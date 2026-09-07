@@ -13,6 +13,9 @@ import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopy, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
 import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
+import { isMcpConnected } from "@/lib/mcp-client";
+import { mcpRun } from "@/lib/mcp.functions";
+import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -30,6 +33,7 @@ function CampaignDetail() {
   const { id } = Route.useParams();
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
+  const runMcp = useServerFn(mcpRun);
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
 
