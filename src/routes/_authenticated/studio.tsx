@@ -17,6 +17,9 @@ import {
   resolveCreativeProvider,
   type CreativeType,
 } from "@/lib/providers/creative-provider";
+import { isMcpConnected } from "@/lib/mcp-client";
+import { mcpRun } from "@/lib/mcp.functions";
+import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -33,6 +36,7 @@ export const Route = createFileRoute("/_authenticated/studio")({
 function Studio() {
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
+  const runMcp = useServerFn(mcpRun);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     title: "",
@@ -69,19 +73,47 @@ function Studio() {
     try {
       const campaign = data.campaigns.find((c) => c.id === form.campaignId) ?? data.campaigns[0];
       const brand = data.brands.find((b) => b.id === campaign?.brand_id) ?? data.brands[0];
-      const provider = resolveCreativeProvider(form.providerId);
-      if (provider.id !== form.providerId) {
-        toast.info("Provedor selecionado não está conectado — usando o gerador simulado.");
-      }
       const brandContext = brand
         ? `${brand.name} · ${brand.segment ?? ""} · cores ${brand.primary_color}/${brand.secondary_color} · tom ${brand.tone_of_voice ?? ""}`
         : "";
-      const result = await provider.generate({
-        prompt: form.prompt || form.title,
-        type: form.type,
-        aspectRatio: form.aspect,
-        brandContext,
-      });
+
+      let provider = resolveCreativeProvider(form.providerId);
+      let result: Awaited<ReturnType<typeof provider.generate>>;
+
+      const useMcp = await isMcpConnected(workspaceId, "higgsfield");
+      if (useMcp) {
+        const run = await runMcp({
+          data: {
+            workspaceId,
+            provider: "higgsfield",
+            intent: form.type === "video" || form.type === "ugc" ? "generate_video" : "generate_image",
+            input: {
+              prompt: `${form.prompt || form.title}${brandContext ? ` — ${brandContext}` : ""}`,
+              aspect_ratio: form.aspect,
+            },
+          },
+        });
+        if (!run.url) throw new Error("A ferramenta MCP não devolveu uma mídia utilizável.");
+        provider = { ...provider, id: "higgsfield", label: "Higgsfield (MCP)" };
+        result = {
+          previewUrl: run.url,
+          provider: "higgsfield",
+          estimatedCost: 0,
+          realCost: 0,
+          status: "ready",
+        };
+      } else {
+        if (provider.id !== form.providerId) {
+          toast.info("Provedor selecionado não está conectado — usando o gerador simulado.");
+        }
+        result = await provider.generate({
+          prompt: form.prompt || form.title,
+          type: form.type,
+          aspectRatio: form.aspect,
+          brandContext,
+        });
+      }
+
       const { data: created, error } = await supabase
         .from("creatives")
         .insert({

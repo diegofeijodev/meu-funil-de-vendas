@@ -780,6 +780,59 @@ export type Database = {
           },
         ]
       }
+      mcp_connections: {
+        Row: {
+          auth_token: string | null
+          created_at: string
+          id: string
+          label: string
+          last_checked_at: string | null
+          last_error: string | null
+          provider: string
+          status: string
+          tools: Json
+          updated_at: string
+          url: string
+          workspace_id: string
+        }
+        Insert: {
+          auth_token?: string | null
+          created_at?: string
+          id?: string
+          label?: string
+          last_checked_at?: string | null
+          last_error?: string | null
+          provider: string
+          status?: string
+          tools?: Json
+          updated_at?: string
+          url: string
+          workspace_id: string
+        }
+        Update: {
+          auth_token?: string | null
+          created_at?: string
+          id?: string
+          label?: string
+          last_checked_at?: string | null
+          last_error?: string | null
+          provider?: string
+          status?: string
+          tools?: Json
+          updated_at?: string
+          url?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mcp_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       meta_accounts: {
         Row: {
           ad_account_id: string | null
