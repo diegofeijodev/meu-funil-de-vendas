@@ -102,13 +102,16 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
 
     const redirectUri = `${originFromRequest()}/api/public/mcp/callback`;
     const discovery = await discoverAuthServer(data.serverUrl);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await assertMember(context.supabase, data.workspaceId);
 
-    const { data: existing } = await context.supabase
+    const { data: existing } = await supabaseAdmin
       .from("mcp_connections")
       .select("id, oauth_client_id, oauth_client_secret")
       .eq("workspace_id", data.workspaceId)
       .eq("provider", data.provider)
       .maybeSingle();
+
 
     let clientId = existing?.oauth_client_id ?? null;
     let clientSecret = existing?.oauth_client_secret ?? null;
