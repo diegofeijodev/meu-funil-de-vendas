@@ -146,11 +146,11 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
       oauth_resource: discovery.resource,
     };
 
-    const query = existing
-      ? context.supabase.from("mcp_connections").update(row).eq("id", existing.id)
-      : context.supabase.from("mcp_connections").insert(row);
-    const { error } = await query;
+    const { error } = await supabaseAdmin
+      .from("mcp_connections")
+      .upsert(row, { onConflict: "workspace_id,provider" });
     if (error) throw new Error(error.message);
+
 
     return {
       authUrl: buildAuthorizationUrl({
