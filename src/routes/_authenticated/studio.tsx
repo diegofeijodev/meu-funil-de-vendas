@@ -17,6 +17,9 @@ import {
   resolveCreativeProvider,
   type CreativeType,
 } from "@/lib/providers/creative-provider";
+import { isMcpConnected } from "@/lib/mcp-client";
+import { mcpRun } from "@/lib/mcp.functions";
+import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
