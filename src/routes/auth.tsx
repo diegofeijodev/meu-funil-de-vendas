@@ -70,7 +70,17 @@ function AuthPage() {
         navigate({ to: "/overview" });
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível continuar.");
+      const raw = err instanceof Error ? err.message : "";
+      const friendly = raw.includes("already registered")
+        ? "Esse e-mail já tem conta. Faça login."
+        : raw.toLowerCase().includes("weak")
+          ? "Escolha uma senha mais forte (evite senhas comuns)."
+          : raw.includes("Invalid login credentials")
+            ? "E-mail ou senha incorretos."
+            : raw.toLowerCase().includes("password")
+              ? "A senha precisa ter pelo menos 6 caracteres."
+              : raw || "Não foi possível continuar.";
+      toast.error(friendly);
     } finally {
       setLoading(false);
     }
