@@ -20,7 +20,7 @@ export const mcpConnect = createServerFn({ method: "POST" })
     const { listTools } = await import("./mcp.server");
     const token = data.accessToken?.trim() ? data.accessToken.trim() : null;
 
-    let tools: { name: string; description?: string }[] = [];
+    let tools: { name: string; description?: string | undefined }[] = [];
     let status = "connected";
     let lastError: string | null = null;
     try {
@@ -100,7 +100,7 @@ export const mcpRun = createServerFn({ method: "POST" })
       throw new Error("Nenhuma conexão MCP ativa para este provedor.");
     }
 
-    const tools = (conn.tools ?? []) as { name: string; description?: string }[];
+    const tools = (conn.tools ?? []) as { name: string; description?: string | undefined }[];
     const tool = data.toolName
       ? tools.find((t) => t.name === data.toolName) ?? { name: data.toolName }
       : pickTool(tools, data.keywords);
