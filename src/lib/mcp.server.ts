@@ -4,9 +4,9 @@
  */
 export type McpTool = {
   name: string;
-  title?: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
+  title?: string | undefined;
+  description?: string | undefined;
+  inputSchema?: Record<string, unknown> | undefined;
 };
 
 type JsonRpcResponse = {
