@@ -141,38 +141,73 @@ function CampaignDetail() {
     setBusy("publish");
     setSteps([]);
     try {
-      const result = await metaMockProvider.publish(
-        {
-          campaignName: c.name,
-          objective: OBJECTIVES[c.objective] ?? c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0),
-          targeting: (c.audience ?? {}) as Record<string, unknown>,
-          placements: ["Instagram Feed", "Reels", "Stories", "Facebook Feed"],
-          creatives: data.creatives.filter((x) => x.status === "approved").map((x) => ({ id: x.id, title: x.title })),
-          primaryText: copy?.meta_ad ?? "",
-          utm: `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`,
-          approved: c.status === "approved" || c.status === "active",
-        },
-        setSteps,
-      );
+      const approved = c.status === "approved" || c.status === "active";
+      if (!approved) {
+        throw new Error("Publicação bloqueada: a campanha precisa de aprovação humana antes de ir ao ar.");
+      }
+      const approvedCreatives = data.creatives.filter((x) => x.status === "approved");
+      const utm = `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`;
+      const viaMcp = await isMcpConnected(workspaceId, "meta");
+
+      let log: string;
+      if (viaMcp) {
+        setSteps([{ key: "mcp", label: "Enviando campanha via MCP da Meta", status: "pending", detail: c.name }]);
+        const run = await runMcp({
+          data: {
+            workspaceId,
+            provider: "meta",
+            intent: "create_campaign",
+            input: {
+              name: c.name,
+              objective: c.objective,
+              daily_budget: Number(c.budget_daily ?? 0),
+              targeting: (c.audience ?? {}) as Record<string, unknown>,
+              placements: ["Instagram Feed", "Reels", "Stories", "Facebook Feed"],
+              primary_text: copy?.meta_ad ?? "",
+              creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title, url: x.preview_url })),
+              utm,
+            },
+          },
+        });
+        setSteps([{ key: "mcp", label: `Ferramenta ${run.tool}`, status: "done", detail: run.text.slice(0, 300) || "Concluído" }]);
+        log = `MCP Meta · ${run.tool}\n${run.text}`;
+      } else {
+        const result = await metaMockProvider.publish(
+          {
+            campaignName: c.name,
+            objective: OBJECTIVES[c.objective] ?? c.objective,
+            dailyBudget: Number(c.budget_daily ?? 0),
+            targeting: (c.audience ?? {}) as Record<string, unknown>,
+            placements: ["Instagram Feed", "Reels", "Stories", "Facebook Feed"],
+            creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title })),
+            primaryText: copy?.meta_ad ?? "",
+            utm,
+            approved,
+          },
+          setSteps,
+        );
+        log = result.map((s) => `${s.label}: ${s.detail}`).join("\n");
+      }
+
       await supabase.from("publishing_jobs").insert({
         workspace_id: workspaceId,
         campaign_id: id,
         target: "meta",
         status: "done",
-        mode: "mock",
-        log: result.map((s) => `${s.label}: ${s.detail}`).join("\n"),
+        mode: viaMcp ? "mcp" : "mock",
+        log,
       });
       await supabase.from("campaigns").update({ status: "active" }).eq("id", id);
-      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "mock" });
+      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: viaMcp ? "mcp" : "mock" });
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success("Campanha publicada no ambiente sandbox da Meta.");
+      toast.success(viaMcp ? "Campanha enviada à Meta via MCP." : "Campanha publicada no ambiente sandbox da Meta.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao publicar");
     } finally {
       setBusy(null);
     }
   };
+
 
   return (
     <>
