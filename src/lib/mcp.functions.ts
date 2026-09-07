@@ -21,15 +21,28 @@ function originFromRequest() {
   return forwardedHost ? `${proto}://${forwardedHost}` : url.origin;
 }
 
+/** Confirma que o usuário pertence ao workspace antes de tocar em colunas sensíveis. */
+async function assertMember(supabase: any, workspaceId: string) {
+  const { data, error } = await supabase
+    .from("workspace_members")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Você não tem acesso a este workspace.");
+}
+
 /** Salva/testa a conexão MCP do workspace e descobre as ferramentas disponíveis. */
 export const mcpConnect = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => connectInput.parse(d))
   .handler(async ({ data, context }) => {
     const { probeConnection } = await import("./mcp-auth.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await assertMember(context.supabase, data.workspaceId);
     const token = data.accessToken?.trim() ? data.accessToken.trim() : null;
 
-    const { data: existing } = await context.supabase
+    const { data: existing } = await supabaseAdmin
       .from("mcp_connections")
       .select("id, access_token")
       .eq("workspace_id", data.workspaceId)
@@ -51,10 +64,9 @@ export const mcpConnect = createServerFn({ method: "POST" })
       connected_at: probe.status === "connected" ? new Date().toISOString() : null,
     };
 
-    const query = existing
-      ? context.supabase.from("mcp_connections").update(row).eq("id", existing.id)
-      : context.supabase.from("mcp_connections").insert(row);
-    const { error } = await query;
+    const { error } = await supabaseAdmin
+      .from("mcp_connections")
+      .upsert(row, { onConflict: "workspace_id,provider" });
     if (error) throw new Error(error.message);
 
     return {
@@ -64,6 +76,7 @@ export const mcpConnect = createServerFn({ method: "POST" })
       needsAuth: probe.needsAuth,
     };
   });
+
 
 /** Inicia o login OAuth (PKCE) no servidor MCP e devolve a URL de autorização. */
 export const mcpOAuthStart = createServerFn({ method: "POST" })
@@ -89,13 +102,16 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
 
     const redirectUri = `${originFromRequest()}/api/public/mcp/callback`;
     const discovery = await discoverAuthServer(data.serverUrl);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await assertMember(context.supabase, data.workspaceId);
 
-    const { data: existing } = await context.supabase
+    const { data: existing } = await supabaseAdmin
       .from("mcp_connections")
       .select("id, oauth_client_id, oauth_client_secret")
       .eq("workspace_id", data.workspaceId)
       .eq("provider", data.provider)
       .maybeSingle();
+
 
     let clientId = existing?.oauth_client_id ?? null;
     let clientSecret = existing?.oauth_client_secret ?? null;
@@ -130,11 +146,11 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
       oauth_resource: discovery.resource,
     };
 
-    const query = existing
-      ? context.supabase.from("mcp_connections").update(row).eq("id", existing.id)
-      : context.supabase.from("mcp_connections").insert(row);
-    const { error } = await query;
+    const { error } = await supabaseAdmin
+      .from("mcp_connections")
+      .upsert(row, { onConflict: "workspace_id,provider" });
     if (error) throw new Error(error.message);
+
 
     return {
       authUrl: buildAuthorizationUrl({
