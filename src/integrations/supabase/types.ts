@@ -612,6 +612,104 @@ export type Database = {
           },
         ]
       }
+      creative_generation_jobs: {
+        Row: {
+          actual_cost: number | null
+          aspect_ratio: string | null
+          asset_url: string | null
+          brand_id: string | null
+          campaign_id: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          creative_id: string | null
+          error_message: string | null
+          estimated_cost: number | null
+          external_job_id: string | null
+          final_prompt: string | null
+          id: string
+          prompt: string | null
+          provider: string
+          status: string
+          thumbnail_url: string | null
+          type: string
+          workspace_id: string
+        }
+        Insert: {
+          actual_cost?: number | null
+          aspect_ratio?: string | null
+          asset_url?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          creative_id?: string | null
+          error_message?: string | null
+          estimated_cost?: number | null
+          external_job_id?: string | null
+          final_prompt?: string | null
+          id?: string
+          prompt?: string | null
+          provider?: string
+          status?: string
+          thumbnail_url?: string | null
+          type?: string
+          workspace_id: string
+        }
+        Update: {
+          actual_cost?: number | null
+          aspect_ratio?: string | null
+          asset_url?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          creative_id?: string | null
+          error_message?: string | null
+          estimated_cost?: number | null
+          external_job_id?: string | null
+          final_prompt?: string | null
+          id?: string
+          prompt?: string | null
+          provider?: string
+          status?: string
+          thumbnail_url?: string | null
+          type?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "creative_generation_jobs_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_generation_jobs_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_generation_jobs_creative_id_fkey"
+            columns: ["creative_id"]
+            isOneToOne: false
+            referencedRelation: "creatives"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "creative_generation_jobs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       creative_versions: {
         Row: {
           created_at: string
@@ -664,13 +762,17 @@ export type Database = {
           campaign_id: string | null
           copy_text: string | null
           created_at: string
+          error_message: string | null
           estimated_cost: number | null
+          external_job_id: string | null
+          final_prompt: string | null
           id: string
           preview_url: string | null
           prompt: string | null
           provider: string
           real_cost: number | null
           status: string
+          thumbnail_url: string | null
           title: string
           type: string
           updated_at: string
@@ -683,13 +785,17 @@ export type Database = {
           campaign_id?: string | null
           copy_text?: string | null
           created_at?: string
+          error_message?: string | null
           estimated_cost?: number | null
+          external_job_id?: string | null
+          final_prompt?: string | null
           id?: string
           preview_url?: string | null
           prompt?: string | null
           provider?: string
           real_cost?: number | null
           status?: string
+          thumbnail_url?: string | null
           title: string
           type?: string
           updated_at?: string
@@ -702,13 +808,17 @@ export type Database = {
           campaign_id?: string | null
           copy_text?: string | null
           created_at?: string
+          error_message?: string | null
           estimated_cost?: number | null
+          external_job_id?: string | null
+          final_prompt?: string | null
           id?: string
           preview_url?: string | null
           prompt?: string | null
           provider?: string
           real_cost?: number | null
           status?: string
+          thumbnail_url?: string | null
           title?: string
           type?: string
           updated_at?: string
@@ -785,10 +895,20 @@ export type Database = {
           access_token: string | null
           connected_at: string | null
           created_at: string
+          expires_at: string | null
           id: string
           label: string | null
           last_error: string | null
+          oauth_authorization_endpoint: string | null
+          oauth_client_id: string | null
+          oauth_client_secret: string | null
+          oauth_code_verifier: string | null
+          oauth_resource: string | null
+          oauth_scope: string | null
+          oauth_state: string | null
+          oauth_token_endpoint: string | null
           provider: string
+          refresh_token: string | null
           server_url: string
           status: string
           tools: Json
@@ -799,10 +919,20 @@ export type Database = {
           access_token?: string | null
           connected_at?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
           label?: string | null
           last_error?: string | null
+          oauth_authorization_endpoint?: string | null
+          oauth_client_id?: string | null
+          oauth_client_secret?: string | null
+          oauth_code_verifier?: string | null
+          oauth_resource?: string | null
+          oauth_scope?: string | null
+          oauth_state?: string | null
+          oauth_token_endpoint?: string | null
           provider: string
+          refresh_token?: string | null
           server_url: string
           status?: string
           tools?: Json
@@ -813,10 +943,20 @@ export type Database = {
           access_token?: string | null
           connected_at?: string | null
           created_at?: string
+          expires_at?: string | null
           id?: string
           label?: string | null
           last_error?: string | null
+          oauth_authorization_endpoint?: string | null
+          oauth_client_id?: string | null
+          oauth_client_secret?: string | null
+          oauth_code_verifier?: string | null
+          oauth_resource?: string | null
+          oauth_scope?: string | null
+          oauth_state?: string | null
+          oauth_token_endpoint?: string | null
           provider?: string
+          refresh_token?: string | null
           server_url?: string
           status?: string
           tools?: Json

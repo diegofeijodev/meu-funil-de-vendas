@@ -11,6 +11,7 @@ export type McpConnectionView = {
   tools: { name: string; description?: string }[];
   last_error: string | null;
   connected_at: string | null;
+  expires_at: string | null;
   hasToken: boolean;
 };
 
@@ -18,7 +19,7 @@ export type McpConnectionView = {
 export async function fetchMcpConnections(workspaceId: string): Promise<McpConnectionView[]> {
   const { data, error } = await supabase
     .from("mcp_connections")
-    .select("id, provider, label, server_url, status, tools, last_error, connected_at, access_token")
+    .select("id, provider, label, server_url, status, tools, last_error, connected_at, expires_at")
     .eq("workspace_id", workspaceId);
   if (error) throw new Error(error.message);
   return (data ?? []).map((c) => ({
@@ -30,7 +31,8 @@ export async function fetchMcpConnections(workspaceId: string): Promise<McpConne
     tools: (c.tools ?? []) as { name: string; description?: string }[],
     last_error: c.last_error,
     connected_at: c.connected_at,
-    hasToken: !!c.access_token,
+    expires_at: c.expires_at,
+    hasToken: c.status === "connected",
   }));
 }
 

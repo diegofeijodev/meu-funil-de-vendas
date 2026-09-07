@@ -12,14 +12,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CREATIVE_STATUS, FORMATS } from "@/lib/labels";
 import { brl } from "@/lib/format";
-import {
-  creativeProviders,
-  resolveCreativeProvider,
-  type CreativeType,
-} from "@/lib/providers/creative-provider";
+import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
 import { useServerFn } from "@tanstack/react-start";
-import { mcpRun } from "@/lib/mcp.functions";
-import { isMcpConnected } from "@/lib/mcp-client";
+import { generateCreative, retryCreativeJob } from "@/lib/creative.functions";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -36,7 +31,8 @@ export const Route = createFileRoute("/_authenticated/studio")({
 function Studio() {
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
-  const runMcp = useServerFn(mcpRun);
+  const runGenerate = useServerFn(generateCreative);
+  const runRetry = useServerFn(retryCreativeJob);
 
   
   const [busy, setBusy] = useState(false);
@@ -47,24 +43,30 @@ function Studio() {
     prompt: "",
     copyText: "",
     campaignId: "",
-    providerId: "mock",
   });
 
   const { data } = useQuery({
     queryKey: ["studio", workspaceId],
     enabled: !!workspaceId,
     queryFn: async () => {
-      const [creatives, campaigns, brands, integrations] = await Promise.all([
+      const [creatives, campaigns, brands, integrations, jobs] = await Promise.all([
         supabase.from("creatives").select("*, campaigns(name)").eq("workspace_id", workspaceId!).order("created_at", { ascending: false }),
         supabase.from("campaigns").select("id, name, brand_id").eq("workspace_id", workspaceId!),
         supabase.from("brands").select("*").eq("workspace_id", workspaceId!),
         supabase.from("integration_connections").select("*").eq("workspace_id", workspaceId!),
+        supabase
+          .from("creative_generation_jobs")
+          .select("*")
+          .eq("workspace_id", workspaceId!)
+          .order("created_at", { ascending: false })
+          .limit(12),
       ]);
       return {
         creatives: creatives.data ?? [],
         campaigns: campaigns.data ?? [],
         brands: brands.data ?? [],
         integrations: integrations.data ?? [],
+        jobs: jobs.data ?? [],
       };
     },
   });
@@ -74,81 +76,46 @@ function Studio() {
     setBusy(true);
     try {
       const campaign = data.campaigns.find((c) => c.id === form.campaignId) ?? data.campaigns[0];
-      const brand = data.brands.find((b) => b.id === campaign?.brand_id) ?? data.brands[0];
-      const brandContext = brand
-        ? `${brand.name} · ${brand.segment ?? ""} · cores ${brand.primary_color}/${brand.secondary_color} · tom ${brand.tone_of_voice ?? ""}`
-        : "";
-
-      const fullPrompt = [form.prompt || form.title, brandContext].filter(Boolean).join(" · ");
-      const mcpReady = await isMcpConnected(workspaceId, "higgsfield");
-      let provider = resolveCreativeProvider(form.providerId);
-      let result: Awaited<ReturnType<typeof provider.generate>>;
-
-      if (mcpReady) {
-        const isVideo = form.type === "video" || form.type === "ugc";
-        const out = await runMcp({
-          data: {
-            workspaceId,
-            provider: "higgsfield",
-            keywords: isVideo ? ["video", "generate_video", "generate"] : ["image", "generate_image", "generate"],
-            args: { prompt: fullPrompt, aspect_ratio: form.aspect },
-          },
-        });
-        if (!out.mediaUrl) throw new Error("O servidor MCP não retornou uma mídia gerada.");
-        const cost = isVideo ? 4.5 : 1.2;
-        provider = { ...provider, id: "higgsfield", label: "Higgsfield (MCP)" };
-        result = {
-          previewUrl: out.mediaUrl,
-          provider: "higgsfield",
-          estimatedCost: cost,
-          realCost: cost,
-          status: "ready",
-        };
-      } else {
-        if (provider.id !== form.providerId) {
-          toast.info("Provedor selecionado não está conectado — usando o gerador simulado.");
-        }
-        result = await provider.generate({
-          prompt: form.prompt || form.title,
+      const res = await runGenerate({
+        data: {
+          workspaceId,
+          campaignId: campaign?.id ?? null,
+          brandId: campaign?.brand_id ?? data.brands[0]?.id ?? null,
+          title: form.title,
           type: form.type,
           aspectRatio: form.aspect,
-          brandContext,
-        });
-      }
-
-      const { data: created, error } = await supabase
-        .from("creatives")
-        .insert({
-          workspace_id: workspaceId,
-          campaign_id: campaign?.id ?? null,
-          brand_id: brand?.id ?? null,
-          title: form.title || "Criativo sem título",
-          type: form.type,
           prompt: form.prompt,
-          aspect_ratio: form.aspect,
-          copy_text: form.copyText,
-          status: result.status,
-          provider: result.provider,
-          estimated_cost: result.estimatedCost,
-          real_cost: result.realCost,
-          preview_url: result.previewUrl,
-          version: 1,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      await supabase.from("creative_versions").insert({
-        workspace_id: workspaceId,
-        creative_id: created.id,
-        version: 1,
-        prompt: form.prompt,
-        preview_url: result.previewUrl,
+          copyText: form.copyText,
+        },
       });
-      await logActivity(workspaceId, "creative.generated", "creative", { creative_id: created.id, provider: provider.id });
       qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
-      toast.success(`Criativo gerado (${provider.label}) — custo estimado ${brl(result.estimatedCost)}.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao gerar criativo");
+      if (res.status === "failed") {
+        toast.error(res.error ?? "Não foi possível gerar este criativo. Tente novamente.");
+        return;
+      }
+      await logActivity(workspaceId, "creative.generated", "creative", {
+        creative_id: res.creativeId,
+        provider: res.provider,
+      });
+      toast.success(
+        res.sandbox ? "Criativo gerado no modo simulado." : "Criativo gerado com o Higgsfield.",
+      );
+    } catch {
+      toast.error("Não foi possível gerar este criativo. Tente novamente.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retry = async (jobId: string) => {
+    setBusy(true);
+    try {
+      const res = await runRetry({ data: { jobId } });
+      qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
+      if (res.status === "failed") toast.error(res.error ?? "A nova tentativa falhou.");
+      else toast.success("Criativo gerado na nova tentativa.");
+    } catch {
+      toast.error("Não foi possível tentar novamente agora.");
     } finally {
       setBusy(false);
     }
@@ -249,28 +216,49 @@ function Studio() {
               <Label htmlFor="ct">Texto sobre o criativo</Label>
               <Textarea id="ct" rows={2} value={form.copyText} onChange={(e) => setForm({ ...form, copyText: e.target.value })} />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pv">Provedor</Label>
-              <select
-                id="pv"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={form.providerId}
-                onChange={(e) => setForm({ ...form, providerId: e.target.value })}
-              >
-                {creativeProviders.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}{p.isConnected() ? "" : " — desconectado"}
-                  </option>
-                ))}
-              </select>
-            </div>
             {canEdit && (
               <Button className="w-full" onClick={generate} disabled={busy}>
                 <Sparkles className="mr-2 size-4" />
-                {busy ? "Gerando..." : "Gerar criativo"}
+                {busy ? "Gerando..." : "Gerar com IA"}
               </Button>
             )}
           </div>
+        </Section>
+
+        <div className="space-y-6">
+        <Section title="Gerações recentes" description="Acompanhe o processamento de cada solicitação.">
+          {data.jobs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhuma geração solicitada ainda.</p>
+          ) : (
+            <div className="space-y-2 text-sm">
+              {data.jobs.map((j) => (
+                <div key={j.id} className="rounded-lg border border-border/60 px-4 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate">{j.final_prompt ?? j.prompt ?? "Criativo"}</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {j.provider === "higgsfield" ? "Higgsfield" : "Simulado"}
+                      </span>
+                      <StatusPill
+                        status={j.status === "ready" ? "approved" : j.status === "failed" ? "failed" : "pending"}
+                        label={JOB_STATUS[j.status] ?? j.status}
+                      />
+                      {j.status === "failed" && canEdit && (
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => retry(j.id)}>
+                          Tentar novamente
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {j.error_message && (
+                    <p className="mt-1 text-xs text-destructive">
+                      Não foi possível gerar este criativo. Tente novamente.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
 
         <Section title={`Biblioteca de criativos (${data.creatives.length})`}>
@@ -303,7 +291,19 @@ function Studio() {
             ))}
           </div>
         </Section>
+        </div>
       </div>
     </>
   );
 }
+
+const JOB_STATUS: Record<string, string> = {
+  draft: "Rascunho",
+  queued: "Na fila",
+  generating: "Gerando",
+  ready: "Pronto",
+  failed: "Falhou",
+  approved: "Aprovado",
+  rejected: "Rejeitado",
+  published: "Publicado",
+};
