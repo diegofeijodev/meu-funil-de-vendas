@@ -36,6 +36,7 @@ export const Route = createFileRoute("/_authenticated/studio")({
 function Studio() {
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
+  const runMcp = useServerFn(mcpRun);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     title: "",
