@@ -14,6 +14,8 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
 import { Route as AuthenticatedBrandsIndexRouteImport } from './routes/_authenticated/brands.index'
+import { Route as AuthenticatedBrandsIdRouteImport } from './routes/_authenticated/brands.$id'
+import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns.index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,18 +42,33 @@ const AuthenticatedBrandsIndexRoute =
     path: '/brands/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedBrandsIdRoute = AuthenticatedBrandsIdRouteImport.update({
+  id: '/brands/$id',
+  path: '/brands/$id',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCampaignsIndexRoute =
+  AuthenticatedCampaignsIndexRouteImport.update({
+    id: '/campaigns/',
+    path: '/campaigns/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/overview': typeof AuthenticatedOverviewRoute
+  '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/brands/': typeof AuthenticatedBrandsIndexRoute
+  '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/overview': typeof AuthenticatedOverviewRoute
+  '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/brands': typeof AuthenticatedBrandsIndexRoute
+  '/campaigns': typeof AuthenticatedCampaignsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -59,20 +76,25 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
+  '/_authenticated/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/_authenticated/brands/': typeof AuthenticatedBrandsIndexRoute
+  '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/overview' | '/brands/'
+  fullPaths:
+    '/' | '/auth' | '/overview' | '/brands/$id' | '/brands/' | '/campaigns/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/overview' | '/brands'
+  to: '/' | '/auth' | '/overview' | '/brands/$id' | '/brands' | '/campaigns'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/overview'
+    | '/_authenticated/brands/$id'
     | '/_authenticated/brands/'
+    | '/_authenticated/campaigns/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -118,17 +140,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBrandsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/brands/$id': {
+      id: '/_authenticated/brands/$id'
+      path: '/brands/$id'
+      fullPath: '/brands/$id'
+      preLoaderRoute: typeof AuthenticatedBrandsIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/campaigns/': {
+      id: '/_authenticated/campaigns/'
+      path: '/campaigns'
+      fullPath: '/campaigns/'
+      preLoaderRoute: typeof AuthenticatedCampaignsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
+  AuthenticatedBrandsIdRoute: typeof AuthenticatedBrandsIdRoute
   AuthenticatedBrandsIndexRoute: typeof AuthenticatedBrandsIndexRoute
+  AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
+  AuthenticatedBrandsIdRoute: AuthenticatedBrandsIdRoute,
   AuthenticatedBrandsIndexRoute: AuthenticatedBrandsIndexRoute,
+  AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
