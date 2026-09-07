@@ -8,7 +8,7 @@ import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { McpConnections } from "@/components/mcp-connections";
+
 import { ROLE_LABELS } from "@/lib/labels";
 import { shortDate } from "@/lib/format";
 
@@ -111,7 +111,7 @@ function Settings() {
           </div>
         </Section>
 
-        <McpConnections />
+        
 
         <Section
           title="Time e permissões"
