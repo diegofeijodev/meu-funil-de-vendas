@@ -24,28 +24,29 @@ export const Route = createFileRoute("/_authenticated/settings")({
 });
 
 function Settings() {
-  const { workspaceId, workspace, role, user } = useWorkspace();
+  const { workspaceId, workspaceName, role, user } = useWorkspace();
   const qc = useQueryClient();
   const [wsName, setWsName] = useState("");
   const [fullName, setFullName] = useState("");
 
   useEffect(() => {
-    setWsName(workspace?.name ?? "");
-  }, [workspace]);
+    setWsName(workspaceName);
+  }, [workspaceName]);
 
   const { data } = useQuery({
     queryKey: ["settings", workspaceId],
     enabled: !!workspaceId,
     queryFn: async () => {
-      const [members, profile] = await Promise.all([
+      const [members, profile, ws] = await Promise.all([
         supabase.from("workspace_members").select("*").eq("workspace_id", workspaceId!),
         supabase.from("profiles").select("*").eq("id", user?.id ?? "").maybeSingle(),
+        supabase.from("workspaces").select("*").eq("id", workspaceId!).maybeSingle(),
       ]);
       const ids = (members.data ?? []).map((m) => m.user_id);
       const profiles = ids.length
         ? (await supabase.from("profiles").select("*").in("id", ids)).data ?? []
         : [];
-      return { members: members.data ?? [], profiles, profile: profile.data };
+      return { members: members.data ?? [], profiles, profile: profile.data, workspace: ws.data };
     },
   });
 
@@ -91,7 +92,7 @@ function Settings() {
             </div>
             {isOwner && <Button onClick={saveWorkspace}>Salvar</Button>}
             <div className="ml-auto text-sm text-muted-foreground">
-              Plano: <span className="text-foreground">{workspace?.plan ?? "free"}</span>
+              Plano: <span className="text-foreground">{data?.workspace?.plan ?? "free"}</span>
             </div>
           </div>
         </Section>
