@@ -3,7 +3,7 @@
  * Roda apenas no servidor: o token do workspace nunca chega ao navegador.
  */
 
-export type McpTool = { name: string; description?: string; inputSchema?: unknown };
+export type McpTool = { name: string; description?: string | undefined; inputSchema?: unknown };
 
 type JsonRpcResponse = { result?: any; error?: { code: number; message: string } };
 
@@ -91,7 +91,7 @@ export async function listTools(rawUrl: string, token: string | null): Promise<M
   return tools.map((t) => ({ name: t.name, description: t.description }));
 }
 
-export type McpCallResult = { text: string; mediaUrl: string | null; structured: unknown };
+export type McpCallResult = { text: string; mediaUrl: string | null; structured: string | null };
 
 export async function callTool(
   rawUrl: string,
@@ -123,7 +123,11 @@ export async function callTool(
     const found = /https?:\/\/\S+\.(png|jpe?g|webp|gif|mp4|mov)/i.exec(text);
     if (found) mediaUrl = found[0];
   }
-  return { text, mediaUrl, structured: result.structuredContent ?? null };
+  return {
+    text,
+    mediaUrl,
+    structured: result.structuredContent ? JSON.stringify(result.structuredContent) : null,
+  };
 }
 
 /** Escolhe a ferramenta mais provável para uma intenção (geração de imagem, vídeo, publicação). */
