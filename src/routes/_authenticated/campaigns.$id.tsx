@@ -13,6 +13,9 @@ import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopy, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
 import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
+import { useServerFn } from "@tanstack/react-start";
+import { mcpRun } from "@/lib/mcp.functions";
+import { isMcpConnected } from "@/lib/mcp-client";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
