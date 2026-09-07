@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export const Route = createFileRoute("/_authenticated/brands")({
+export const Route = createFileRoute("/_authenticated/brands/")({
   head: () => ({
     meta: [
       { title: "Brands · AI Marketing OS" },
