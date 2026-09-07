@@ -6,6 +6,7 @@ import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section, StatusPill, SandboxBadge } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { shortDate } from "@/lib/format";
+import { McpConnections } from "@/components/mcp-connections";
 
 export const Route = createFileRoute("/_authenticated/integrations")({
   head: () => ({
@@ -77,6 +78,8 @@ function Integrations() {
       />
 
       <div className="space-y-6">
+        <McpConnections />
+
         <Section title="Provedores">
           <div className="grid gap-4 md:grid-cols-3">
             {data.conns.map((c) => {

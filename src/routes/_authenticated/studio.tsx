@@ -17,6 +17,9 @@ import {
   resolveCreativeProvider,
   type CreativeType,
 } from "@/lib/providers/creative-provider";
+import { useServerFn } from "@tanstack/react-start";
+import { mcpRun } from "@/lib/mcp.functions";
+import { isMcpConnected } from "@/lib/mcp-client";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -33,6 +36,8 @@ export const Route = createFileRoute("/_authenticated/studio")({
 function Studio() {
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
+  const runMcp = useServerFn(mcpRun);
+
   
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -74,16 +79,42 @@ function Studio() {
         ? `${brand.name} · ${brand.segment ?? ""} · cores ${brand.primary_color}/${brand.secondary_color} · tom ${brand.tone_of_voice ?? ""}`
         : "";
 
-      const provider = resolveCreativeProvider(form.providerId);
-      if (provider.id !== form.providerId) {
-        toast.info("Provedor selecionado não está conectado — usando o gerador simulado.");
+      const fullPrompt = [form.prompt || form.title, brandContext].filter(Boolean).join(" · ");
+      const mcpReady = await isMcpConnected(workspaceId, "higgsfield");
+      let provider = resolveCreativeProvider(form.providerId);
+      let result: Awaited<ReturnType<typeof provider.generate>>;
+
+      if (mcpReady) {
+        const isVideo = form.type === "video" || form.type === "ugc";
+        const out = await runMcp({
+          data: {
+            workspaceId,
+            provider: "higgsfield",
+            keywords: isVideo ? ["video", "generate_video", "generate"] : ["image", "generate_image", "generate"],
+            args: { prompt: fullPrompt, aspect_ratio: form.aspect },
+          },
+        });
+        if (!out.mediaUrl) throw new Error("O servidor MCP não retornou uma mídia gerada.");
+        const cost = isVideo ? 4.5 : 1.2;
+        provider = { ...provider, id: "higgsfield", label: "Higgsfield (MCP)" };
+        result = {
+          previewUrl: out.mediaUrl,
+          provider: "higgsfield",
+          estimatedCost: cost,
+          realCost: cost,
+          status: "ready",
+        };
+      } else {
+        if (provider.id !== form.providerId) {
+          toast.info("Provedor selecionado não está conectado — usando o gerador simulado.");
+        }
+        result = await provider.generate({
+          prompt: form.prompt || form.title,
+          type: form.type,
+          aspectRatio: form.aspect,
+          brandContext,
+        });
       }
-      const result = await provider.generate({
-        prompt: form.prompt || form.title,
-        type: form.type,
-        aspectRatio: form.aspect,
-        brandContext,
-      });
 
       const { data: created, error } = await supabase
         .from("creatives")

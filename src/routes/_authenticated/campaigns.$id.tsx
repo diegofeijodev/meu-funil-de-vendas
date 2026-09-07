@@ -13,6 +13,9 @@ import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopy, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
 import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
+import { useServerFn } from "@tanstack/react-start";
+import { mcpRun } from "@/lib/mcp.functions";
+import { isMcpConnected } from "@/lib/mcp-client";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -30,6 +33,8 @@ function CampaignDetail() {
   const { id } = Route.useParams();
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
+  const runMcp = useServerFn(mcpRun);
+
   
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
@@ -148,6 +153,42 @@ function CampaignDetail() {
       }
       const approvedCreatives = data.creatives.filter((x) => x.status === "approved");
       const utm = `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`;
+
+      if (await isMcpConnected(workspaceId, "meta")) {
+        setSteps([{ key: "mcp", label: "Publicando via MCP da Meta", status: "pending", detail: c.name }]);
+        const out = await runMcp({
+          data: {
+            workspaceId,
+            provider: "meta",
+            keywords: ["create_campaign", "campaign", "publish", "ad"],
+            args: {
+              name: c.name,
+              objective: c.objective,
+              daily_budget: Number(c.budget_daily ?? 0),
+              targeting: (c.audience ?? {}) as Record<string, unknown>,
+              creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title, url: x.preview_url })),
+              primary_text: copy?.meta_ad ?? "",
+              utm,
+              status: "PAUSED",
+            },
+          },
+        });
+        setSteps([{ key: "mcp", label: `Ferramenta ${out.tool}`, status: "done", detail: out.text.slice(0, 300) || "Concluído" }]);
+        await supabase.from("publishing_jobs").insert({
+          workspace_id: workspaceId,
+          campaign_id: id,
+          target: "meta",
+          status: "done",
+          mode: "mcp",
+          log: `${out.tool}\n${out.text}`,
+        });
+        await supabase.from("campaigns").update({ status: "active" }).eq("id", id);
+        await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "mcp" });
+        qc.invalidateQueries({ queryKey: ["campaign", id] });
+        toast.success("Campanha publicada pelo servidor MCP da Meta.");
+        return;
+      }
+
       const result = await metaMockProvider.publish(
         {
           campaignName: c.name,
