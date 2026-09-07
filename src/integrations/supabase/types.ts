@@ -1378,7 +1378,6 @@ export type Database = {
         Returns: boolean
       }
       is_workspace_member: { Args: { _ws: string }; Returns: boolean }
-      seed_demo_workspace: { Args: { _ws: string }; Returns: undefined }
     }
     Enums: {
       workspace_role: "owner" | "admin" | "marketing" | "viewer"
