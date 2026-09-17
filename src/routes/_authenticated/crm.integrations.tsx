@@ -23,7 +23,7 @@ import {
 export const Route = createFileRoute("/_authenticated/crm/integrations")({
   head: () => ({
     meta: [
-      { title: "CRM · Integrações · AI Marketing OS" },
+      { title: "CRM · Integrações · Meu Funil" },
       { name: "description", content: "Conecte Meta Lead Ads e WhatsApp por workspace e acompanhe o status." },
       { property: "og:title", content: "CRM · Integrações" },
       { property: "og:description", content: "Webhooks, mapeamento de formulários e provedores de WhatsApp." },

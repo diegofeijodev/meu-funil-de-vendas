@@ -20,9 +20,9 @@ import { isMcpConnected } from "@/lib/mcp-client";
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
     meta: [
-      { title: "Campanha · AI Marketing OS" },
+      { title: "Campanha · Meu Funil" },
       { name: "description", content: "Estratégia, copies, criativos, performance e publicação da campanha." },
-      { property: "og:title", content: "Campanha · AI Marketing OS" },
+      { property: "og:title", content: "Campanha · Meu Funil" },
       { property: "og:description", content: "Fluxo completo com aprovação humana antes de publicar." },
     ],
   }),

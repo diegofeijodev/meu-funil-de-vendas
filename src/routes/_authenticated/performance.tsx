@@ -22,9 +22,9 @@ import { computeKpis, groupByDay, type PerformanceRow } from "@/lib/metrics";
 export const Route = createFileRoute("/_authenticated/performance")({
   head: () => ({
     meta: [
-      { title: "Performance e ROI · AI Marketing OS" },
+      { title: "Performance e ROI · Meu Funil" },
       { name: "description", content: "CPM, CTR, CPC, CPL, CAC, ROAS e ROI real por campanha, criativo e público." },
-      { property: "og:title", content: "Performance e ROI · AI Marketing OS" },
+      { property: "og:title", content: "Performance e ROI · Meu Funil" },
       { property: "og:description", content: "Do gasto em mídia ao lucro, com custos extras incluídos." },
     ],
   }),

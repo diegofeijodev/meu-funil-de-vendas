@@ -34,7 +34,7 @@ import {
 export const Route = createFileRoute("/_authenticated/crm/cadences")({
   head: () => ({
     meta: [
-      { title: "CRM · Cadências · AI Marketing OS" },
+      { title: "CRM · Cadências · Meu Funil" },
       { name: "description", content: "Construtor de cadências de follow-up por WhatsApp, e-mail e ligação." },
       { property: "og:title", content: "CRM · Cadências" },
       { property: "og:description", content: "Sequências automáticas de contato com indicadores por passo." },

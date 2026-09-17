@@ -18,7 +18,7 @@ import { brl, fullDate } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/crm/leads/$id")({
   head: () => ({
     meta: [
-      { title: "CRM · Ficha do lead · AI Marketing OS" },
+      { title: "CRM · Ficha do lead · Meu Funil" },
       { name: "description", content: "Dados, timeline de interações, tarefas e controle da IA do lead." },
       { property: "og:title", content: "CRM · Ficha do lead" },
       { property: "og:description", content: "Histórico completo e ações do lead." },

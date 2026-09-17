@@ -15,9 +15,9 @@ import { brl } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/insights")({
   head: () => ({
     meta: [
-      { title: "AI Insights · AI Marketing OS" },
+      { title: "AI Insights · Meu Funil" },
       { name: "description", content: "Recomendações do AI Optimizer com justificativa e impacto estimado." },
-      { property: "og:title", content: "AI Insights · AI Marketing OS" },
+      { property: "og:title", content: "AI Insights · Meu Funil" },
       { property: "og:description", content: "Otimização contínua com aprovação humana." },
     ],
   }),

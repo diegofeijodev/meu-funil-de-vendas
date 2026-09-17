@@ -19,9 +19,9 @@ import { generateCreative, retryCreativeJob } from "@/lib/creative.functions";
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
     meta: [
-      { title: "Creative Studio · AI Marketing OS" },
+      { title: "Creative Studio · Meu Funil" },
       { name: "description", content: "Gere criativos por formato com prompt automático a partir do Brand Brain." },
-      { property: "og:title", content: "Creative Studio · AI Marketing OS" },
+      { property: "og:title", content: "Creative Studio · Meu Funil" },
       { property: "og:description", content: "Imagens, vídeos, carrosséis e UGC em um só lugar." },
     ],
   }),

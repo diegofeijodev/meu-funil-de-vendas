@@ -16,9 +16,9 @@ import { brl } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/brands/$id")({
   head: () => ({
     meta: [
-      { title: "Brand Kit · AI Marketing OS" },
+      { title: "Brand Kit · Meu Funil" },
       { name: "description", content: "DNA da marca: identidade, produtos, personas, tom de voz e aprendizados." },
-      { property: "og:title", content: "Brand Kit · AI Marketing OS" },
+      { property: "og:title", content: "Brand Kit · Meu Funil" },
       { property: "og:description", content: "O contexto que alimenta todos os agentes de IA." },
     ],
   }),

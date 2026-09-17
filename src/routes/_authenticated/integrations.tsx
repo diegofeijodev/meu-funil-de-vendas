@@ -11,9 +11,9 @@ import { McpConnections } from "@/components/mcp-connections";
 export const Route = createFileRoute("/_authenticated/integrations")({
   head: () => ({
     meta: [
-      { title: "Integrações · AI Marketing OS" },
+      { title: "Integrações · Meu Funil" },
       { name: "description", content: "Meta Ads, Higgsfield e geradores de imagem em modo sandbox, prontos para credenciais reais." },
-      { property: "og:title", content: "Integrações · AI Marketing OS" },
+      { property: "og:title", content: "Integrações · Meu Funil" },
       { property: "og:description", content: "Conecte provedores reais quando quiser sair do modo simulado." },
     ],
   }),

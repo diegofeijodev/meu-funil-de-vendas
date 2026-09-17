@@ -11,9 +11,9 @@ import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 export const Route = createFileRoute("/_authenticated/campaigns/")({
   head: () => ({
     meta: [
-      { title: "Campanhas · AI Marketing OS" },
+      { title: "Campanhas · Meu Funil" },
       { name: "description", content: "Todas as campanhas do workspace, com verba, status e retorno." },
-      { property: "og:title", content: "Campanhas · AI Marketing OS" },
+      { property: "og:title", content: "Campanhas · Meu Funil" },
       { property: "og:description", content: "Do briefing à publicação, com aprovação humana." },
     ],
   }),

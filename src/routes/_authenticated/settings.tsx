@@ -15,9 +15,9 @@ import { shortDate } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({
     meta: [
-      { title: "Configurações · AI Marketing OS" },
+      { title: "Configurações · Meu Funil" },
       { name: "description", content: "Workspace, perfil, papéis do time e registro de atividades." },
-      { property: "og:title", content: "Configurações · AI Marketing OS" },
+      { property: "og:title", content: "Configurações · Meu Funil" },
       { property: "og:description", content: "Controle de acesso por workspace com papéis." },
     ],
   }),

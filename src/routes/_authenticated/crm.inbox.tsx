@@ -15,7 +15,7 @@ import { fullDate } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/crm/inbox")({
   head: () => ({
     meta: [
-      { title: "CRM · Inbox do WhatsApp · AI Marketing OS" },
+      { title: "CRM · Inbox do WhatsApp · Meu Funil" },
       { name: "description", content: "Conversas de WhatsApp do workspace, com não lidas e filtro por responsável." },
       { property: "og:title", content: "CRM · Inbox do WhatsApp" },
       { property: "og:description", content: "Responda leads de todas as campanhas em um só lugar." },

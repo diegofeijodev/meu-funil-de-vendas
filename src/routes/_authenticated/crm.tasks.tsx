@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_authenticated/crm/tasks")({
   head: () => ({
     meta: [
-      { title: "CRM · Minhas tarefas · AI Marketing OS" },
+      { title: "CRM · Minhas tarefas · Meu Funil" },
       { name: "description", content: "Tarefas do dia por lead, com vencimento e conclusão rápida." },
       { property: "og:title", content: "CRM · Minhas tarefas" },
       { property: "og:description", content: "Organize o follow-up diário do time comercial." },
