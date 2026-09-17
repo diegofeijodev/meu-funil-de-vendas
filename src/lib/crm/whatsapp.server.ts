@@ -238,6 +238,29 @@ export async function sendAndStore(args: {
   authorType?: "user" | "ai" | "system";
 }) {
   const db = await admin();
+
+  // Defesa em profundidade: nunca enviar para quem pediu para sair,
+  // nem texto livre fora da janela de 24h na API oficial.
+  if (args.leadId) {
+    const { data: lead } = await db
+      .from("crm_leads")
+      .select("unsubscribed")
+      .eq("id", args.leadId)
+      .maybeSingle();
+    if (lead?.unsubscribed) throw new Error("Lead descadastrado: envios bloqueados.");
+  }
+  if (args.integration.provider === "whatsapp_cloud" && args.message.kind !== "template") {
+    const { data: conv } = await db
+      .from("crm_conversations")
+      .select("window_expires_at")
+      .eq("id", args.conversationId)
+      .maybeSingle();
+    const expires = conv?.window_expires_at ? new Date(conv.window_expires_at).getTime() : 0;
+    if (expires <= Date.now()) {
+      throw new Error("Fora da janela de 24 horas: envie um template aprovado.");
+    }
+  }
+
   const { data: row, error } = await db
     .from("crm_messages")
     .insert({

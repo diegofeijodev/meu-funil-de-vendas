@@ -69,12 +69,37 @@ async function runDueCadences() {
       continue;
     }
     try {
+      const message = step.message ?? "";
+      if (message && lead.phone) {
+        const { data: integration } = await db
+          .from("crm_integrations")
+          .select("*")
+          .eq("workspace_id", run.workspace_id as string)
+          .eq("kind", "whatsapp")
+          .eq("status", "connected")
+          .maybeSingle();
+        if (integration) {
+          const { ensureConversation, sendAndStore } = await import("@/lib/crm/whatsapp.server");
+          const conversation = await ensureConversation({
+            integration: integration as never,
+            phone: lead.phone,
+            leadId: lead.id,
+          });
+          await sendAndStore({
+            integration: integration as never,
+            conversationId: (conversation as Record<string, unknown>)["id"] as string,
+            leadId: lead.id,
+            message: { to: lead.phone, kind: "text", body: message },
+            authorType: "ai",
+          });
+        }
+      }
       await addInteraction({
         workspaceId: run.workspace_id as string,
         leadId: lead.id,
         kind: "ai_action",
         authorType: "ai",
-        content: step.message ?? "Passo da cadência executado.",
+        content: message || "Passo da cadência executado.",
       });
       executed += 1;
       const nextIndex = (run.step_index as number) + 1;
