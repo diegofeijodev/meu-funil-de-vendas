@@ -33,6 +33,8 @@ import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
+import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
+import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -162,6 +164,18 @@ const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   path: '/api/public/mcp/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicWebhooksWhatsappTokenRoute =
+  ApiPublicWebhooksWhatsappTokenRouteImport.update({
+    id: '/api/public/webhooks/whatsapp/$token',
+    path: '/api/public/webhooks/whatsapp/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicWebhooksMetaLeadgenTokenRoute =
+  ApiPublicWebhooksMetaLeadgenTokenRouteImport.update({
+    id: '/api/public/webhooks/meta/leadgen/$token',
+    path: '/api/public/webhooks/meta/leadgen/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -187,6 +201,8 @@ export interface FileRoutesByFullPath {
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
+  '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -211,6 +227,8 @@ export interface FileRoutesByTo {
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
+  '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -238,6 +256,8 @@ export interface FileRoutesById {
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
+  '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -265,6 +285,8 @@ export interface FileRouteTypes {
     | '/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/crm/leads/'
+    | '/api/public/webhooks/whatsapp/$token'
+    | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -289,6 +311,8 @@ export interface FileRouteTypes {
     | '/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/crm/leads'
+    | '/api/public/webhooks/whatsapp/$token'
+    | '/api/public/webhooks/meta/leadgen/$token'
   id:
     | '__root__'
     | '/'
@@ -315,6 +339,8 @@ export interface FileRouteTypes {
     | '/_authenticated/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/_authenticated/crm/leads/'
+    | '/api/public/webhooks/whatsapp/$token'
+    | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -322,6 +348,8 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
+  ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
+  ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -494,6 +522,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicMcpCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/webhooks/whatsapp/$token': {
+      id: '/api/public/webhooks/whatsapp/$token'
+      path: '/api/public/webhooks/whatsapp/$token'
+      fullPath: '/api/public/webhooks/whatsapp/$token'
+      preLoaderRoute: typeof ApiPublicWebhooksWhatsappTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/webhooks/meta/leadgen/$token': {
+      id: '/api/public/webhooks/meta/leadgen/$token'
+      path: '/api/public/webhooks/meta/leadgen/$token'
+      fullPath: '/api/public/webhooks/meta/leadgen/$token'
+      preLoaderRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -560,6 +602,9 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
+  ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
+  ApiPublicWebhooksMetaLeadgenTokenRoute:
+    ApiPublicWebhooksMetaLeadgenTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import type { InboundMessage as Inbound } from "@/lib/crm/whatsapp.server";
 
 /**
  * WhatsApp webhook for every provider.
