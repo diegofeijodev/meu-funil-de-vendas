@@ -280,9 +280,24 @@ function LeadsPage() {
               <option key={t} value={t}>{t}</option>
             ))}
           </Select>
-          <Button size="sm" variant="outline" onClick={() => bulk({ ai_active: true }, "Leads incluídos na cadência da IA.")}>
-            Incluir em cadência
-          </Button>
+          <Select
+            value=""
+            onChange={async (v) => {
+              if (!v || !workspaceId) return;
+              try {
+                const r = await enroll({ data: { workspaceId, cadenceId: v, leadIds: selected } });
+                toast.success(`${r.enrolled} lead(s) incluído(s) na cadência.`);
+                setSelected([]);
+              } catch {
+                toast.error("Não foi possível incluir na cadência.");
+              }
+            }}
+          >
+            <option value="">Incluir em cadência…</option>
+            {cadences.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </Select>
         </div>
       )}
 
