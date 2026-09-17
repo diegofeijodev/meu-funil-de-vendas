@@ -215,7 +215,10 @@ function LeadDetail() {
                     <p>{t.title as string}</p>
                     <p className="text-xs text-muted-foreground">Vence {fullDate(t.due_at as string)}</p>
                   </div>
-                  <StatusPill status={t.status as string} label={TASK_STATUS[t.status as string]} />
+                  <StatusPill
+                    status={t.status as string}
+                    label={TASK_STATUS[t.status as string] ?? (t.status as string)}
+                  />
                 </div>
               ))}
               {!data?.tasks.length && <p className="text-sm text-muted-foreground">Sem tarefas.</p>}

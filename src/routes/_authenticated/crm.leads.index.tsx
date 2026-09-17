@@ -58,10 +58,19 @@ function LeadsPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["crm-leads", workspaceId, pipelineId] });
 
-  const bulk = async (patch: Record<string, unknown>, label: string) => {
-    if (!selected.length) return toast.error("Selecione ao menos um lead.");
+  const bulk = async (
+    patch: { stage_id?: string; owner_id?: string | null; ai_active?: boolean },
+    label: string,
+  ) => {
+    if (!selected.length) {
+      toast.error("Selecione ao menos um lead.");
+      return;
+    }
     const { error } = await supabase.from("crm_leads").update(patch).in("id", selected);
-    if (error) return toast.error("Não foi possível aplicar a ação.");
+    if (error) {
+      toast.error("Não foi possível aplicar a ação.");
+      return;
+    }
     toast.success(label);
     setSelected([]);
     refresh();
