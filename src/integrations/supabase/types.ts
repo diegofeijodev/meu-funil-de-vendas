@@ -849,6 +849,459 @@ export type Database = {
           },
         ]
       }
+      crm_interactions: {
+        Row: {
+          author_id: string | null
+          author_type: string
+          content: string | null
+          created_at: string
+          id: string
+          kind: string
+          lead_id: string
+          metadata: Json
+          workspace_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          author_type?: string
+          content?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          lead_id: string
+          metadata?: Json
+          workspace_id: string
+        }
+        Update: {
+          author_id?: string | null
+          author_type?: string
+          content?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          lead_id?: string
+          metadata?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_interactions_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_interactions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_leads: {
+        Row: {
+          ad_name: string | null
+          adset_name: string | null
+          ai_active: boolean
+          campaign_name: string | null
+          city: string | null
+          created_at: string
+          email: string | null
+          estimated_value: number
+          first_response_at: string | null
+          id: string
+          last_interaction_at: string | null
+          lgpd_consent: boolean
+          lgpd_consent_at: string | null
+          loss_reason: string | null
+          name: string
+          owner_id: string | null
+          phone: string | null
+          pipeline_id: string | null
+          score: number
+          source: string
+          stage_entered_at: string
+          stage_id: string | null
+          tags: string[]
+          temperature: string
+          unsubscribed: boolean
+          updated_at: string
+          utm_campaign: string | null
+          utm_medium: string | null
+          utm_source: string | null
+          workspace_id: string
+        }
+        Insert: {
+          ad_name?: string | null
+          adset_name?: string | null
+          ai_active?: boolean
+          campaign_name?: string | null
+          city?: string | null
+          created_at?: string
+          email?: string | null
+          estimated_value?: number
+          first_response_at?: string | null
+          id?: string
+          last_interaction_at?: string | null
+          lgpd_consent?: boolean
+          lgpd_consent_at?: string | null
+          loss_reason?: string | null
+          name: string
+          owner_id?: string | null
+          phone?: string | null
+          pipeline_id?: string | null
+          score?: number
+          source?: string
+          stage_entered_at?: string
+          stage_id?: string | null
+          tags?: string[]
+          temperature?: string
+          unsubscribed?: boolean
+          updated_at?: string
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          workspace_id: string
+        }
+        Update: {
+          ad_name?: string | null
+          adset_name?: string | null
+          ai_active?: boolean
+          campaign_name?: string | null
+          city?: string | null
+          created_at?: string
+          email?: string | null
+          estimated_value?: number
+          first_response_at?: string | null
+          id?: string
+          last_interaction_at?: string | null
+          lgpd_consent?: boolean
+          lgpd_consent_at?: string | null
+          loss_reason?: string | null
+          name?: string
+          owner_id?: string | null
+          phone?: string | null
+          pipeline_id?: string | null
+          score?: number
+          source?: string
+          stage_entered_at?: string
+          stage_id?: string | null
+          tags?: string[]
+          temperature?: string
+          unsubscribed?: boolean
+          updated_at?: string
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_leads_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_leads_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_leads_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_loss_reasons: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_loss_reasons_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipelines: {
+        Row: {
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipelines_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_settings: {
+        Row: {
+          created_at: string
+          default_owner_id: string | null
+          distribution: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          default_owner_id?: string | null
+          distribution?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          default_owner_id?: string | null
+          distribution?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_settings_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_stage_history: {
+        Row: {
+          created_at: string
+          from_stage_id: string | null
+          id: string
+          lead_id: string
+          moved_by: string | null
+          to_stage_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_stage_id?: string | null
+          id?: string
+          lead_id: string
+          moved_by?: string | null
+          to_stage_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          from_stage_id?: string | null
+          id?: string
+          lead_id?: string
+          moved_by?: string | null
+          to_stage_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_stage_history_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_stage_history_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_stages: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          is_lost: boolean
+          is_won: boolean
+          name: string
+          pipeline_id: string
+          position: number
+          sla_hours: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          is_lost?: boolean
+          is_won?: boolean
+          name: string
+          pipeline_id: string
+          position?: number
+          sla_hours?: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          is_lost?: boolean
+          is_won?: boolean
+          name?: string
+          pipeline_id?: string
+          position?: number
+          sla_hours?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_tags: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          workspace_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          workspace_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_tags_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_tasks: {
+        Row: {
+          assignee_id: string | null
+          created_at: string
+          due_at: string | null
+          id: string
+          lead_id: string | null
+          status: string
+          title: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          assignee_id?: string | null
+          created_at?: string
+          due_at?: string | null
+          id?: string
+          lead_id?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          assignee_id?: string | null
+          created_at?: string
+          due_at?: string | null
+          id?: string
+          lead_id?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_tasks_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_tasks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_connections: {
         Row: {
           account_label: string | null

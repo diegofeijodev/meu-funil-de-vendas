@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
 import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
+import { Route as AuthenticatedCrmRouteImport } from './routes/_authenticated/crm'
 import { Route as AuthenticatedInsightsRouteImport } from './routes/_authenticated/insights'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated/integrations'
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
@@ -25,6 +26,12 @@ import { Route as AuthenticatedBrandsIdRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns.index'
 import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenticated/campaigns.$id'
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
+import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
+import { Route as AuthenticatedCrmDashboardRouteImport } from './routes/_authenticated/crm.dashboard'
+import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenticated/crm.settings'
+import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
+import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
+import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -49,6 +56,11 @@ const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
 const AuthenticatedCalendarRoute = AuthenticatedCalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCrmRoute = AuthenticatedCrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedInsightsRoute = AuthenticatedInsightsRouteImport.update({
@@ -112,6 +124,39 @@ const AuthenticatedCampaignsNewRoute =
     path: '/campaigns/new',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedCrmIndexRoute = AuthenticatedCrmIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedCrmRoute,
+} as any)
+const AuthenticatedCrmDashboardRoute =
+  AuthenticatedCrmDashboardRouteImport.update({
+    id: '/dashboard',
+    path: '/dashboard',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
+const AuthenticatedCrmSettingsRoute =
+  AuthenticatedCrmSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
+const AuthenticatedCrmTasksRoute = AuthenticatedCrmTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => AuthenticatedCrmRoute,
+} as any)
+const AuthenticatedCrmLeadsIndexRoute =
+  AuthenticatedCrmLeadsIndexRouteImport.update({
+    id: '/leads/',
+    path: '/leads/',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
+const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
+  id: '/leads/$id',
+  path: '/leads/$id',
+  getParentRoute: () => AuthenticatedCrmRoute,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -123,6 +168,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
+  '/crm': typeof AuthenticatedCrmRouteWithChildren
   '/insights': typeof AuthenticatedInsightsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/overview': typeof AuthenticatedOverviewRoute
@@ -132,9 +178,15 @@ export interface FileRoutesByFullPath {
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/crm/settings': typeof AuthenticatedCrmSettingsRoute
+  '/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/brands/': typeof AuthenticatedBrandsIndexRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/crm/': typeof AuthenticatedCrmIndexRoute
+  '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -150,9 +202,15 @@ export interface FileRoutesByTo {
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/crm/settings': typeof AuthenticatedCrmSettingsRoute
+  '/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/brands': typeof AuthenticatedBrandsIndexRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
+  '/crm': typeof AuthenticatedCrmIndexRoute
+  '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -161,6 +219,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
+  '/_authenticated/crm': typeof AuthenticatedCrmRouteWithChildren
   '/_authenticated/insights': typeof AuthenticatedInsightsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
@@ -170,9 +229,15 @@ export interface FileRoutesById {
   '/_authenticated/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/_authenticated/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/_authenticated/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/_authenticated/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/_authenticated/crm/settings': typeof AuthenticatedCrmSettingsRoute
+  '/_authenticated/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/_authenticated/brands/': typeof AuthenticatedBrandsIndexRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
+  '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -181,6 +246,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/approvals'
     | '/calendar'
+    | '/crm'
     | '/insights'
     | '/integrations'
     | '/overview'
@@ -190,9 +256,15 @@ export interface FileRouteTypes {
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
+    | '/crm/dashboard'
+    | '/crm/settings'
+    | '/crm/tasks'
     | '/brands/'
     | '/campaigns/'
+    | '/crm/'
+    | '/crm/leads/$id'
     | '/api/public/mcp/callback'
+    | '/crm/leads/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -208,9 +280,15 @@ export interface FileRouteTypes {
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
+    | '/crm/dashboard'
+    | '/crm/settings'
+    | '/crm/tasks'
     | '/brands'
     | '/campaigns'
+    | '/crm'
+    | '/crm/leads/$id'
     | '/api/public/mcp/callback'
+    | '/crm/leads'
   id:
     | '__root__'
     | '/'
@@ -218,6 +296,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/approvals'
     | '/_authenticated/calendar'
+    | '/_authenticated/crm'
     | '/_authenticated/insights'
     | '/_authenticated/integrations'
     | '/_authenticated/overview'
@@ -227,9 +306,15 @@ export interface FileRouteTypes {
     | '/_authenticated/brands/$id'
     | '/_authenticated/campaigns/$id'
     | '/_authenticated/campaigns/new'
+    | '/_authenticated/crm/dashboard'
+    | '/_authenticated/crm/settings'
+    | '/_authenticated/crm/tasks'
     | '/_authenticated/brands/'
     | '/_authenticated/campaigns/'
+    | '/_authenticated/crm/'
+    | '/_authenticated/crm/leads/$id'
     | '/api/public/mcp/callback'
+    | '/_authenticated/crm/leads/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -274,6 +359,13 @@ declare module '@tanstack/react-router' {
       path: '/calendar'
       fullPath: '/calendar'
       preLoaderRoute: typeof AuthenticatedCalendarRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/crm': {
+      id: '/_authenticated/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof AuthenticatedCrmRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/insights': {
@@ -353,6 +445,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsNewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/crm/': {
+      id: '/_authenticated/crm/'
+      path: '/'
+      fullPath: '/crm/'
+      preLoaderRoute: typeof AuthenticatedCrmIndexRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
+    '/_authenticated/crm/dashboard': {
+      id: '/_authenticated/crm/dashboard'
+      path: '/dashboard'
+      fullPath: '/crm/dashboard'
+      preLoaderRoute: typeof AuthenticatedCrmDashboardRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
+    '/_authenticated/crm/settings': {
+      id: '/_authenticated/crm/settings'
+      path: '/settings'
+      fullPath: '/crm/settings'
+      preLoaderRoute: typeof AuthenticatedCrmSettingsRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
+    '/_authenticated/crm/tasks': {
+      id: '/_authenticated/crm/tasks'
+      path: '/tasks'
+      fullPath: '/crm/tasks'
+      preLoaderRoute: typeof AuthenticatedCrmTasksRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
+    '/_authenticated/crm/leads/': {
+      id: '/_authenticated/crm/leads/'
+      path: '/leads'
+      fullPath: '/crm/leads/'
+      preLoaderRoute: typeof AuthenticatedCrmLeadsIndexRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
+    '/_authenticated/crm/leads/$id': {
+      id: '/_authenticated/crm/leads/$id'
+      path: '/leads/$id'
+      fullPath: '/crm/leads/$id'
+      preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -363,9 +497,31 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedCrmRouteChildren {
+  AuthenticatedCrmDashboardRoute: typeof AuthenticatedCrmDashboardRoute
+  AuthenticatedCrmSettingsRoute: typeof AuthenticatedCrmSettingsRoute
+  AuthenticatedCrmTasksRoute: typeof AuthenticatedCrmTasksRoute
+  AuthenticatedCrmIndexRoute: typeof AuthenticatedCrmIndexRoute
+  AuthenticatedCrmLeadsIdRoute: typeof AuthenticatedCrmLeadsIdRoute
+  AuthenticatedCrmLeadsIndexRoute: typeof AuthenticatedCrmLeadsIndexRoute
+}
+
+const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
+  AuthenticatedCrmDashboardRoute: AuthenticatedCrmDashboardRoute,
+  AuthenticatedCrmSettingsRoute: AuthenticatedCrmSettingsRoute,
+  AuthenticatedCrmTasksRoute: AuthenticatedCrmTasksRoute,
+  AuthenticatedCrmIndexRoute: AuthenticatedCrmIndexRoute,
+  AuthenticatedCrmLeadsIdRoute: AuthenticatedCrmLeadsIdRoute,
+  AuthenticatedCrmLeadsIndexRoute: AuthenticatedCrmLeadsIndexRoute,
+}
+
+const AuthenticatedCrmRouteWithChildren =
+  AuthenticatedCrmRoute._addFileChildren(AuthenticatedCrmRouteChildren)
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
+  AuthenticatedCrmRoute: typeof AuthenticatedCrmRouteWithChildren
   AuthenticatedInsightsRoute: typeof AuthenticatedInsightsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
@@ -382,6 +538,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
+  AuthenticatedCrmRoute: AuthenticatedCrmRouteWithChildren,
   AuthenticatedInsightsRoute: AuthenticatedInsightsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
