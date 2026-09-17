@@ -1,13 +1,20 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Database } from "@/integrations/supabase/types";
+
+type Authed = SupabaseClient<Database>;
 
 /** Confirms the caller is an owner/admin of the workspace before privileged work. */
-async function assertAdmin(supabase: { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown }> }, workspaceId: string) {
-  const { data } = await supabase.rpc("has_workspace_role", { _ws: workspaceId, _roles: ["owner", "admin"] });
+async function assertAdmin(supabase: Authed, workspaceId: string) {
+  const { data } = await supabase.rpc("has_workspace_role", {
+    _ws: workspaceId,
+    _roles: ["owner", "admin"],
+  });
   if (!data) throw new Error("Sem permissão para alterar integrações deste workspace.");
 }
 
-async function assertMember(supabase: { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown }> }, workspaceId: string) {
+async function assertMember(supabase: Authed, workspaceId: string) {
   const { data } = await supabase.rpc("is_workspace_member", { _ws: workspaceId });
   if (!data) throw new Error("Workspace inválido.");
 }
