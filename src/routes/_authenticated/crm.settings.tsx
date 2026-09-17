@@ -214,6 +214,10 @@ function CrmSettings() {
           </div>
         </Section>
       </div>
+
+      <div className="mt-6">
+        <SdrAgentPanel workspaceId={workspaceId} />
+      </div>
     </div>
   );
 }
