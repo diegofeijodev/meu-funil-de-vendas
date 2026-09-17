@@ -28,8 +28,7 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
         const { integrationByToken, verifyMetaSignature, logEvent, touchIntegration } = await import(
           "@/lib/crm/integrations.server"
         );
-        const { handleInbound, applyStatusUpdate, type InboundMessage } = await import("@/lib/crm/whatsapp.server");
-        type Inbound = InboundMessage;
+        const { handleInbound, applyStatusUpdate } = await import("@/lib/crm/whatsapp.server");
 
         const raw = await request.text();
         const integration = await integrationByToken(params.token, "whatsapp");
