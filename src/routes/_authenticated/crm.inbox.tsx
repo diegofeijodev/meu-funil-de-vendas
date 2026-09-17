@@ -79,7 +79,7 @@ function Inbox() {
             <Select value={owner} onChange={setOwner}>
               <option value="all">Todos os responsáveis</option>
               {members.map((m) => (
-                <option key={m.user_id} value={m.user_id}>{m.name}</option>
+                <option key={m.user_id} value={m.user_id}>{m.label}</option>
               ))}
             </Select>
             <label className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -8,8 +8,10 @@ export const Route = createFileRoute("/_authenticated/crm")({
 const TABS = [
   { to: "/crm", label: "Funil" },
   { to: "/crm/leads", label: "Leads" },
+  { to: "/crm/inbox", label: "Inbox" },
   { to: "/crm/tasks", label: "Minhas tarefas" },
   { to: "/crm/dashboard", label: "Indicadores" },
+  { to: "/crm/integrations", label: "Integrações" },
   { to: "/crm/settings", label: "Configurações" },
 ] as const;
 
