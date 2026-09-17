@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/routes/_authenticated/crm.index";
+import { WhatsAppChat } from "@/components/crm/whatsapp-chat";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { AUTHOR_TYPES, INTERACTION_KINDS, LEAD_SOURCES, TEMPERATURES, TASK_STATUS, type Lead } from "@/lib/crm";
 import { brl, fullDate } from "@/lib/format";
@@ -151,10 +152,15 @@ function LeadDetail() {
             </div>
           </Section>
 
-          <Section title="Chat WhatsApp" description="Integração de mensagens chega na fase 2.">
-            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              Área reservada para a conversa de WhatsApp do lead.
-            </div>
+          <Section title="Chat WhatsApp" description="Conversa em tempo quase real com status de entrega e leitura.">
+            {workspaceId && (
+              <WhatsAppChat
+                workspaceId={workspaceId}
+                leadId={lead.id}
+                phone={lead.phone ?? null}
+                unsubscribed={!!lead.unsubscribed}
+              />
+            )}
           </Section>
         </div>
 

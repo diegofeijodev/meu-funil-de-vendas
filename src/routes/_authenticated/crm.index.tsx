@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
@@ -11,6 +12,7 @@ import { usePipelines, useStages, useLeads, useMembers } from "@/lib/crm-queries
 import { LEAD_SOURCES, humanDuration, hoursSince, slaBroken, type Lead } from "@/lib/crm";
 import { brl } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { notifyMetaConversion } from "@/lib/crm-integrations.functions";
 
 export const Route = createFileRoute("/_authenticated/crm/")({
   head: () => ({
@@ -27,6 +29,7 @@ export const Route = createFileRoute("/_authenticated/crm/")({
 function KanbanPage() {
   const { workspaceId } = useWorkspace();
   const qc = useQueryClient();
+  const notifyConversion = useServerFn(notifyMetaConversion);
   const { data: pipelines = [] } = usePipelines(workspaceId);
   const [pipelineId, setPipelineId] = useState<string | null>(null);
   const activePipeline = pipelineId ?? pipelines[0]?.id ?? null;
@@ -86,6 +89,15 @@ function KanbanPage() {
       author_type: "user",
       content: `Movido para ${stages.find((s) => s.id === stageId)?.name ?? "outra etapa"}.`,
     });
+    const stageName = (stages.find((s) => s.id === stageId)?.name ?? "").toLowerCase();
+    const conversion = stageName.includes("qualificado") ? "Qualificado" : stageName.includes("ganho") ? "Ganho" : null;
+    if (conversion) {
+      try {
+        await notifyConversion({ data: { workspaceId, leadId, event: conversion } });
+      } catch {
+        /* otimização da Meta é opcional: não bloqueia o movimento do lead */
+      }
+    }
     qc.invalidateQueries({ queryKey: ["crm-leads", workspaceId, activePipeline] });
     toast.success("Lead movido.");
   };
