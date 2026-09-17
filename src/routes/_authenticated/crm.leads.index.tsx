@@ -142,22 +142,34 @@ function LeadsPage() {
         };
       })
       .filter((r) => r.name);
-    if (!payload.length) return toast.error("Arquivo sem linhas válidas.");
+    if (!payload.length) {
+      toast.error("Arquivo sem linhas válidas.");
+      return;
+    }
     const { error } = await supabase.from("crm_leads").insert(payload);
-    if (error) return toast.error("Falha ao importar o arquivo.");
+    if (error) {
+      toast.error("Falha ao importar o arquivo.");
+      return;
+    }
     toast.success(`${payload.length} leads importados.`);
     refresh();
   };
 
-  const createLead = async () => {
-    if (!workspaceId || !form.name) return toast.error("Informe o nome do lead.");
+  const createLead = async (): Promise<void> => {
+    if (!workspaceId || !form.name) {
+      toast.error("Informe o nome do lead.");
+      return;
+    }
     const { error } = await supabase.from("crm_leads").insert({
       workspace_id: workspaceId,
       pipeline_id: pipelineId,
       stage_id: stages[0]?.id ?? null,
       ...form,
     });
-    if (error) return toast.error("Não foi possível criar o lead.");
+    if (error) {
+      toast.error("Não foi possível criar o lead.");
+      return;
+    }
     setOpen(false);
     setForm({ name: "", phone: "", email: "", city: "", source: "manual" });
     refresh();
