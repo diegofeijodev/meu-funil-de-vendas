@@ -2,6 +2,7 @@
  * WhatsApp provider layer: official Cloud API (Meta) or Z-API / Evolution API.
  * Selected per workspace through crm_integrations.provider.
  */
+import { stopCadences } from "./cadence.server";
 import {
   admin,
   addInteraction,
@@ -400,7 +401,7 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
   if (isOptOut(msg.body)) {
     patch["unsubscribed"] = true;
     patch["ai_active"] = false;
-    await db.from("crm_cadence_runs").update({ status: "stopped" }).eq("lead_id", leadId).eq("status", "running");
+    await stopCadences(leadId, "opt_out");
     await addInteraction({
       workspaceId: integration.workspace_id,
       leadId,
@@ -410,6 +411,9 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
     });
   }
   if (Object.keys(patch).length) await db.from("crm_leads").update(patch).eq("id", leadId);
+
+  // Lead respondeu: a cadência para e a conversa volta para a IA ou para o responsável.
+  if (!patch["unsubscribed"]) await stopCadences(leadId, "replied");
 
   const conversationId = conversation["id"] as string;
   if (!patch["unsubscribed"]) {

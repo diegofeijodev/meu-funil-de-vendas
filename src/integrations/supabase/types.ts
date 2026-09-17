@@ -849,40 +849,130 @@ export type Database = {
           },
         ]
       }
+      crm_cadence_events: {
+        Row: {
+          cadence_id: string
+          channel: string
+          created_at: string
+          detail: string | null
+          event: string
+          id: string
+          lead_id: string | null
+          message_id: string | null
+          run_id: string | null
+          step_index: number
+          workspace_id: string
+        }
+        Insert: {
+          cadence_id: string
+          channel?: string
+          created_at?: string
+          detail?: string | null
+          event: string
+          id?: string
+          lead_id?: string | null
+          message_id?: string | null
+          run_id?: string | null
+          step_index?: number
+          workspace_id: string
+        }
+        Update: {
+          cadence_id?: string
+          channel?: string
+          created_at?: string
+          detail?: string | null
+          event?: string
+          id?: string
+          lead_id?: string | null
+          message_id?: string | null
+          run_id?: string | null
+          step_index?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_cadence_events_cadence_id_fkey"
+            columns: ["cadence_id"]
+            isOneToOne: false
+            referencedRelation: "crm_cadences"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_cadence_events_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_cadence_events_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "crm_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_cadence_events_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "crm_cadence_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_cadence_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_cadence_runs: {
         Row: {
           cadence_id: string
           created_at: string
+          entered_at: string
+          entry_stage_id: string | null
           id: string
           last_error: string | null
+          last_step_at: string | null
           lead_id: string
           next_run_at: string
           status: string
           step_index: number
+          stop_reason: string | null
           updated_at: string
           workspace_id: string
         }
         Insert: {
           cadence_id: string
           created_at?: string
+          entered_at?: string
+          entry_stage_id?: string | null
           id?: string
           last_error?: string | null
+          last_step_at?: string | null
           lead_id: string
           next_run_at?: string
           status?: string
           step_index?: number
+          stop_reason?: string | null
           updated_at?: string
           workspace_id: string
         }
         Update: {
           cadence_id?: string
           created_at?: string
+          entered_at?: string
+          entry_stage_id?: string | null
           id?: string
           last_error?: string | null
+          last_step_at?: string | null
           lead_id?: string
           next_run_at?: string
           status?: string
           step_index?: number
+          stop_reason?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -913,31 +1003,46 @@ export type Database = {
       crm_cadences: {
         Row: {
           created_at: string
+          description: string
+          exit_rules: Json
           id: string
           is_active: boolean
           name: string
           source: string
           steps: Json
+          template_key: string | null
+          trigger_type: string
+          trigger_value: string | null
           updated_at: string
           workspace_id: string
         }
         Insert: {
           created_at?: string
+          description?: string
+          exit_rules?: Json
           id?: string
           is_active?: boolean
           name: string
           source?: string
           steps?: Json
+          template_key?: string | null
+          trigger_type?: string
+          trigger_value?: string | null
           updated_at?: string
           workspace_id: string
         }
         Update: {
           created_at?: string
+          description?: string
+          exit_rules?: Json
           id?: string
           is_active?: boolean
           name?: string
           source?: string
           steps?: Json
+          template_key?: string | null
+          trigger_type?: string
+          trigger_value?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -1696,6 +1801,7 @@ export type Database = {
           default_owner_id: string | null
           distribution: string
           updated_at: string
+          wa_hourly_limit: number
           workspace_id: string
         }
         Insert: {
@@ -1703,6 +1809,7 @@ export type Database = {
           default_owner_id?: string | null
           distribution?: string
           updated_at?: string
+          wa_hourly_limit?: number
           workspace_id: string
         }
         Update: {
@@ -1710,6 +1817,7 @@ export type Database = {
           default_owner_id?: string | null
           distribution?: string
           updated_at?: string
+          wa_hourly_limit?: number
           workspace_id?: string
         }
         Relationships: [

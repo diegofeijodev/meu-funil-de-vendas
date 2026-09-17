@@ -162,32 +162,22 @@ export async function addInteraction(args: {
     .eq("id", args.leadId);
 }
 
-/** Starts the cadence configured for a lead source, if any is active. */
+/** Starts the cadence configured for the lead source/campaign, if any is active. */
 export async function startCadence(workspaceId: string, leadId: string, source: string) {
   const db = await admin();
-  const { data: cadence } = await db
+  const { data: cadences } = await db
     .from("crm_cadences")
-    .select("id")
+    .select("id, trigger_type, trigger_value, source")
     .eq("workspace_id", workspaceId)
-    .eq("source", source)
-    .eq("is_active", true)
-    .limit(1)
-    .maybeSingle();
-  if (!cadence) return;
-  const { data: existing } = await db
-    .from("crm_cadence_runs")
-    .select("id")
-    .eq("lead_id", leadId)
-    .eq("cadence_id", cadence.id)
-    .maybeSingle();
-  if (existing) return;
-  await db.from("crm_cadence_runs").insert({
-    workspace_id: workspaceId,
-    cadence_id: cadence.id,
-    lead_id: leadId,
-    step_index: 0,
-    next_run_at: new Date().toISOString(),
+    .eq("is_active", true);
+  const match = (cadences ?? []).find((c) => {
+    const type = (c.trigger_type as string) ?? "source";
+    if (type !== "source") return false;
+    return ((c.trigger_value as string | null) ?? (c.source as string)) === source;
   });
+  if (!match) return;
+  const { enrollLead } = await import("./cadence.server");
+  await enrollLead({ workspaceId, cadenceId: match.id as string, leadId });
 }
 
 export const OPT_OUT_WORDS = ["sair", "parar", "descadastrar", "stop"];
