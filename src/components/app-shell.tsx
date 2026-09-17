@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Sparkles,
   Megaphone,
+  Users,
   Images,
   CalendarDays,
   BarChart3,
