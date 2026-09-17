@@ -25,6 +25,7 @@ const NAV = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
   { to: "/brands", label: "Brands", icon: Sparkles },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
+  { to: "/crm", label: "CRM", icon: Users },
   { to: "/studio", label: "Creative Studio", icon: Images },
   { to: "/calendar", label: "Content Calendar", icon: CalendarDays },
   { to: "/performance", label: "Performance", icon: BarChart3 },
