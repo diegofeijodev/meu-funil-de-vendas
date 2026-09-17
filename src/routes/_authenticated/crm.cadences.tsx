@@ -166,7 +166,7 @@ function CadencesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Cadências"
-        description="Sequências automáticas de follow-up com janela de envio, variáveis e saída automática."
+        subtitle="Sequências automáticas de follow-up com janela de envio, variáveis e saída automática."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
