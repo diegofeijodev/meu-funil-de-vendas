@@ -391,7 +391,7 @@ export async function applyDecision(args: {
   }
   if (decision.transferir_humano) patch["ai_active"] = false;
 
-  await db.from("crm_leads").update(patch).eq("id", leadId);
+  await db.from("crm_leads").update(patch as never).eq("id", leadId);
 
   if (patch["stage_id"]) {
     await db.from("crm_stage_history").insert({
