@@ -86,6 +86,15 @@ function KanbanPage() {
       author_type: "user",
       content: `Movido para ${stages.find((s) => s.id === stageId)?.name ?? "outra etapa"}.`,
     });
+    const stageName = (stages.find((s) => s.id === stageId)?.name ?? "").toLowerCase();
+    const conversion = stageName.includes("qualificado") ? "Qualificado" : stageName.includes("ganho") ? "Ganho" : null;
+    if (conversion) {
+      try {
+        await notifyConversion({ data: { workspaceId, leadId, event: conversion } });
+      } catch {
+        /* otimização da Meta é opcional: não bloqueia o movimento do lead */
+      }
+    }
     qc.invalidateQueries({ queryKey: ["crm-leads", workspaceId, activePipeline] });
     toast.success("Lead movido.");
   };
