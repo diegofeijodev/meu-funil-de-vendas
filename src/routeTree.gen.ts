@@ -26,6 +26,7 @@ import { Route as AuthenticatedBrandsIdRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns.index'
 import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenticated/campaigns.$id'
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
+import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -118,6 +119,11 @@ const AuthenticatedCampaignsNewRoute =
     path: '/campaigns/new',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedCrmIndexRoute = AuthenticatedCrmIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedCrmRoute,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -129,7 +135,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
-  '/crm': typeof AuthenticatedCrmRoute
+  '/crm': typeof AuthenticatedCrmRouteWithChildren
   '/insights': typeof AuthenticatedInsightsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/overview': typeof AuthenticatedOverviewRoute
@@ -141,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/brands/': typeof AuthenticatedBrandsIndexRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/crm/': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
 }
 export interface FileRoutesByTo {
@@ -148,7 +155,6 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
-  '/crm': typeof AuthenticatedCrmRoute
   '/insights': typeof AuthenticatedInsightsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/overview': typeof AuthenticatedOverviewRoute
@@ -160,6 +166,7 @@ export interface FileRoutesByTo {
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/brands': typeof AuthenticatedBrandsIndexRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
+  '/crm': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
 }
 export interface FileRoutesById {
@@ -169,7 +176,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
-  '/_authenticated/crm': typeof AuthenticatedCrmRoute
+  '/_authenticated/crm': typeof AuthenticatedCrmRouteWithChildren
   '/_authenticated/insights': typeof AuthenticatedInsightsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
@@ -181,6 +188,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/_authenticated/brands/': typeof AuthenticatedBrandsIndexRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
 }
 export interface FileRouteTypes {
@@ -202,6 +210,7 @@ export interface FileRouteTypes {
     | '/campaigns/new'
     | '/brands/'
     | '/campaigns/'
+    | '/crm/'
     | '/api/public/mcp/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -209,7 +218,6 @@ export interface FileRouteTypes {
     | '/auth'
     | '/approvals'
     | '/calendar'
-    | '/crm'
     | '/insights'
     | '/integrations'
     | '/overview'
@@ -221,6 +229,7 @@ export interface FileRouteTypes {
     | '/campaigns/new'
     | '/brands'
     | '/campaigns'
+    | '/crm'
     | '/api/public/mcp/callback'
   id:
     | '__root__'
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/new'
     | '/_authenticated/brands/'
     | '/_authenticated/campaigns/'
+    | '/_authenticated/crm/'
     | '/api/public/mcp/callback'
   fileRoutesById: FileRoutesById
 }
@@ -372,6 +382,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsNewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/crm/': {
+      id: '/_authenticated/crm/'
+      path: '/'
+      fullPath: '/crm/'
+      preLoaderRoute: typeof AuthenticatedCrmIndexRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -382,10 +399,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedCrmRouteChildren {
+  AuthenticatedCrmIndexRoute: typeof AuthenticatedCrmIndexRoute
+}
+
+const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
+  AuthenticatedCrmIndexRoute: AuthenticatedCrmIndexRoute,
+}
+
+const AuthenticatedCrmRouteWithChildren =
+  AuthenticatedCrmRoute._addFileChildren(AuthenticatedCrmRouteChildren)
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
-  AuthenticatedCrmRoute: typeof AuthenticatedCrmRoute
+  AuthenticatedCrmRoute: typeof AuthenticatedCrmRouteWithChildren
   AuthenticatedInsightsRoute: typeof AuthenticatedInsightsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
@@ -402,7 +430,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
-  AuthenticatedCrmRoute: AuthenticatedCrmRoute,
+  AuthenticatedCrmRoute: AuthenticatedCrmRouteWithChildren,
   AuthenticatedInsightsRoute: AuthenticatedInsightsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
