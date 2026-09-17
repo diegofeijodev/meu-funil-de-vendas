@@ -28,6 +28,7 @@ import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
 import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
+import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -131,6 +132,11 @@ const AuthenticatedCrmLeadsIndexRoute =
     path: '/leads/',
     getParentRoute: () => AuthenticatedCrmRoute,
   } as any)
+const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
+  id: '/leads/$id',
+  path: '/leads/$id',
+  getParentRoute: () => AuthenticatedCrmRoute,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -155,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/brands/': typeof AuthenticatedBrandsIndexRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
+  '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
@@ -175,6 +182,7 @@ export interface FileRoutesByTo {
   '/brands': typeof AuthenticatedBrandsIndexRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
+  '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
 }
@@ -198,6 +206,7 @@ export interface FileRoutesById {
   '/_authenticated/brands/': typeof AuthenticatedBrandsIndexRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
+  '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
@@ -221,6 +230,7 @@ export interface FileRouteTypes {
     | '/brands/'
     | '/campaigns/'
     | '/crm/'
+    | '/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/crm/leads/'
   fileRoutesByTo: FileRoutesByTo
@@ -241,6 +251,7 @@ export interface FileRouteTypes {
     | '/brands'
     | '/campaigns'
     | '/crm'
+    | '/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/crm/leads'
   id:
@@ -263,6 +274,7 @@ export interface FileRouteTypes {
     | '/_authenticated/brands/'
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
+    | '/_authenticated/crm/leads/$id'
     | '/api/public/mcp/callback'
     | '/_authenticated/crm/leads/'
   fileRoutesById: FileRoutesById
@@ -409,6 +421,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmLeadsIndexRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/_authenticated/crm/leads/$id': {
+      id: '/_authenticated/crm/leads/$id'
+      path: '/leads/$id'
+      fullPath: '/crm/leads/$id'
+      preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -421,11 +440,13 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedCrmRouteChildren {
   AuthenticatedCrmIndexRoute: typeof AuthenticatedCrmIndexRoute
+  AuthenticatedCrmLeadsIdRoute: typeof AuthenticatedCrmLeadsIdRoute
   AuthenticatedCrmLeadsIndexRoute: typeof AuthenticatedCrmLeadsIndexRoute
 }
 
 const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
   AuthenticatedCrmIndexRoute: AuthenticatedCrmIndexRoute,
+  AuthenticatedCrmLeadsIdRoute: AuthenticatedCrmLeadsIdRoute,
   AuthenticatedCrmLeadsIndexRoute: AuthenticatedCrmLeadsIndexRoute,
 }
 
