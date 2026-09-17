@@ -68,7 +68,7 @@ export function WhatsAppChat({
     queryFn: async () => {
       const { data } = await supabase
         .from("crm_conversations")
-        .select("id, last_inbound_at, unread_count")
+        .select("id, window_expires_at, unread_count")
         .eq("lead_id", leadId)
         .maybeSingle();
       return data;
@@ -120,8 +120,8 @@ export function WhatsAppChat({
 
   const connected = integration?.status === "connected";
   const official = integration?.provider === "whatsapp_cloud";
-  const lastInbound = conversation?.last_inbound_at ? new Date(conversation.last_inbound_at).getTime() : 0;
-  const windowOpen = !official || Date.now() - lastInbound < 24 * 60 * 60 * 1000;
+  const expires = conversation?.window_expires_at ? new Date(conversation.window_expires_at).getTime() : 0;
+  const windowOpen = !official || expires > Date.now();
   const blocked = !connected || unsubscribed || !phone;
 
   const doSend = async (payload: Parameters<typeof send>[0]["data"]) => {
@@ -256,7 +256,13 @@ export function WhatsAppChat({
                   disabled={blocked || busy || !template}
                   onClick={() => {
                     const [name, language] = template.split("|");
-                    doSend({ workspaceId, leadId, kind: "template", templateName: name, templateLanguage: language });
+                    doSend({
+                      workspaceId,
+                      leadId,
+                      kind: "template",
+                      templateName: name ?? "",
+                      templateLanguage: language ?? "pt_BR",
+                    });
                   }}
                 >
                   Enviar template
