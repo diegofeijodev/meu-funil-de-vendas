@@ -8,6 +8,7 @@ import { Select } from "@/routes/_authenticated/crm.index";
 import { usePipelines, useStages, useLeads, useMembers } from "@/lib/crm-queries";
 import { LEAD_SOURCES, humanDuration, hoursSince, slaBroken } from "@/lib/crm";
 import { brl, num, pct, shortDate } from "@/lib/format";
+import { CadenceMetrics } from "@/components/crm/cadence-metrics";
 
 export const Route = createFileRoute("/_authenticated/crm/dashboard")({
   head: () => ({
@@ -281,6 +282,10 @@ function CrmDashboard() {
             {!daily.length && <p className="text-sm text-muted-foreground">Sem dados no período.</p>}
           </div>
         </Section>
+      </div>
+
+      <div className="mt-6">
+        <CadenceMetrics workspaceId={workspaceId} />
       </div>
     </div>
   );
