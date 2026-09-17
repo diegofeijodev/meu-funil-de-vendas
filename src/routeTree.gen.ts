@@ -28,6 +28,7 @@ import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
 import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
 import { Route as AuthenticatedCrmDashboardRouteImport } from './routes/_authenticated/crm.dashboard'
+import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenticated/crm.settings'
 import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
@@ -134,6 +135,12 @@ const AuthenticatedCrmDashboardRoute =
     path: '/dashboard',
     getParentRoute: () => AuthenticatedCrmRoute,
   } as any)
+const AuthenticatedCrmSettingsRoute =
+  AuthenticatedCrmSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
 const AuthenticatedCrmTasksRoute = AuthenticatedCrmTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
@@ -172,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/crm/settings': typeof AuthenticatedCrmSettingsRoute
   '/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/brands/': typeof AuthenticatedBrandsIndexRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
@@ -195,6 +203,7 @@ export interface FileRoutesByTo {
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/crm/settings': typeof AuthenticatedCrmSettingsRoute
   '/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/brands': typeof AuthenticatedBrandsIndexRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
@@ -221,6 +230,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/_authenticated/campaigns/new': typeof AuthenticatedCampaignsNewRoute
   '/_authenticated/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
+  '/_authenticated/crm/settings': typeof AuthenticatedCrmSettingsRoute
   '/_authenticated/crm/tasks': typeof AuthenticatedCrmTasksRoute
   '/_authenticated/brands/': typeof AuthenticatedBrandsIndexRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
@@ -247,6 +257,7 @@ export interface FileRouteTypes {
     | '/campaigns/$id'
     | '/campaigns/new'
     | '/crm/dashboard'
+    | '/crm/settings'
     | '/crm/tasks'
     | '/brands/'
     | '/campaigns/'
@@ -270,6 +281,7 @@ export interface FileRouteTypes {
     | '/campaigns/$id'
     | '/campaigns/new'
     | '/crm/dashboard'
+    | '/crm/settings'
     | '/crm/tasks'
     | '/brands'
     | '/campaigns'
@@ -295,6 +307,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/$id'
     | '/_authenticated/campaigns/new'
     | '/_authenticated/crm/dashboard'
+    | '/_authenticated/crm/settings'
     | '/_authenticated/crm/tasks'
     | '/_authenticated/brands/'
     | '/_authenticated/campaigns/'
@@ -446,6 +459,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmDashboardRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/_authenticated/crm/settings': {
+      id: '/_authenticated/crm/settings'
+      path: '/settings'
+      fullPath: '/crm/settings'
+      preLoaderRoute: typeof AuthenticatedCrmSettingsRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/_authenticated/crm/tasks': {
       id: '/_authenticated/crm/tasks'
       path: '/tasks'
@@ -479,6 +499,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedCrmRouteChildren {
   AuthenticatedCrmDashboardRoute: typeof AuthenticatedCrmDashboardRoute
+  AuthenticatedCrmSettingsRoute: typeof AuthenticatedCrmSettingsRoute
   AuthenticatedCrmTasksRoute: typeof AuthenticatedCrmTasksRoute
   AuthenticatedCrmIndexRoute: typeof AuthenticatedCrmIndexRoute
   AuthenticatedCrmLeadsIdRoute: typeof AuthenticatedCrmLeadsIdRoute
@@ -487,6 +508,7 @@ interface AuthenticatedCrmRouteChildren {
 
 const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
   AuthenticatedCrmDashboardRoute: AuthenticatedCrmDashboardRoute,
+  AuthenticatedCrmSettingsRoute: AuthenticatedCrmSettingsRoute,
   AuthenticatedCrmTasksRoute: AuthenticatedCrmTasksRoute,
   AuthenticatedCrmIndexRoute: AuthenticatedCrmIndexRoute,
   AuthenticatedCrmLeadsIdRoute: AuthenticatedCrmLeadsIdRoute,
