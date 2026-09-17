@@ -121,11 +121,11 @@ function LeadsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const importCsv = async (file: File) => {
+  const importCsv = async (file: File): Promise<void> => {
     if (!workspaceId) return;
     const text = await file.text();
     const [head, ...body] = text.trim().split(/\r?\n/);
-    const cols = head.split(",").map((c) => c.replace(/"/g, "").trim().toLowerCase());
+    const cols = (head ?? "").split(",").map((c) => c.replace(/"/g, "").trim().toLowerCase());
     const payload = body
       .map((line) => {
         const cells = line.split(",").map((c) => c.replace(/^"|"$/g, "").replace(/""/g, '"').trim());
