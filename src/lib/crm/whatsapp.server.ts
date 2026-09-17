@@ -411,7 +411,45 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
   }
   if (Object.keys(patch).length) await db.from("crm_leads").update(patch).eq("id", leadId);
 
-  return { leadId, conversationId: conversation["id"] as string };
+  const conversationId = conversation["id"] as string;
+  if (!patch["unsubscribed"]) {
+    await triggerSdrAgent(integration, leadId, conversationId, msg.body ?? "");
+  }
+
+  return { leadId, conversationId };
+}
+
+/** Runs the SDR agent for the inbound message and replies on WhatsApp. */
+async function triggerSdrAgent(
+  integration: Integration,
+  leadId: string,
+  conversationId: string,
+  inboundText: string,
+) {
+  if (!inboundText.trim()) return;
+  try {
+    const { runSdrAgent } = await import("./sdr.server");
+    const result = await runSdrAgent({
+      workspaceId: integration.workspace_id,
+      leadId,
+      conversationId,
+      inboundText,
+    });
+    const reply = ("reply" in result && result.reply) || null;
+    if (!reply) return;
+    const db = await admin();
+    const { data: lead } = await db.from("crm_leads").select("phone").eq("id", leadId).maybeSingle();
+    if (!lead?.phone) return;
+    await sendAndStore({
+      integration,
+      conversationId,
+      leadId,
+      message: { to: lead.phone, kind: "text", body: reply },
+      authorType: "ai",
+    });
+  } catch (err) {
+    console.error("[sdr] falha ao responder o lead:", err);
+  }
 }
 
 /** Delivery/read receipts from the Cloud API. */

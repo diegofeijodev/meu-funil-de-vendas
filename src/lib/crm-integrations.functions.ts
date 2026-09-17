@@ -248,6 +248,10 @@ export const sendWhatsAppMessage = createServerFn({ method: "POST" })
       author_type: "user",
       content: data.body ?? data.templateName ?? "Mídia enviada",
     });
+
+    // Um humano respondeu: a IA é pausada automaticamente nesta conversa.
+    await supabaseAdmin.from("crm_leads").update({ ai_active: false }).eq("id", lead.id);
+
     return result;
   });
 
