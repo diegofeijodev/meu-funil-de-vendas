@@ -59,7 +59,12 @@ function LeadsPage() {
   const refresh = () => qc.invalidateQueries({ queryKey: ["crm-leads", workspaceId, pipelineId] });
 
   const bulk = async (
-    patch: { stage_id?: string; owner_id?: string | null; ai_active?: boolean },
+    patch: {
+      stage_id?: string;
+      owner_id?: string | null;
+      ai_active?: boolean;
+      stage_entered_at?: string;
+    },
     label: string,
   ) => {
     if (!selected.length) {
