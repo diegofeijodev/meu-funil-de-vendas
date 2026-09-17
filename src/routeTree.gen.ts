@@ -32,6 +32,7 @@ import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
+import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
 import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
@@ -159,6 +160,11 @@ const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
   path: '/leads/$id',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const ApiPublicCronCrmDailyRoute = ApiPublicCronCrmDailyRouteImport.update({
+  id: '/api/public/cron/crm-daily',
+  path: '/api/public/cron/crm-daily',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -199,6 +205,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -225,6 +232,7 @@ export interface FileRoutesByTo {
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -254,6 +262,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -283,6 +292,7 @@ export interface FileRouteTypes {
     | '/campaigns/'
     | '/crm/'
     | '/crm/leads/$id'
+    | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/crm/leads/'
     | '/api/public/webhooks/whatsapp/$token'
@@ -309,6 +319,7 @@ export interface FileRouteTypes {
     | '/campaigns'
     | '/crm'
     | '/crm/leads/$id'
+    | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/crm/leads'
     | '/api/public/webhooks/whatsapp/$token'
@@ -337,6 +348,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
     | '/_authenticated/crm/leads/$id'
+    | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/_authenticated/crm/leads/'
     | '/api/public/webhooks/whatsapp/$token'
@@ -347,6 +359,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
   ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -515,6 +528,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/api/public/cron/crm-daily': {
+      id: '/api/public/cron/crm-daily'
+      path: '/api/public/cron/crm-daily'
+      fullPath: '/api/public/cron/crm-daily'
+      preLoaderRoute: typeof ApiPublicCronCrmDailyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -601,6 +621,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
   ApiPublicWebhooksMetaLeadgenTokenRoute:
