@@ -372,7 +372,7 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
     content: msg.body ?? `Mídia recebida (${msg.type})`,
   });
 
-  const patch: Record<string, unknown> = {};
+  const patch: { first_response_at?: string; unsubscribed?: boolean; ai_active?: boolean } = {};
   if (!lead["first_response_at"]) patch["first_response_at"] = new Date().toISOString();
   if (isOptOut(msg.body)) {
     patch["unsubscribed"] = true;
