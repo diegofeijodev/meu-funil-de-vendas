@@ -151,10 +151,15 @@ function LeadDetail() {
             </div>
           </Section>
 
-          <Section title="Chat WhatsApp" description="Integração de mensagens chega na fase 2.">
-            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              Área reservada para a conversa de WhatsApp do lead.
-            </div>
+          <Section title="Chat WhatsApp" description="Conversa em tempo quase real com status de entrega e leitura.">
+            {workspaceId && (
+              <WhatsAppChat
+                workspaceId={workspaceId}
+                leadId={lead.id}
+                phone={lead.phone ?? null}
+                unsubscribed={!!lead.unsubscribed}
+              />
+            )}
           </Section>
         </div>
 
