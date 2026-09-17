@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/routes/_authenticated/crm.index";
+import { WhatsAppChat } from "@/components/crm/whatsapp-chat";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { AUTHOR_TYPES, INTERACTION_KINDS, LEAD_SOURCES, TEMPERATURES, TASK_STATUS, type Lead } from "@/lib/crm";
 import { brl, fullDate } from "@/lib/format";
