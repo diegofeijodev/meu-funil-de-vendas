@@ -249,8 +249,10 @@ export const sendWhatsAppMessage = createServerFn({ method: "POST" })
       content: data.body ?? data.templateName ?? "Mídia enviada",
     });
 
-    // Um humano respondeu: a IA é pausada automaticamente nesta conversa.
+    // Um humano respondeu: a IA é pausada e as cadências são encerradas.
     await supabaseAdmin.from("crm_leads").update({ ai_active: false }).eq("id", lead.id);
+    const { stopCadences } = await import("@/lib/crm/cadence.server");
+    await stopCadences(lead.id as string, "human_takeover");
 
     return result;
   });

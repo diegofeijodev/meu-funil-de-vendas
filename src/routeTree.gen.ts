@@ -27,6 +27,7 @@ import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenticated/campaigns.$id'
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
 import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
+import { Route as AuthenticatedCrmCadencesRouteImport } from './routes/_authenticated/crm.cadences'
 import { Route as AuthenticatedCrmDashboardRouteImport } from './routes/_authenticated/crm.dashboard'
 import { Route as AuthenticatedCrmInboxRouteImport } from './routes/_authenticated/crm.inbox'
 import { Route as AuthenticatedCrmIntegrationsRouteImport } from './routes/_authenticated/crm.integrations'
@@ -34,6 +35,7 @@ import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
+import { Route as ApiPublicCronCrmCadencesRouteImport } from './routes/api/public/cron/crm-cadences'
 import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
@@ -134,6 +136,12 @@ const AuthenticatedCrmIndexRoute = AuthenticatedCrmIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const AuthenticatedCrmCadencesRoute =
+  AuthenticatedCrmCadencesRouteImport.update({
+    id: '/cadences',
+    path: '/cadences',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
 const AuthenticatedCrmDashboardRoute =
   AuthenticatedCrmDashboardRouteImport.update({
     id: '/dashboard',
@@ -173,6 +181,12 @@ const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
   path: '/leads/$id',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const ApiPublicCronCrmCadencesRoute =
+  ApiPublicCronCrmCadencesRouteImport.update({
+    id: '/api/public/cron/crm-cadences',
+    path: '/api/public/cron/crm-cadences',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicCronCrmDailyRoute = ApiPublicCronCrmDailyRouteImport.update({
   id: '/api/public/cron/crm-daily',
   path: '/api/public/cron/crm-daily',
@@ -211,6 +225,7 @@ export interface FileRoutesByFullPath {
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/crm/cadences': typeof AuthenticatedCrmCadencesRoute
   '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
   '/crm/inbox': typeof AuthenticatedCrmInboxRoute
   '/crm/integrations': typeof AuthenticatedCrmIntegrationsRoute
@@ -220,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
@@ -240,6 +256,7 @@ export interface FileRoutesByTo {
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/crm/cadences': typeof AuthenticatedCrmCadencesRoute
   '/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
   '/crm/inbox': typeof AuthenticatedCrmInboxRoute
   '/crm/integrations': typeof AuthenticatedCrmIntegrationsRoute
@@ -249,6 +266,7 @@ export interface FileRoutesByTo {
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
@@ -272,6 +290,7 @@ export interface FileRoutesById {
   '/_authenticated/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/_authenticated/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/_authenticated/campaigns/new': typeof AuthenticatedCampaignsNewRoute
+  '/_authenticated/crm/cadences': typeof AuthenticatedCrmCadencesRoute
   '/_authenticated/crm/dashboard': typeof AuthenticatedCrmDashboardRoute
   '/_authenticated/crm/inbox': typeof AuthenticatedCrmInboxRoute
   '/_authenticated/crm/integrations': typeof AuthenticatedCrmIntegrationsRoute
@@ -281,6 +300,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
@@ -304,6 +324,7 @@ export interface FileRouteTypes {
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
+    | '/crm/cadences'
     | '/crm/dashboard'
     | '/crm/inbox'
     | '/crm/integrations'
@@ -313,6 +334,7 @@ export interface FileRouteTypes {
     | '/campaigns/'
     | '/crm/'
     | '/crm/leads/$id'
+    | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/crm/leads/'
@@ -333,6 +355,7 @@ export interface FileRouteTypes {
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
+    | '/crm/cadences'
     | '/crm/dashboard'
     | '/crm/inbox'
     | '/crm/integrations'
@@ -342,6 +365,7 @@ export interface FileRouteTypes {
     | '/campaigns'
     | '/crm'
     | '/crm/leads/$id'
+    | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/crm/leads'
@@ -364,6 +388,7 @@ export interface FileRouteTypes {
     | '/_authenticated/brands/$id'
     | '/_authenticated/campaigns/$id'
     | '/_authenticated/campaigns/new'
+    | '/_authenticated/crm/cadences'
     | '/_authenticated/crm/dashboard'
     | '/_authenticated/crm/inbox'
     | '/_authenticated/crm/integrations'
@@ -373,6 +398,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
     | '/_authenticated/crm/leads/$id'
+    | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/mcp/callback'
     | '/_authenticated/crm/leads/'
@@ -384,6 +410,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -518,6 +545,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmIndexRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/_authenticated/crm/cadences': {
+      id: '/_authenticated/crm/cadences'
+      path: '/cadences'
+      fullPath: '/crm/cadences'
+      preLoaderRoute: typeof AuthenticatedCrmCadencesRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/_authenticated/crm/dashboard': {
       id: '/_authenticated/crm/dashboard'
       path: '/dashboard'
@@ -567,6 +601,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/api/public/cron/crm-cadences': {
+      id: '/api/public/cron/crm-cadences'
+      path: '/api/public/cron/crm-cadences'
+      fullPath: '/api/public/cron/crm-cadences'
+      preLoaderRoute: typeof ApiPublicCronCrmCadencesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/cron/crm-daily': {
       id: '/api/public/cron/crm-daily'
       path: '/api/public/cron/crm-daily'
@@ -599,6 +640,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedCrmRouteChildren {
+  AuthenticatedCrmCadencesRoute: typeof AuthenticatedCrmCadencesRoute
   AuthenticatedCrmDashboardRoute: typeof AuthenticatedCrmDashboardRoute
   AuthenticatedCrmInboxRoute: typeof AuthenticatedCrmInboxRoute
   AuthenticatedCrmIntegrationsRoute: typeof AuthenticatedCrmIntegrationsRoute
@@ -610,6 +652,7 @@ interface AuthenticatedCrmRouteChildren {
 }
 
 const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
+  AuthenticatedCrmCadencesRoute: AuthenticatedCrmCadencesRoute,
   AuthenticatedCrmDashboardRoute: AuthenticatedCrmDashboardRoute,
   AuthenticatedCrmInboxRoute: AuthenticatedCrmInboxRoute,
   AuthenticatedCrmIntegrationsRoute: AuthenticatedCrmIntegrationsRoute,
@@ -664,6 +707,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, Upload, Plus } from "lucide-react";
@@ -14,6 +14,8 @@ import { usePipelines, useStages, useLeads, useMembers } from "@/lib/crm-queries
 import { Select } from "@/routes/_authenticated/crm.index";
 import { LEAD_SOURCES, TEMPERATURES } from "@/lib/crm";
 import { brl, fullDate } from "@/lib/format";
+import { useServerFn } from "@tanstack/react-start";
+import { enrollLeads } from "@/lib/crm-cadences.functions";
 
 export const Route = createFileRoute("/_authenticated/crm/leads/")({
   head: () => ({
@@ -36,6 +38,19 @@ function LeadsPage() {
   const { data: leads = [] } = useLeads(workspaceId, pipelineId);
   const { data: members = [] } = useMembers(workspaceId);
   const fileRef = useRef<HTMLInputElement>(null);
+  const enroll = useServerFn(enrollLeads);
+  const { data: cadences = [] } = useQuery({
+    queryKey: ["crm-cadences-select", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("crm_cadences")
+        .select("id, name")
+        .eq("workspace_id", workspaceId!)
+        .order("name");
+      return (data ?? []) as { id: string; name: string }[];
+    },
+  });
 
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState("");
@@ -280,9 +295,24 @@ function LeadsPage() {
               <option key={t} value={t}>{t}</option>
             ))}
           </Select>
-          <Button size="sm" variant="outline" onClick={() => bulk({ ai_active: true }, "Leads incluídos na cadência da IA.")}>
-            Incluir em cadência
-          </Button>
+          <Select
+            value=""
+            onChange={async (v) => {
+              if (!v || !workspaceId) return;
+              try {
+                const r = await enroll({ data: { workspaceId, cadenceId: v, leadIds: selected } });
+                toast.success(`${r.enrolled} lead(s) incluído(s) na cadência.`);
+                setSelected([]);
+              } catch {
+                toast.error("Não foi possível incluir na cadência.");
+              }
+            }}
+          >
+            <option value="">Incluir em cadência…</option>
+            {cadences.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </Select>
         </div>
       )}
 
