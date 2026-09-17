@@ -262,7 +262,7 @@ export async function registerClient(registrationEndpoint: string, redirectUri: 
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
-      client_name: "AI Marketing OS",
+      client_name: "Meu Funil",
       redirect_uris: [redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

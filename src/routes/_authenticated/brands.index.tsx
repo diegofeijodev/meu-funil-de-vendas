@@ -19,9 +19,9 @@ import {
 export const Route = createFileRoute("/_authenticated/brands/")({
   head: () => ({
     meta: [
-      { title: "Brands · AI Marketing OS" },
+      { title: "Brands · Meu Funil" },
       { name: "description", content: "Marcas do workspace e o DNA que alimenta os agentes de IA." },
-      { property: "og:title", content: "Brands · AI Marketing OS" },
+      { property: "og:title", content: "Brands · Meu Funil" },
       { property: "og:description", content: "Brand Brain: identidade, produtos, personas e tom de voz." },
     ],
   }),

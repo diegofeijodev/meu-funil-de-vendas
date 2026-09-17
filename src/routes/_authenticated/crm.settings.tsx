@@ -16,7 +16,7 @@ import { SdrAgentPanel } from "@/components/crm/sdr-agent-panel";
 export const Route = createFileRoute("/_authenticated/crm/settings")({
   head: () => ({
     meta: [
-      { title: "CRM · Configurações · AI Marketing OS" },
+      { title: "CRM · Configurações · Meu Funil" },
       { name: "description", content: "Funis, etapas, SLA, distribuição de leads, motivos de perda e tags." },
       { property: "og:title", content: "CRM · Configurações" },
       { property: "og:description", content: "Configure o funil e as regras do time comercial." },

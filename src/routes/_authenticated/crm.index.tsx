@@ -17,7 +17,7 @@ import { notifyMetaConversion } from "@/lib/crm-integrations.functions";
 export const Route = createFileRoute("/_authenticated/crm/")({
   head: () => ({
     meta: [
-      { title: "CRM · Funil de vendas · AI Marketing OS" },
+      { title: "CRM · Funil de vendas · Meu Funil" },
       { name: "description", content: "Kanban de leads com SLA, origem, score e responsável por etapa." },
       { property: "og:title", content: "CRM · Funil de vendas" },
       { property: "og:description", content: "Acompanhe leads por etapa, SLA e responsável." },

@@ -13,7 +13,7 @@ import { CadenceMetrics } from "@/components/crm/cadence-metrics";
 export const Route = createFileRoute("/_authenticated/crm/dashboard")({
   head: () => ({
     meta: [
-      { title: "CRM · Indicadores · AI Marketing OS" },
+      { title: "CRM · Indicadores · Meu Funil" },
       { name: "description", content: "Conversão por etapa, SLA, origem, IA, ganhos e ranking de vendedores." },
       { property: "og:title", content: "CRM · Indicadores" },
       { property: "og:description", content: "Indicadores do funil calculados pelo histórico de etapas." },

@@ -21,9 +21,9 @@ import { Button } from "@/components/ui/button";
 export const Route = createFileRoute("/_authenticated/overview")({
   head: () => ({
     meta: [
-      { title: "Overview · AI Marketing OS" },
+      { title: "Overview · Meu Funil" },
       { name: "description", content: "Investimento, receita atribuída, ROAS, ROI e recomendações prioritárias do mês." },
-      { property: "og:title", content: "Overview · AI Marketing OS" },
+      { property: "og:title", content: "Overview · Meu Funil" },
       { property: "og:description", content: "Painel geral de performance e insights de IA." },
     ],
   }),

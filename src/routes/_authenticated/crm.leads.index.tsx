@@ -20,7 +20,7 @@ import { enrollLeads } from "@/lib/crm-cadences.functions";
 export const Route = createFileRoute("/_authenticated/crm/leads/")({
   head: () => ({
     meta: [
-      { title: "CRM · Lista de leads · AI Marketing OS" },
+      { title: "CRM · Lista de leads · Meu Funil" },
       { name: "description", content: "Filtre, edite em massa, importe e exporte leads do CRM." },
       { property: "og:title", content: "CRM · Lista de leads" },
       { property: "og:description", content: "Gestão de leads com ações em massa e CSV." },

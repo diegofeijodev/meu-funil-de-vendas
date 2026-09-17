@@ -17,9 +17,9 @@ import { shortDate } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/calendar")({
   head: () => ({
     meta: [
-      { title: "Calendário de conteúdo · AI Marketing OS" },
+      { title: "Calendário de conteúdo · Meu Funil" },
       { name: "description", content: "Planeje, aprove e agende posts por canal com criativos vinculados." },
-      { property: "og:title", content: "Calendário de conteúdo · AI Marketing OS" },
+      { property: "og:title", content: "Calendário de conteúdo · Meu Funil" },
       { property: "og:description", content: "Do rascunho ao agendamento, com publicação simulada." },
     ],
   }),

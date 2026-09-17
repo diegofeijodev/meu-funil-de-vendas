@@ -10,9 +10,9 @@ import { shortDate } from "@/lib/format";
 export const Route = createFileRoute("/_authenticated/approvals")({
   head: () => ({
     meta: [
-      { title: "Aprovações · AI Marketing OS" },
+      { title: "Aprovações · Meu Funil" },
       { name: "description", content: "Nada vai ao ar sem aprovação humana: campanhas, criativos e recomendações." },
-      { property: "og:title", content: "Aprovações · AI Marketing OS" },
+      { property: "og:title", content: "Aprovações · Meu Funil" },
       { property: "og:description", content: "Controle humano sobre tudo que a IA propõe." },
     ],
   }),

@@ -17,9 +17,9 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_authenticated/campaigns/new")({
   head: () => ({
     meta: [
-      { title: "Nova campanha · AI Marketing OS" },
+      { title: "Nova campanha · Meu Funil" },
       { name: "description", content: "Wizard de briefing em 5 etapas com geração automática de estratégia e copies." },
-      { property: "og:title", content: "Nova campanha · AI Marketing OS" },
+      { property: "og:title", content: "Nova campanha · Meu Funil" },
       { property: "og:description", content: "Do briefing ao plano completo em minutos." },
     ],
   }),
