@@ -5,17 +5,19 @@ export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "AI Marketing OS · Sua agência operada por IA" },
+      { title: "Meu Funil · Marketing e vendas com IA" },
       {
         name: "description",
         content:
-          "Plataforma que transforma o DNA da sua marca em estratégia, copies, criativos, campanhas e análise de ROI, com aprovação humana.",
+          "Estratégia, conteúdo, mídia, CRM e automação trabalhando em um único fluxo para transformar marketing em vendas.",
       },
-      { property: "og:title", content: "AI Marketing OS" },
+      { property: "og:title", content: "Meu Funil" },
       {
         property: "og:description",
-        content: "Do briefing ao ROI: estratégia, criativos e campanhas operados por IA.",
+        content: "A IA que transforma marketing em vendas.",
       },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   beforeLoad: async () => {

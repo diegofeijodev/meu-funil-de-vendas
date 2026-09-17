@@ -20,6 +20,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
 import { ROLE_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/utils";
+import meuFunilLogo from "@/assets/meu-funil-logo.png.asset.json";
+import meuFunilSymbol from "@/assets/meu-funil-symbol.png.asset.json";
 
 const NAV = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
@@ -114,7 +116,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button onClick={() => setOpen(true)} aria-label="Abrir menu">
             <Menu className="size-5" />
           </button>
-          <span className="font-semibold">AI Marketing OS</span>
+          <img src={meuFunilSymbol.url} alt="Meu Funil" className="size-8 object-contain" />
+          <span className="font-display font-bold text-brand-navy">Meu Funil</span>
         </header>
         <main className="surface-grid min-w-0 flex-1 px-4 py-8 md:px-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1400px]">{children}</div>
@@ -126,14 +129,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function BrandMark() {
   return (
-    <div className="mb-6 flex items-center gap-2.5 px-5">
-      <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-        <Sparkles className="size-4" />
-      </div>
-      <div className="leading-tight">
-        <p className="text-sm font-semibold">AI Marketing OS</p>
-        <p className="text-[11px] text-muted-foreground">Agência operada por IA</p>
-      </div>
+    <div className="mb-6 px-5">
+      <img
+        src={meuFunilLogo.url}
+        alt="Meu Funil — A IA que transforma marketing em vendas"
+        className="h-auto w-[190px] object-contain object-left"
+      />
     </div>
   );
 }

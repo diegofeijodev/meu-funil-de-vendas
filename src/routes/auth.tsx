@@ -1,28 +1,31 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Sparkles, Loader2 } from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import meuFunilLogo from "@/assets/meu-funil-logo.png.asset.json";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Entrar · AI Marketing OS" },
+      { title: "Entrar · Meu Funil" },
       {
         name: "description",
         content:
-          "Acesse o AI Marketing OS: estratégia, criativos, campanhas e ROI operados por inteligência artificial.",
+          "Acesse o Meu Funil e transforme marketing em vendas com inteligência artificial.",
       },
-      { property: "og:title", content: "Entrar · AI Marketing OS" },
+      { property: "og:title", content: "Entrar · Meu Funil" },
       {
         property: "og:description",
-        content: "Sua agência de marketing operada por IA, do briefing ao ROI.",
+        content: "A IA que transforma marketing em vendas.",
       },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: AuthPage,
@@ -99,45 +102,49 @@ function AuthPage() {
   };
 
   return (
-    <div className="surface-grid flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-2">
-        <div className="hidden lg:block">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
-            <Sparkles className="size-3.5 text-primary" /> Agência de marketing operada por IA
-          </div>
-          <h1 className="text-4xl font-semibold leading-tight">
-            Do briefing ao <span className="text-gradient-brand">ROI</span>, sem perder o
-            controle humano.
+    <div className="surface-grid flex min-h-screen items-center justify-center px-4 py-10 sm:px-6">
+      <div className="grid w-full max-w-6xl items-center gap-12 lg:grid-cols-[1.08fr_.92fr]">
+        <section className="hidden lg:block">
+          <img
+            src={meuFunilLogo.url}
+            alt="Meu Funil — A IA que transforma marketing em vendas"
+            className="mb-10 h-auto w-[300px] object-contain object-left"
+          />
+          <p className="mb-4 font-semibold text-primary">Tecnologia para transformar atenção em vendas.</p>
+          <h1 className="max-w-xl text-5xl font-extrabold leading-[1.08] text-brand-navy">
+            Marketing, vendas e IA em <span className="text-gradient-brand">um único fluxo.</span>
           </h1>
-          <p className="mt-4 max-w-md text-muted-foreground">
-            Cadastre a marca uma vez. A plataforma transforma o DNA do seu negócio em estratégia,
-            copies, criativos, campanhas e análise de retorno — sempre com aprovação humana antes de
-            qualquer ação externa.
+          <p className="mt-5 max-w-lg text-lg leading-8 text-muted-foreground">
+            Estratégia, conteúdo, mídia, CRM e automação trabalhando juntos para organizar e acelerar o crescimento.
           </p>
-          <ul className="mt-8 space-y-3 text-sm text-muted-foreground">
+          <ul className="mt-8 grid max-w-lg gap-3 text-sm text-foreground sm:grid-cols-2">
             {[
-              "Brand Brain como contexto de todos os agentes",
-              "Estratégia versionada e editável",
-              "Copy engine e Creative Studio integrados",
-              "Publicação Meta com fila de aprovação",
-              "Dashboard de ROAS, ROI e CAC em tempo real",
+              "Estratégia e conteúdo integrados",
+              "CRM com automação inteligente",
+              "Campanhas e criativos em um só lugar",
+              "Performance orientada a vendas",
             ].map((i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-primary" />
+              <li key={i} className="flex items-center gap-2.5">
+                <span className="grid size-5 shrink-0 place-items-center rounded-full bg-success/15 text-success"><Check className="size-3" /></span>
                 {i}
               </li>
             ))}
           </ul>
-        </div>
+        </section>
 
-        <div className="panel p-8">
-          <h2 className="text-xl font-semibold">
+        <div className="rounded-xl border border-border bg-card p-6 shadow-elevated sm:p-10">
+          <img
+            src={meuFunilLogo.url}
+            alt="Meu Funil"
+            className="mx-auto mb-8 h-auto w-[220px] object-contain lg:hidden"
+          />
+          <h2 className="text-2xl font-bold text-brand-navy">
             {mode === "signup" ? "Criar conta" : "Entrar"}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "signup"
-              ? "Seu workspace já nasce com uma marca e campanhas de demonstração."
-              : "Bem-vindo de volta."}
+              ? "Comece a transformar marketing em vendas."
+              : "Bem-vindo de volta ao seu funil."}
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -179,9 +186,10 @@ function AuthPage() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" size="lg" className="w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 size-4 animate-spin" />}
-              {mode === "signup" ? "Criar conta" : "Entrar"}
+              {mode === "signup" ? "Criar conta" : "Entrar no Meu Funil"}
+              {!loading && <ArrowRight className="ml-1 size-4" />}
             </Button>
           </form>
 
@@ -189,7 +197,7 @@ function AuthPage() {
             <span className="h-px flex-1 bg-border" /> ou <span className="h-px flex-1 bg-border" />
           </div>
 
-          <Button variant="outline" className="w-full" onClick={google}>
+          <Button variant="outline" size="lg" className="w-full" onClick={google}>
             Continuar com Google
           </Button>
 
