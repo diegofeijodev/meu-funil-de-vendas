@@ -27,6 +27,7 @@ import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenticated/campaigns.$id'
 import { Route as AuthenticatedCampaignsNewRouteImport } from './routes/_authenticated/campaigns.new'
 import { Route as AuthenticatedCrmIndexRouteImport } from './routes/_authenticated/crm.index'
+import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -124,6 +125,12 @@ const AuthenticatedCrmIndexRoute = AuthenticatedCrmIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const AuthenticatedCrmLeadsIndexRoute =
+  AuthenticatedCrmLeadsIndexRouteImport.update({
+    id: '/leads/',
+    path: '/leads/',
+    getParentRoute: () => AuthenticatedCrmRoute,
+  } as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -149,6 +156,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -168,6 +176,7 @@ export interface FileRoutesByTo {
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -190,6 +199,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -212,6 +222,7 @@ export interface FileRouteTypes {
     | '/campaigns/'
     | '/crm/'
     | '/api/public/mcp/callback'
+    | '/crm/leads/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/campaigns'
     | '/crm'
     | '/api/public/mcp/callback'
+    | '/crm/leads'
   id:
     | '__root__'
     | '/'
@@ -252,6 +264,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
     | '/api/public/mcp/callback'
+    | '/_authenticated/crm/leads/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -389,6 +402,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmIndexRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/_authenticated/crm/leads/': {
+      id: '/_authenticated/crm/leads/'
+      path: '/leads'
+      fullPath: '/crm/leads/'
+      preLoaderRoute: typeof AuthenticatedCrmLeadsIndexRouteImport
+      parentRoute: typeof AuthenticatedCrmRoute
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -401,10 +421,12 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedCrmRouteChildren {
   AuthenticatedCrmIndexRoute: typeof AuthenticatedCrmIndexRoute
+  AuthenticatedCrmLeadsIndexRoute: typeof AuthenticatedCrmLeadsIndexRoute
 }
 
 const AuthenticatedCrmRouteChildren: AuthenticatedCrmRouteChildren = {
   AuthenticatedCrmIndexRoute: AuthenticatedCrmIndexRoute,
+  AuthenticatedCrmLeadsIndexRoute: AuthenticatedCrmLeadsIndexRoute,
 }
 
 const AuthenticatedCrmRouteWithChildren =
