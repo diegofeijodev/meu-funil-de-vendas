@@ -1476,6 +1476,220 @@ export type Database = {
           },
         ]
       }
+      crm_sdr_agents: {
+        Row: {
+          available_slots: Json
+          business_hours: Json
+          created_at: string
+          goal: string
+          handoff_triggers: Json
+          id: string
+          is_active: boolean
+          knowledge_text: string
+          max_messages: number
+          min_score: number
+          model: string
+          name: string
+          offhours_message: string
+          persona: string
+          questions: Json
+          scheduling_link: string | null
+          tone: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          available_slots?: Json
+          business_hours?: Json
+          created_at?: string
+          goal?: string
+          handoff_triggers?: Json
+          id?: string
+          is_active?: boolean
+          knowledge_text?: string
+          max_messages?: number
+          min_score?: number
+          model?: string
+          name?: string
+          offhours_message?: string
+          persona?: string
+          questions?: Json
+          scheduling_link?: string | null
+          tone?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          available_slots?: Json
+          business_hours?: Json
+          created_at?: string
+          goal?: string
+          handoff_triggers?: Json
+          id?: string
+          is_active?: boolean
+          knowledge_text?: string
+          max_messages?: number
+          min_score?: number
+          model?: string
+          name?: string
+          offhours_message?: string
+          persona?: string
+          questions?: Json
+          scheduling_link?: string | null
+          tone?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_sdr_agents_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_sdr_documents: {
+        Row: {
+          agent_id: string
+          created_at: string
+          extracted_text: string
+          file_name: string
+          id: string
+          mime_type: string
+          size_bytes: number
+          workspace_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          extracted_text?: string
+          file_name: string
+          id?: string
+          mime_type?: string
+          size_bytes?: number
+          workspace_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          extracted_text?: string
+          file_name?: string
+          id?: string
+          mime_type?: string
+          size_bytes?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_sdr_documents_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "crm_sdr_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_sdr_documents_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_sdr_runs: {
+        Row: {
+          agent_id: string | null
+          conversation_id: string | null
+          created_at: string
+          decision: Json
+          duration_ms: number | null
+          error_message: string | null
+          handoff: boolean
+          id: string
+          inbound_text: string | null
+          input_tokens: number | null
+          lead_id: string | null
+          mode: string
+          model: string | null
+          output_tokens: number | null
+          reply_text: string | null
+          score: number | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          decision?: Json
+          duration_ms?: number | null
+          error_message?: string | null
+          handoff?: boolean
+          id?: string
+          inbound_text?: string | null
+          input_tokens?: number | null
+          lead_id?: string | null
+          mode?: string
+          model?: string | null
+          output_tokens?: number | null
+          reply_text?: string | null
+          score?: number | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          decision?: Json
+          duration_ms?: number | null
+          error_message?: string | null
+          handoff?: boolean
+          id?: string
+          inbound_text?: string | null
+          input_tokens?: number | null
+          lead_id?: string | null
+          mode?: string
+          model?: string | null
+          output_tokens?: number | null
+          reply_text?: string | null
+          score?: number | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_sdr_runs_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "crm_sdr_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_sdr_runs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "crm_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_sdr_runs_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_sdr_runs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       crm_settings: {
         Row: {
           created_at: string
