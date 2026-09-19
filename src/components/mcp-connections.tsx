@@ -155,6 +155,16 @@ export function McpConnections() {
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{p.hint}</p>
 
+              <details className="mt-3 rounded-lg border border-border/60 bg-background/40 p-3">
+                <summary className="cursor-pointer text-xs font-medium">Passo a passo para conectar</summary>
+                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+                  {p.steps.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+              </details>
+
+
               <div className="mt-4 space-y-3">
                 <div>
                   <Label className="text-xs">Endereço do servidor MCP</Label>
