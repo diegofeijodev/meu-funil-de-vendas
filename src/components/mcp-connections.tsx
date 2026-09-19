@@ -11,13 +11,27 @@ import { useWorkspace, logActivity } from "@/lib/workspace";
 import { fetchMcpConnections, type McpProvider } from "@/lib/mcp-client";
 import { mcpConnect, mcpDisconnect, mcpOAuthStart } from "@/lib/mcp.functions";
 
-const PROVIDERS: { id: McpProvider; label: string; hint: string; placeholder: string; defaultUrl: string }[] = [
+const PROVIDERS: {
+  id: McpProvider;
+  label: string;
+  hint: string;
+  placeholder: string;
+  defaultUrl: string;
+  steps: string[];
+}[] = [
   {
     id: "higgsfield",
     label: "Higgsfield",
     hint: "Gerador de imagens e vídeos por IA. Conectado, o Creative Studio passa a gerar ativos reais pelo MCP oficial.",
     placeholder: "https://mcp.higgsfield.ai/mcp",
     defaultUrl: "https://mcp.higgsfield.ai/mcp",
+    steps: [
+      "Tenha uma conta paga no Higgsfield (é ela que autoriza as gerações e paga os créditos).",
+      "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
+      "Uma janela do Higgsfield abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
+      "Ao voltar, o status muda para Conectado e a lista de ferramentas aparece no cartão.",
+      "Abra o Creative Studio e gere um criativo: ele passa a usar o Higgsfield de verdade.",
+    ],
   },
   {
     id: "meta",
@@ -25,6 +39,13 @@ const PROVIDERS: { id: McpProvider; label: string; hint: string; placeholder: st
     hint: "Ao conectar, a publicação aprovada de campanhas usa as ferramentas MCP da Meta em vez do modo simulado.",
     placeholder: "https://seu-servidor-mcp-meta.com/mcp",
     defaultUrl: "",
+    steps: [
+      "A Meta não oferece um endereço público pronto: você precisa de um servidor MCP de anúncios (próprio ou de um fornecedor).",
+      "Nesse servidor, use um usuário com acesso à sua conta de anúncios, página e Instagram.",
+      "Cole aqui o endereço do servidor e, se ele pedir, a chave de acesso; se ele usar login, deixe a chave vazia.",
+      "Clique em Conectar: se o servidor pedir login, abrimos a janela de autorização automaticamente.",
+      "Conectado, a publicação de campanhas aprovadas sai do modo simulado e vai para a Meta.",
+    ],
   },
 ];
 
@@ -133,6 +154,16 @@ export function McpConnections() {
                 <StatusPill status={info.pill} label={info.label} />
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{p.hint}</p>
+
+              <details className="mt-3 rounded-lg border border-border/60 bg-background/40 p-3">
+                <summary className="cursor-pointer text-xs font-medium">Passo a passo para conectar</summary>
+                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+                  {p.steps.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+              </details>
+
 
               <div className="mt-4 space-y-3">
                 <div>
