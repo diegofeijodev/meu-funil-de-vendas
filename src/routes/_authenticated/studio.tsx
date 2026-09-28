@@ -43,6 +43,7 @@ function Studio() {
     prompt: "",
     copyText: "",
     campaignId: "",
+    provider: "auto" as "auto" | "higgsfield" | "chatgpt" | "gemini",
   });
 
   const { data } = useQuery({
@@ -86,6 +87,7 @@ function Studio() {
           aspectRatio: form.aspect,
           prompt: form.prompt,
           copyText: form.copyText,
+          provider: form.provider,
         },
       });
       qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
@@ -98,7 +100,7 @@ function Studio() {
         provider: res.provider,
       });
       toast.success(
-        res.sandbox ? "Criativo gerado no modo simulado." : "Criativo gerado com o Higgsfield.",
+        res.sandbox ? "Criativo gerado no modo simulado." : `Criativo gerado com ${PROVIDER_LABEL[res.provider] ?? res.provider}.`,
       );
     } catch {
       toast.error("Não foi possível gerar este criativo. Tente novamente.");
@@ -156,6 +158,7 @@ function Studio() {
 
   if (!data) return <div className="panel h-64 animate-pulse" />;
 
+  const isVideo = ["video", "ugc", "reels", "story"].includes(form.type);
   const totalCost = data.creatives.reduce((s, c) => s + Number(c.real_cost ?? 0), 0);
 
   return (
@@ -209,6 +212,23 @@ function Studio() {
               </div>
             </div>
             <div className="space-y-1.5">
+              <Label htmlFor="ai">Qual IA usar</Label>
+              <select
+                id="ai"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={form.provider}
+                onChange={(e) => setForm({ ...form, provider: e.target.value as typeof form.provider })}
+              >
+                <option value="auto">Automático (Higgsfield se conectado)</option>
+                <option value="chatgpt" disabled={isVideo}>ChatGPT — imagens{isVideo ? " (não gera vídeo)" : ""}</option>
+                <option value="gemini">Gemini — imagens e vídeos</option>
+                <option value="higgsfield">Higgsfield — imagens e vídeos</option>
+              </select>
+              {form.provider === "gemini" && isVideo && (
+                <p className="text-xs text-muted-foreground">Vídeos levam de 1 a 3 minutos para ficar prontos.</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
               <Label htmlFor="pr">Prompt</Label>
               <Textarea id="pr" rows={3} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} />
             </div>
@@ -237,7 +257,7 @@ function Studio() {
                     <span className="truncate">{j.final_prompt ?? j.prompt ?? "Criativo"}</span>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="text-xs text-muted-foreground">
-                        {j.provider === "higgsfield" ? "Higgsfield" : "Simulado"}
+                        {PROVIDER_LABEL[j.provider] ?? "Simulado"}
                       </span>
                       <StatusPill
                         status={j.status === "ready" ? "approved" : j.status === "failed" ? "failed" : "pending"}
@@ -265,11 +285,15 @@ function Studio() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {data.creatives.map((c) => (
               <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-surface/50">
-                <img
-                  src={c.preview_url ?? `https://picsum.photos/seed/${c.id}/600/600`}
-                  alt={c.title}
-                  className="aspect-square w-full object-cover"
-                />
+                {c.preview_url && /\.mp4(\?|$)/.test(c.preview_url) ? (
+                  <video src={c.preview_url} controls className="aspect-square w-full bg-muted object-cover" />
+                ) : (
+                  <img
+                    src={c.preview_url ?? `https://picsum.photos/seed/${c.id}/600/600`}
+                    alt={c.title}
+                    className="aspect-square w-full object-cover"
+                  />
+                )}
                 <div className="space-y-2 p-3">
                   <p className="text-sm font-medium">{c.title}</p>
                   <p className="text-xs text-muted-foreground">
@@ -306,4 +330,11 @@ const JOB_STATUS: Record<string, string> = {
   approved: "Aprovado",
   rejected: "Rejeitado",
   published: "Publicado",
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  higgsfield: "Higgsfield",
+  chatgpt: "ChatGPT",
+  gemini: "Gemini",
+  mock: "Simulado",
 };

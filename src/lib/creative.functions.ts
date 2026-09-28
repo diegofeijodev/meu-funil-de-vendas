@@ -11,7 +11,9 @@ const generateInput = z.object({
   aspectRatio: z.string().default("1:1"),
   prompt: z.string().default(""),
   copyText: z.string().default(""),
+  provider: z.enum(["auto", "higgsfield", "chatgpt", "gemini"]).default("auto"),
 });
+const CHOICES = new Set(["higgsfield", "chatgpt", "gemini"]);
 
 const VIDEO_TYPES = new Set(["video", "ugc", "reels", "story"]);
 
@@ -35,7 +37,7 @@ export const generateCreative = createServerFn({ method: "POST" })
         workspace_id: data.workspaceId,
         brand_id: brand?.id ?? null,
         campaign_id: campaign?.id ?? null,
-        provider: "pending",
+        provider: data.provider === "auto" ? "pending" : data.provider,
         type: data.type,
         prompt: data.prompt,
         final_prompt: finalPrompt,
@@ -60,6 +62,7 @@ export const generateCreative = createServerFn({ method: "POST" })
       copyText: data.copyText,
       kind: VIDEO_TYPES.has(data.type) ? "video" : "image",
       brandContext,
+      providerChoice: data.provider,
     });
   });
 
@@ -98,5 +101,6 @@ export const retryCreativeJob = createServerFn({ method: "POST" })
       kind: VIDEO_TYPES.has(job.type) ? "video" : "image",
       brandContext: {},
       existingCreativeId: job.creative_id,
+      providerChoice: (CHOICES.has(job.provider) ? job.provider : "auto") as "auto",
     });
   });
