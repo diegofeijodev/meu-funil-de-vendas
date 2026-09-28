@@ -24,7 +24,7 @@ export const metaAdsStatus = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = missingSecrets();
+    const missing = await missingSecrets();
     return { configured: missing.length === 0, missing };
   });
 

@@ -4,16 +4,16 @@
  */
 import { graph, metaConfig, missingSecrets, MetaError } from "./graph.server";
 
-export function isConfigured() {
-  return missingSecrets().length === 0;
+export async function isConfigured() {
+  return (await missingSecrets()).length === 0;
 }
 
 export async function testConnection() {
-  const missing = missingSecrets();
+  const missing = await missingSecrets();
   if (missing.length) {
-    return { ok: false as const, missing, error: `Faltam segredos no cofre: ${missing.join(", ")}.` };
+    return { ok: false as const, missing, error: `Faltam credenciais: ${missing.join(", ")}. Preencha o formulário em Integrações.` };
   }
-  const cfg = metaConfig();
+  const cfg = await metaConfig();
   try {
     const [me, account, page, ig] = await Promise.all([
       graph<{ id: string; name: string }>("/me", { params: { fields: "id,name" } }),
@@ -55,7 +55,7 @@ export async function testConnection() {
 }
 
 export async function listStructure() {
-  const { adAccountId } = metaConfig();
+  const { adAccountId } = await metaConfig();
   const fields = "id,name,status,effective_status";
   const [campaigns, adsets, ads] = await Promise.all([
     graph<{ data: any[] }>(`/${adAccountId}/campaigns`, { params: { fields: `${fields},objective,daily_budget`, limit: 50 } }),
@@ -66,7 +66,7 @@ export async function listStructure() {
 }
 
 export async function uploadImageFromUrl(url: string) {
-  const { adAccountId } = metaConfig();
+  const { adAccountId } = await metaConfig();
   const res = await fetch(url);
   if (!res.ok) throw new MetaError(`Não foi possível baixar a imagem do criativo (${res.status}).`);
   const bytes = Buffer.from(await res.arrayBuffer()).toString("base64");
@@ -80,7 +80,7 @@ export async function uploadImageFromUrl(url: string) {
 }
 
 export async function uploadVideoFromUrl(url: string, title: string) {
-  const { adAccountId } = metaConfig();
+  const { adAccountId } = await metaConfig();
   const out = await graph<{ id: string }>(`/${adAccountId}/advideos`, {
     method: "POST",
     params: { file_url: url, name: title.slice(0, 100) },
@@ -120,7 +120,7 @@ export type Step = { key: string; label: string; status: "done" | "failed"; deta
 
 /** Cria campanha + conjunto + criativos + anúncios, tudo PAUSADO. */
 export async function publishPaused(input: PublishInput) {
-  const cfg = metaConfig();
+  const cfg = await metaConfig();
   const steps: Step[] = [];
   const { objective, optimization } = mapObjective(input.objective);
 
@@ -204,7 +204,7 @@ export async function setDeliveryStatus(ids: { campaignId: string; adsetId?: str
 }
 
 export async function fetchInsights(opts: { since: string; until: string; campaignId?: string | null }) {
-  const { adAccountId } = metaConfig();
+  const { adAccountId } = await metaConfig();
   const target = opts.campaignId ?? adAccountId;
   const out = await graph<{ data: any[] }>(`/${target}/insights`, {
     params: {
