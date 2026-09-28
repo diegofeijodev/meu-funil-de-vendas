@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getLiveConnection, errMessage } from "./mcp-auth.server";
 import { createHiggsfieldProvider } from "./providers/higgsfield.server";
+import { chatgptProvider, geminiProvider } from "./providers/lovable-ai.server";
 import {
   mockServerProvider,
   type CreativeKind,
@@ -104,7 +105,11 @@ export async function buildBrandBrainPrompt(
   return { brand, campaign, brandContext, finalPrompt: lines.join(" ") };
 }
 
-async function resolveProvider(supabase: DB, workspaceId: string) {
+export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
+
+async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto") {
+  if (choice === "chatgpt") return chatgptProvider;
+  if (choice === "gemini") return geminiProvider;
   const conn = await getLiveConnection(supabase, workspaceId, "higgsfield");
   if (conn && conn.status === "connected") {
     return createHiggsfieldProvider({
@@ -113,6 +118,7 @@ async function resolveProvider(supabase: DB, workspaceId: string) {
       tools: (conn.tools ?? []) as { name: string; description?: string | undefined }[],
     });
   }
+  if (choice === "higgsfield") throw new Error("Higgsfield não está conectado. Conecte em Integrações.");
   return mockServerProvider;
 }
 
@@ -130,10 +136,28 @@ export type RunGenerationInput = {
   kind: CreativeKind;
   brandContext: Record<string, unknown>;
   existingCreativeId?: string | null;
+  providerChoice?: ProviderChoice;
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
-  const provider: ServerCreativeProvider = await resolveProvider(supabase, input.workspaceId);
+  let provider: ServerCreativeProvider;
+  try {
+    provider = await resolveProvider(supabase, input.workspaceId, input.providerChoice);
+  } catch (e) {
+    await supabase
+      .from("creative_generation_jobs")
+      .update({ status: "failed", provider: input.providerChoice ?? "auto", error_message: errMessage(e), completed_at: new Date().toISOString() })
+      .eq("id", input.jobId);
+    return {
+      jobId: input.jobId,
+      creativeId: input.existingCreativeId ?? null,
+      status: "failed" as const,
+      assetUrl: null as string | null,
+      provider: input.providerChoice ?? "auto",
+      sandbox: false,
+      error: errMessage(e),
+    };
+  }
 
   await supabase
     .from("creative_generation_jobs")
