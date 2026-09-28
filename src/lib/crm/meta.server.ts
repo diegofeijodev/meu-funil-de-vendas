@@ -12,16 +12,19 @@ import {
   type Integration,
 } from "./integrations.server";
 
-const GRAPH = "https://graph.facebook.com/v21.0";
-
+/** Usa o cliente oficial (token do usuário do sistema + appsecret_proof). */
 async function graph(path: string, init?: RequestInit & { token?: string }) {
-  const token = init?.token ?? secret("META_GRAPH_TOKEN");
-  if (!token) throw new Error("META_GRAPH_TOKEN ausente");
-  const url = `${GRAPH}${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url, { ...init, redirect: "follow" });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Graph API [${res.status}]: ${text}`);
-  return text ? JSON.parse(text) : {};
+  const { graph: call } = await import("@/lib/meta/graph.server");
+  const [p, qs] = path.split("?");
+  const params: Record<string, string> = Object.fromEntries(new URLSearchParams(qs ?? ""));
+  if (init?.body && typeof init.body === "string") {
+    try {
+      Object.assign(params, JSON.parse(init.body));
+    } catch {
+      /* corpo não-JSON ignorado */
+    }
+  }
+  return call(p!, { method: (init?.method as "GET" | "POST") ?? "GET", params, ...(init?.token ? { token: init.token } : {}) });
 }
 
 type LeadField = { name: string; values: string[] };

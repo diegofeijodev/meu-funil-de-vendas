@@ -14,8 +14,7 @@ import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopy, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
 import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@tanstack/react-start";
-import { mcpRun } from "@/lib/mcp.functions";
-import { isMcpConnected } from "@/lib/mcp-client";
+import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -33,7 +32,9 @@ function CampaignDetail() {
   const { id } = Route.useParams();
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
-  const runMcp = useServerFn(mcpRun);
+  const metaStatus = useServerFn(metaAdsStatus);
+  const metaPublish = useServerFn(metaAdsPublish);
+  const metaSetStatus = useServerFn(metaAdsSetStatus);
 
   
   const [busy, setBusy] = useState<string | null>(null);
@@ -154,38 +155,14 @@ function CampaignDetail() {
       const approvedCreatives = data.creatives.filter((x) => x.status === "approved");
       const utm = `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`;
 
-      if (await isMcpConnected(workspaceId, "meta")) {
-        setSteps([{ key: "mcp", label: "Publicando via MCP da Meta", status: "pending", detail: c.name }]);
-        const out = await runMcp({
-          data: {
-            workspaceId,
-            provider: "meta",
-            keywords: ["create_campaign", "campaign", "publish", "ad"],
-            args: {
-              name: c.name,
-              objective: c.objective,
-              daily_budget: Number(c.budget_daily ?? 0),
-              targeting: (c.audience ?? {}) as Record<string, unknown>,
-              creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title, url: x.preview_url })),
-              primary_text: copy?.meta_ad ?? "",
-              utm,
-              status: "PAUSED",
-            },
-          },
-        });
-        setSteps([{ key: "mcp", label: `Ferramenta ${out.tool}`, status: "done", detail: out.text.slice(0, 300) || "Concluído" }]);
-        await supabase.from("publishing_jobs").insert({
-          workspace_id: workspaceId,
-          campaign_id: id,
-          target: "meta",
-          status: "done",
-          mode: "mcp",
-          log: `${out.tool}\n${out.text}`,
-        });
-        await supabase.from("campaigns").update({ status: "active" }).eq("id", id);
-        await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "mcp" });
+      const st = await metaStatus({ data: { workspaceId } });
+      if (st.configured) {
+        setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
+        const out = await metaPublish({ data: { workspaceId, campaignId: id } });
+        setSteps(out.steps);
+        await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "live" });
         qc.invalidateQueries({ queryKey: ["campaign", id] });
-        toast.success("Campanha publicada pelo servidor MCP da Meta.");
+        toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
         return;
       }
 
@@ -225,6 +202,22 @@ function CampaignDetail() {
   };
 
 
+  const setDelivery = async (status: "ACTIVE" | "PAUSED") => {
+    if (!workspaceId) return;
+    setBusy("delivery");
+    try {
+      await metaSetStatus({ data: { workspaceId, campaignId: id, status } });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(status === "ACTIVE" ? "Campanha ativada na Meta." : "Campanha pausada na Meta.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível alterar na Meta.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
+  const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
+
   return (
     <>
       <PageHeader
@@ -235,10 +228,15 @@ function CampaignDetail() {
             <StatusPill status={c.status} label={CAMPAIGN_STATUS[c.status] ?? c.status} />
             <Button variant="outline" asChild><Link to="/campaigns">Voltar</Link></Button>
             {canEdit && c.status === "draft" && <Button onClick={requestApproval}>Solicitar aprovação</Button>}
-            {canEdit && (c.status === "approved" || c.status === "active") && (
+            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (
+              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery(metaDelivery === "ACTIVE" ? "PAUSED" : "ACTIVE")}>
+                {metaDelivery === "ACTIVE" ? "Pausar na Meta" : "Ativar na Meta"}
+              </Button>
+            )}
+            {canEdit && !metaId && (c.status === "approved" || c.status === "active") && (
               <Button onClick={publish} disabled={busy === "publish"}>
                 <Rocket className="mr-2 size-4" />
-                {busy === "publish" ? "Publicando..." : "Publicar na Meta (sandbox)"}
+                {busy === "publish" ? "Publicando..." : "Publicar na Meta"}
               </Button>
             )}
           </>
