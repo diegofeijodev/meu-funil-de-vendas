@@ -33,20 +33,6 @@ const PROVIDERS: {
       "Abra o Creative Studio e gere um criativo: ele passa a usar o Higgsfield de verdade.",
     ],
   },
-  {
-    id: "meta",
-    label: "Meta Ads (MCP)",
-    hint: "Ao conectar, a publicação aprovada de campanhas usa as ferramentas MCP da Meta em vez do modo simulado.",
-    placeholder: "https://seu-servidor-mcp-meta.com/mcp",
-    defaultUrl: "",
-    steps: [
-      "A Meta não oferece um endereço público pronto: você precisa de um servidor MCP de anúncios (próprio ou de um fornecedor).",
-      "Nesse servidor, use um usuário com acesso à sua conta de anúncios, página e Instagram.",
-      "Cole aqui o endereço do servidor e, se ele pedir, a chave de acesso; se ele usar login, deixe a chave vazia.",
-      "Clique em Conectar: se o servidor pedir login, abrimos a janela de autorização automaticamente.",
-      "Conectado, a publicação de campanhas aprovadas sai do modo simulado e vai para a Meta.",
-    ],
-  },
 ];
 
 const STATUS_LABEL: Record<string, { label: string; pill: string }> = {

@@ -7,6 +7,7 @@ import { PageHeader, Section, StatusPill, SandboxBadge } from "@/components/ui-b
 import { Button } from "@/components/ui/button";
 import { shortDate } from "@/lib/format";
 import { McpConnections } from "@/components/mcp-connections";
+import { MetaAdsCard } from "@/components/meta-ads-card";
 
 export const Route = createFileRoute("/_authenticated/integrations")({
   head: () => ({
@@ -78,6 +79,7 @@ function Integrations() {
       />
 
       <div className="space-y-6">
+        <MetaAdsCard />
         <McpConnections />
 
         <Section title="Provedores">
