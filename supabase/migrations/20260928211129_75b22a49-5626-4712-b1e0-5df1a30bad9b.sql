@@ -1,0 +1,1 @@
+CREATE POLICY "Cofre inacessível pelo navegador" ON public.app_credentials FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
