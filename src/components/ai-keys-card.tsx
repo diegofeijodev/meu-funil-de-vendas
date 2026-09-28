@@ -71,7 +71,7 @@ function VendorBox({
   vendor, state, canEdit, workspaceId, onChange,
 }: {
   vendor: Vendor;
-  state?: { connected: boolean; hint: string | null };
+  state: { connected: boolean; hint: string | null } | undefined;
   canEdit: boolean;
   workspaceId: string | null;
   onChange: () => void;
