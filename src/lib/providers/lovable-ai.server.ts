@@ -8,7 +8,7 @@ const BASE = "https://ai.gateway.lovable.dev";
 const BUCKET = "creative-assets";
 
 function key() {
-  const k = process.env.LOVABLE_API_KEY;
+  const k = process.env['LOVABLE_API_KEY'];
   if (!k) throw new Error("LOVABLE_API_KEY não configurada no servidor.");
   return k;
 }
