@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OBJECTIVES, FORMATS } from "@/lib/labels";
-import { generateStrategy, generateCopy, type CampaignBrief, type BrandContext } from "@/lib/ai/agents";
+import { generateStrategy, generateCopySmart, type CampaignBrief, type BrandContext } from "@/lib/ai/agents";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/campaigns/new")({
@@ -120,7 +120,8 @@ function NewCampaign() {
 
       const brandCtx: BrandContext = brand;
       const strategy = await generateStrategy(brandCtx, brief, learnings ?? []);
-      const copy = await generateCopy(brandCtx, brief);
+      const { content: copy, error: copyErr } = await generateCopySmart(workspaceId!, brandCtx, brief);
+      if (copyErr) toast.warning(`Copy simulada: ${copyErr}`);
 
       await supabase.from("campaign_strategies").insert({
         workspace_id: workspaceId,

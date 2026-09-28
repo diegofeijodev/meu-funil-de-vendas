@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
-import { generateCopy, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
+import { generateCopySmart, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
 import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
@@ -112,7 +112,9 @@ function CampaignDetail() {
     if (!workspaceId || !brand) return;
     setBusy("copy");
     const version = (data.copy?.version ?? 0) + 1;
-    const content = await generateCopy(brand, brief(), version);
+    const { content, engine, error: copyErr } = await generateCopySmart(workspaceId, brand, brief(), version);
+    if (copyErr) toast.warning(`Copy simulada: ${copyErr}`);
+    else toast.message(`Copy gerada com ${engine}.`);
     await supabase.from("copies").insert({
       workspace_id: workspaceId,
       campaign_id: id,
