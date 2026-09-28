@@ -85,7 +85,7 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
       db.from("copies").select("content").eq("campaign_id", c.id).order("version", { ascending: false }).limit(1),
     ]);
     if (!creatives?.length) throw new Error("Aprove pelo menos um criativo desta campanha antes de publicar.");
-    const copy = (copies?.[0]?.content ?? {}) as Record<string, any>;
+    const copy = (copies?.[0]?.content ?? {}) as any;
     const sep = c.landing_url.includes("?") ? "&" : "?";
     const landing = `${c.landing_url}${sep}utm_source=meta&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`;
 

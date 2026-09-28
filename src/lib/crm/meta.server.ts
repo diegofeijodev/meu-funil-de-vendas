@@ -24,7 +24,7 @@ async function graph(path: string, init?: RequestInit & { token?: string }) {
       /* corpo não-JSON ignorado */
     }
   }
-  return call(p!, { method: (init?.method as "GET" | "POST") ?? "GET", params, token: init?.token });
+  return call(p!, { method: (init?.method as "GET" | "POST") ?? "GET", params, ...(init?.token ? { token: init.token } : {}) });
 }
 
 type LeadField = { name: string; values: string[] };

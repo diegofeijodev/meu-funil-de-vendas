@@ -36,8 +36,8 @@ export function missingSecrets() {
 }
 
 export class MetaError extends Error {
-  code?: number;
-  subcode?: number;
+  code: number | undefined;
+  subcode: number | undefined;
   constructor(message: string, code?: number, subcode?: number) {
     super(message);
     this.code = code;
