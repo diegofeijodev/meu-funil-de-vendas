@@ -25,7 +25,12 @@ async function upload(bytes: Uint8Array, ext: string, contentType: string) {
   const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
   const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: false });
   if (error) throw new Error(`Falha ao salvar arquivo: ${error.message}`);
-  return supabaseAdmin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+  // Bucket privado: link assinado de longa duração para exibir no Studio.
+  const { data, error: signErr } = await supabaseAdmin.storage
+    .from(BUCKET)
+    .createSignedUrl(path, 60 * 60 * 24 * 365 * 5);
+  if (signErr || !data) throw new Error(`Falha ao gerar link do arquivo: ${signErr?.message}`);
+  return data.signedUrl;
 }
 
 function ready(url: string, cost: number, externalJobId: string | null = null): GenerationResult {
