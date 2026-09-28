@@ -17,6 +17,39 @@ async function requireMember(ctx: Ctx, workspaceId: string, edit = false) {
 
 const ws = z.object({ workspaceId: z.string().uuid() });
 
+/** Salva as credenciais da Meta no cofre do servidor (nunca legíveis pelo navegador). */
+export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    ws.extend({
+      appId: z.string().trim().min(4, "Informe o ID do app."),
+      appSecret: z.string().trim().min(8, "Informe a chave secreta do app."),
+      systemUserToken: z.string().trim().min(20, "Informe o token do usuário do sistema."),
+      adAccountId: z.string().trim().min(4, "Informe o ID da conta de anúncios (act_...)."),
+      pageId: z.string().trim().min(4, "Informe o ID da Página do Facebook."),
+      instagramId: z.string().trim().optional().nullable(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireMember(context as Ctx, data.workspaceId, true);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const rows = [
+      { key: "META_APP_ID", value: data.appId },
+      { key: "META_APP_SECRET", value: data.appSecret },
+      { key: "META_SYSTEM_USER_TOKEN", value: data.systemUserToken },
+      { key: "META_AD_ACCOUNT_ID", value: data.adAccountId },
+      { key: "META_PAGE_ID", value: data.pageId },
+    ];
+    if (data.instagramId?.trim()) rows.push({ key: "META_INSTAGRAM_ACCOUNT_ID", value: data.instagramId.trim() });
+    const { error } = await supabaseAdmin
+      .from("app_credentials")
+      .upsert(rows.map((r) => ({ ...r, updated_at: new Date().toISOString() })));
+    if (error) throw new Error(error.message);
+    const { missingSecrets } = await import("./meta/graph.server");
+    const missing = await missingSecrets();
+    return { ok: true, configured: missing.length === 0, missing };
+  });
+
 /** Status leve: só diz se os segredos existem (sem chamar a Meta). */
 export const metaAdsStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -24,7 +57,7 @@ export const metaAdsStatus = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = missingSecrets();
+    const missing = await missingSecrets();
     return { configured: missing.length === 0, missing };
   });
 

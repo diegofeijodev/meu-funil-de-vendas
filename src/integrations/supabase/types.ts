@@ -112,6 +112,24 @@ export type Database = {
           },
         ]
       }
+      app_credentials: {
+        Row: {
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       approval_requests: {
         Row: {
           campaign_id: string | null
