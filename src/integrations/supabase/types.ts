@@ -448,6 +448,10 @@ export type Database = {
           landing_url: string | null
           margin_percent: number | null
           max_cac: number | null
+          meta_ad_ids: string[]
+          meta_adset_id: string | null
+          meta_campaign_id: string | null
+          meta_delivery_status: string | null
           name: string
           objective: string
           offer_price: number | null
@@ -473,6 +477,10 @@ export type Database = {
           landing_url?: string | null
           margin_percent?: number | null
           max_cac?: number | null
+          meta_ad_ids?: string[]
+          meta_adset_id?: string | null
+          meta_campaign_id?: string | null
+          meta_delivery_status?: string | null
           name: string
           objective?: string
           offer_price?: number | null
@@ -498,6 +506,10 @@ export type Database = {
           landing_url?: string | null
           margin_percent?: number | null
           max_cac?: number | null
+          meta_ad_ids?: string[]
+          meta_adset_id?: string | null
+          meta_campaign_id?: string | null
+          meta_delivery_status?: string | null
           name?: string
           objective?: string
           offer_price?: number | null
