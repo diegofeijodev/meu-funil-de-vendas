@@ -12,20 +12,47 @@ function env(name: string) {
   return v && v.trim() ? v.trim() : null;
 }
 
-export function metaConfig() {
-  const rawAccount = env("META_AD_ACCOUNT_ID");
+export type MetaConfig = {
+  appId: string | null;
+  appSecret: string | null;
+  token: string | null;
+  adAccountId: string | null;
+  pageId: string | null;
+  instagramId: string | null;
+};
+
+const KEYS = ["META_APP_ID", "META_APP_SECRET", "META_SYSTEM_USER_TOKEN", "META_AD_ACCOUNT_ID", "META_PAGE_ID", "META_INSTAGRAM_ACCOUNT_ID"] as const;
+
+/** Lê as credenciais salvas pelo formulário de Integrações (tabela app_credentials, só service_role). */
+async function vaultRead(): Promise<Record<string, string>> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data } = await supabaseAdmin.from("app_credentials").select("key, value").in("key", KEYS as unknown as string[]);
+    const out: Record<string, string> = {};
+    for (const row of data ?? []) if (row.value?.trim()) out[row.key as string] = row.value.trim();
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Credenciais efetivas: cofre do banco primeiro, Secrets do ambiente como fallback. */
+export async function metaConfig(): Promise<MetaConfig> {
+  const vault = await vaultRead();
+  const pick = (k: (typeof KEYS)[number]) => vault[k] ?? env(k);
+  const rawAccount = pick("META_AD_ACCOUNT_ID");
   return {
-    appId: env("META_APP_ID"),
-    appSecret: env("META_APP_SECRET"),
-    token: env("META_SYSTEM_USER_TOKEN") ?? env("META_GRAPH_TOKEN"),
+    appId: pick("META_APP_ID"),
+    appSecret: pick("META_APP_SECRET"),
+    token: pick("META_SYSTEM_USER_TOKEN") ?? env("META_GRAPH_TOKEN"),
     adAccountId: rawAccount ? (rawAccount.startsWith("act_") ? rawAccount : `act_${rawAccount}`) : null,
-    pageId: env("META_PAGE_ID"),
-    instagramId: env("META_INSTAGRAM_ACCOUNT_ID"),
+    pageId: pick("META_PAGE_ID"),
+    instagramId: pick("META_INSTAGRAM_ACCOUNT_ID"),
   };
 }
 
-export function missingSecrets() {
-  const c = metaConfig();
+export async function missingSecrets() {
+  const c = await metaConfig();
   const missing: string[] = [];
   if (!c.appId) missing.push("META_APP_ID");
   if (!c.appSecret) missing.push("META_APP_SECRET");
