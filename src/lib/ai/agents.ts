@@ -281,3 +281,34 @@ export async function generateRecommendations(input: OptimizerInput): Promise<Re
   });
   return out;
 }
+
+/**
+ * Copy com IA real (sua conta OpenAI/Gemini ou créditos do app).
+ * Se a IA falhar, volta para o gerador simulado para não travar o fluxo.
+ */
+export async function generateCopySmart(
+  workspaceId: string,
+  brand: BrandContext,
+  brief: CampaignBrief,
+  seed = 0,
+): Promise<{ content: CopyContent; engine: string; error?: string }> {
+  try {
+    const { generateCopyWithAI } = await import("@/lib/copy-ai.functions");
+    const r = await generateCopyWithAI({
+      data: {
+        workspaceId,
+        engine: "auto",
+        brand: brand as unknown as Record<string, unknown>,
+        brief: brief as unknown as Record<string, unknown>,
+        seed,
+      },
+    });
+    return { content: { ...(await generateCopy(brand, brief, seed)), ...r.content }, engine: r.engine };
+  } catch (e) {
+    return {
+      content: await generateCopy(brand, brief, seed),
+      engine: "simulado",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
