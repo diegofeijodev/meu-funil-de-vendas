@@ -5,7 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getLiveConnection, errMessage } from "./mcp-auth.server";
 import { createHiggsfieldProvider } from "./providers/higgsfield.server";
-import { chatgptProvider, geminiProvider } from "./providers/lovable-ai.server";
+import { createChatgptProvider, createGeminiProvider } from "./providers/lovable-ai.server";
+import { getWorkspaceAiKey } from "./ai-keys.server";
 import {
   mockServerProvider,
   type CreativeKind,
@@ -108,8 +109,8 @@ export async function buildBrandBrainPrompt(
 export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
 
 async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto") {
-  if (choice === "chatgpt") return chatgptProvider;
-  if (choice === "gemini") return geminiProvider;
+  if (choice === "chatgpt") return createChatgptProvider(await getWorkspaceAiKey(workspaceId, "openai"));
+  if (choice === "gemini") return createGeminiProvider(await getWorkspaceAiKey(workspaceId, "gemini"));
   const conn = await getLiveConnection(supabase, workspaceId, "higgsfield");
   if (conn && conn.status === "connected") {
     return createHiggsfieldProvider({
