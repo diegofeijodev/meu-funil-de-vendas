@@ -91,7 +91,7 @@ export async function graph<T = any>(
   path: string,
   opts: { method?: "GET" | "POST" | "DELETE"; params?: Record<string, unknown>; token?: string } = {},
 ): Promise<T> {
-  const cfg = metaConfig();
+  const cfg = await metaConfig();
   const token = opts.token ?? cfg.token;
   if (!token) throw new MetaError("Token da Meta não configurado no cofre (META_SYSTEM_USER_TOKEN).");
   if (!cfg.appSecret) throw new MetaError("META_APP_SECRET não configurado no cofre.");
