@@ -27,7 +27,7 @@ export type BrandRef = Img & { id: string; tag: string | null; url: string };
 
 export async function loadBrandRefs(
   brandId: string | null | undefined,
-  opts: { max?: number; ids?: string[] } = {},
+  opts: { max?: number; ids?: string[] | undefined } = {},
 ): Promise<BrandRef[]> {
   if (!brandId) return [];
   const s = await db();

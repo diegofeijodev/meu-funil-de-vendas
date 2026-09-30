@@ -138,7 +138,7 @@ export type RunGenerationInput = {
   brandContext: Record<string, unknown>;
   existingCreativeId?: string | null;
   providerChoice?: ProviderChoice;
-  targetFormat?: string | null;
+  targetFormat?: string | null | undefined;
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
@@ -409,17 +409,17 @@ export type ArtInput = {
   prompt: string;
   copyText: string;
   aspectRatio: string;
-  targetFormat?: string | null;
+  targetFormat?: string | null | undefined;
   providerChoice: ProviderChoice;
   kind: CreativeKind;
-  visualPrompt?: string | null;
-  artDirection?: Record<string, unknown> | null;
-  adjust?: string | null;
+  visualPrompt?: string | null | undefined;
+  artDirection?: Record<string, unknown> | null | undefined;
+  adjust?: string | null | undefined;
   layout: import("./creative/visual-style").TextLayout;
   variations: number;
-  headline?: string | null;
-  price?: string | null;
-  cta?: string | null;
+  headline?: string | null | undefined;
+  price?: string | null | undefined;
+  cta?: string | null | undefined;
   userId: string;
 };
 
