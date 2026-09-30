@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 /**
- * A cada 5 minutos (pg_cron): publica posts agendados do Instagram e coleta métricas (1h, 24h, 7d).
+ * pg_cron:
+ * - a cada 5 min (sem task): piloto automático (mídia/agenda/regra 2h), fila de publicação e métricas.
+ * - task=weekly (domingo 18h BRT): gera o calendário da próxima semana.
+ * - task=optimize (segunda): agente de otimização.
  * Protegido pelo token "instagram" em cron_tokens (ou CRM_CRON_SECRET).
  */
 export const Route = createFileRoute("/api/public/cron/instagram")({
@@ -18,10 +21,15 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
           ok = !!data?.token && data.token === provided;
         }
         if (!ok) return new Response("Unauthorized", { status: 401 });
+        const body = (await request.json().catch(() => ({}))) as { task?: string };
+        const ap = await import("@/lib/instagram/autopilot.server");
+        if (body.task === "weekly") return Response.json({ weekly: await ap.runWeeklyAutopilot() });
+        if (body.task === "optimize") return Response.json({ optimize: await ap.runOptimizer() });
         const { runPublishingQueue, collectDueMetrics } = await import("@/lib/instagram/instagram.server");
+        const autopilot = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
         const queue = await runPublishingQueue();
         const metrics = await collectDueMetrics();
-        return Response.json({ queue, metrics });
+        return Response.json({ autopilot, queue, metrics });
       },
     },
   },
