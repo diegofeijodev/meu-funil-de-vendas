@@ -83,6 +83,10 @@ export async function autopilotTick() {
       await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "failure", level: "error", message: `Falha ao gerar a mídia: ${r.error}` });
       continue;
     }
+    if (r.pending) {
+      await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "media", message: `Mídia em geração (${r.provider}); será concluída automaticamente.` });
+      continue;
+    }
     await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "media", message: `Mídia gerada (${r.provider}).` });
     if (!plan.requires_approval) {
       try {

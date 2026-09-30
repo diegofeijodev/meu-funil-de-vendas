@@ -1,12 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { timingSafeEqual } from "crypto";
 
 /**
- * pg_cron:
- * - a cada 5 min (sem task): piloto automático (mídia/agenda/regra 2h), fila de publicação e métricas.
- * - task=weekly (domingo 18h BRT): gera o calendário da próxima semana.
- * - task=optimize (segunda): agente de otimização.
+ * pg_cron (a cada 5 min):
+ * - task=queue: conclui mídias assíncronas pendentes + fila de publicação.
+ * - task=media: piloto automático (gera mídia, agenda, regra das 2h).
+ * - task=metrics: coleta de métricas 1h/24h/7d.
+ * - task=weekly (domingo 18h BRT) e task=optimize (segunda).
+ * - sem task: executa queue + media + metrics (compatibilidade).
  * Protegido pelo token "instagram" em cron_tokens (ou CRM_CRON_SECRET).
  */
+function safeEqual(a: string, b: string) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
 export const Route = createFileRoute("/api/public/cron/instagram")({
   server: {
     handlers: {
@@ -14,22 +23,35 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
         const provided = request.headers.get("x-cron-secret");
         if (!provided) return new Response("Unauthorized", { status: 401 });
         const envSecret = process.env["CRM_CRON_SECRET"];
-        let ok = !!envSecret && provided === envSecret;
+        let ok = !!envSecret && safeEqual(provided, envSecret);
         if (!ok) {
           const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
           const { data } = await supabaseAdmin.from("cron_tokens").select("token").eq("name", "instagram").maybeSingle();
-          ok = !!data?.token && data.token === provided;
+          ok = !!data?.token && safeEqual(provided, data.token);
         }
         if (!ok) return new Response("Unauthorized", { status: 401 });
+
         const body = (await request.json().catch(() => ({}))) as { task?: string };
+        const task = body.task;
         const ap = await import("@/lib/instagram/autopilot.server");
-        if (body.task === "weekly") return Response.json({ weekly: await ap.runWeeklyAutopilot() });
-        if (body.task === "optimize") return Response.json({ optimize: await ap.runOptimizer() });
-        const { runPublishingQueue, collectDueMetrics } = await import("@/lib/instagram/instagram.server");
-        const autopilot = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
-        const queue = await runPublishingQueue();
-        const metrics = await collectDueMetrics();
-        return Response.json({ autopilot, queue, metrics });
+        if (task === "weekly") return Response.json({ weekly: await ap.runWeeklyAutopilot() });
+        if (task === "optimize") return Response.json({ optimize: await ap.runOptimizer() });
+
+        const ig = await import("@/lib/instagram/instagram.server");
+        const out: Record<string, unknown> = {};
+        const all = !task;
+        if (all || task === "queue") {
+          out["pendingMedia"] = await ig.pollPendingMedia().catch((e) => ({ error: String(e) }));
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { pollPendingCreatives } = await import("@/lib/creative.server");
+          out["pendingCreatives"] = await pollPendingCreatives(supabaseAdmin as never).catch((e) => ({
+            error: String(e),
+          }));
+          out["queue"] = await ig.runPublishingQueue();
+        }
+        if (all || task === "media") out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
+        if (all || task === "metrics") out["metrics"] = await ig.collectDueMetrics();
+        return Response.json(out);
       },
     },
   },
