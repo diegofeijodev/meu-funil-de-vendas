@@ -6,6 +6,7 @@ import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section, EmptyState, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { shortDate } from "@/lib/format";
+import { IgApprovalList } from "@/components/instagram/approvals";
 
 export const Route = createFileRoute("/_authenticated/approvals")({
   head: () => ({
@@ -104,6 +105,12 @@ function Approvals() {
             </div>
           )}
         </Section>
+
+        {workspaceId && (
+          <Section title="Instagram" description="Posts orgânicos aguardando aprovação.">
+            <IgApprovalList workspaceId={workspaceId} canEdit={canEdit} />
+          </Section>
+        )}
 
         <Section title="Decisões recentes">
           {decided.length === 0 ? (

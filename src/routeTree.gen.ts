@@ -16,6 +16,7 @@ import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authentica
 import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
 import { Route as AuthenticatedCrmRouteImport } from './routes/_authenticated/crm'
 import { Route as AuthenticatedInsightsRouteImport } from './routes/_authenticated/insights'
+import { Route as AuthenticatedInstagramRouteImport } from './routes/_authenticated/instagram'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated/integrations'
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
 import { Route as AuthenticatedPerformanceRouteImport } from './routes/_authenticated/performance'
@@ -74,6 +75,11 @@ const AuthenticatedCrmRoute = AuthenticatedCrmRouteImport.update({
 const AuthenticatedInsightsRoute = AuthenticatedInsightsRouteImport.update({
   id: '/insights',
   path: '/insights',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedInstagramRoute = AuthenticatedInstagramRouteImport.update({
+  id: '/instagram',
+  path: '/instagram',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedIntegrationsRoute =
@@ -223,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/calendar': typeof AuthenticatedCalendarRoute
   '/crm': typeof AuthenticatedCrmRouteWithChildren
   '/insights': typeof AuthenticatedInsightsRoute
+  '/instagram': typeof AuthenticatedInstagramRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/overview': typeof AuthenticatedOverviewRoute
   '/performance': typeof AuthenticatedPerformanceRoute
@@ -255,6 +262,7 @@ export interface FileRoutesByTo {
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
   '/insights': typeof AuthenticatedInsightsRoute
+  '/instagram': typeof AuthenticatedInstagramRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/overview': typeof AuthenticatedOverviewRoute
   '/performance': typeof AuthenticatedPerformanceRoute
@@ -290,6 +298,7 @@ export interface FileRoutesById {
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
   '/_authenticated/crm': typeof AuthenticatedCrmRouteWithChildren
   '/_authenticated/insights': typeof AuthenticatedInsightsRoute
+  '/_authenticated/instagram': typeof AuthenticatedInstagramRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
   '/_authenticated/performance': typeof AuthenticatedPerformanceRoute
@@ -325,6 +334,7 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/crm'
     | '/insights'
+    | '/instagram'
     | '/integrations'
     | '/overview'
     | '/performance'
@@ -357,6 +367,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/calendar'
     | '/insights'
+    | '/instagram'
     | '/integrations'
     | '/overview'
     | '/performance'
@@ -391,6 +402,7 @@ export interface FileRouteTypes {
     | '/_authenticated/calendar'
     | '/_authenticated/crm'
     | '/_authenticated/insights'
+    | '/_authenticated/instagram'
     | '/_authenticated/integrations'
     | '/_authenticated/overview'
     | '/_authenticated/performance'
@@ -479,6 +491,13 @@ declare module '@tanstack/react-router' {
       path: '/insights'
       fullPath: '/insights'
       preLoaderRoute: typeof AuthenticatedInsightsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/instagram': {
+      id: '/_authenticated/instagram'
+      path: '/instagram'
+      fullPath: '/instagram'
+      preLoaderRoute: typeof AuthenticatedInstagramRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/integrations': {
@@ -691,6 +710,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
   AuthenticatedCrmRoute: typeof AuthenticatedCrmRouteWithChildren
   AuthenticatedInsightsRoute: typeof AuthenticatedInsightsRoute
+  AuthenticatedInstagramRoute: typeof AuthenticatedInstagramRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
   AuthenticatedPerformanceRoute: typeof AuthenticatedPerformanceRoute
@@ -708,6 +728,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
   AuthenticatedCrmRoute: AuthenticatedCrmRouteWithChildren,
   AuthenticatedInsightsRoute: AuthenticatedInsightsRoute,
+  AuthenticatedInstagramRoute: AuthenticatedInstagramRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
   AuthenticatedPerformanceRoute: AuthenticatedPerformanceRoute,
