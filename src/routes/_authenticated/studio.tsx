@@ -122,23 +122,12 @@ function Studio() {
     if (!workspaceId || !data) return;
     setBusy(true);
     try {
-      const campaign = data.campaigns.find((c) => c.id === form.campaignId) ?? data.campaigns[0];
       const res = await runGenerate({
         data: {
           ...payload(),
           visualPrompt: art.prompt || null,
           artDirection: art.ad,
           adjust: adjustText || null,
-          workspaceId,
-          campaignId: campaign?.id ?? null,
-          brandId: campaign?.brand_id ?? data.brands[0]?.id ?? null,
-          title: form.title,
-          type: form.type,
-          aspectRatio: aspectFor(form.target),
-          targetFormat: form.target,
-          prompt: form.prompt,
-          copyText: form.copyText,
-          provider: form.provider,
         },
       });
       qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
