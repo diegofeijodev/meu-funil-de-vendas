@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   LayoutDashboard,
   Sparkles,
@@ -174,28 +175,73 @@ function WorkspacePicker({
   memberships: { workspace_id: string; workspaces: { name: string } | null }[];
   onChange: (id: string) => void;
 }) {
-  if (memberships.length <= 1) {
-    return (
-      <div className="mx-3 mb-4 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-3 py-2">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Workspace</p>
-        <p className="truncate text-sm font-medium">{workspaceName}</p>
-      </div>
-    );
-  }
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc("create_workspace" as never, { _name: name.trim() } as never);
+    setBusy(false);
+    if (error) {
+      toast.error("Não foi possível criar a empresa.");
+      return;
+    }
+    await qc.invalidateQueries({ queryKey: ["memberships"] });
+    onChange(data as unknown as string);
+    qc.invalidateQueries();
+    setName("");
+    setCreating(false);
+    toast.success("Empresa criada. Você já está trabalhando nela.");
+  };
   return (
     <div className="mx-3 mb-4">
-      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Workspace</label>
+      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Empresa</label>
       <select
         value={workspaceId ?? ""}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          if (e.target.value === "__new") return setCreating(true);
+          onChange(e.target.value);
+          qc.invalidateQueries();
+        }}
         className="mt-1 w-full rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
       >
+        {memberships.length === 0 && <option value="">{workspaceName}</option>}
         {memberships.map((m) => (
           <option key={m.workspace_id} value={m.workspace_id}>
-            {m.workspaces?.name ?? "Workspace"}
+            {m.workspaces?.name ?? "Empresa"}
           </option>
         ))}
+        <option value="__new">+ Nova empresa</option>
       </select>
+      {creating && (
+        <div className="mt-2 space-y-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-2">
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="Nome da empresa"
+            className="w-full rounded-md border border-sidebar-border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={create}
+              disabled={busy || !name.trim()}
+              className="flex-1 rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {busy ? "Criando..." : "Criar"}
+            </button>
+            <button
+              onClick={() => setCreating(false)}
+              className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
