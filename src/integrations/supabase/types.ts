@@ -2629,6 +2629,154 @@ export type Database = {
           },
         ]
       }
+      media_assets: {
+        Row: {
+          aspect_ratio: string | null
+          brand_id: string | null
+          campaign_id: string | null
+          cost: number | null
+          created_at: string
+          created_by: string | null
+          creative_id: string | null
+          duration_seconds: number | null
+          folder: string | null
+          height: number | null
+          id: string
+          ig_post_id: string | null
+          ig_ready: boolean
+          kind: string
+          mime: string | null
+          parent_id: string | null
+          prompt: string | null
+          provider: string | null
+          quality_report: Json
+          size_bytes: number | null
+          source: string
+          status: string
+          storage_path: string | null
+          tags: string[]
+          target_format: string
+          thumbnail_path: string | null
+          thumbnail_url: string | null
+          title: string
+          updated_at: string
+          url: string | null
+          width: number | null
+          workspace_id: string
+        }
+        Insert: {
+          aspect_ratio?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          cost?: number | null
+          created_at?: string
+          created_by?: string | null
+          creative_id?: string | null
+          duration_seconds?: number | null
+          folder?: string | null
+          height?: number | null
+          id?: string
+          ig_post_id?: string | null
+          ig_ready?: boolean
+          kind?: string
+          mime?: string | null
+          parent_id?: string | null
+          prompt?: string | null
+          provider?: string | null
+          quality_report?: Json
+          size_bytes?: number | null
+          source?: string
+          status?: string
+          storage_path?: string | null
+          tags?: string[]
+          target_format?: string
+          thumbnail_path?: string | null
+          thumbnail_url?: string | null
+          title?: string
+          updated_at?: string
+          url?: string | null
+          width?: number | null
+          workspace_id: string
+        }
+        Update: {
+          aspect_ratio?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          cost?: number | null
+          created_at?: string
+          created_by?: string | null
+          creative_id?: string | null
+          duration_seconds?: number | null
+          folder?: string | null
+          height?: number | null
+          id?: string
+          ig_post_id?: string | null
+          ig_ready?: boolean
+          kind?: string
+          mime?: string | null
+          parent_id?: string | null
+          prompt?: string | null
+          provider?: string | null
+          quality_report?: Json
+          size_bytes?: number | null
+          source?: string
+          status?: string
+          storage_path?: string | null
+          tags?: string[]
+          target_format?: string
+          thumbnail_path?: string | null
+          thumbnail_url?: string | null
+          title?: string
+          updated_at?: string
+          url?: string | null
+          width?: number | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_assets_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_creative_id_fkey"
+            columns: ["creative_id"]
+            isOneToOne: false
+            referencedRelation: "creatives"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_ig_post_id_fkey"
+            columns: ["ig_post_id"]
+            isOneToOne: false
+            referencedRelation: "ig_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "media_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       meta_accounts: {
         Row: {
           ad_account_id: string | null
