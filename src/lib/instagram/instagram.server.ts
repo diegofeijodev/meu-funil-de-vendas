@@ -86,19 +86,17 @@ export async function connectInstagramAccount(workspaceId: string, pageIdOverrid
     if (error) throw new Error(error.message);
     return { ok: true as const, username: row.username, igUserId: igId };
   } catch (e) {
-    await s
-      .from("instagram_accounts")
-      .upsert(
-        {
-          workspace_id: workspaceId,
-          facebook_page_id: pageId,
-          status: "error",
-          last_error: errMsg(e),
-        } as never,
-        {
-          onConflict: "workspace_id",
-        },
-      );
+    await s.from("instagram_accounts").upsert(
+      {
+        workspace_id: workspaceId,
+        facebook_page_id: pageId,
+        status: "error",
+        last_error: errMsg(e),
+      } as never,
+      {
+        onConflict: "workspace_id",
+      },
+    );
     return { ok: false as const, error: errMsg(e) };
   }
 }
@@ -504,7 +502,14 @@ export async function pollPendingMedia() {
         throw new Error("O provedor informou falha na geração da mídia.");
       const media = [
         ...pj.media,
-        await libraryItem(post, { sourceUrl: assetUrl }, pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
+        await libraryItem(
+          post,
+          { sourceUrl: assetUrl },
+          pj.index,
+          pj.provider,
+          pj.prompts[pj.index] ?? null,
+          r.cost ?? 0,
+        ),
       ];
       const res = await continueAssets(
         post,
@@ -705,7 +710,8 @@ export async function publishInstagramPost(
       );
   } else {
     const bad = media.find((m) => m.ig_ready === false);
-    if (bad) throw new Guardrail(`Mídia fora do padrão do Instagram: ${(bad.issues ?? []).join(" ")}`);
+    if (bad)
+      throw new Guardrail(`Mídia fora do padrão do Instagram: ${(bad.issues ?? []).join(" ")}`);
   }
   // Guardrail: toda mídia precisa de URL pública válida.
   for (const m of media) await assertPublicUrl(m.url);

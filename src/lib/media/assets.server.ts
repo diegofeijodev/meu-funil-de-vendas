@@ -3,7 +3,12 @@
  * "creative-assets", registrando em media_assets. Nunca guarda só a URL do provedor.
  */
 import { normalizeImage, imageSize } from "./normalize.server";
-import { readVideoMeta, validateImageForInstagram, validateVideoForInstagram, type QualityReport } from "./video-meta.server";
+import {
+  readVideoMeta,
+  validateImageForInstagram,
+  validateVideoForInstagram,
+  type QualityReport,
+} from "./video-meta.server";
 import { aspectFor, targetFromAspect, type TargetFormat } from "./formats";
 
 export const MEDIA_BUCKET = "creative-assets";
@@ -58,12 +63,18 @@ async function downloadBytes(url: string) {
   const m = /\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/.exec(url);
   if (m) {
     const s = await db();
-    const { data, error } = await s.storage.from(decodeURIComponent(m[1]!)).download(decodeURIComponent(m[2]!));
-    if (!error && data) return { bytes: new Uint8Array(await data.arrayBuffer()), mime: data.type || null };
+    const { data, error } = await s.storage
+      .from(decodeURIComponent(m[1]!))
+      .download(decodeURIComponent(m[2]!));
+    if (!error && data)
+      return { bytes: new Uint8Array(await data.arrayBuffer()), mime: data.type || null };
   }
   if (url.startsWith("data:")) {
     const [head, b64] = url.split(",", 2);
-    return { bytes: new Uint8Array(Buffer.from(b64 ?? "", "base64")), mime: /data:([^;]+)/.exec(head ?? "")?.[1] ?? null };
+    return {
+      bytes: new Uint8Array(Buffer.from(b64 ?? "", "base64")),
+      mime: /data:([^;]+)/.exec(head ?? "")?.[1] ?? null,
+    };
   }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Não foi possível baixar a mídia do provedor (HTTP ${res.status}).`);
@@ -72,9 +83,13 @@ async function downloadBytes(url: string) {
 
 export async function storeBytes(path: string, bytes: Uint8Array, contentType: string) {
   const s = await db();
-  const { error } = await s.storage.from(MEDIA_BUCKET).upload(path, bytes, { contentType, upsert: true });
+  const { error } = await s.storage
+    .from(MEDIA_BUCKET)
+    .upload(path, bytes, { contentType, upsert: true });
   if (error) throw new Error(`Falha ao salvar a mídia: ${error.message}`);
-  const { data, error: e2 } = await s.storage.from(MEDIA_BUCKET).createSignedUrl(path, SIGN_SECONDS);
+  const { data, error: e2 } = await s.storage
+    .from(MEDIA_BUCKET)
+    .createSignedUrl(path, SIGN_SECONDS);
   if (e2 || !data?.signedUrl) throw new Error("Falha ao gerar o link da mídia.");
   return data.signedUrl;
 }
@@ -142,7 +157,14 @@ export async function ingestAsset(input: IngestInput): Promise<MediaAssetRow> {
       height: meta.height,
       duration_seconds: meta.duration,
       size_bytes: bytes.length,
-      aspect_ratio: meta.width && meta.height ? (meta.width < meta.height ? "9:16" : meta.width === meta.height ? "1:1" : "16:9") : aspectFor(target),
+      aspect_ratio:
+        meta.width && meta.height
+          ? meta.width < meta.height
+            ? "9:16"
+            : meta.width === meta.height
+              ? "1:1"
+              : "16:9"
+          : aspectFor(target),
       ig_ready: report.ok,
       quality_report: report,
     };
@@ -177,14 +199,29 @@ export async function ingestAsset(input: IngestInput): Promise<MediaAssetRow> {
 }
 
 /** Reprocessa um asset de imagem para outro formato (sem IA — só corte/redimensionamento). */
-export async function reformatAsset(assetId: string, target: TargetFormat, createdBy?: string | null) {
+export async function reformatAsset(
+  assetId: string,
+  target: TargetFormat,
+  createdBy?: string | null,
+) {
   const s = await db();
-  const { data: a } = await s.from("media_assets" as never).select("*").eq("id", assetId).maybeSingle();
+  const { data: a } = await s
+    .from("media_assets" as never)
+    .select("*")
+    .eq("id", assetId)
+    .maybeSingle();
   const asset = a as any;
   if (!asset) throw new Error("Mídia não encontrada.");
-  if (asset.kind !== "image") throw new Error("Vídeos não são recortados no servidor. Gere um novo vídeo neste formato.");
+  if (asset.kind !== "image")
+    throw new Error("Vídeos não são recortados no servidor. Gere um novo vídeo neste formato.");
   const src = asset.storage_path
-    ? await s.storage.from(MEDIA_BUCKET).download(asset.storage_path).then(async (r) => ({ bytes: new Uint8Array(await r.data!.arrayBuffer()), mime: r.data!.type }))
+    ? await s.storage
+        .from(MEDIA_BUCKET)
+        .download(asset.storage_path)
+        .then(async (r) => ({
+          bytes: new Uint8Array(await r.data!.arrayBuffer()),
+          mime: r.data!.type,
+        }))
     : await downloadBytes(asset.url);
   return ingestAsset({
     workspaceId: asset.workspace_id,
@@ -203,7 +240,11 @@ export async function reformatAsset(assetId: string, target: TargetFormat, creat
   });
 }
 
-export function guessTarget(aspect: string | null | undefined, video: boolean, explicit?: string | null): TargetFormat {
+export function guessTarget(
+  aspect: string | null | undefined,
+  video: boolean,
+  explicit?: string | null,
+): TargetFormat {
   return (explicit as TargetFormat) || targetFromAspect(aspect, video);
 }
 

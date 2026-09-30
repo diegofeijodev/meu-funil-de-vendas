@@ -38,12 +38,21 @@ function cover(img: PhotonImage, w: number, h: number) {
   return out;
 }
 
-export function normalizeImage(bytes: Uint8Array, target: TargetFormat, forceFormat?: "jpg" | "png"): NormalizedImage {
+export function normalizeImage(
+  bytes: Uint8Array,
+  target: TargetFormat,
+  forceFormat?: "jpg" | "png",
+): NormalizedImage {
   const src = PhotonImage.new_from_byteslice(bytes);
   try {
     const dims =
-      target === "other" ? { width: src.get_width(), height: src.get_height() } : TARGET_FORMATS[target];
-    const out = target === "other" ? resize(src, dims.width, dims.height, SamplingFilter.Lanczos3) : cover(src, dims.width, dims.height);
+      target === "other"
+        ? { width: src.get_width(), height: src.get_height() }
+        : TARGET_FORMATS[target];
+    const out =
+      target === "other"
+        ? resize(src, dims.width, dims.height, SamplingFilter.Lanczos3)
+        : cover(src, dims.width, dims.height);
     const png = forceFormat ? forceFormat === "png" : hasTransparency(out);
     const data = png ? out.get_bytes() : out.get_bytes_jpeg(92);
     const tw = 400;

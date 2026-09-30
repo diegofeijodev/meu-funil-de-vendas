@@ -217,7 +217,12 @@ export function PostEditor({
             <B id="upload" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
               <Upload className="size-4" /> Enviar minha própria
             </B>
-            <PickFromLibrary workspaceId={workspaceId} postId={post.id} igFormat={post.format} onDone={refresh} />
+            <PickFromLibrary
+              workspaceId={workspaceId}
+              postId={post.id}
+              igFormat={post.format}
+              onDone={refresh}
+            />
             <input
               ref={fileRef}
               type="file"

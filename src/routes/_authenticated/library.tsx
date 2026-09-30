@@ -59,7 +59,8 @@ export const Route = createFileRoute("/_authenticated/library")({
       { title: "Biblioteca de mídia · Meu Funil" },
       {
         name: "description",
-        content: "Todas as imagens e vídeos da marca no tamanho certo para Instagram e anúncios, prontos para baixar, exportar e publicar.",
+        content:
+          "Todas as imagens e vídeos da marca no tamanho certo para Instagram e anúncios, prontos para baixar, exportar e publicar.",
       },
       { property: "og:title", content: "Biblioteca de mídia · Meu Funil" },
       {
@@ -87,7 +88,11 @@ type Asset = {
   size_bytes: number | null;
   target_format: string;
   ig_ready: boolean;
-  quality_report: { issues?: string[]; checks?: Record<string, unknown>; backfill?: boolean } | null;
+  quality_report: {
+    issues?: string[];
+    checks?: Record<string, unknown>;
+    backfill?: boolean;
+  } | null;
   tags: string[];
   folder: string | null;
   status: "draft" | "approved" | "rejected" | "archived";
@@ -190,7 +195,10 @@ function LibraryPage() {
 
   const assets = data?.assets ?? [];
   const tags = useMemo(() => [...new Set(assets.flatMap((a) => a.tags ?? []))].sort(), [assets]);
-  const folders = useMemo(() => [...new Set(assets.map((a) => a.folder).filter(Boolean) as string[])].sort(), [assets]);
+  const folders = useMemo(
+    () => [...new Set(assets.map((a) => a.folder).filter(Boolean) as string[])].sort(),
+    [assets],
+  );
 
   const list = useMemo(() => {
     const q = f.q.trim().toLowerCase();
@@ -218,7 +226,8 @@ function LibraryPage() {
   }, [assets, f]);
 
   const open = assets.find((a) => a.id === openId) ?? null;
-  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggle = (id: string) =>
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   async function run<T>(key: string, fn: () => Promise<T>, ok?: string | ((r: T) => string)) {
     setBusy(key);
@@ -238,7 +247,10 @@ function LibraryPage() {
     run(
       "bulk",
       async () => {
-        const { error } = await supabase.from("media_assets" as never).update(patch as never).in("id", picked);
+        const { error } = await supabase
+          .from("media_assets" as never)
+          .update(patch as never)
+          .in("id", picked);
         if (error) throw error;
         refresh();
       },
@@ -253,7 +265,10 @@ function LibraryPage() {
       async () => {
         for (const a of assets.filter((x) => picked.includes(x.id))) {
           const next = [...new Set([...(a.tags ?? []), t])];
-          await supabase.from("media_assets" as never).update({ tags: next } as never).eq("id", a.id);
+          await supabase
+            .from("media_assets" as never)
+            .update({ tags: next } as never)
+            .eq("id", a.id);
         }
         refresh();
       },
@@ -268,11 +283,15 @@ function LibraryPage() {
   };
 
   const downloadOne = (id: string, format: "original" | "png" | "jpg") =>
-    run(`dl-${id}-${format}`, async () => {
-      const r = await fns.download({ data: { workspaceId: workspaceId!, assetId: id, format } });
-      triggerDownload(r.url);
-      return r;
-    }, "Download iniciado.");
+    run(
+      `dl-${id}-${format}`,
+      async () => {
+        const r = await fns.download({ data: { workspaceId: workspaceId!, assetId: id, format } });
+        triggerDownload(r.url);
+        return r;
+      },
+      "Download iniciado.",
+    );
 
   const downloadSelected = async (format: "original" | "png" | "jpg") => {
     for (const id of picked) await downloadOne(id, format);
@@ -291,13 +310,17 @@ function LibraryPage() {
       try {
         const r = await fns.upload({ data: fd });
         ok++;
-        if (!r.igReady) toast.warning(`${file.name}: ${r.issues.join(" ") || "fora do padrão do Instagram."}`);
+        if (!r.igReady)
+          toast.warning(`${file.name}: ${r.issues.join(" ") || "fora do padrão do Instagram."}`);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : `Falha ao enviar ${file.name}.`);
       }
     }
     setBusy(null);
-    if (ok) toast.success(`${ok} arquivo${ok > 1 ? "s" : ""} enviado${ok > 1 ? "s" : ""} e padronizado${ok > 1 ? "s" : ""}.`);
+    if (ok)
+      toast.success(
+        `${ok} arquivo${ok > 1 ? "s" : ""} enviado${ok > 1 ? "s" : ""} e padronizado${ok > 1 ? "s" : ""}.`,
+      );
     refresh();
   };
 
@@ -311,7 +334,12 @@ function LibraryPage() {
         actions={
           canEdit && (
             <div className="flex items-center gap-2">
-              <select className={sel} value={uploadTarget} onChange={(e) => setUploadTarget(e.target.value as TargetFormat)} aria-label="Formato do upload">
+              <select
+                className={sel}
+                value={uploadTarget}
+                onChange={(e) => setUploadTarget(e.target.value as TargetFormat)}
+                aria-label="Formato do upload"
+              >
                 {TARGET_FORMAT_KEYS.map((k) => (
                   <option key={k} value={k}>
                     {TARGET_FORMATS[k].label}
@@ -320,7 +348,12 @@ function LibraryPage() {
                 <option value="other">Manter tamanho original</option>
               </select>
               <Button onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
-                {busy === "upload" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Enviar arquivos
+                {busy === "upload" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}{" "}
+                Enviar arquivos
               </Button>
               <input
                 ref={fileRef}
@@ -328,7 +361,9 @@ function LibraryPage() {
                 multiple
                 accept="image/*,video/mp4,video/quicktime"
                 className="hidden"
-                onChange={(e) => e.target.files && uploadFiles(e.target.files).then(() => (e.target.value = ""))}
+                onChange={(e) =>
+                  e.target.files && uploadFiles(e.target.files).then(() => (e.target.value = ""))
+                }
               />
             </div>
           )
@@ -336,7 +371,10 @@ function LibraryPage() {
       />
 
       <div
-        className={cn("space-y-4 rounded-xl transition", dragging && "outline-dashed outline-2 outline-primary")}
+        className={cn(
+          "space-y-4 rounded-xl transition",
+          dragging && "outline-dashed outline-2 outline-primary",
+        )}
         onDragOver={(e) => {
           if (!canEdit) return;
           e.preventDefault();
@@ -352,12 +390,43 @@ function LibraryPage() {
         <div className="panel flex flex-wrap items-end gap-2 p-3">
           <div className="min-w-48 flex-1">
             <Label className="text-xs">Buscar</Label>
-            <Input placeholder="Título ou prompt" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} className="h-9" />
+            <Input
+              placeholder="Título ou prompt"
+              value={f.q}
+              onChange={(e) => setF({ ...f, q: e.target.value })}
+              className="h-9"
+            />
           </div>
-          <Filter label="Marca" value={f.brand} onChange={(v) => setF({ ...f, brand: v })} options={(data?.brands ?? []).map((b) => [b.id, b.name])} />
-          <Filter label="Campanha" value={f.campaign} onChange={(v) => setF({ ...f, campaign: v })} options={(data?.campaigns ?? []).map((c) => [c.id, c.name])} />
-          <Filter label="Tipo" value={f.kind} onChange={(v) => setF({ ...f, kind: v })} options={[["image", "Imagem"], ["video", "Vídeo"]]} />
-          <Filter label="Formato" value={f.format} onChange={(v) => setF({ ...f, format: v })} options={[...TARGET_FORMAT_KEYS.map((k) => [k, TARGET_FORMATS[k].short] as [string, string]), ["other", "Outro"]]} />
+          <Filter
+            label="Marca"
+            value={f.brand}
+            onChange={(v) => setF({ ...f, brand: v })}
+            options={(data?.brands ?? []).map((b) => [b.id, b.name])}
+          />
+          <Filter
+            label="Campanha"
+            value={f.campaign}
+            onChange={(v) => setF({ ...f, campaign: v })}
+            options={(data?.campaigns ?? []).map((c) => [c.id, c.name])}
+          />
+          <Filter
+            label="Tipo"
+            value={f.kind}
+            onChange={(v) => setF({ ...f, kind: v })}
+            options={[
+              ["image", "Imagem"],
+              ["video", "Vídeo"],
+            ]}
+          />
+          <Filter
+            label="Formato"
+            value={f.format}
+            onChange={(v) => setF({ ...f, format: v })}
+            options={[
+              ...TARGET_FORMAT_KEYS.map((k) => [k, TARGET_FORMATS[k].short] as [string, string]),
+              ["other", "Outro"],
+            ]}
+          />
           <Filter
             label="Status"
             value={f.status}
@@ -365,16 +434,53 @@ function LibraryPage() {
             all="Todos"
             options={[["active", "Ativos"], ...Object.entries(STATUS)]}
           />
-          <Filter label="Tag" value={f.tag} onChange={(v) => setF({ ...f, tag: v })} options={tags.map((t) => [t, t])} />
-          <Filter label="Pasta" value={f.folder} onChange={(v) => setF({ ...f, folder: v })} options={folders.map((t) => [t, t])} />
-          <Filter label="Fonte" value={f.source} onChange={(v) => setF({ ...f, source: v })} options={Object.entries(SOURCE)} />
-          <Filter label="Período" value={f.period} onChange={(v) => setF({ ...f, period: v })} options={[["7", "7 dias"], ["30", "30 dias"], ["90", "90 dias"]]} />
-          <Filter label="Ordenar" value={f.sort} onChange={(v) => setF({ ...f, sort: v || "new" })} all={null} options={[["new", "Mais recentes"], ["old", "Mais antigas"], ["title", "Título"], ["size", "Maior peso"]]} />
+          <Filter
+            label="Tag"
+            value={f.tag}
+            onChange={(v) => setF({ ...f, tag: v })}
+            options={tags.map((t) => [t, t])}
+          />
+          <Filter
+            label="Pasta"
+            value={f.folder}
+            onChange={(v) => setF({ ...f, folder: v })}
+            options={folders.map((t) => [t, t])}
+          />
+          <Filter
+            label="Fonte"
+            value={f.source}
+            onChange={(v) => setF({ ...f, source: v })}
+            options={Object.entries(SOURCE)}
+          />
+          <Filter
+            label="Período"
+            value={f.period}
+            onChange={(v) => setF({ ...f, period: v })}
+            options={[
+              ["7", "7 dias"],
+              ["30", "30 dias"],
+              ["90", "90 dias"],
+            ]}
+          />
+          <Filter
+            label="Ordenar"
+            value={f.sort}
+            onChange={(v) => setF({ ...f, sort: v || "new" })}
+            all={null}
+            options={[
+              ["new", "Mais recentes"],
+              ["old", "Mais antigas"],
+              ["title", "Título"],
+              ["size", "Maior peso"],
+            ]}
+          />
         </div>
 
         {picked.length > 0 && (
           <div className="panel sticky top-2 z-10 flex flex-wrap items-center gap-2 p-2.5">
-            <span className="px-2 text-sm font-medium">{picked.length} selecionada{picked.length > 1 ? "s" : ""}</span>
+            <span className="px-2 text-sm font-medium">
+              {picked.length} selecionada{picked.length > 1 ? "s" : ""}
+            </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="outline" disabled={!!busy}>
@@ -382,15 +488,26 @@ function LibraryPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItem onClick={() => downloadSelected("original")}>Original (MP4/JPG/PNG)</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => downloadSelected("jpg")}>Imagens em JPG</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => downloadSelected("png")}>Imagens em PNG</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadSelected("original")}>
+                  Original (MP4/JPG/PNG)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadSelected("jpg")}>
+                  Imagens em JPG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadSelected("png")}>
+                  Imagens em PNG
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="outline" disabled={!!busy}>
-                  {busy === "pdf" ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} Exportar PDF
+                  {busy === "pdf" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <FileText className="size-4" />
+                  )}{" "}
+                  Exportar PDF
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -398,14 +515,22 @@ function LibraryPage() {
                   <DropdownMenuItem
                     key={layout}
                     onClick={() =>
-                      run("pdf", async () => {
-                        const r = await fns.pdf({ data: { workspaceId, assetIds: picked, layout } });
-                        triggerDownload(r.url);
-                        return r;
-                      }, "PDF pronto.")
+                      run(
+                        "pdf",
+                        async () => {
+                          const r = await fns.pdf({
+                            data: { workspaceId, assetIds: picked, layout },
+                          });
+                          triggerDownload(r.url);
+                          return r;
+                        },
+                        "PDF pronto.",
+                      )
                     }
                   >
-                    {layout === "one_per_page" ? "Uma por página (tamanho real)" : "Folha de contato (grade 2x3)"}
+                    {layout === "one_per_page"
+                      ? "Uma por página (tamanho real)"
+                      : "Folha de contato (grade 2x3)"}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -415,21 +540,40 @@ function LibraryPage() {
               variant="outline"
               disabled={!!busy}
               onClick={() =>
-                run("zip", async () => {
-                  const r = await fns.zip({ data: { workspaceId, assetIds: picked } });
-                  triggerDownload(r.url);
-                  return r;
-                }, "ZIP pronto.")
+                run(
+                  "zip",
+                  async () => {
+                    const r = await fns.zip({ data: { workspaceId, assetIds: picked } });
+                    triggerDownload(r.url);
+                    return r;
+                  },
+                  "ZIP pronto.",
+                )
               }
             >
-              {busy === "zip" ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Baixar ZIP
+              {busy === "zip" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}{" "}
+              Baixar ZIP
             </Button>
             {canEdit && (
               <>
-                <Button size="sm" variant="outline" disabled={!!busy} onClick={() => bulkUpdate({ status: "approved" }, "Mídias aprovadas.")}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() => bulkUpdate({ status: "approved" }, "Mídias aprovadas.")}
+                >
                   <CheckCircle2 className="size-4" /> Aprovar
                 </Button>
-                <Button size="sm" variant="outline" disabled={!!busy} onClick={() => bulkUpdate({ status: "archived" }, "Mídias arquivadas.")}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() => bulkUpdate({ status: "archived" }, "Mídias arquivadas.")}
+                >
                   <Archive className="size-4" /> Arquivar
                 </Button>
                 <Button size="sm" variant="outline" disabled={!!busy} onClick={moveFolder}>
@@ -443,16 +587,25 @@ function LibraryPage() {
                   variant="outline"
                   disabled={!!busy}
                   onClick={() =>
-                    run("ig", async () => {
-                      const r = await fns.ig({ data: { workspaceId, assetIds: picked } });
-                      navigate({ to: "/instagram" });
-                      return r;
-                    }, "Post rascunho criado no Instagram (Calendário).")
+                    run(
+                      "ig",
+                      async () => {
+                        const r = await fns.ig({ data: { workspaceId, assetIds: picked } });
+                        navigate({ to: "/instagram" });
+                        return r;
+                      },
+                      "Post rascunho criado no Instagram (Calendário).",
+                    )
                   }
                 >
                   <Instagram className="size-4" /> Usar no Instagram
                 </Button>
-                <Button size="sm" variant="outline" disabled={!!busy} onClick={() => setCampaignDialog(true)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() => setCampaignDialog(true)}
+                >
                   <Megaphone className="size-4" /> Usar em campanha
                 </Button>
               </>
@@ -471,7 +624,9 @@ function LibraryPage() {
           </div>
         ) : list.length === 0 ? (
           <EmptyState
-            title={assets.length ? "Nada encontrado com estes filtros" : "Sua biblioteca está vazia"}
+            title={
+              assets.length ? "Nada encontrado com estes filtros" : "Sua biblioteca está vazia"
+            }
             description={
               assets.length
                 ? "Limpe alguns filtros para ver mais mídias."
@@ -490,7 +645,13 @@ function LibraryPage() {
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">
               {list.map((a) => (
-                <AssetCard key={a.id} a={a} picked={picked.includes(a.id)} onPick={() => toggle(a.id)} onOpen={() => setOpenId(a.id)} />
+                <AssetCard
+                  key={a.id}
+                  a={a}
+                  picked={picked.includes(a.id)}
+                  onPick={() => toggle(a.id)}
+                  onOpen={() => setOpenId(a.id)}
+                />
               ))}
             </div>
           </>
@@ -502,16 +663,29 @@ function LibraryPage() {
           {open && (
             <AssetDetail
               a={open}
-              versions={assets.filter((x) => x.parent_id === open.id || (open.parent_id && (x.id === open.parent_id || x.parent_id === open.parent_id)) ).filter((x) => x.id !== open.id)}
+              versions={assets
+                .filter(
+                  (x) =>
+                    x.parent_id === open.id ||
+                    (open.parent_id && (x.id === open.parent_id || x.parent_id === open.parent_id)),
+                )
+                .filter((x) => x.id !== open.id)}
               canEdit={canEdit}
               busy={busy}
               onDownload={(fmt) => downloadOne(open.id, fmt)}
               onReformat={(targets) =>
-                run("reformat", async () => {
-                  const r = await fns.reformat({ data: { workspaceId, assetId: open.id, targets } });
-                  refresh();
-                  return r;
-                }, (r) => `${r.ids.length} versão${r.ids.length > 1 ? "ões" : ""} criada${r.ids.length > 1 ? "s" : ""} sem gastar créditos de IA.`)
+                run(
+                  "reformat",
+                  async () => {
+                    const r = await fns.reformat({
+                      data: { workspaceId, assetId: open.id, targets },
+                    });
+                    refresh();
+                    return r;
+                  },
+                  (r) =>
+                    `${r.ids.length} versão${r.ids.length > 1 ? "ões" : ""} criada${r.ids.length > 1 ? "s" : ""} sem gastar créditos de IA.`,
+                )
               }
               onOpenVersion={(id) => setOpenId(id)}
             />
@@ -535,12 +709,19 @@ function LibraryPage() {
                   className="w-full justify-start"
                   disabled={!!busy}
                   onClick={() =>
-                    run("campaign", async () => {
-                      const r = await fns.campaign({ data: { workspaceId, assetIds: picked, campaignId: c.id } });
-                      setCampaignDialog(false);
-                      refresh();
-                      return r;
-                    }, (r) => `${r.count} criativo${r.count > 1 ? "s" : ""} aprovado${r.count > 1 ? "s" : ""} adicionado${r.count > 1 ? "s" : ""} à campanha.`)
+                    run(
+                      "campaign",
+                      async () => {
+                        const r = await fns.campaign({
+                          data: { workspaceId, assetIds: picked, campaignId: c.id },
+                        });
+                        setCampaignDialog(false);
+                        refresh();
+                        return r;
+                      },
+                      (r) =>
+                        `${r.count} criativo${r.count > 1 ? "s" : ""} aprovado${r.count > 1 ? "s" : ""} adicionado${r.count > 1 ? "s" : ""} à campanha.`,
+                    )
                   }
                 >
                   {c.name}
@@ -570,7 +751,11 @@ function Filter({
   return (
     <div>
       <Label className="text-xs">{label}</Label>
-      <select className={cn(sel, "block w-full min-w-28")} value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className={cn(sel, "block w-full min-w-28")}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         {all !== null && <option value="">{all}</option>}
         {options.map(([v, l]) => (
           <option key={v} value={v}>
@@ -594,8 +779,23 @@ const ASPECT_CLASS: Record<string, string> = {
 
 function Media({ a, className, controls }: { a: Asset; className?: string; controls?: boolean }) {
   if (a.kind === "video")
-    return <video src={a.url ?? undefined} controls={controls} muted={!controls} preload="metadata" className={cn("w-full bg-muted object-cover", className)} />;
-  return <img src={(controls ? a.url : a.thumbnail_url) ?? a.url ?? ""} alt={a.title} loading="lazy" className={cn("w-full bg-muted object-cover", className)} />;
+    return (
+      <video
+        src={a.url ?? undefined}
+        controls={controls}
+        muted={!controls}
+        preload="metadata"
+        className={cn("w-full bg-muted object-cover", className)}
+      />
+    );
+  return (
+    <img
+      src={(controls ? a.url : a.thumbnail_url) ?? a.url ?? ""}
+      alt={a.title}
+      loading="lazy"
+      className={cn("w-full bg-muted object-cover", className)}
+    />
+  );
 }
 
 function ReadyBadge({ a }: { a: Asset }) {
@@ -616,20 +816,43 @@ function ReadyBadge({ a }: { a: Asset }) {
   );
 }
 
-function AssetCard({ a, picked, onPick, onOpen }: { a: Asset; picked: boolean; onPick: () => void; onOpen: () => void }) {
+function AssetCard({
+  a,
+  picked,
+  onPick,
+  onOpen,
+}: {
+  a: Asset;
+  picked: boolean;
+  onPick: () => void;
+  onOpen: () => void;
+}) {
   return (
-    <div className={cn("group overflow-hidden rounded-lg border bg-surface/50 transition", picked ? "border-primary ring-2 ring-primary" : "border-border")}>
+    <div
+      className={cn(
+        "group overflow-hidden rounded-lg border bg-surface/50 transition",
+        picked ? "border-primary ring-2 ring-primary" : "border-border",
+      )}
+    >
       <div className="relative">
         <button type="button" onClick={onOpen} className="block w-full">
           <Media a={a} className={ASPECT_CLASS[a.target_format] ?? "aspect-square"} />
         </button>
         <div className="absolute left-2 top-2">
-          <Checkbox checked={picked} onCheckedChange={onPick} aria-label={`Selecionar ${a.title}`} className="bg-background/90" />
+          <Checkbox
+            checked={picked}
+            onCheckedChange={onPick}
+            aria-label={`Selecionar ${a.title}`}
+            className="bg-background/90"
+          />
         </div>
-        <span className="absolute right-2 top-2 rounded bg-background/85 px-1.5 py-0.5 text-[11px] font-medium">{formatLabel(a.target_format)}</span>
+        <span className="absolute right-2 top-2 rounded bg-background/85 px-1.5 py-0.5 text-[11px] font-medium">
+          {formatLabel(a.target_format)}
+        </span>
         {a.kind === "video" && (
           <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-background/85 px-1.5 py-0.5 text-[11px]">
-            <Play className="size-3" /> {a.duration_seconds ? `${Math.round(Number(a.duration_seconds))}s` : "vídeo"}
+            <Play className="size-3" />{" "}
+            {a.duration_seconds ? `${Math.round(Number(a.duration_seconds))}s` : "vídeo"}
           </span>
         )}
       </div>
@@ -672,7 +895,10 @@ function AssetDetail({
     ...(a.kind === "video"
       ? ([
           ["Duração", a.duration_seconds ? `${a.duration_seconds}s` : "—"],
-          ["Codec", [checks["videoCodec"], checks["audioCodec"]].filter(Boolean).join(" / ") || "—"],
+          [
+            "Codec",
+            [checks["videoCodec"], checks["audioCodec"]].filter(Boolean).join(" / ") || "—",
+          ],
           ["Quadros/s", checks["fps"] ? String(checks["fps"]) : "—"],
         ] as [string, string][])
       : []),
@@ -700,19 +926,38 @@ function AssetDetail({
         </div>
         {!a.ig_ready && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-            {issues.length ? issues.map((i) => <p key={i}>• {i}</p>) : <p>Esta mídia ainda não passou pela validação (item antigo).</p>}
+            {issues.length ? (
+              issues.map((i) => <p key={i}>• {i}</p>)
+            ) : (
+              <p>Esta mídia ainda não passou pela validação (item antigo).</p>
+            )}
           </div>
         )}
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => onDownload("original")} disabled={!!busy}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onDownload("original")}
+            disabled={!!busy}
+          >
             <Download className="size-4" /> {a.kind === "video" ? "Baixar MP4" : "Baixar original"}
           </Button>
           {a.kind === "image" && (
             <>
-              <Button size="sm" variant="outline" onClick={() => onDownload("jpg")} disabled={!!busy}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onDownload("jpg")}
+                disabled={!!busy}
+              >
                 JPG
               </Button>
-              <Button size="sm" variant="outline" onClick={() => onDownload("png")} disabled={!!busy}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onDownload("png")}
+                disabled={!!busy}
+              >
                 PNG
               </Button>
             </>
@@ -723,21 +968,33 @@ function AssetDetail({
           <div className="space-y-2 rounded-lg border border-border p-3">
             <p className="text-sm font-medium">Outros formatos (sem gastar créditos de IA)</p>
             <div className="flex flex-wrap gap-2">
-              <select className={sel} value={target} onChange={(e) => setTarget(e.target.value as TargetFormat)}>
+              <select
+                className={sel}
+                value={target}
+                onChange={(e) => setTarget(e.target.value as TargetFormat)}
+              >
                 {TARGET_FORMAT_KEYS.map((k) => (
                   <option key={k} value={k}>
                     {TARGET_FORMATS[k].label}
                   </option>
                 ))}
               </select>
-              <Button size="sm" variant="outline" disabled={!!busy} onClick={() => onReformat([target])}>
-                {busy === "reformat" && <Loader2 className="size-4 animate-spin" />} Gerar variação neste formato
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!!busy}
+                onClick={() => onReformat([target])}
+              >
+                {busy === "reformat" && <Loader2 className="size-4 animate-spin" />} Gerar variação
+                neste formato
               </Button>
             </div>
             <Button size="sm" disabled={!!busy} onClick={() => onReformat(IG_FORMATS)}>
               Redimensionar para todos os formatos do Instagram
             </Button>
-            <p className="text-xs text-muted-foreground">O corte é centralizado. Para vídeos, gere um novo vídeo no formato desejado.</p>
+            <p className="text-xs text-muted-foreground">
+              O corte é centralizado. Para vídeos, gere um novo vídeo no formato desejado.
+            </p>
           </div>
         )}
 
@@ -753,7 +1010,9 @@ function AssetDetail({
         {a.prompt && (
           <div className="space-y-1">
             <p className="text-sm font-medium">Prompt usado</p>
-            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">{a.prompt}</p>
+            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+              {a.prompt}
+            </p>
           </div>
         )}
 
@@ -762,7 +1021,12 @@ function AssetDetail({
             <p className="text-sm font-medium">Versões em outros formatos</p>
             <div className="grid grid-cols-3 gap-2">
               {versions.map((v) => (
-                <button key={v.id} type="button" onClick={() => onOpenVersion(v.id)} className="overflow-hidden rounded border border-border text-left">
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => onOpenVersion(v.id)}
+                  className="overflow-hidden rounded border border-border text-left"
+                >
                   <Media a={v} className="aspect-square" />
                   <p className="truncate px-1.5 py-1 text-[11px]">{formatLabel(v.target_format)}</p>
                 </button>

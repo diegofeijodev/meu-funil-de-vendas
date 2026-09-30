@@ -4,7 +4,13 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { CheckCircle2, Images, Loader2, TriangleAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatLabel, targetForIgFormat } from "@/lib/media/formats";
@@ -50,7 +56,9 @@ export function PickFromLibrary({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("media_assets" as never)
-        .select("id,title,kind,url,thumbnail_url,target_format,ig_ready,quality_report,width,height,duration_seconds")
+        .select(
+          "id,title,kind,url,thumbnail_url,target_format,ig_ready,quality_report,width,height,duration_seconds",
+        )
         .eq("workspace_id", workspaceId)
         .eq("target_format", target)
         .eq("kind", video ? "video" : "image")
@@ -64,10 +72,14 @@ export function PickFromLibrary({
 
   const toggle = (a: MediaAsset) => {
     if (!a.ig_ready) {
-      toast.error(`Esta mídia não está pronta para o Instagram: ${(a.quality_report?.issues ?? []).join(" ") || "sem validação."}`);
+      toast.error(
+        `Esta mídia não está pronta para o Instagram: ${(a.quality_report?.issues ?? []).join(" ") || "sem validação."}`,
+      );
       return;
     }
-    setPicked((p) => (p.includes(a.id) ? p.filter((x) => x !== a.id) : multi ? [...p, a.id].slice(0, 10) : [a.id]));
+    setPicked((p) =>
+      p.includes(a.id) ? p.filter((x) => x !== a.id) : multi ? [...p, a.id].slice(0, 10) : [a.id],
+    );
   };
 
   const confirm = async () => {
@@ -95,7 +107,8 @@ export function PickFromLibrary({
           <DialogHeader>
             <DialogTitle>Escolher da biblioteca</DialogTitle>
             <DialogDescription>
-              Mostrando {video ? "vídeos" : "imagens"} no formato {formatLabel(target)}. Só mídias prontas para o Instagram podem ser usadas
+              Mostrando {video ? "vídeos" : "imagens"} no formato {formatLabel(target)}. Só mídias
+              prontas para o Instagram podem ser usadas
               {multi ? " (até 10 no carrossel)" : ""}.
             </DialogDescription>
           </DialogHeader>
@@ -121,9 +134,17 @@ export function PickFromLibrary({
                   )}
                 >
                   {a.kind === "video" ? (
-                    <video src={a.url ?? undefined} muted className="aspect-[9/16] w-full bg-muted object-cover" />
+                    <video
+                      src={a.url ?? undefined}
+                      muted
+                      className="aspect-[9/16] w-full bg-muted object-cover"
+                    />
                   ) : (
-                    <img src={a.thumbnail_url ?? a.url ?? ""} alt={a.title} className="aspect-square w-full bg-muted object-cover" />
+                    <img
+                      src={a.thumbnail_url ?? a.url ?? ""}
+                      alt={a.title}
+                      className="aspect-square w-full bg-muted object-cover"
+                    />
                   )}
                   <span className="absolute left-1.5 top-1.5">
                     {a.ig_ready ? (
@@ -142,7 +163,8 @@ export function PickFromLibrary({
               Cancelar
             </Button>
             <Button onClick={confirm} disabled={!picked.length || busy}>
-              {busy && <Loader2 className="size-4 animate-spin" />} Usar {picked.length || ""} selecionada{picked.length > 1 ? "s" : ""}
+              {busy && <Loader2 className="size-4 animate-spin" />} Usar {picked.length || ""}{" "}
+              selecionada{picked.length > 1 ? "s" : ""}
             </Button>
           </div>
         </DialogContent>

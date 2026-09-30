@@ -1,5 +1,11 @@
 /** Ações da Biblioteca de mídia no servidor (chamadas só após checar o membro). */
-import { ingestAsset, reformatAsset, readAssetBytes, storeBytes, MEDIA_BUCKET } from "./assets.server";
+import {
+  ingestAsset,
+  reformatAsset,
+  readAssetBytes,
+  storeBytes,
+  MEDIA_BUCKET,
+} from "./assets.server";
 import { convertImage } from "./normalize.server";
 import { IG_FORMATS, TARGET_FORMATS, type TargetFormat } from "./formats";
 
@@ -36,16 +42,29 @@ function fileName(a: any, ext: string, i?: number) {
   return `${brand}_${fmt}_${date}${i != null ? `_${i + 1}` : ""}.${ext}`;
 }
 
-const extOf = (a: any) => (a.kind === "video" ? (a.mime?.includes("quicktime") ? "mov" : "mp4") : a.mime?.includes("png") ? "png" : "jpg");
+const extOf = (a: any) =>
+  a.kind === "video"
+    ? a.mime?.includes("quicktime")
+      ? "mov"
+      : "mp4"
+    : a.mime?.includes("png")
+      ? "png"
+      : "jpg";
 
 async function signedDownload(path: string, name: string) {
   const s = await db();
-  const { data, error } = await s.storage.from(MEDIA_BUCKET).createSignedUrl(path, 600, { download: name });
+  const { data, error } = await s.storage
+    .from(MEDIA_BUCKET)
+    .createSignedUrl(path, 600, { download: name });
   if (error || !data?.signedUrl) throw new Error("Não foi possível gerar o link de download.");
   return data.signedUrl;
 }
 
-export async function downloadAsset(workspaceId: string, assetId: string, format: "original" | "png" | "jpg") {
+export async function downloadAsset(
+  workspaceId: string,
+  assetId: string,
+  format: "original" | "png" | "jpg",
+) {
   const [a] = await loadAssets(workspaceId, [assetId]);
   if (!a) throw new Error("Mídia não encontrada.");
   if (a.kind === "video" || format === "original") {
@@ -72,7 +91,10 @@ export async function exportZip(workspaceId: string, ids: string[]) {
   for (const [i, a] of assets.entries()) {
     const { bytes } = await readAssetBytes(a);
     total += bytes.length;
-    if (total > 250 * 1024 * 1024) throw new Error("Seleção grande demais para um ZIP (limite de 250 MB). Selecione menos itens.");
+    if (total > 250 * 1024 * 1024)
+      throw new Error(
+        "Seleção grande demais para um ZIP (limite de 250 MB). Selecione menos itens.",
+      );
     zip.file(fileName(a, extOf(a), i), bytes);
   }
   const data = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
@@ -82,7 +104,11 @@ export async function exportZip(workspaceId: string, ids: string[]) {
   return { url: await signedDownload(path, name), name, count: assets.length };
 }
 
-export async function exportPdf(workspaceId: string, ids: string[], layout: "one_per_page" | "contact_sheet") {
+export async function exportPdf(
+  workspaceId: string,
+  ids: string[],
+  layout: "one_per_page" | "contact_sheet",
+) {
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -92,7 +118,10 @@ export async function exportPdf(workspaceId: string, ids: string[], layout: "one
 
   async function imageFor(a: any) {
     if (a.kind === "video") return null;
-    const src = a.thumbnail_path && layout === "contact_sheet" ? { storage_path: a.thumbnail_path, url: null } : a;
+    const src =
+      a.thumbnail_path && layout === "contact_sheet"
+        ? { storage_path: a.thumbnail_path, url: null }
+        : a;
     const { bytes } = await readAssetBytes(src);
     return pdf.embedJpg(convertImage(bytes, "jpg"));
   }
@@ -101,7 +130,13 @@ export async function exportPdf(workspaceId: string, ids: string[], layout: "one
     page.drawRectangle({ x, y, width: w, height: h, color: rgb(0.03, 0.11, 0.22) });
     const label = "VIDEO";
     const size = Math.max(10, Math.min(w, h) / 8);
-    page.drawText(label, { x: x + w / 2 - bold.widthOfTextAtSize(label, size) / 2, y: y + h / 2 - size / 2, size, font: bold, color: rgb(0.07, 0.74, 0.65) });
+    page.drawText(label, {
+      x: x + w / 2 - bold.widthOfTextAtSize(label, size) / 2,
+      y: y + h / 2 - size / 2,
+      size,
+      font: bold,
+      color: rgb(0.07, 0.74, 0.65),
+    });
   }
 
   if (layout === "one_per_page") {
@@ -123,7 +158,12 @@ export async function exportPdf(workspaceId: string, ids: string[], layout: "one
     const cellH = (PH - margin * 2 - 30 - 18 * (rows - 1)) / rows;
     for (let i = 0; i < assets.length; i += cols * rows) {
       const page = pdf.addPage([PW, PH]);
-      page.drawText("Biblioteca de mídia · Meu Funil", { x: margin, y: PH - margin - 12, size: 12, font: bold });
+      page.drawText("Biblioteca de mídia · Meu Funil", {
+        x: margin,
+        y: PH - margin - 12,
+        size: 12,
+        font: bold,
+      });
       for (let j = 0; j < cols * rows && i + j < assets.length; j++) {
         const a = assets[i + j];
         const c = j % cols;
@@ -145,8 +185,20 @@ export async function exportPdf(workspaceId: string, ids: string[], layout: "one
         else videoBox(page, ix, iy, iw, ih);
         const fmt = (TARGET_FORMATS as any)[a.target_format]?.short ?? "Outro";
         page.drawText(safe(a.title ?? "Mídia"), { x, y: top - boxH - 14, size: 9, font: bold });
-        page.drawText(safe(`${fmt} · ${a.width ?? "?"}x${a.height ?? "?"}${a.duration_seconds ? ` · ${a.duration_seconds}s` : ""}`), { x, y: top - boxH - 26, size: 8, font, color: rgb(0.35, 0.4, 0.5) });
-        if (a.prompt) page.drawText(safe(a.prompt), { x, y: top - boxH - 37, size: 7, font, color: rgb(0.45, 0.5, 0.6) });
+        page.drawText(
+          safe(
+            `${fmt} · ${a.width ?? "?"}x${a.height ?? "?"}${a.duration_seconds ? ` · ${a.duration_seconds}s` : ""}`,
+          ),
+          { x, y: top - boxH - 26, size: 8, font, color: rgb(0.35, 0.4, 0.5) },
+        );
+        if (a.prompt)
+          page.drawText(safe(a.prompt), {
+            x,
+            y: top - boxH - 37,
+            size: 7,
+            font,
+            color: rgb(0.45, 0.5, 0.6),
+          });
       }
     }
   }
@@ -157,9 +209,16 @@ export async function exportPdf(workspaceId: string, ids: string[], layout: "one
   return { url: await signedDownload(path, name), name };
 }
 
-export async function uploadToLibrary(workspaceId: string, file: File, target: TargetFormat, userId: string, extra: { brandId?: string | null; campaignId?: string | null }) {
+export async function uploadToLibrary(
+  workspaceId: string,
+  file: File,
+  target: TargetFormat,
+  userId: string,
+  extra: { brandId?: string | null; campaignId?: string | null },
+) {
   const video = file.type.startsWith("video/");
-  if (!video && !file.type.startsWith("image/")) throw new Error(`${file.name}: envie imagem ou vídeo.`);
+  if (!video && !file.type.startsWith("image/"))
+    throw new Error(`${file.name}: envie imagem ou vídeo.`);
   if (file.size > 500 * 1024 * 1024) throw new Error(`${file.name}: arquivo maior que 500 MB.`);
   return ingestAsset({
     workspaceId,
@@ -175,7 +234,12 @@ export async function uploadToLibrary(workspaceId: string, file: File, target: T
   });
 }
 
-export async function reformat(workspaceId: string, assetId: string, targets: TargetFormat[], userId: string) {
+export async function reformat(
+  workspaceId: string,
+  assetId: string,
+  targets: TargetFormat[],
+  userId: string,
+) {
   const [a] = await loadAssets(workspaceId, [assetId]);
   if (!a) throw new Error("Mídia não encontrada.");
   const out = [];
@@ -197,7 +261,12 @@ export async function useInInstagram(workspaceId: string, ids: string[]) {
   const assets = await loadAssets(workspaceId, ids);
   if (!assets.length) throw new Error("Selecione ao menos uma mídia.");
   const first = assets[0];
-  let format = first.kind === "video" ? (first.target_format === "ig_story" ? "story_video" : "reel") : IG_FROM_TARGET[first.target_format] ?? "feed_image";
+  let format =
+    first.kind === "video"
+      ? first.target_format === "ig_story"
+        ? "story_video"
+        : "reel"
+      : (IG_FROM_TARGET[first.target_format] ?? "feed_image");
   if (assets.length > 1) format = "feed_carousel";
   const media = assets.slice(0, 10).map((a, i) => ({
     url: a.url,
@@ -223,14 +292,22 @@ export async function useInInstagram(workspaceId: string, ids: string[]) {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
-  await s.from("media_assets" as never).update({ ig_post_id: (data as any).id } as never).in("id", ids);
+  await s
+    .from("media_assets" as never)
+    .update({ ig_post_id: (data as any).id } as never)
+    .in("id", ids);
   return { postId: (data as any).id as string, format };
 }
 
 /** Cria criativos aprovados na campanha a partir das mídias. */
 export async function useInCampaign(workspaceId: string, ids: string[], campaignId: string) {
   const s = await db();
-  const { data: camp } = await s.from("campaigns").select("id, brand_id").eq("id", campaignId).eq("workspace_id", workspaceId).maybeSingle();
+  const { data: camp } = await s
+    .from("campaigns")
+    .select("id, brand_id")
+    .eq("id", campaignId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
   if (!camp) throw new Error("Campanha não encontrada.");
   const assets = await loadAssets(workspaceId, ids);
   let n = 0;
@@ -254,7 +331,10 @@ export async function useInCampaign(workspaceId: string, ids: string[], campaign
       .select("id")
       .single();
     if (error) throw new Error(error.message);
-    await s.from("media_assets" as never).update({ campaign_id: campaignId, creative_id: (cr as any).id, status: "approved" } as never).eq("id", a.id);
+    await s
+      .from("media_assets" as never)
+      .update({ campaign_id: campaignId, creative_id: (cr as any).id, status: "approved" } as never)
+      .eq("id", a.id);
     n++;
   }
   return { count: n };

@@ -14,7 +14,11 @@ const TARGETS = [
   "other",
 ] as const;
 
-async function requireMember(ctx: { supabase: any; userId: string }, workspaceId: string, roles?: string[]) {
+async function requireMember(
+  ctx: { supabase: any; userId: string },
+  workspaceId: string,
+  roles?: string[],
+) {
   const { data } = await ctx.supabase
     .from("workspace_members")
     .select("role")
@@ -32,7 +36,13 @@ const ids = z.array(z.string().uuid()).min(1).max(100);
 export const downloadAsset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ workspaceId: ws, assetId: z.string().uuid(), format: z.enum(["original", "png", "jpg"]).default("original") }).parse(d),
+    z
+      .object({
+        workspaceId: ws,
+        assetId: z.string().uuid(),
+        format: z.enum(["original", "png", "jpg"]).default("original"),
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId);
@@ -42,7 +52,9 @@ export const downloadAsset = createServerFn({ method: "POST" })
 export const exportPdf = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ workspaceId: ws, assetIds: ids, layout: z.enum(["one_per_page", "contact_sheet"]) }).parse(d),
+    z
+      .object({ workspaceId: ws, assetIds: ids, layout: z.enum(["one_per_page", "contact_sheet"]) })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId);
@@ -72,7 +84,9 @@ export const uploadMedia = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId, EDIT);
-    const a = await (await lib()).uploadToLibrary(data.workspaceId, data.file, data.target, context.userId, {
+    const a = await (
+      await lib()
+    ).uploadToLibrary(data.workspaceId, data.file, data.target, context.userId, {
       brandId: data.brandId,
     });
     return { id: a.id, igReady: a.ig_ready, issues: a.quality_report?.issues ?? [] };
@@ -81,11 +95,21 @@ export const uploadMedia = createServerFn({ method: "POST" })
 export const reformatMedia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ workspaceId: ws, assetId: z.string().uuid(), targets: z.array(z.enum(TARGETS)).min(1).max(8) }).parse(d),
+    z
+      .object({
+        workspaceId: ws,
+        assetId: z.string().uuid(),
+        targets: z.array(z.enum(TARGETS)).min(1).max(8),
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId, EDIT);
-    return { ids: await (await lib()).reformat(data.workspaceId, data.assetId, data.targets, context.userId) };
+    return {
+      ids: await (
+        await lib()
+      ).reformat(data.workspaceId, data.assetId, data.targets, context.userId),
+    };
   });
 
 export const useMediaInInstagram = createServerFn({ method: "POST" })
@@ -98,7 +122,9 @@ export const useMediaInInstagram = createServerFn({ method: "POST" })
 
 export const useMediaInCampaign = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ workspaceId: ws, assetIds: ids, campaignId: z.string().uuid() }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ workspaceId: ws, assetIds: ids, campaignId: z.string().uuid() }).parse(d),
+  )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId, EDIT);
     return (await lib()).useInCampaign(data.workspaceId, data.assetIds, data.campaignId);
@@ -107,16 +133,32 @@ export const useMediaInCampaign = createServerFn({ method: "POST" })
 /** Anexa uma mídia da biblioteca a um post do Instagram (substitui a mídia atual). */
 export const attachMediaToPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ workspaceId: ws, postId: z.string().uuid(), assetIds: ids }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ workspaceId: ws, postId: z.string().uuid(), assetIds: ids }).parse(d),
+  )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId, EDIT);
     const { supabaseAdmin: s } = await import("@/integrations/supabase/client.server");
-    const { data: post } = await s.from("ig_posts").select("id, format").eq("id", data.postId).eq("workspace_id", data.workspaceId).maybeSingle();
+    const { data: post } = await s
+      .from("ig_posts")
+      .select("id, format")
+      .eq("id", data.postId)
+      .eq("workspace_id", data.workspaceId)
+      .maybeSingle();
     if (!post) throw new Error("Post não encontrado.");
-    const { data: rows } = await s.from("media_assets" as never).select("*").eq("workspace_id", data.workspaceId).in("id", data.assetIds);
-    const assets = data.assetIds.map((id) => ((rows ?? []) as any[]).find((r) => r.id === id)).filter(Boolean) as any[];
+    const { data: rows } = await s
+      .from("media_assets" as never)
+      .select("*")
+      .eq("workspace_id", data.workspaceId)
+      .in("id", data.assetIds);
+    const assets = data.assetIds
+      .map((id) => ((rows ?? []) as any[]).find((r) => r.id === id))
+      .filter(Boolean) as any[];
     const bad = assets.filter((a) => !a.ig_ready);
-    if (bad.length) throw new Error(`Mídia não está pronta para o Instagram: ${(bad[0].quality_report?.issues ?? []).join(" ") || "sem validação."}`);
+    if (bad.length)
+      throw new Error(
+        `Mídia não está pronta para o Instagram: ${(bad[0].quality_report?.issues ?? []).join(" ") || "sem validação."}`,
+      );
     const media = assets.slice(0, post.format === "feed_carousel" ? 10 : 1).map((a, i) => ({
       url: a.url,
       type: a.kind,
@@ -127,7 +169,13 @@ export const attachMediaToPost = createServerFn({ method: "POST" })
       asset_id: a.id,
       ig_ready: a.ig_ready,
     }));
-    await s.from("ig_posts").update({ media } as never).eq("id", data.postId);
-    await s.from("media_assets" as never).update({ ig_post_id: data.postId } as never).in("id", data.assetIds);
+    await s
+      .from("ig_posts")
+      .update({ media } as never)
+      .eq("id", data.postId);
+    await s
+      .from("media_assets" as never)
+      .update({ ig_post_id: data.postId } as never)
+      .in("id", data.assetIds);
     return { ok: true, items: media.length };
   });
