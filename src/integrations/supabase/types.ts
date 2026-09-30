@@ -2366,6 +2366,7 @@ export type Database = {
           hashtags: string[]
           hook: string | null
           id: string
+          ig_creation_id: string | null
           ig_media_id: string | null
           ig_permalink: string | null
           last_error: string | null
@@ -2393,6 +2394,7 @@ export type Database = {
           hashtags?: string[]
           hook?: string | null
           id?: string
+          ig_creation_id?: string | null
           ig_media_id?: string | null
           ig_permalink?: string | null
           last_error?: string | null
@@ -2420,6 +2422,7 @@ export type Database = {
           hashtags?: string[]
           hook?: string | null
           id?: string
+          ig_creation_id?: string | null
           ig_media_id?: string | null
           ig_permalink?: string | null
           last_error?: string | null

@@ -26,7 +26,10 @@ export type IgPost = {
   created_at: string;
 };
 
-export const FORMATS: Record<string, { label: string; icon: typeof ImageIcon; aspect: string; phone: boolean }> = {
+export const FORMATS: Record<
+  string,
+  { label: string; icon: typeof ImageIcon; aspect: string; phone: boolean }
+> = {
   feed_image: { label: "Feed", icon: ImageIcon, aspect: "aspect-square", phone: false },
   feed_carousel: { label: "Carrossel", icon: Images, aspect: "aspect-[4/5]", phone: false },
   reel: { label: "Reels", icon: Clapperboard, aspect: "aspect-[9/16]", phone: true },
@@ -52,7 +55,11 @@ export function useIgAccount(workspaceId: string | null) {
     queryKey: ["ig-account", workspaceId],
     enabled: !!workspaceId,
     queryFn: async () => {
-      const { data } = await supabase.from("instagram_accounts").select("*").eq("workspace_id", workspaceId!).maybeSingle();
+      const { data } = await supabase
+        .from("instagram_accounts")
+        .select("*")
+        .eq("workspace_id", workspaceId!)
+        .maybeSingle();
       return data as any;
     },
   });
@@ -71,7 +78,12 @@ export function useIgPosts(workspaceId: string | null) {
       if (error) throw error;
       return (data ?? []) as unknown as IgPost[];
     },
-    refetchInterval: (q) => ((q.state.data as IgPost[] | undefined)?.some((p) => p.status === "generating" || p.status === "publishing") ? 5000 : false),
+    refetchInterval: (q) =>
+      (q.state.data as IgPost[] | undefined)?.some(
+        (p) => p.status === "generating" || p.status === "publishing",
+      )
+        ? 5000
+        : false,
   });
 }
 
@@ -85,7 +97,12 @@ export function MediaThumb({ post, className }: { post: IgPost; className?: stri
         m.type === "video" ? (
           <video src={m.url} className="size-full object-cover" muted playsInline />
         ) : (
-          <img src={m.url} alt={post.theme ?? "Post"} className="size-full object-cover" loading="lazy" />
+          <img
+            src={m.url}
+            alt={post.theme ?? "Post"}
+            className="size-full object-cover"
+            loading="lazy"
+          />
         )
       ) : (
         <div className="flex size-full items-center justify-center text-muted-foreground">
@@ -98,4 +115,11 @@ export function MediaThumb({ post, className }: { post: IgPost; className?: stri
 
 export const fmtNum = (n: number) => new Intl.NumberFormat("pt-BR").format(Math.round(n));
 export const fmtDateTime = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Sem data";
+  iso
+    ? new Date(iso).toLocaleString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Sem data";
