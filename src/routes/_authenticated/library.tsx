@@ -922,7 +922,7 @@ function AssetDetail({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ReadyBadge a={a} />
-          <StatusPill status={a.status} label={STATUS[a.status]} />
+          <StatusPill status={a.status} label={STATUS[a.status] ?? a.status} />
         </div>
         {!a.ig_ready && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
