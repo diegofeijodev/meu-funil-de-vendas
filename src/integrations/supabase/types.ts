@@ -2148,6 +2148,293 @@ export type Database = {
         }
         Relationships: []
       }
+      ig_content_plans: {
+        Row: {
+          auto_publish: boolean
+          brand_id: string | null
+          content_pillars: Json
+          created_at: string
+          cta_default: string | null
+          hashtag_strategy: Json
+          id: string
+          name: string
+          objective: string | null
+          posting_frequency: Json
+          preferred_times: Json
+          requires_approval: boolean
+          status: string
+          tone_of_voice: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          auto_publish?: boolean
+          brand_id?: string | null
+          content_pillars?: Json
+          created_at?: string
+          cta_default?: string | null
+          hashtag_strategy?: Json
+          id?: string
+          name: string
+          objective?: string | null
+          posting_frequency?: Json
+          preferred_times?: Json
+          requires_approval?: boolean
+          status?: string
+          tone_of_voice?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          auto_publish?: boolean
+          brand_id?: string | null
+          content_pillars?: Json
+          created_at?: string
+          cta_default?: string | null
+          hashtag_strategy?: Json
+          id?: string
+          name?: string
+          objective?: string | null
+          posting_frequency?: Json
+          preferred_times?: Json
+          requires_approval?: boolean
+          status?: string
+          tone_of_voice?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_content_plans_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_content_plans_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ig_post_metrics: {
+        Row: {
+          collected_at: string
+          comments: number | null
+          created_at: string
+          id: string
+          impressions: number | null
+          likes: number | null
+          plays: number | null
+          post_id: string
+          profile_visits: number | null
+          raw: Json
+          reach: number | null
+          saves: number | null
+          shares: number | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          collected_at?: string
+          comments?: number | null
+          created_at?: string
+          id?: string
+          impressions?: number | null
+          likes?: number | null
+          plays?: number | null
+          post_id: string
+          profile_visits?: number | null
+          raw?: Json
+          reach?: number | null
+          saves?: number | null
+          shares?: number | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          collected_at?: string
+          comments?: number | null
+          created_at?: string
+          id?: string
+          impressions?: number | null
+          likes?: number | null
+          plays?: number | null
+          post_id?: string
+          profile_visits?: number | null
+          raw?: Json
+          reach?: number | null
+          saves?: number | null
+          shares?: number | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_post_metrics_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "ig_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_post_metrics_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ig_posts: {
+        Row: {
+          ai_generation_log: Json
+          ai_provider: string | null
+          caption: string | null
+          created_at: string
+          creative_brief: Json
+          cta: string | null
+          format: string
+          hashtags: string[]
+          hook: string | null
+          id: string
+          ig_media_id: string | null
+          ig_permalink: string | null
+          last_error: string | null
+          media: Json
+          metrics_collected: Json
+          plan_id: string | null
+          published_at: string | null
+          rejection_reason: string | null
+          retry_count: number
+          scheduled_at: string | null
+          status: string
+          theme: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          ai_generation_log?: Json
+          ai_provider?: string | null
+          caption?: string | null
+          created_at?: string
+          creative_brief?: Json
+          cta?: string | null
+          format: string
+          hashtags?: string[]
+          hook?: string | null
+          id?: string
+          ig_media_id?: string | null
+          ig_permalink?: string | null
+          last_error?: string | null
+          media?: Json
+          metrics_collected?: Json
+          plan_id?: string | null
+          published_at?: string | null
+          rejection_reason?: string | null
+          retry_count?: number
+          scheduled_at?: string | null
+          status?: string
+          theme?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          ai_generation_log?: Json
+          ai_provider?: string | null
+          caption?: string | null
+          created_at?: string
+          creative_brief?: Json
+          cta?: string | null
+          format?: string
+          hashtags?: string[]
+          hook?: string | null
+          id?: string
+          ig_media_id?: string | null
+          ig_permalink?: string | null
+          last_error?: string | null
+          media?: Json
+          metrics_collected?: Json
+          plan_id?: string | null
+          published_at?: string | null
+          rejection_reason?: string | null
+          retry_count?: number
+          scheduled_at?: string | null
+          status?: string
+          theme?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_posts_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_posts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_accounts: {
+        Row: {
+          connected_at: string | null
+          created_at: string
+          facebook_page_id: string | null
+          id: string
+          ig_user_id: string | null
+          last_error: string | null
+          profile_picture_url: string | null
+          status: string
+          updated_at: string
+          username: string | null
+          workspace_id: string
+        }
+        Insert: {
+          connected_at?: string | null
+          created_at?: string
+          facebook_page_id?: string | null
+          id?: string
+          ig_user_id?: string | null
+          last_error?: string | null
+          profile_picture_url?: string | null
+          status?: string
+          updated_at?: string
+          username?: string | null
+          workspace_id: string
+        }
+        Update: {
+          connected_at?: string | null
+          created_at?: string
+          facebook_page_id?: string | null
+          id?: string
+          ig_user_id?: string | null
+          last_error?: string | null
+          profile_picture_url?: string | null
+          status?: string
+          updated_at?: string
+          username?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_accounts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_connections: {
         Row: {
           account_label: string | null
@@ -2671,34 +2958,49 @@ export type Database = {
       }
       publishing_jobs: {
         Row: {
+          attempts: number
           campaign_id: string | null
+          channel: string
           created_at: string
           id: string
+          ig_post_id: string | null
+          locked_at: string | null
           log: string | null
           mode: string
           post_id: string | null
+          run_at: string | null
           status: string
           target: string
           workspace_id: string
         }
         Insert: {
+          attempts?: number
           campaign_id?: string | null
+          channel?: string
           created_at?: string
           id?: string
+          ig_post_id?: string | null
+          locked_at?: string | null
           log?: string | null
           mode?: string
           post_id?: string | null
+          run_at?: string | null
           status?: string
           target?: string
           workspace_id: string
         }
         Update: {
+          attempts?: number
           campaign_id?: string | null
+          channel?: string
           created_at?: string
           id?: string
+          ig_post_id?: string | null
+          locked_at?: string | null
           log?: string | null
           mode?: string
           post_id?: string | null
+          run_at?: string | null
           status?: string
           target?: string
           workspace_id?: string
@@ -2709,6 +3011,13 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "publishing_jobs_ig_post_id_fkey"
+            columns: ["ig_post_id"]
+            isOneToOne: false
+            referencedRelation: "ig_posts"
             referencedColumns: ["id"]
           },
           {
