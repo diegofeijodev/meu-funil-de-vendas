@@ -13,6 +13,7 @@ export async function getWorkspaceAiKey(workspaceId: string, vendor: AiVendor): 
     .from("app_credentials")
     .select("value")
     .eq("key", slot(vendor, workspaceId))
+    .is("workspace_id" as never, null)
     .maybeSingle();
   return data?.value?.trim() || null;
 }
@@ -20,13 +21,16 @@ export async function getWorkspaceAiKey(workspaceId: string, vendor: AiVendor): 
 export async function setWorkspaceAiKey(workspaceId: string, vendor: AiVendor, value: string | null) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   if (!value) {
-    const { error } = await supabaseAdmin.from("app_credentials").delete().eq("key", slot(vendor, workspaceId));
+    const { error } = await supabaseAdmin.from("app_credentials").delete().eq("key", slot(vendor, workspaceId)).is("workspace_id" as never, null);
     if (error) throw new Error(error.message);
     return;
   }
   const { error } = await supabaseAdmin
     .from("app_credentials")
-    .upsert({ key: slot(vendor, workspaceId), value, updated_at: new Date().toISOString() });
+    .upsert(
+      { key: slot(vendor, workspaceId), value, updated_at: new Date().toISOString() } as never,
+      { onConflict: "workspace_id,key" },
+    );
   if (error) throw new Error(error.message);
 }
 
