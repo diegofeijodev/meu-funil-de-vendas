@@ -60,7 +60,10 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
           out["revalidate"] = await revalidateBackfill(20).catch((e) => ({ error: String(e) }));
           out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
         }
-        if (all || task === "metrics") out["metrics"] = await ig.collectDueMetrics();
+        if (all || task === "metrics") {
+          out["metrics"] = await ig.collectDueMetrics();
+          out["learning"] = await ig.learnFromTopPosts().catch((e) => ({ error: String(e) }));
+        }
         return Response.json(out);
       },
     },
