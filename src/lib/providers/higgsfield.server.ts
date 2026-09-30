@@ -48,7 +48,10 @@ export function createHiggsfieldProvider(opts: {
     const tool = video ? "generate_video" : "generate_image";
     let out;
     try {
-      out = await callTool(serverUrl, accessToken, tool, { params: { ...params, resolution: video ? "1080p" : "2k" } });
+      const refs = (req.referenceUrls ?? []).slice(0, 4);
+      out = await callTool(serverUrl, accessToken, tool, {
+        params: { ...params, resolution: video ? "1080p" : "2k", ...(refs.length ? { input_images: refs } : {}) },
+      });
       if (/invalid|unknown|not (allowed|supported)|resolution/i.test(out.text ?? "") && !extractJobId(`${out.structured ?? ""}\n${out.text}`))
         throw new Error("resolution rejected");
     } catch {
