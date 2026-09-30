@@ -1185,6 +1185,7 @@ export async function syncInstagramHistory(workspaceId: string) {
             },
           ],
           creative_brief: { imported: true },
+          metrics_collected: ["1h", "24h", "7d"],
         };
       });
       const { data: ins, error } = await s.from("ig_posts").insert(rows as never).select("id, ig_media_id");
