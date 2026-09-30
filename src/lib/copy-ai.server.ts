@@ -49,7 +49,7 @@ function parse(text: string) {
   return JSON.parse(m[0]);
 }
 
-async function viaOpenAI(key: string, p: string) {
+export async function viaOpenAI(key: string, p: string) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -64,7 +64,7 @@ async function viaOpenAI(key: string, p: string) {
   return parse(j.choices?.[0]?.message?.content ?? "");
 }
 
-async function viaGemini(key: string, p: string) {
+export async function viaGemini(key: string, p: string) {
   const res = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
     {
@@ -82,7 +82,7 @@ async function viaGemini(key: string, p: string) {
 }
 
 /** Créditos do app (Lovable AI) via Responses em streaming. */
-async function viaGateway(p: string) {
+export async function viaGateway(p: string, schema: Record<string, unknown> = SCHEMA, name = "copy") {
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) throw new Error("IA do app não configurada.");
   const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
@@ -94,7 +94,7 @@ async function viaGateway(p: string) {
       stream: true,
       store: false,
       reasoning: { effort: "low" },
-      text: { format: { type: "json_schema", name: "copy", strict: true, schema: SCHEMA } },
+      text: { format: { type: "json_schema", name, strict: true, schema } },
     }),
   });
   if (res.status === 402) throw new Error("Créditos de IA esgotados. Conecte sua própria chave em Integrações.");

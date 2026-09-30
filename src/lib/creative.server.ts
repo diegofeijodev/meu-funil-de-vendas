@@ -108,7 +108,7 @@ export async function buildBrandBrainPrompt(
 
 export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
 
-async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto") {
+export async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto") {
   if (choice === "chatgpt") return createChatgptProvider(await getWorkspaceAiKey(workspaceId, "openai"));
   if (choice === "gemini") return createGeminiProvider(await getWorkspaceAiKey(workspaceId, "gemini"));
   const conn = await getLiveConnection(supabase, workspaceId, "higgsfield");
