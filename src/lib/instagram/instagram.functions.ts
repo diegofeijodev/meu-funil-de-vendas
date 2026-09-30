@@ -120,3 +120,27 @@ export const collectPostMetrics = createServerFn({ method: "POST" })
     await requirePost(context, data.workspaceId, data.postId);
     return (await lib()).collectPostMetrics(data.postId);
   });
+
+export const suggestPillars = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ workspaceId: ws, brandId: z.string().uuid().nullable().optional(), objective: z.string().max(500).optional(), tone: z.string().max(500).optional(), audience: z.string().max(500).optional() }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId);
+    return (await lib()).suggestPillars(data.workspaceId, data);
+  });
+
+export const uploadPostMedia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => {
+    if (!(d instanceof FormData)) throw new Error("Envio inválido.");
+    const file = d.get("file");
+    if (!(file instanceof File)) throw new Error("Arquivo ausente.");
+    return { workspaceId: ws.parse(d.get("workspaceId")), postId: z.string().uuid().parse(d.get("postId")), file };
+  })
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId);
+    await requirePost(context, data.workspaceId, data.postId);
+    return (await lib()).uploadOwnMedia(data.workspaceId, data.postId, data.file);
+  });
