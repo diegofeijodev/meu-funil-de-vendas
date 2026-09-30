@@ -10,7 +10,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
 
 /** Lista de posts do Instagram aguardando aprovação — usada na aba Instagram e em Aprovações. */
-export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { workspaceId: string; onOpen?: (id: string) => void; canEdit?: boolean }) {
+export function IgApprovalList({
+  workspaceId,
+  onOpen,
+  canEdit = true,
+}: {
+  workspaceId: string;
+  onOpen?: (id: string) => void;
+  canEdit?: boolean;
+}) {
   const qc = useQueryClient();
   const { data: posts = [], isLoading } = useIgPosts(workspaceId);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -29,7 +37,9 @@ export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { worksp
     let ok = 0;
     for (const id of ids) {
       try {
-        await (kind === "approve" ? approve({ data: { workspaceId, postId: id } }) : reject({ data: { workspaceId, postId: id, reason } }));
+        await (kind === "approve"
+          ? approve({ data: { workspaceId, postId: id } })
+          : reject({ data: { workspaceId, postId: id, reason } }));
         ok++;
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Falha.");
@@ -38,11 +48,20 @@ export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { worksp
     setBusy(false);
     setSel(new Set());
     qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
-    if (ok) toast.success(kind === "approve" ? `${ok} post(s) aprovado(s).` : `${ok} post(s) rejeitado(s).`);
+    if (ok)
+      toast.success(
+        kind === "approve" ? `${ok} post(s) aprovado(s).` : `${ok} post(s) rejeitado(s).`,
+      );
   };
 
   if (isLoading) return <div className="h-32 animate-pulse rounded-lg bg-muted" />;
-  if (!pending.length) return <EmptyState title="Nenhum post do Instagram pendente" description="Posts com mídia gerada aparecem aqui para aprovação." />;
+  if (!pending.length)
+    return (
+      <EmptyState
+        title="Nenhum post do Instagram pendente"
+        description="Posts com mídia gerada aparecem aqui para aprovação."
+      />
+    );
 
   const all = sel.size === pending.length;
   return (
@@ -50,19 +69,33 @@ export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { worksp
       {canEdit && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={all} onCheckedChange={() => setSel(all ? new Set() : new Set(pending.map((p) => p.id)))} />
+            <Checkbox
+              checked={all}
+              onCheckedChange={() => setSel(all ? new Set() : new Set(pending.map((p) => p.id)))}
+            />
             Selecionar todos
           </label>
           <div className="flex gap-2">
-            <Button size="sm" variant="ghost" disabled={!sel.size || busy} onClick={() => act([...sel], "reject")}>Rejeitar selecionados</Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!sel.size || busy}
+              onClick={() => act([...sel], "reject")}
+            >
+              Rejeitar selecionados
+            </Button>
             <Button size="sm" disabled={!sel.size || busy} onClick={() => act([...sel], "approve")}>
-              {busy && <Loader2 className="size-4 animate-spin" />} Aprovar selecionados ({sel.size})
+              {busy && <Loader2 className="size-4 animate-spin" />} Aprovar selecionados ({sel.size}
+              )
             </Button>
           </div>
         </div>
       )}
       {pending.map((p) => (
-        <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface/50 p-3">
+        <div
+          key={p.id}
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface/50 p-3"
+        >
           {canEdit && (
             <Checkbox
               checked={sel.has(p.id)}
@@ -75,7 +108,11 @@ export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { worksp
             />
           )}
           <MediaThumb post={p} className="size-14 shrink-0" />
-          <button className="min-w-0 flex-1 text-left" onClick={() => onOpen?.(p.id)} disabled={!onOpen}>
+          <button
+            className="min-w-0 flex-1 text-left"
+            onClick={() => onOpen?.(p.id)}
+            disabled={!onOpen}
+          >
             <div className="flex flex-wrap items-center gap-2">
               <StatusPill status="pending" label={`Instagram · ${FORMATS[p.format]?.label}`} />
               <span className="text-xs text-muted-foreground">{fmtDateTime(p.scheduled_at)}</span>
@@ -85,8 +122,17 @@ export function IgApprovalList({ workspaceId, onOpen, canEdit = true }: { worksp
           </button>
           {canEdit && (
             <div className="flex gap-2">
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => act([p.id], "reject")}>Rejeitar</Button>
-              <Button size="sm" disabled={busy} onClick={() => act([p.id], "approve")}>Aprovar</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => act([p.id], "reject")}
+              >
+                Rejeitar
+              </Button>
+              <Button size="sm" disabled={busy} onClick={() => act([p.id], "approve")}>
+                Aprovar
+              </Button>
             </div>
           )}
         </div>

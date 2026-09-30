@@ -26,7 +26,11 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
         let ok = !!envSecret && safeEqual(provided, envSecret);
         if (!ok) {
           const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-          const { data } = await supabaseAdmin.from("cron_tokens").select("token").eq("name", "instagram").maybeSingle();
+          const { data } = await supabaseAdmin
+            .from("cron_tokens")
+            .select("token")
+            .eq("name", "instagram")
+            .maybeSingle();
           ok = !!data?.token && safeEqual(provided, data.token);
         }
         if (!ok) return new Response("Unauthorized", { status: 401 });
@@ -44,12 +48,15 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
           out["pendingMedia"] = await ig.pollPendingMedia().catch((e) => ({ error: String(e) }));
           const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
           const { pollPendingCreatives } = await import("@/lib/creative.server");
-          out["pendingCreatives"] = await pollPendingCreatives(supabaseAdmin as never).catch((e) => ({
-            error: String(e),
-          }));
+          out["pendingCreatives"] = await pollPendingCreatives(supabaseAdmin as never).catch(
+            (e) => ({
+              error: String(e),
+            }),
+          );
           out["queue"] = await ig.runPublishingQueue();
         }
-        if (all || task === "media") out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
+        if (all || task === "media")
+          out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
         if (all || task === "metrics") out["metrics"] = await ig.collectDueMetrics();
         return Response.json(out);
       },

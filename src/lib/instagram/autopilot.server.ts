@@ -17,7 +17,16 @@ export async function logEvent(ev: {
   workspace_id: string;
   plan_id?: string | null;
   post_id?: string | null;
-  kind: "generation" | "media" | "schedule" | "publish" | "failure" | "approval" | "reschedule" | "optimize" | "guardrail";
+  kind:
+    | "generation"
+    | "media"
+    | "schedule"
+    | "publish"
+    | "failure"
+    | "approval"
+    | "reschedule"
+    | "optimize"
+    | "guardrail";
   level?: "info" | "warn" | "error";
   message: string;
 }) {
@@ -31,7 +40,11 @@ export async function logEvent(ev: {
 
 async function activePlans() {
   const s = await db();
-  const { data } = await s.from("ig_content_plans").select("*").eq("auto_publish", true).eq("status", "active");
+  const { data } = await s
+    .from("ig_content_plans")
+    .select("*")
+    .eq("auto_publish", true)
+    .eq("status", "active");
   return (data ?? []) as any[];
 }
 
@@ -42,14 +55,33 @@ export async function runWeeklyAutopilot() {
     try {
       const r = await generateContentCalendar(plan.workspace_id, plan.id, 1, "auto");
       const s = await db();
-      await s.from("ig_content_plans").update({ last_autopilot_at: new Date().toISOString() }).eq("id", plan.id);
-      await logEvent({ workspace_id: plan.workspace_id, plan_id: plan.id, kind: "generation", message: `Calendário da próxima semana gerado: ${r.created} posts (IA: ${r.provider}).` });
+      await s
+        .from("ig_content_plans")
+        .update({ last_autopilot_at: new Date().toISOString() })
+        .eq("id", plan.id);
+      await logEvent({
+        workspace_id: plan.workspace_id,
+        plan_id: plan.id,
+        kind: "generation",
+        message: `Calendário da próxima semana gerado: ${r.created} posts (IA: ${r.provider}).`,
+      });
       if (plan.requires_approval) {
-        await logEvent({ workspace_id: plan.workspace_id, plan_id: plan.id, kind: "approval", message: "Os criativos serão gerados e aguardarão sua aprovação na aba Aprovações." });
+        await logEvent({
+          workspace_id: plan.workspace_id,
+          plan_id: plan.id,
+          kind: "approval",
+          message: "Os criativos serão gerados e aguardarão sua aprovação na aba Aprovações.",
+        });
       }
       out.push({ plan: plan.id, created: r.created });
     } catch (e) {
-      await logEvent({ workspace_id: plan.workspace_id, plan_id: plan.id, kind: "failure", level: "error", message: `Falha ao gerar o calendário: ${errMsg(e)}` });
+      await logEvent({
+        workspace_id: plan.workspace_id,
+        plan_id: plan.id,
+        kind: "failure",
+        level: "error",
+        message: `Falha ao gerar o calendário: ${errMsg(e)}`,
+      });
       out.push({ plan: plan.id, error: errMsg(e) });
     }
   }
@@ -80,20 +112,52 @@ export async function autopilotTick() {
     const r = await generatePostAssets(p.workspace_id, p.id, "auto");
     media++;
     if (!r.ok) {
-      await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "failure", level: "error", message: `Falha ao gerar a mídia: ${r.error}` });
+      await logEvent({
+        workspace_id: p.workspace_id,
+        plan_id: p.plan_id,
+        post_id: p.id,
+        kind: "failure",
+        level: "error",
+        message: `Falha ao gerar a mídia: ${r.error}`,
+      });
       continue;
     }
-    if (r.pending) {
-      await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "media", message: `Mídia em geração (${r.provider}); será concluída automaticamente.` });
+    if ("pending" in r && r.pending) {
+      await logEvent({
+        workspace_id: p.workspace_id,
+        plan_id: p.plan_id,
+        post_id: p.id,
+        kind: "media",
+        message: `Mídia em geração (${r.provider}); será concluída automaticamente.`,
+      });
       continue;
     }
-    await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "media", message: `Mídia gerada (${r.provider}).` });
+    await logEvent({
+      workspace_id: p.workspace_id,
+      plan_id: p.plan_id,
+      post_id: p.id,
+      kind: "media",
+      message: `Mídia gerada (${r.provider}).`,
+    });
     if (!plan.requires_approval) {
       try {
         await schedulePost(p.workspace_id, p.id, p.scheduled_at);
-        await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "schedule", message: `Agendado para ${fmt(p.scheduled_at)}.` });
+        await logEvent({
+          workspace_id: p.workspace_id,
+          plan_id: p.plan_id,
+          post_id: p.id,
+          kind: "schedule",
+          message: `Agendado para ${fmt(p.scheduled_at)}.`,
+        });
       } catch (e) {
-        await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "failure", level: "error", message: `Falha ao agendar: ${errMsg(e)}` });
+        await logEvent({
+          workspace_id: p.workspace_id,
+          plan_id: p.plan_id,
+          post_id: p.id,
+          kind: "failure",
+          level: "error",
+          message: `Falha ao agendar: ${errMsg(e)}`,
+        });
       }
     }
   }
@@ -117,7 +181,14 @@ export async function autopilotTick() {
       const iso = new Date(next).toISOString();
       await s.from("ig_posts").update({ scheduled_at: iso }).eq("id", p.id);
       rescheduled++;
-      await logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: "reschedule", level: "warn", message: `Sem aprovação até 2h antes — reagendado para ${fmt(iso)}.` });
+      await logEvent({
+        workspace_id: p.workspace_id,
+        plan_id: p.plan_id,
+        post_id: p.id,
+        kind: "reschedule",
+        level: "warn",
+        message: `Sem aprovação até 2h antes — reagendado para ${fmt(iso)}.`,
+      });
     }
   }
   return { media, rescheduled };
@@ -126,28 +197,60 @@ export async function autopilotTick() {
 /** Chamado quando um post é aprovado: agenda sozinho se o plano está no piloto automático. */
 export async function afterApproval(workspaceId: string, postId: string) {
   const s = await db();
-  const { data: post } = await s.from("ig_posts").select("plan_id, scheduled_at").eq("id", postId).maybeSingle();
+  const { data: post } = await s
+    .from("ig_posts")
+    .select("plan_id, scheduled_at")
+    .eq("id", postId)
+    .maybeSingle();
   if (!post?.plan_id) return;
-  const { data: plan } = await s.from("ig_content_plans").select("auto_publish, status").eq("id", post.plan_id).maybeSingle();
-  await logEvent({ workspace_id: workspaceId, plan_id: post.plan_id, post_id: postId, kind: "approval", message: "Post aprovado." });
+  const { data: plan } = await s
+    .from("ig_content_plans")
+    .select("auto_publish, status")
+    .eq("id", post.plan_id)
+    .maybeSingle();
+  await logEvent({
+    workspace_id: workspaceId,
+    plan_id: post.plan_id,
+    post_id: postId,
+    kind: "approval",
+    message: "Post aprovado.",
+  });
   if (!plan?.auto_publish || plan.status !== "active" || !post.scheduled_at) return;
   if (new Date(post.scheduled_at).getTime() < Date.now()) return;
   await schedulePost(workspaceId, postId, post.scheduled_at);
-  await logEvent({ workspace_id: workspaceId, plan_id: post.plan_id, post_id: postId, kind: "schedule", message: `Agendado automaticamente para ${fmt(post.scheduled_at)}.` });
+  await logEvent({
+    workspace_id: workspaceId,
+    plan_id: post.plan_id,
+    post_id: postId,
+    kind: "schedule",
+    message: `Agendado automaticamente para ${fmt(post.scheduled_at)}.`,
+  });
 }
 
 /** Token expirado: pausa planos, marca conta com erro e avisa. */
 export async function handleTokenExpired(workspaceId: string, message: string) {
   const s = await db();
-  await s.from("instagram_accounts").update({ status: "error", last_error: message }).eq("workspace_id", workspaceId);
-  await s.from("ig_content_plans").update({ status: "paused" }).eq("workspace_id", workspaceId).eq("status", "active");
+  await s
+    .from("instagram_accounts")
+    .update({ status: "error", last_error: message })
+    .eq("workspace_id", workspaceId);
+  await s
+    .from("ig_content_plans")
+    .update({ status: "paused" })
+    .eq("workspace_id", workspaceId)
+    .eq("status", "active");
   await s
     .from("publishing_jobs")
     .update({ status: "cancelled", locked_at: null })
     .eq("workspace_id", workspaceId)
     .eq("channel", "instagram_organic")
     .eq("status", "pending");
-  await logEvent({ workspace_id: workspaceId, kind: "guardrail", level: "error", message: `Token da Meta expirado: planos pausados e publicações suspensas. ${message}` });
+  await logEvent({
+    workspace_id: workspaceId,
+    kind: "guardrail",
+    level: "error",
+    message: `Token da Meta expirado: planos pausados e publicações suspensas. ${message}`,
+  });
 }
 
 /* ---------------- Agente de otimização ---------------- */
@@ -160,7 +263,10 @@ function pillarName(p: any) {
 export async function runOptimizer() {
   const s = await db();
   const since = new Date(Date.now() - 14 * 86400e3).toISOString();
-  const { data: plans } = await s.from("ig_content_plans").select("*").in("status", ["active", "paused"]);
+  const { data: plans } = await s
+    .from("ig_content_plans")
+    .select("*")
+    .in("status", ["active", "paused"]);
   const out: any[] = [];
   for (const plan of (plans ?? []) as any[]) {
     const { data: posts } = await s
@@ -177,29 +283,48 @@ export async function runOptimizer() {
     const { data: metrics } = await s
       .from("ig_post_metrics")
       .select("post_id, reach, collected_at")
-      .in("post_id", list.map((p) => p.id))
+      .in(
+        "post_id",
+        list.map((p) => p.id),
+      )
       .order("collected_at", { ascending: false });
     const reach = new Map<string, number>();
-    for (const m of (metrics ?? []) as any[]) if (!reach.has(m.post_id)) reach.set(m.post_id, m.reach ?? 0);
+    for (const m of (metrics ?? []) as any[])
+      if (!reach.has(m.post_id)) reach.set(m.post_id, m.reach ?? 0);
 
     // Horários (fuso de São Paulo).
     const byHour = new Map<number, number[]>();
     for (const p of list) {
-      const h = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/Sao_Paulo" }).format(new Date(p.published_at))) % 24;
+      const h =
+        Number(
+          new Intl.DateTimeFormat("en-US", {
+            hour: "numeric",
+            hour12: false,
+            timeZone: "America/Sao_Paulo",
+          }).format(new Date(p.published_at)),
+        ) % 24;
       byHour.set(h, [...(byHour.get(h) ?? []), reach.get(p.id) ?? 0]);
     }
     const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
-    const hours = [...byHour.entries()].map(([h, v]) => ({ h, avg: avg(v), n: v.length })).sort((a, b) => b.avg - a.avg);
+    const hours = [...byHour.entries()]
+      .map(([h, v]) => ({ h, avg: avg(v), n: v.length }))
+      .sort((a, b) => b.avg - a.avg);
     const topHours = hours.slice(0, 3).map((x) => `${String(x.h).padStart(2, "0")}:00`);
 
     // Pilares por palavra-chave.
-    const pillars = (Array.isArray(plan.content_pillars) ? plan.content_pillars : []).map(pillarName).filter(Boolean);
+    const pillars = (Array.isArray(plan.content_pillars) ? plan.content_pillars : [])
+      .map(pillarName)
+      .filter(Boolean);
     const scores: Record<string, number[]> = {};
     for (const name of pillars) {
-      const words = name.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3 && !PILLAR_STOP.has(w));
+      const words = name
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((w: string) => w.length > 3 && !PILLAR_STOP.has(w));
       for (const p of list) {
         const text = `${p.theme ?? ""} ${p.caption ?? ""}`.toLowerCase();
-        if (words.some((w: string) => text.includes(w))) (scores[name] ??= []).push(reach.get(p.id) ?? 0);
+        if (words.some((w: string) => text.includes(w)))
+          (scores[name] ??= []).push(reach.get(p.id) ?? 0);
       }
     }
     const raw: Record<string, number> = {};
@@ -222,19 +347,43 @@ export async function runOptimizer() {
       preferred_times: { before: prevTimes, after: newTimes },
       pillar_weights: weights,
       summary: [
-        topHours.length ? `Melhores horários por alcance médio: ${hours.slice(0, 3).map((x) => `${String(x.h).padStart(2, "0")}h (${Math.round(x.avg)} de alcance, ${x.n} posts)`).join(", ")}.` : null,
-        best ? `Pilar com melhor desempenho: "${best[0]}" (peso ${Math.round(best[1] * 100)}%).` : null,
+        topHours.length
+          ? `Melhores horários por alcance médio: ${hours
+              .slice(0, 3)
+              .map(
+                (x) =>
+                  `${String(x.h).padStart(2, "0")}h (${Math.round(x.avg)} de alcance, ${x.n} posts)`,
+              )
+              .join(", ")}.`
+          : null,
+        best
+          ? `Pilar com melhor desempenho: "${best[0]}" (peso ${Math.round(best[1] * 100)}%).`
+          : null,
         `Baseado em ${list.length} posts publicados nos últimos 14 dias.`,
-      ].filter(Boolean).join(" "),
+      ]
+        .filter(Boolean)
+        .join(" "),
     };
     const notes = [...(Array.isArray(plan.ai_notes) ? plan.ai_notes : []), note].slice(-20);
-    await s.from("ig_content_plans").update({ preferred_times: newTimes, pillar_weights: weights, ai_notes: notes }).eq("id", plan.id);
-    await logEvent({ workspace_id: plan.workspace_id, plan_id: plan.id, kind: "optimize", message: `Otimização semanal: ${note.summary}` });
+    await s
+      .from("ig_content_plans")
+      .update({ preferred_times: newTimes, pillar_weights: weights, ai_notes: notes })
+      .eq("id", plan.id);
+    await logEvent({
+      workspace_id: plan.workspace_id,
+      plan_id: plan.id,
+      kind: "optimize",
+      message: `Otimização semanal: ${note.summary}`,
+    });
     out.push({ plan: plan.id, ok: true });
   }
   return out;
 }
 
 function fmt(iso: string) {
-  return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
+  return new Date(iso).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }

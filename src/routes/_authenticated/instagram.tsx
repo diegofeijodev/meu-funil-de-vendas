@@ -15,9 +15,16 @@ export const Route = createFileRoute("/_authenticated/instagram")({
   head: () => ({
     meta: [
       { title: "Instagram · Meu Funil" },
-      { name: "description", content: "Planeje, gere com IA, aprove e publique posts, carrosséis, Reels e Stories no Instagram." },
+      {
+        name: "description",
+        content:
+          "Planeje, gere com IA, aprove e publique posts, carrosséis, Reels e Stories no Instagram.",
+      },
       { property: "og:title", content: "Instagram · Meu Funil" },
-      { property: "og:description", content: "Publicação automática no Instagram com criativos e legendas gerados por IA." },
+      {
+        property: "og:description",
+        content: "Publicação automática no Instagram com criativos e legendas gerados por IA.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -49,15 +56,23 @@ function InstagramPage() {
           <TabsTrigger value="approvals">Aprovações</TabsTrigger>
           <TabsTrigger value="results">Resultados</TabsTrigger>
         </TabsList>
-        <TabsContent value="overview"><IgOverview workspaceId={workspaceId} posts={posts} onOpen={setOpenId} /></TabsContent>
-        <TabsContent value="strategy"><IgStrategy workspaceId={workspaceId} /></TabsContent>
-        <TabsContent value="calendar"><IgCalendar workspaceId={workspaceId} posts={posts} onOpen={setOpenId} /></TabsContent>
+        <TabsContent value="overview">
+          <IgOverview workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+        </TabsContent>
+        <TabsContent value="strategy">
+          <IgStrategy workspaceId={workspaceId} />
+        </TabsContent>
+        <TabsContent value="calendar">
+          <IgCalendar workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+        </TabsContent>
         <TabsContent value="approvals">
           <Section title="Posts aguardando aprovação">
             <IgApprovalList workspaceId={workspaceId} onOpen={setOpenId} canEdit={canEdit} />
           </Section>
         </TabsContent>
-        <TabsContent value="results"><IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} /></TabsContent>
+        <TabsContent value="results">
+          <IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+        </TabsContent>
       </Tabs>
       {open && <PostEditor workspaceId={workspaceId} post={open} onClose={() => setOpenId(null)} />}
     </>
