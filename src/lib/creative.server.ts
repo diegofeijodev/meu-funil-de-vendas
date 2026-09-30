@@ -397,3 +397,220 @@ export async function pollPendingCreatives(supabase: DB) {
   }
   return out;
 }
+
+/* ---------------- Direção de arte (imagens) ---------------- */
+
+export type ArtInput = {
+  workspaceId: string;
+  brand: any | null;
+  campaign: any | null;
+  title: string;
+  type: string;
+  prompt: string;
+  copyText: string;
+  aspectRatio: string;
+  targetFormat?: string | null;
+  providerChoice: ProviderChoice;
+  kind: CreativeKind;
+  visualPrompt?: string | null;
+  artDirection?: Record<string, unknown> | null;
+  adjust?: string | null;
+  layout: import("./creative/visual-style").TextLayout;
+  variations: number;
+  headline?: string | null;
+  price?: string | null;
+  cta?: string | null;
+  userId: string;
+};
+
+/** Monta (ou reaproveita, se o usuário editou) a direção de arte. */
+export async function directArt(supabase: DB, input: Omit<ArtInput, "layout" | "variations" | "userId">, providerId: string) {
+  const { buildVisualPrompt } = await import("./creative/art-director.server");
+  const { data: products } = input.brand?.id
+    ? await supabase.from("products").select("name, description").eq("brand_id", input.brand.id).limit(3)
+    : { data: [] as any[] };
+  const { count } = input.brand?.id
+    ? await supabase
+        .from("brand_assets")
+        .select("id", { count: "exact", head: true })
+        .eq("brand_id", input.brand.id)
+        .in("kind", ["reference", "photo"])
+        .eq("tag", "produto")
+    : { count: 0 };
+  const brief = {
+    workspaceId: input.workspaceId,
+    brand: input.brand,
+    campaign: input.campaign,
+    products: products ?? [],
+    theme: input.title,
+    hook: input.copyText || null,
+    offer: input.campaign?.offer_product ?? null,
+    userPrompt: input.prompt,
+    aspectRatio: input.aspectRatio,
+    kind: input.kind,
+    provider: providerId,
+    hasProductRef: (count ?? 0) > 0,
+  };
+  if (input.visualPrompt && input.artDirection && !input.adjust) {
+    return { ad: { ...(input.artDirection as any), prompt_final: input.visualPrompt }, brief };
+  }
+  const ad = await buildVisualPrompt({
+    ...brief,
+    adjust: input.adjust ?? null,
+    previousPrompt: input.visualPrompt ?? null,
+  });
+  return { ad, brief };
+}
+
+export async function runArtDirected(supabase: DB, input: ArtInput) {
+  const { buildVisualPrompt, providerPrompt } = await import("./creative/art-director.server");
+  const provider = await resolveProvider(supabase, input.workspaceId, input.providerChoice);
+  const { ad, brief } = await directArt(supabase, input, provider.id);
+  const finalPrompt = providerPrompt(ad);
+  const { data: job, error: jobError } = await supabase
+    .from("creative_generation_jobs")
+    .insert({
+      workspace_id: input.workspaceId,
+      brand_id: input.brand?.id ?? null,
+      campaign_id: input.campaign?.id ?? null,
+      provider: provider.id,
+      type: input.type,
+      prompt: input.prompt,
+      final_prompt: finalPrompt,
+      aspect_ratio: input.aspectRatio,
+      status: "generating",
+      created_by: input.userId,
+    })
+    .select()
+    .single();
+  if (jobError) throw new Error(jobError.message);
+
+  const base: RunGenerationInput = {
+    jobId: job.id,
+    workspaceId: input.workspaceId,
+    brandId: input.brand?.id ?? null,
+    campaignId: input.campaign?.id ?? null,
+    title: input.title || input.campaign?.name || "Criativo sem título",
+    type: input.type,
+    aspectRatio: input.aspectRatio,
+    targetFormat: input.targetFormat ?? null,
+    prompt: input.prompt,
+    finalPrompt,
+    copyText: input.copyText,
+    kind: input.kind,
+    brandContext: { art_direction: ad },
+    providerChoice: input.providerChoice,
+  };
+
+  // Vídeo e simulado: só o prompt do diretor de arte, fluxo de sempre.
+  if (input.kind === "video" || provider.sandbox) {
+    const r = await finalizeWith(supabase, provider, base);
+    return { ...r, artDirection: ad, variations: [] as import("./creative/visual-style").Variation[] };
+  }
+
+  try {
+    const { runImagePipeline } = await import("./creative/pipeline.server");
+    const { loadBrandRefs } = await import("./creative/refs.server");
+    const { guessTarget } = await import("./media/assets.server");
+    const vs = (input.brand?.visual_style ?? {}) as { referencias?: string[] };
+    const refs = await loadBrandRefs(input.brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined });
+    const res = await runImagePipeline({
+      workspaceId: input.workspaceId,
+      brand: input.brand,
+      provider,
+      ad,
+      aspectRatio: input.aspectRatio,
+      targetFormat: guessTarget(input.aspectRatio, false, input.targetFormat),
+      refs,
+      variations: input.variations,
+      layout: input.layout,
+      text: { title: input.headline ?? input.copyText ?? null, price: input.price ?? null, cta: input.cta ?? null },
+      title: base.title,
+      campaignId: base.campaignId,
+      createdBy: input.userId,
+      rebuild: (motivo) =>
+        buildVisualPrompt({ ...brief, previousPrompt: ad.prompt_final, adjust: `Corrija este problema apontado pelo crítico: ${motivo}` }),
+    });
+    if (res.pending) {
+      const fixed: ServerCreativeProvider = { ...provider, generateImage: async () => res.pending };
+      const r = await finalizeWith(supabase, fixed, base);
+      return { ...r, artDirection: ad, variations: [] };
+    }
+    const { data: created, error } = await supabase
+      .from("creatives")
+      .insert({
+        workspace_id: input.workspaceId,
+        campaign_id: base.campaignId,
+        brand_id: base.brandId,
+        title: base.title,
+        type: input.type,
+        prompt: input.prompt,
+        final_prompt: providerPrompt(res.ad),
+        aspect_ratio: input.aspectRatio,
+        copy_text: input.copyText,
+        status: "ready",
+        provider: provider.id,
+        estimated_cost: res.cost,
+        real_cost: res.cost,
+        preview_url: res.finalUrl,
+        thumbnail_url: res.finalThumb,
+        version: 1,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin
+      .from("media_assets" as never)
+      .update({ creative_id: created.id } as never)
+      .in("id", [res.finalAssetId, ...res.variations.map((v) => v.assetId)]);
+    await supabase.from("creative_versions").insert({
+      workspace_id: input.workspaceId,
+      creative_id: created.id,
+      version: 1,
+      prompt: providerPrompt(res.ad),
+      preview_url: res.finalUrl,
+    });
+    await supabase
+      .from("creative_generation_jobs")
+      .update({
+        status: "ready",
+        creative_id: created.id,
+        final_prompt: providerPrompt(res.ad),
+        asset_url: res.finalUrl,
+        thumbnail_url: res.finalThumb,
+        estimated_cost: res.cost,
+        actual_cost: res.cost,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", job.id);
+    return {
+      jobId: job.id,
+      creativeId: created.id as string | null,
+      status: "ready" as const,
+      assetUrl: res.finalUrl as string | null,
+      provider: provider.id,
+      sandbox: false,
+      error: null as string | null,
+      artDirection: res.ad,
+      variations: res.variations,
+    };
+  } catch (e) {
+    console.error("[art-pipeline] falhou", e);
+    await supabase
+      .from("creative_generation_jobs")
+      .update({ status: "failed", error_message: errMessage(e), completed_at: new Date().toISOString() })
+      .eq("id", job.id);
+    return {
+      jobId: job.id,
+      creativeId: null,
+      status: "failed" as const,
+      assetUrl: null,
+      provider: provider.id,
+      sandbox: false,
+      error: `Não foi possível gerar este criativo: ${errMessage(e)}`,
+      artDirection: ad,
+      variations: [],
+    };
+  }
+}
