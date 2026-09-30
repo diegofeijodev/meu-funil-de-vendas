@@ -7,8 +7,13 @@ import { Plus, Trash2, Upload } from "lucide-react";
 const ASSET_KINDS = [
   { kind: "logo", label: "Logo" },
   { kind: "identity", label: "Identidade visual" },
-  { kind: "photo", label: "Foto de referência" },
+  { kind: "reference", label: "Foto de referência" },
+  { kind: "font", label: "Fonte (.ttf/.otf)" },
 ];
+const kindLabel = (a: { kind: string; tag?: string | null }) =>
+  a.kind === "photo" || a.kind === "reference"
+    ? `Referência${a.tag ? ` · ${REFERENCE_TAGS[a.tag] ?? a.tag}` : ""}`
+    : (ASSET_KINDS.find((k) => k.kind === a.kind)?.label ?? a.kind);
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section } from "@/components/ui-bits";
@@ -18,6 +23,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { brl } from "@/lib/format";
+import { useServerFn } from "@tanstack/react-start";
+import { generateBrandGuide } from "@/lib/creative.functions";
+import { LOGO_POSITIONS, REFERENCE_TAGS, listField, type VisualStyle } from "@/lib/creative/visual-style";
 
 export const Route = createFileRoute("/_authenticated/brands/$id")({
   head: () => ({
@@ -128,12 +136,18 @@ function BrandDetail() {
   };
 
   const [uploading, setUploading] = useState<string | null>(null);
+  const [refTag, setRefTag] = useState("produto");
   const uploadAssets = async (kind: string, files: FileList | null) => {
     if (!workspaceId || !files?.length) return;
     setUploading(kind);
     let ok = 0;
     for (const file of Array.from(files)) {
-      if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+      const isFont = /\.(ttf|otf)$/i.test(file.name);
+      if (kind === "font" && !isFont) {
+        toast.error(`${file.name}: envie uma fonte .ttf ou .otf.`);
+        continue;
+      }
+      if (kind !== "font" && !file.type.startsWith("image/") && file.type !== "application/pdf") {
         toast.error(`${file.name}: envie uma imagem (JPG, PNG, SVG, WEBP) ou PDF.`);
         continue;
       }
@@ -143,7 +157,7 @@ function BrandDetail() {
       }
       const ext = file.name.split(".").pop()?.toLowerCase() || "png";
       const path = `brands/${workspaceId}/${id}/${kind}/${crypto.randomUUID()}.${ext}`;
-      const up = await supabase.storage.from("creative-assets").upload(path, file, { contentType: file.type });
+      const up = await supabase.storage.from("creative-assets").upload(path, file, { contentType: file.type || "application/octet-stream" });
       if (up.error) {
         toast.error(`Falha ao enviar ${file.name}.`);
         continue;
@@ -152,7 +166,15 @@ function BrandDetail() {
         .from("creative-assets")
         .createSignedUrl(path, 60 * 60 * 24 * 365 * 5);
       const url = signed?.signedUrl ?? "";
-      await supabase.from("brand_assets").insert({ workspace_id: workspaceId, brand_id: id, kind, url, name: file.name });
+      await supabase.from("brand_assets").insert({
+        workspace_id: workspaceId,
+        brand_id: id,
+        kind,
+        url,
+        name: file.name,
+        storage_path: path,
+        tag: kind === "reference" ? refTag : null,
+      } as never);
       if (kind === "logo") {
         await supabase.from("brands").update({ logo_url: url }).eq("id", id);
         qc.invalidateQueries({ queryKey: ["brand", id] });
@@ -189,6 +211,7 @@ function BrandDetail() {
         <TabsList className="mb-6">
           <TabsTrigger value="dna">DNA</TabsTrigger>
           <TabsTrigger value="identidade">Identidade visual</TabsTrigger>
+          <TabsTrigger value="guia">Guia visual</TabsTrigger>
           <TabsTrigger value="produtos">Produtos</TabsTrigger>
           <TabsTrigger value="personas">Personas</TabsTrigger>
           <TabsTrigger value="aprendizados">Aprendizados</TabsTrigger>
@@ -275,6 +298,16 @@ function BrandDetail() {
             actions={
               canEdit && (
                 <div className="flex flex-wrap gap-2">
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    value={refTag}
+                    onChange={(e) => setRefTag(e.target.value)}
+                    aria-label="Tipo da foto de referência"
+                  >
+                    {Object.entries(REFERENCE_TAGS).map(([k, v]) => (
+                      <option key={k} value={k}>Referência: {v}</option>
+                    ))}
+                  </select>
                   {ASSET_KINDS.map((k) => (
                     <Button key={k.kind} size="sm" variant="outline" asChild disabled={!!uploading}>
                       <label className="cursor-pointer">
@@ -282,7 +315,7 @@ function BrandDetail() {
                         {uploading === k.kind ? "Enviando..." : k.label}
                         <input
                           type="file"
-                          accept="image/*,application/pdf"
+                          accept={k.kind === "font" ? ".ttf,.otf" : "image/*,application/pdf"}
                           multiple={k.kind !== "logo"}
                           className="hidden"
                           onChange={(e) => {
@@ -303,7 +336,11 @@ function BrandDetail() {
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 {assets.map((a) => (
                   <div key={a.id} className="overflow-hidden rounded-lg border border-border">
-                    {a.name?.toLowerCase().endsWith(".pdf") ? (
+                    {/\.(ttf|otf)$/i.test(a.name ?? "") ? (
+                      <div className="flex aspect-square w-full items-center justify-center bg-muted text-xs font-semibold text-muted-foreground">
+                        Aa · {a.name}
+                      </div>
+                    ) : a.name?.toLowerCase().endsWith(".pdf") ? (
                       <a href={a.url ?? "#"} target="_blank" rel="noreferrer" className="flex aspect-square w-full items-center justify-center bg-muted text-xs font-semibold text-muted-foreground">
                         PDF
                       </a>
@@ -312,7 +349,7 @@ function BrandDetail() {
                     )}
                     <div className="flex items-center justify-between px-2 py-1.5">
                       <span className="truncate text-[11px] text-muted-foreground" title={a.name ?? ""}>
-                        {ASSET_KINDS.find((k) => k.kind === a.kind)?.label ?? a.kind}
+                        {kindLabel(a as any)}
                       </span>
                       <button
                         onClick={async () => {
@@ -329,6 +366,10 @@ function BrandDetail() {
               </div>
             )}
           </Section>
+        </TabsContent>
+
+        <TabsContent value="guia" className="space-y-6">
+          <VisualGuide brandId={id} brand={brand} canEdit={canEdit} />
         </TabsContent>
 
         <TabsContent value="produtos">
@@ -472,5 +513,136 @@ function EditableRow({
         </div>
       </div>
     </div>
+  );
+}
+
+const GUIDE_TEXT: { key: keyof VisualStyle; label: string; placeholder: string }[] = [
+  { key: "estilo_fotografico", label: "Estilo fotográfico", placeholder: "fotografia gastronômica realista, close, fundo de bar de madeira" },
+  { key: "iluminacao", label: "Iluminação", placeholder: "luz quente e baixa, fim de tarde" },
+  { key: "fonte_titulo", label: "Fonte do título", placeholder: "Archivo Black" },
+  { key: "fonte_corpo", label: "Fonte do corpo", placeholder: "Inter" },
+];
+const GUIDE_LISTS: { key: keyof VisualStyle; label: string; placeholder: string }[] = [
+  { key: "paleta_hex", label: "Paleta (hex)", placeholder: "#071B39, #F2A900" },
+  { key: "ambientes", label: "Ambientes", placeholder: "balcão de bar, praça de alimentação" },
+  { key: "elementos_obrigatorios", label: "Elementos obrigatórios", placeholder: "copo de chopp com colarinho" },
+  { key: "elementos_proibidos", label: "Elementos proibidos", placeholder: "pessoas com rosto visível, texto gerado pela IA, marcas de concorrentes" },
+];
+
+function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: any; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const runGuide = useServerFn(generateBrandGuide);
+  const [vs, setVs] = useState<VisualStyle>({});
+  const [lists, setLists] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const v = (brand?.visual_style ?? {}) as VisualStyle;
+    setVs(v);
+    setLists(Object.fromEntries(GUIDE_LISTS.map((l) => [l.key, listField(v[l.key]).join(", ")])));
+  }, [brand?.id, brand?.updated_at]);
+
+  const toList = (t: string) => t.split(",").map((x) => x.trim()).filter(Boolean);
+
+  const save = async () => {
+    setBusy("save");
+    const next: VisualStyle = { ...vs };
+    for (const l of GUIDE_LISTS) (next as any)[l.key] = toList(lists[l.key] ?? "");
+    const { error } = await supabase.from("brands").update({ visual_style: next } as never).eq("id", brandId);
+    setBusy(null);
+    if (error) return toast.error(error.message);
+    qc.invalidateQueries({ queryKey: ["brand", brandId] });
+    toast.success("Guia visual salvo. Os próximos criativos já seguem este guia.");
+  };
+
+  const suggest = async () => {
+    setBusy("ai");
+    try {
+      const { guide, referencias } = await runGuide({ data: { brandId } });
+      setVs((v) => ({ ...v, ...guide, referencias }));
+      setLists(Object.fromEntries(GUIDE_LISTS.map((l) => [l.key, listField((guide as any)[l.key]).join(", ")])));
+      toast.success("Guia sugerido pela IA. Revise e clique em Salvar guia visual.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar o guia.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section
+      title="Guia visual"
+      description="Como as fotos da marca devem parecer. O diretor de arte usa isto em todo criativo. Envie as fotos de referência na aba Identidade visual."
+      actions={
+        canEdit && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={suggest} disabled={!!busy}>
+              {busy === "ai" ? "Analisando fotos..." : "Gerar guia com IA"}
+            </Button>
+            <Button size="sm" onClick={save} disabled={!!busy}>
+              {busy === "save" ? "Salvando..." : "Salvar guia visual"}
+            </Button>
+          </div>
+        )
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        {GUIDE_TEXT.map((f) => (
+          <div key={f.key} className="space-y-1.5">
+            <Label>{f.label}</Label>
+            <Input value={String(vs[f.key] ?? "")} placeholder={f.placeholder} onChange={(e) => setVs({ ...vs, [f.key]: e.target.value })} />
+          </div>
+        ))}
+        {GUIDE_LISTS.map((f) => (
+          <div key={f.key} className="space-y-1.5">
+            <Label>{f.label}</Label>
+            <Textarea rows={2} value={lists[f.key] ?? ""} placeholder={`${f.placeholder} (separe por vírgula)`} onChange={(e) => setLists({ ...lists, [f.key]: e.target.value })} />
+            {f.key === "paleta_hex" && (
+              <div className="flex gap-1">
+                {toList(lists[f.key] ?? "").map((c) => (
+                  <span key={c} className="size-5 rounded border border-border" style={{ background: c }} title={c} />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div className="space-y-1.5">
+          <Label>Posição da logo</Label>
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={vs.posicao_logo ?? "none"}
+            onChange={(e) => setVs({ ...vs, posicao_logo: e.target.value as VisualStyle["posicao_logo"] })}
+          >
+            {Object.entries(LOGO_POSITIONS).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label>Prompts que funcionaram ({listField(vs.exemplos_prompt).length}/10)</Label>
+          {listField(vs.exemplos_prompt).length ? (
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {listField(vs.exemplos_prompt).map((p, i) => (
+                <li key={i} className="flex items-start justify-between gap-2 rounded border border-border/60 p-2">
+                  <span>{p}</span>
+                  {canEdit && (
+                    <button
+                      aria-label="Remover exemplo"
+                      onClick={() => setVs({ ...vs, exemplos_prompt: listField(vs.exemplos_prompt).filter((_, j) => j !== i) })}
+                    >
+                      <Trash2 className="size-3.5 hover:text-destructive" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Entram sozinhos quando um post fica entre os 20% com mais alcance e salvamentos.
+            </p>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
