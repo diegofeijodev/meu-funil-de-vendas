@@ -103,8 +103,15 @@ async function liveAccount(workspaceId: string) {
 
 async function aiJson(workspaceId: string, engine: Engine, prompt: string, schema: Record<string, unknown>, name: string) {
   const [o, g] = await Promise.all([getWorkspaceAiKey(workspaceId, "openai"), getWorkspaceAiKey(workspaceId, "gemini")]);
-  if ((engine === "chatgpt" || engine === "auto") && o) return { json: await viaOpenAI(o, prompt), provider: "openai_own" };
-  if ((engine === "gemini" || engine === "auto") && g) return { json: await viaGemini(g, prompt), provider: "gemini_own" };
+  // Chaves do cliente primeiro; se falharem (sem crédito, inválida), segue para a próxima opção.
+  if ((engine === "chatgpt" || engine === "auto") && o) {
+    try { return { json: await viaOpenAI(o, prompt), provider: "openai_own" }; }
+    catch (e) { console.warn("[instagram] chave OpenAI falhou:", errMsg(e)); }
+  }
+  if ((engine === "gemini" || engine === "auto") && g) {
+    try { return { json: await viaGemini(g, prompt), provider: "gemini_own" }; }
+    catch (e) { console.warn("[instagram] chave Gemini falhou:", errMsg(e)); }
+  }
   return { json: await viaGateway(prompt, schema, name), provider: "lovable_ai" };
 }
 
@@ -348,7 +355,7 @@ async function waitContainer(containerId: string) {
     if (r.status_code === "FINISHED") return;
     if (r.status_code === "ERROR" || r.status_code === "EXPIRED")
       throw new Error(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ""}`);
-    await sleep(10_000);
+    await sleep(r.status_code === "IN_PROGRESS" ? 5_000 : 3_000);
   }
   throw new Error("A Meta demorou mais de 5 minutos para processar o vídeo.");
 }
@@ -435,6 +442,8 @@ export async function publishInstagramPost(postId: string): Promise<{ ok: boolea
     if (video) await waitContainer(creationId);
   }
 
+  // Imagens também passam por processamento na Meta: espera o container ficar FINISHED.
+  await waitContainer(creationId);
   const published = await graph<{ id: string }>(`/${ig}/media_publish`, { method: "POST", params: { creation_id: creationId } });
   const info = await graph<{ permalink?: string }>(`/${published.id}`, { params: { fields: "permalink" } }).catch(() => ({ permalink: undefined }));
   await patchPost(postId, {
