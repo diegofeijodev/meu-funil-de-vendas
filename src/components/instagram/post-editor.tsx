@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusPill } from "@/components/ui-bits";
 import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, type IgPost } from "./shared";
+import { PickFromLibrary } from "@/components/media/media-picker";
 
 const toLocal = (iso: string | null) => {
   if (!iso) return "";
@@ -216,6 +217,7 @@ export function PostEditor({
             <B id="upload" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
               <Upload className="size-4" /> Enviar minha própria
             </B>
+            <PickFromLibrary workspaceId={workspaceId} postId={post.id} igFormat={post.format} onDone={refresh} />
             <input
               ref={fileRef}
               type="file"
