@@ -479,16 +479,20 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
 
 /* ---------------- Publicação (Graph API) ---------------- */
 
-async function waitContainer(containerId: string) {
-  const deadline = Date.now() + 5 * 60 * 1000;
+/** Container ainda em processamento na Meta: a fila tenta de novo em 2 min sem contar tentativa. */
+export class ContainerPending extends Error {}
+
+const POLL_BUDGET_MS = 40_000;
+
+async function waitContainer(containerId: string, deadline: number) {
   while (Date.now() < deadline) {
     const r = await graph<{ status_code?: string; status?: string }>(`/${containerId}`, { params: { fields: "status_code,status" } });
     if (r.status_code === "FINISHED") return;
     if (r.status_code === "ERROR" || r.status_code === "EXPIRED")
       throw new Error(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ""}`);
-    await sleep(r.status_code === "IN_PROGRESS" ? 5_000 : 3_000);
+    await sleep(Math.min(r.status_code === "IN_PROGRESS" ? 5_000 : 3_000, Math.max(0, deadline - Date.now())));
   }
-  throw new Error("A Meta demorou mais de 5 minutos para processar o vídeo.");
+  throw new ContainerPending("A Meta ainda está processando a mídia; nova verificação em 2 minutos.");
 }
 
 function fullCaption(post: any) {
@@ -532,6 +536,12 @@ export async function publishInstagramPost(postId: string): Promise<{ ok: boolea
   for (const m of media) await assertPublicUrl(m.url);
 
   const acc = await liveAccount(post.workspace_id);
+  const deadline = Date.now() + POLL_BUDGET_MS;
+
+  // Retomada: container já criado numa execução anterior → só polling + media_publish.
+  if (acc && post.ig_creation_id && post.status === "publishing") {
+    return finishPublish(postId, acc.ig_user_id as string, post.ig_creation_id, deadline);
+  }
 
   if (!acc) {
     const fake = `sim_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -560,28 +570,48 @@ export async function publishInstagramPost(postId: string): Promise<{ ok: boolea
       if (m.type === "video") Object.assign(params, { media_type: "VIDEO", video_url: m.url });
       else params["image_url"] = m.url;
       const c = await graph<{ id: string }>(`/${ig}/media`, { method: "POST", params });
-      if (m.type === "video") await waitContainer(c.id);
+      if (m.type === "video") await waitContainer(c.id, deadline);
       children.push(c.id);
     }
     creationId = (await graph<{ id: string }>(`/${ig}/media`, { method: "POST", params: { media_type: "CAROUSEL", children: children.join(","), caption } })).id;
   } else if (format === "reel") {
-    creationId = (await graph<{ id: string }>(`/${ig}/media`, { method: "POST", params: { media_type: "REELS", video_url: media[0].url, caption, share_to_feed: "true" } })).id;
-    await waitContainer(creationId);
+    creationId = (
+      await graph<{ id: string }>(`/${ig}/media`, {
+        method: "POST",
+        params: { media_type: "REELS", video_url: media[0].url, caption, share_to_feed: "true" },
+      })
+    ).id;
   } else {
     const video = format === "story_video";
-    creationId = (await graph<{ id: string }>(`/${ig}/media`, { method: "POST", params: { media_type: "STORIES", [video ? "video_url" : "image_url"]: media[0].url } })).id;
-    if (video) await waitContainer(creationId);
+    creationId = (
+      await graph<{ id: string }>(`/${ig}/media`, {
+        method: "POST",
+        params: { media_type: "STORIES", [video ? "video_url" : "image_url"]: media[0].url },
+      })
+    ).id;
   }
 
+  // Salva o container antes do polling para poder retomar na próxima execução.
+  await patchPost(postId, { ig_creation_id: creationId });
+  return finishPublish(postId, ig, creationId, deadline);
+}
+
+async function finishPublish(postId: string, ig: string, creationId: string, deadline: number) {
   // Imagens também passam por processamento na Meta: espera o container ficar FINISHED.
-  await waitContainer(creationId);
-  const published = await graph<{ id: string }>(`/${ig}/media_publish`, { method: "POST", params: { creation_id: creationId } });
-  const info = await graph<{ permalink?: string }>(`/${published.id}`, { params: { fields: "permalink" } }).catch(() => ({ permalink: undefined }));
+  await waitContainer(creationId, deadline);
+  const published = await graph<{ id: string }>(`/${ig}/media_publish`, {
+    method: "POST",
+    params: { creation_id: creationId },
+  });
+  const info = await graph<{ permalink?: string }>(`/${published.id}`, { params: { fields: "permalink" } }).catch(
+    () => ({ permalink: undefined }),
+  );
   await patchPost(postId, {
     status: "published",
     published_at: new Date().toISOString(),
     ig_media_id: published.id,
     ig_permalink: info.permalink ?? null,
+    ig_creation_id: null,
     last_error: null,
   });
   return { ok: true, sandbox: false, permalink: info.permalink ?? null };
@@ -711,6 +741,20 @@ export async function runPublishingQueue() {
       results.push({ job: job.id, status: "done" });
     } catch (e) {
       const msg = errMsg(e);
+      if (e instanceof ContainerPending) {
+        await s
+          .from("publishing_jobs")
+          .update({
+            status: "pending",
+            locked_at: null,
+            attempts: job.attempts,
+            run_at: new Date(Date.now() + 2 * 60e3).toISOString(),
+            log: `${job.log ?? ""}\n[${stamp}] ${msg}`.trim(),
+          } as never)
+          .eq("id", job.id);
+        results.push({ job: job.id, status: "processing" });
+        continue;
+      }
       const attempts = job.attempts + 1;
       const rate = e instanceof RateLimited;
       const tokenExpired = e instanceof MetaError && e.code === 190;
