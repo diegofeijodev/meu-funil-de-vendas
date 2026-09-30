@@ -13,6 +13,14 @@ const generateInput = z.object({
   prompt: z.string().default(""),
   copyText: z.string().default(""),
   provider: z.enum(["auto", "higgsfield", "chatgpt", "gemini"]).default("auto"),
+  visualPrompt: z.string().max(4000).nullable().optional(),
+  artDirection: z.record(z.string(), z.unknown()).nullable().optional(),
+  adjust: z.string().max(300).nullable().optional(),
+  layout: z.enum(["limpo", "titulo_topo", "preco_destaque", "cta_rodape"]).default("limpo"),
+  variations: z.number().int().min(1).max(4).default(3),
+  headline: z.string().max(120).nullable().optional(),
+  price: z.string().max(40).nullable().optional(),
+  cta: z.string().max(40).nullable().optional(),
 });
 const CHOICES = new Set(["higgsfield", "chatgpt", "gemini"]);
 
@@ -27,45 +35,84 @@ export const generateCreative = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => generateInput.parse(d))
   .handler(async ({ data, context }) => {
-    const { buildBrandBrainPrompt, runGeneration } = await import("./creative.server");
+    const { buildBrandBrainPrompt, runArtDirected } = await import("./creative.server");
     const supabase = context.supabase;
-
-    const { brand, campaign, finalPrompt, brandContext } = await buildBrandBrainPrompt(supabase, data);
-
-    const { data: job, error: jobError } = await supabase
-      .from("creative_generation_jobs")
-      .insert({
-        workspace_id: data.workspaceId,
-        brand_id: brand?.id ?? null,
-        campaign_id: campaign?.id ?? null,
-        provider: data.provider === "auto" ? "pending" : data.provider,
-        type: data.type,
-        prompt: data.prompt,
-        final_prompt: finalPrompt,
-        aspect_ratio: data.aspectRatio,
-        status: "queued",
-        created_by: context.userId,
-      })
-      .select()
-      .single();
-    if (jobError) throw new Error(jobError.message);
-
-    return runGeneration(supabase, {
-      jobId: job.id,
-      workspaceId: data.workspaceId,
-      brandId: brand?.id ?? null,
-      campaignId: campaign?.id ?? null,
+    const { brand, campaign } = await buildBrandBrainPrompt(supabase, data);
+    return runArtDirected(supabase, {
+      ...data,
+      brand,
+      campaign,
       title: data.title || campaign?.name || "Criativo sem título",
-      type: data.type,
-      aspectRatio: data.aspectRatio,
-      targetFormat: data.targetFormat ?? null,
-      prompt: data.prompt,
-      finalPrompt,
-      copyText: data.copyText,
-      kind: VIDEO_TYPES.has(data.type) ? "video" : "image",
-      brandContext,
       providerChoice: data.provider,
+      kind: VIDEO_TYPES.has(data.type) ? "video" : "image",
+      userId: context.userId,
     });
+  });
+
+/** Mostra o prompt visual do diretor de arte antes de gerar (editável na tela). */
+export const previewVisualPrompt = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => generateInput.parse(d))
+  .handler(async ({ data, context }) => {
+    const { buildBrandBrainPrompt, directArt } = await import("./creative.server");
+    const supabase = context.supabase;
+    const { brand, campaign } = await buildBrandBrainPrompt(supabase, data);
+    const target = data.provider === "auto" ? "higgsfield ou IA padrão" : data.provider;
+    const { ad } = await directArt(
+      supabase,
+      {
+        ...data,
+        brand,
+        campaign,
+        title: data.title || campaign?.name || "",
+        providerChoice: data.provider,
+        kind: VIDEO_TYPES.has(data.type) ? "video" : "image",
+      },
+      target,
+    );
+    return { artDirection: ad };
+  });
+
+/** Analisa as fotos de referência e sugere o guia visual (o usuário revisa antes de salvar). */
+export const generateBrandGuide = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ brandId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: brand } = await context.supabase
+      .from("brands")
+      .select("id, workspace_id, name, segment, primary_color, secondary_color")
+      .eq("id", data.brandId)
+      .maybeSingle();
+    if (!brand) throw new Error("Marca não encontrada.");
+    const { loadBrandRefs } = await import("./creative/refs.server");
+    const { visionJSON } = await import("./creative/llm.server");
+    const refs = await loadBrandRefs(brand.id, { max: 6 });
+    if (!refs.length) throw new Error("Envie ao menos uma foto de referência (produto, ambiente ou equipe).");
+    const arr = { type: "array", items: { type: "string" } };
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["estilo_fotografico", "iluminacao", "paleta_hex", "ambientes", "elementos_obrigatorios", "elementos_proibidos", "fonte_titulo", "fonte_corpo"],
+      properties: {
+        estilo_fotografico: { type: "string" },
+        iluminacao: { type: "string" },
+        paleta_hex: arr,
+        ambientes: arr,
+        elementos_obrigatorios: arr,
+        elementos_proibidos: arr,
+        fonte_titulo: { type: "string" },
+        fonte_corpo: { type: "string" },
+      },
+    };
+    const prompt = [
+      `Você é diretor de arte. Estas são fotos reais da marca "${brand.name}" (${brand.segment ?? "segmento não informado"}).`,
+      "Monte o guia visual em português do Brasil, curto e objetivo:",
+      "estilo_fotografico (ex.: fotografia gastronômica realista, close, fundo de bar de madeira), iluminacao,",
+      "paleta_hex (4 a 6 cores #RRGGBB tiradas das fotos), ambientes (2 a 4), elementos_obrigatorios (o que deve aparecer),",
+      "elementos_proibidos (inclua sempre: texto gerado pela IA, marcas de concorrentes), fonte_titulo e fonte_corpo (sugestões de Google Fonts coerentes).",
+    ].join("\n");
+    const guide = await visionJSON(brand.workspace_id, prompt, refs, schema, "brand_guide");
+    return { guide, referencias: refs.map((r) => r.id) };
   });
 
 /** Reprocessa um job que falhou, mantendo o mesmo prompt final. */
