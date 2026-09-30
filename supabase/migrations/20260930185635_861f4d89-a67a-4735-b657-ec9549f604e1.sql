@@ -1,0 +1,1 @@
+ALTER TABLE public.creative_generation_jobs ADD COLUMN IF NOT EXISTS provider_log text;
