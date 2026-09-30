@@ -204,7 +204,7 @@ export async function runOptimizer() {
     const weights: Record<string, number> = {};
     for (const name of pillars) {
       // Mistura 70% desempenho + 30% distribuição igual, para não zerar pilares sem dados.
-      const perf = total ? raw[name] / total : 1 / pillars.length;
+      const perf = total ? (raw[name] ?? 0) / total : 1 / pillars.length;
       weights[name] = Math.round((0.7 * perf + 0.3 / pillars.length) * 100) / 100;
     }
 
