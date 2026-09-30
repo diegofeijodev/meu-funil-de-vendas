@@ -10,6 +10,7 @@ import { getWorkspaceAiKey } from "./ai-keys.server";
 import {
   mockServerProvider,
   type CreativeKind,
+  type GenerationResult,
   type ServerCreativeProvider,
 } from "./providers/creative-provider.server";
 
