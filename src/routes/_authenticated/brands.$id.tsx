@@ -2,7 +2,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Upload } from "lucide-react";
+
+const ASSET_KINDS = [
+  { kind: "logo", label: "Logo" },
+  { kind: "identity", label: "Identidade visual" },
+  { kind: "photo", label: "Foto de referência" },
+];
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section } from "@/components/ui-bits";
@@ -121,11 +127,40 @@ function BrandDetail() {
     qc.invalidateQueries({ queryKey: ["personas", id] });
   };
 
-  const addAsset = async (kind: string) => {
-    if (!workspaceId) return;
-    const url = window.prompt("Cole a URL do arquivo (logo ou foto de referência):");
-    if (!url) return;
-    await supabase.from("brand_assets").insert({ workspace_id: workspaceId, brand_id: id, kind, url, name: url.split("/").pop() ?? kind });
+  const [uploading, setUploading] = useState<string | null>(null);
+  const uploadAssets = async (kind: string, files: FileList | null) => {
+    if (!workspaceId || !files?.length) return;
+    setUploading(kind);
+    let ok = 0;
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+        toast.error(`${file.name}: envie uma imagem (JPG, PNG, SVG, WEBP) ou PDF.`);
+        continue;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        toast.error(`${file.name}: máximo de 20 MB.`);
+        continue;
+      }
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const path = `brands/${workspaceId}/${id}/${kind}/${crypto.randomUUID()}.${ext}`;
+      const up = await supabase.storage.from("creative-assets").upload(path, file, { contentType: file.type });
+      if (up.error) {
+        toast.error(`Falha ao enviar ${file.name}.`);
+        continue;
+      }
+      const { data: signed } = await supabase.storage
+        .from("creative-assets")
+        .createSignedUrl(path, 60 * 60 * 24 * 365 * 5);
+      const url = signed?.signedUrl ?? "";
+      await supabase.from("brand_assets").insert({ workspace_id: workspaceId, brand_id: id, kind, url, name: file.name });
+      if (kind === "logo") {
+        await supabase.from("brands").update({ logo_url: url }).eq("id", id);
+        qc.invalidateQueries({ queryKey: ["brand", id] });
+      }
+      ok++;
+    }
+    setUploading(null);
+    if (ok) toast.success(ok === 1 ? "Arquivo enviado." : `${ok} arquivos enviados.`);
     qc.invalidateQueries({ queryKey: ["assets", id] });
   };
 
@@ -235,30 +270,50 @@ function BrandDetail() {
           </Section>
 
           <Section
-            title="Logos e referências"
-            description="Cole a URL do arquivo. Os assets entram no prompt enviado ao provedor de criativos."
+            title="Logo, identidade visual e referências"
+            description="Envie os arquivos do seu computador. Eles entram no contexto usado pela IA para criar os criativos."
             actions={
               canEdit && (
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => addAsset("logo")}>
-                    <Plus className="mr-1 size-3.5" /> Logo
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => addAsset("photo")}>
-                    <Plus className="mr-1 size-3.5" /> Foto de referência
-                  </Button>
+                <div className="flex flex-wrap gap-2">
+                  {ASSET_KINDS.map((k) => (
+                    <Button key={k.kind} size="sm" variant="outline" asChild disabled={!!uploading}>
+                      <label className="cursor-pointer">
+                        <Upload className="mr-1 size-3.5" />
+                        {uploading === k.kind ? "Enviando..." : k.label}
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          multiple={k.kind !== "logo"}
+                          className="hidden"
+                          onChange={(e) => {
+                            void uploadAssets(k.kind, e.target.files);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </Button>
+                  ))}
                 </div>
               )
             }
           >
             {assets.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhum arquivo cadastrado.</p>
+              <p className="text-sm text-muted-foreground">Nenhum arquivo enviado ainda.</p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 {assets.map((a) => (
                   <div key={a.id} className="overflow-hidden rounded-lg border border-border">
-                    <img src={a.url ?? ""} alt={a.name ?? "Asset da marca"} className="aspect-square w-full object-cover" />
+                    {a.name?.toLowerCase().endsWith(".pdf") ? (
+                      <a href={a.url ?? "#"} target="_blank" rel="noreferrer" className="flex aspect-square w-full items-center justify-center bg-muted text-xs font-semibold text-muted-foreground">
+                        PDF
+                      </a>
+                    ) : (
+                      <img src={a.url ?? ""} alt={a.name ?? "Arquivo da marca"} className="aspect-square w-full bg-muted object-contain" />
+                    )}
                     <div className="flex items-center justify-between px-2 py-1.5">
-                      <span className="truncate text-[11px] text-muted-foreground">{a.kind}</span>
+                      <span className="truncate text-[11px] text-muted-foreground" title={a.name ?? ""}>
+                        {ASSET_KINDS.find((k) => k.kind === a.kind)?.label ?? a.kind}
+                      </span>
                       <button
                         onClick={async () => {
                           await supabase.from("brand_assets").delete().eq("id", a.id);
