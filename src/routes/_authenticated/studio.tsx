@@ -296,7 +296,7 @@ function Studio() {
         <Section
           title={`Biblioteca de criativos (${data.creatives.length})`}
           description="Baixe, exporte em PDF e reaproveite as mídias na Biblioteca."
-          action={
+          actions={
             <Button asChild size="sm" variant="outline">
               <Link to="/library">Abrir Biblioteca</Link>
             </Button>
