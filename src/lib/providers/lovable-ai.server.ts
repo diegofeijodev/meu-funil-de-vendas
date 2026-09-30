@@ -173,7 +173,14 @@ export function createChatgptProvider(userKey: string | null): ServerCreativePro
     label: userKey ? "ChatGPT (sua conta OpenAI)" : "ChatGPT (OpenAI)",
     sandbox: false,
     async generateImage(req) {
-      if (userKey) return ready(await openaiDirectImage(userKey, req), 0);
+      if (userKey) {
+        try {
+          return ready(await openaiDirectImage(userKey, req), 0);
+        } catch (e) {
+          // Chave do cliente sem crédito/inválida: cai para os créditos de IA do app em vez de travar.
+          console.warn("[chatgpt] chave própria falhou, usando créditos do app:", e instanceof Error ? e.message : e);
+        }
+      }
       const url = await imageFromGateway({
         model: "openai/gpt-image-2.5-sunburst",
         prompt: req.finalPrompt,
@@ -195,7 +202,13 @@ export function createGeminiProvider(userKey: string | null): ServerCreativeProv
     label: userKey ? "Gemini (sua conta Google)" : "Gemini (Google)",
     sandbox: false,
     async generateImage(req) {
-      if (userKey) return ready(await geminiDirectImage(userKey, req), 0);
+      if (userKey) {
+        try {
+          return ready(await geminiDirectImage(userKey, req), 0);
+        } catch (e) {
+          console.warn("[gemini] chave própria falhou, usando créditos do app:", e instanceof Error ? e.message : e);
+        }
+      }
       const url = await imageFromGateway({
         model: "google/gemini-3.1-flash-image",
         messages: [{ role: "user", content: `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.` }],
