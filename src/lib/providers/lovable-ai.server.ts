@@ -39,9 +39,9 @@ function ready(url: string, cost: number, externalJobId: string | null = null): 
 
 const OPENAI_SIZE: Record<string, string> = {
   "1:1": "1024x1024",
-  "4:5": "1024x1280",
-  "9:16": "1024x1824",
-  "16:9": "1824x1024",
+  "4:5": "1024x1536",
+  "9:16": "1024x1536",
+  "16:9": "1536x1024",
 };
 
 async function imageFromGateway(body: Record<string, unknown>) {
@@ -59,7 +59,14 @@ async function imageFromGateway(body: Record<string, unknown>) {
 
 /** Veo (Google) — cria o job, acompanha até terminar e salva o MP4. */
 async function veoVideo(req: GenerationRequest, model: string) {
-  const res = await fetch(`${BASE}/v1/videos`, {
+  // Pede 1080p; se o modelo não aceitar, repete em 720p.
+  let res = await veoCreate(req, model, "1080p");
+  if (res.status === 400) res = await veoCreate(req, model, "720p");
+  return veoFinish(res);
+}
+
+async function veoCreate(req: GenerationRequest, model: string, resolution: string) {
+  return fetch(`${BASE}/v1/videos`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key()}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -67,13 +74,16 @@ async function veoVideo(req: GenerationRequest, model: string) {
       instances: [{ prompt: req.finalPrompt.slice(0, 3000) }],
       parameters: {
         durationSeconds: 8,
-        resolution: "720p",
+        resolution,
         aspectRatio: req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "9:16" : "16:9",
         sampleCount: 1,
         generateAudio: true,
       },
     }),
   });
+}
+
+async function veoFinish(res: Response) {
   if (!res.ok) throw await gatewayError(res);
   let job = (await res.json()) as { id: string; status: string; error?: { message: string } };
   while (job.status !== "completed" && job.status !== "failed") {
@@ -102,7 +112,7 @@ async function openaiDirectImage(key: string, req: GenerationRequest) {
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-image-1", prompt: req.finalPrompt.slice(0, 30000), size, quality: "medium" }),
+    body: JSON.stringify({ model: "gpt-image-1", prompt: req.finalPrompt.slice(0, 30000), size, quality: "high" }),
   });
   if (!res.ok) throw await vendorError("openai", res);
   const json = (await res.json()) as { data?: { b64_json?: string }[] };
@@ -185,7 +195,7 @@ export function createChatgptProvider(userKey: string | null): ServerCreativePro
         model: "openai/gpt-image-2.5-sunburst",
         prompt: req.finalPrompt,
         size: OPENAI_SIZE[req.aspectRatio] ?? "1024x1024",
-        quality: "medium",
+        quality: "high",
       });
       return ready(url, 1.5);
     },

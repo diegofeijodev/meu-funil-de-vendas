@@ -17,6 +17,7 @@ import {
   Menu,
   X,
   Instagram,
+  FolderOpen,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
@@ -31,6 +32,7 @@ const NAV = [
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/crm", label: "CRM", icon: Users },
   { to: "/studio", label: "Creative Studio", icon: Images },
+  { to: "/library", label: "Biblioteca", icon: FolderOpen },
   { to: "/calendar", label: "Content Calendar", icon: CalendarDays },
   { to: "/instagram", label: "Instagram", icon: Instagram },
   { to: "/performance", label: "Performance", icon: BarChart3 },

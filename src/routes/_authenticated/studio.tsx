@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CREATIVE_STATUS, FORMATS } from "@/lib/labels";
 import { brl } from "@/lib/format";
+import { Link } from "@tanstack/react-router";
+import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
 import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { generateCreative, retryCreativeJob } from "@/lib/creative.functions";
@@ -40,6 +42,7 @@ function Studio() {
     title: "",
     type: "static_image" as CreativeType,
     aspect: "1:1",
+    target: "ig_feed_square" as TargetFormat,
     prompt: "",
     copyText: "",
     campaignId: "",
@@ -84,7 +87,8 @@ function Studio() {
           brandId: campaign?.brand_id ?? data.brands[0]?.id ?? null,
           title: form.title,
           type: form.type,
-          aspectRatio: form.aspect,
+          aspectRatio: aspectFor(form.target),
+          targetFormat: form.target,
           prompt: form.prompt,
           copyText: form.copyText,
           provider: form.provider,
@@ -93,6 +97,10 @@ function Studio() {
       qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
       if (res.status === "failed") {
         toast.error(res.error ?? "Não foi possível gerar este criativo. Tente novamente.");
+        return;
+      }
+      if (res.status === "generating") {
+        toast.success("A IA ainda está gerando. O criativo aparece na Biblioteca assim que ficar pronto.");
         return;
       }
       await logActivity(workspaceId, "creative.generated", "creative", {
@@ -200,14 +208,18 @@ function Studio() {
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="ar">Proporção</Label>
+                <Label htmlFor="ar">Formato de destino</Label>
                 <select
                   id="ar"
                   className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={form.aspect}
-                  onChange={(e) => setForm({ ...form, aspect: e.target.value })}
+                  value={form.target}
+                  onChange={(e) => setForm({ ...form, target: e.target.value as TargetFormat })}
                 >
-                  {["1:1", "4:5", "9:16", "16:9"].map((a) => <option key={a} value={a}>{a}</option>)}
+                  {TARGET_FORMAT_KEYS.map((k) => (
+                    <option key={k} value={k}>
+                      {TARGET_FORMATS[k].label} ({TARGET_FORMATS[k].width}x{TARGET_FORMATS[k].height})
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -281,7 +293,15 @@ function Studio() {
           )}
         </Section>
 
-        <Section title={`Biblioteca de criativos (${data.creatives.length})`}>
+        <Section
+          title={`Biblioteca de criativos (${data.creatives.length})`}
+          description="Baixe, exporte em PDF e reaproveite as mídias na Biblioteca."
+          actions={
+            <Button asChild size="sm" variant="outline">
+              <Link to="/library">Abrir Biblioteca</Link>
+            </Button>
+          }
+        >
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {data.creatives.map((c) => (
               <div key={c.id} className="overflow-hidden rounded-lg border border-border bg-surface/50">

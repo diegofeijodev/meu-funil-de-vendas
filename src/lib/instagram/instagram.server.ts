@@ -86,19 +86,17 @@ export async function connectInstagramAccount(workspaceId: string, pageIdOverrid
     if (error) throw new Error(error.message);
     return { ok: true as const, username: row.username, igUserId: igId };
   } catch (e) {
-    await s
-      .from("instagram_accounts")
-      .upsert(
-        {
-          workspace_id: workspaceId,
-          facebook_page_id: pageId,
-          status: "error",
-          last_error: errMsg(e),
-        } as never,
-        {
-          onConflict: "workspace_id",
-        },
-      );
+    await s.from("instagram_accounts").upsert(
+      {
+        workspace_id: workspaceId,
+        facebook_page_id: pageId,
+        status: "error",
+        last_error: errMsg(e),
+      } as never,
+      {
+        onConflict: "workspace_id",
+      },
+    );
     return { ok: false as const, error: errMsg(e) };
   }
 }
@@ -312,29 +310,47 @@ export async function regenerateCaption(
 
 /* ---------------- Mídia ---------------- */
 
-async function storeToIgMedia(
-  workspaceId: string,
-  postId: string,
-  sourceUrl: string,
-  video: boolean,
+/**
+ * Salva a mídia na Biblioteca (bucket creative-assets, padronizada no formato do post)
+ * e devolve o item de mídia do post com largura/altura/duração reais.
+ */
+async function libraryItem(
+  post: any,
+  src: { sourceUrl?: string; bytes?: Uint8Array; mime?: string },
+  order: number,
+  provider: string,
+  prompt: string | null,
+  cost = 0,
+  title?: string,
 ) {
-  const res = await fetch(sourceUrl, { redirect: "follow" });
-  if (!res.ok) throw new Error(`Não foi possível baixar a mídia gerada (${res.status}).`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const ct = res.headers.get("content-type") ?? (video ? "video/mp4" : "image/jpeg");
-  const ext = video ? "mp4" : ct.includes("png") ? "png" : "jpg";
-  const path = `${workspaceId}/${postId}/${crypto.randomUUID()}.${ext}`;
-  const s = await db();
-  const { error } = await s.storage
-    .from(BUCKET)
-    .upload(path, bytes, { contentType: video ? "video/mp4" : ct, upsert: false });
-  if (error) throw new Error(`Falha ao salvar a mídia: ${error.message}`);
-  // Bucket privado: link assinado de 1 ano é público para a Graph API buscar.
-  const { data, error: e2 } = await s.storage
-    .from(BUCKET)
-    .createSignedUrl(path, 60 * 60 * 24 * 365);
-  if (e2 || !data) throw new Error("Falha ao gerar o link da mídia.");
-  return data.signedUrl;
+  const { ingestAsset } = await import("@/lib/media/assets.server");
+  const { targetForIgFormat } = await import("@/lib/media/formats");
+  const video = src.mime ? src.mime.startsWith("video/") : isVideo(post.format as IgFormat);
+  const a = await ingestAsset({
+    workspaceId: post.workspace_id,
+    kind: video ? "video" : "image",
+    targetFormat: targetForIgFormat(post.format),
+    source: provider,
+    sourceUrl: src.sourceUrl,
+    bytes: src.bytes,
+    mime: src.mime ?? null,
+    title: title ?? post.theme ?? "Post do Instagram",
+    prompt,
+    provider,
+    cost,
+    igPostId: post.id,
+  });
+  return {
+    url: a.url,
+    type: a.kind,
+    order,
+    width: a.width,
+    height: a.height,
+    duration: a.duration_seconds,
+    asset_id: a.id,
+    ig_ready: a.ig_ready,
+    issues: a.quality_report?.issues ?? [],
+  };
 }
 
 type PendingJob = {
@@ -366,12 +382,6 @@ async function continueAssets(
 ): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
   const format = post.format as IgFormat;
   const s = await db();
-  const [w, h] =
-    ASPECT[format] === "1:1"
-      ? [1080, 1080]
-      : ASPECT[format] === "4:5"
-        ? [1080, 1350]
-        : [1080, 1920];
   for (let i = start; i < prompts.length; i++) {
     const req = {
       finalPrompt:
@@ -403,17 +413,9 @@ async function continueAssets(
     if (r.status !== "ready" || !r.assetUrl)
       throw new Error("O provedor não devolveu a mídia pronta.");
     cost += r.cost;
-    const url = await storeToIgMedia(post.workspace_id, post.id, r.assetUrl, isVideo(format));
     media = [
       ...media,
-      {
-        url,
-        type: isVideo(format) ? "video" : "image",
-        order: i,
-        width: w,
-        height: h,
-        duration: isVideo(format) ? 8 : null,
-      },
+      await libraryItem(post, { sourceUrl: r.assetUrl }, i, provider.id, req.finalPrompt, r.cost),
     ];
   }
   const { data: plan } = post.plan_id
@@ -498,24 +500,16 @@ export async function pollPendingMedia() {
         r.assetUrl ?? (r.status === "ready" ? await provider.getAsset(pj.jobId) : null);
       if (r.status !== "ready" || !assetUrl)
         throw new Error("O provedor informou falha na geração da mídia.");
-      const format = post.format as IgFormat;
-      const [w, h] =
-        ASPECT[format] === "1:1"
-          ? [1080, 1080]
-          : ASPECT[format] === "4:5"
-            ? [1080, 1350]
-            : [1080, 1920];
-      const url = await storeToIgMedia(post.workspace_id, post.id, assetUrl, isVideo(format));
       const media = [
         ...pj.media,
-        {
-          url,
-          type: isVideo(format) ? "video" : "image",
-          order: pj.index,
-          width: w,
-          height: h,
-          duration: isVideo(format) ? 8 : null,
-        },
+        await libraryItem(
+          post,
+          { sourceUrl: assetUrl },
+          pj.index,
+          pj.provider,
+          pj.prompts[pj.index] ?? null,
+          r.cost ?? 0,
+        ),
       ];
       const res = await continueAssets(
         post,
@@ -702,6 +696,23 @@ export async function publishInstagramPost(
     .gte("published_at", new Date(Date.now() - 24 * 3600e3).toISOString());
   if ((count ?? 0) >= DAILY_LIMIT)
     throw new RateLimited("Limite de 25 publicações em 24h atingido.");
+  // Guardrail: mídia reprovada na validação de qualidade do Instagram não é publicada.
+  const assetIds = media.map((m) => m.asset_id).filter(Boolean);
+  if (assetIds.length) {
+    const { data: assets } = await s
+      .from("media_assets" as never)
+      .select("id, ig_ready, quality_report")
+      .in("id", assetIds);
+    const bad = ((assets ?? []) as any[]).find((a) => !a.ig_ready);
+    if (bad)
+      throw new Guardrail(
+        `Mídia fora do padrão do Instagram: ${(bad.quality_report?.issues ?? []).join(" ") || "validação pendente."}`,
+      );
+  } else {
+    const bad = media.find((m) => m.ig_ready === false);
+    if (bad)
+      throw new Guardrail(`Mídia fora do padrão do Instagram: ${(bad.issues ?? []).join(" ")}`);
+  }
   // Guardrail: toda mídia precisa de URL pública válida.
   for (const m of media) await assertPublicUrl(m.url);
 
@@ -1039,28 +1050,18 @@ export async function uploadOwnMedia(workspaceId: string, postId: string, file: 
   if (!video && !file.type.startsWith("image/"))
     throw new Error("Envie uma imagem ou um vídeo MP4.");
   if (file.size > 100 * 1024 * 1024) throw new Error("Arquivo acima de 100 MB.");
-  const ext = video ? "mp4" : file.type.includes("png") ? "png" : "jpg";
-  const path = `${workspaceId}/${postId}/${crypto.randomUUID()}.${ext}`;
-  const s = await db();
-  const { error } = await s.storage
-    .from(BUCKET)
-    .upload(path, new Uint8Array(await file.arrayBuffer()), { contentType: file.type });
-  if (error) throw new Error(`Falha ao salvar: ${error.message}`);
-  const { data } = await s.storage.from(BUCKET).createSignedUrl(path, 60 * 60 * 24 * 365);
-  if (!data) throw new Error("Falha ao gerar o link.");
   const format = post.format as IgFormat;
   const current: any[] = format === "feed_carousel" ? (post.media ?? []) : [];
-  const media = [
-    ...current,
-    {
-      url: data.signedUrl,
-      type: video ? "video" : "image",
-      order: current.length,
-      width: null,
-      height: null,
-      duration: null,
-    },
-  ];
+  const item = await libraryItem(
+    post,
+    { bytes: new Uint8Array(await file.arrayBuffer()), mime: file.type },
+    current.length,
+    "upload",
+    null,
+    0,
+    file.name.replace(/\.[^.]+$/, ""),
+  );
+  const media = [...current, item];
   await patchPost(postId, {
     media,
     status: post.status === "idea" || post.status === "failed" ? "pending_approval" : post.status,

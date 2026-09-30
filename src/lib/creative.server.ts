@@ -138,6 +138,7 @@ export type RunGenerationInput = {
   brandContext: Record<string, unknown>;
   existingCreativeId?: string | null;
   providerChoice?: ProviderChoice;
+  targetFormat?: string | null;
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
@@ -200,6 +201,32 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
       throw new Error("O provedor não devolveu um ativo pronto.");
     }
 
+    // Biblioteca de mídia: baixa do provedor, padroniza no formato de destino e salva no bucket.
+    let assetId: string | null = null;
+    if (!provider.sandbox) {
+      try {
+        const { ingestAsset, guessTarget } = await import("./media/assets.server");
+        const asset = await ingestAsset({
+          workspaceId: input.workspaceId,
+          kind: input.kind === "video" ? "video" : "image",
+          targetFormat: guessTarget(input.aspectRatio, input.kind === "video", input.targetFormat),
+          source: provider.id,
+          sourceUrl: result.assetUrl,
+          title: input.title,
+          prompt: input.finalPrompt,
+          provider: provider.id,
+          cost: result.cost,
+          brandId: input.brandId,
+          campaignId: input.campaignId,
+        });
+        assetId = asset.id;
+        result.assetUrl = asset.url;
+        result.thumbnailUrl = asset.thumbnail_url ?? asset.url;
+      } catch (e) {
+        console.error("[creative-generation] biblioteca de mídia falhou", errMessage(e));
+      }
+    }
+
     let creativeId = input.existingCreativeId ?? null;
     let version = 1;
 
@@ -245,6 +272,11 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
         .single();
       if (error) throw new Error(error.message);
       creativeId = created.id;
+    }
+
+    if (assetId) {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin.from("media_assets" as never).update({ creative_id: creativeId } as never).eq("id", assetId);
     }
 
     await supabase.from("creative_versions").insert({
