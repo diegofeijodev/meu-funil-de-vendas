@@ -245,13 +245,101 @@ async function storeToIgMedia(workspaceId: string, postId: string, sourceUrl: st
   return data.signedUrl;
 }
 
-export async function generatePostAssets(workspaceId: string, postId: string, providerChoice: ProviderChoice = "auto", instructions?: string) {
+type PendingJob = {
+  provider: string;
+  jobId: string;
+  index: number;
+  prompts: string[];
+  media: any[];
+  cost: number;
+  instructions?: string | null;
+  started_at: string;
+};
+
+const choiceFor = (id: string): ProviderChoice =>
+  id === "higgsfield" || id === "chatgpt" || id === "gemini" ? id : "auto";
+
+/**
+ * Gera (ou continua gerando) a mídia a partir do slide `start`. Se o provedor responder
+ * "generating", salva creative_brief.pending_job e mantém o post em "generating".
+ */
+async function continueAssets(
+  post: any,
+  provider: Awaited<ReturnType<typeof resolveProvider>>,
+  prompts: string[],
+  start: number,
+  media: any[],
+  cost: number,
+  instructions?: string | null,
+): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
+  const format = post.format as IgFormat;
+  const s = await db();
+  const [w, h] = ASPECT[format] === "1:1" ? [1080, 1080] : ASPECT[format] === "4:5" ? [1080, 1350] : [1080, 1920];
+  for (let i = start; i < prompts.length; i++) {
+    const req = {
+      finalPrompt: `${prompts[i]} ${format === "feed_carousel" ? `(slide ${i + 1} de ${prompts.length})` : ""}`.trim(),
+      aspectRatio: ASPECT[format],
+      kind: (isVideo(format) ? "video" : "image") as "image" | "video",
+    };
+    const r = isVideo(format) ? await provider.generateVideo(req) : await provider.generateImage(req);
+    if (r.status === "generating" && r.externalJobId) {
+      const pending: PendingJob = {
+        provider: provider.id,
+        jobId: r.externalJobId,
+        index: i,
+        prompts,
+        media,
+        cost,
+        instructions: instructions ?? null,
+        started_at: new Date().toISOString(),
+      };
+      await patchPost(post.id, {
+        status: "generating",
+        ai_provider: provider.id,
+        creative_brief: { ...(post.creative_brief ?? {}), pending_job: pending },
+      });
+      return { ok: true, items: media.length, provider: provider.id, pending: true };
+    }
+    if (r.status !== "ready" || !r.assetUrl) throw new Error("O provedor não devolveu a mídia pronta.");
+    cost += r.cost;
+    const url = await storeToIgMedia(post.workspace_id, post.id, r.assetUrl, isVideo(format));
+    media = [
+      ...media,
+      { url, type: isVideo(format) ? "video" : "image", order: i, width: w, height: h, duration: isVideo(format) ? 8 : null },
+    ];
+  }
+  const { data: plan } = post.plan_id
+    ? await s.from("ig_content_plans").select("requires_approval").eq("id", post.plan_id).maybeSingle()
+    : { data: null as any };
+  const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
+  await patchPost(post.id, {
+    media,
+    creative_brief: brief,
+    status: plan?.requires_approval === false ? "ready" : "pending_approval",
+    ai_provider: provider.id,
+    ai_generation_log: await appendLog(post, {
+      step: "media",
+      provider: provider.id,
+      items: media.length,
+      cost,
+      instructions,
+    }),
+  });
+  return { ok: true, items: media.length, provider: provider.id };
+}
+
+export async function generatePostAssets(
+  workspaceId: string,
+  postId: string,
+  providerChoice: ProviderChoice = "auto",
+  instructions?: string,
+) {
   const post = await getPost(postId);
   if (post.workspace_id !== workspaceId) throw new Error("Post não encontrado.");
   const format = post.format as IgFormat;
   const s = await db();
   const { data: plan } = post.plan_id
-    ? await s.from("ig_content_plans").select("requires_approval, brand_id").eq("id", post.plan_id).maybeSingle()
+    ? await s.from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle()
     : { data: null as any };
   const brand = await brandFor(plan?.brand_id ?? null);
   await patchPost(postId, { status: "generating", last_error: null });
@@ -263,32 +351,75 @@ export async function generatePostAssets(workspaceId: string, postId: string, pr
       .join(" ");
     const prompts: string[] =
       format === "feed_carousel" ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
-    const media: any[] = [];
-    let cost = 0;
-    for (let i = 0; i < prompts.length; i++) {
-      const req = {
-        finalPrompt: `${prompts[i]} ${format === "feed_carousel" ? `(slide ${i + 1} de ${prompts.length})` : ""}`.trim(),
-        aspectRatio: ASPECT[format],
-        kind: (isVideo(format) ? "video" : "image") as "image" | "video",
-      };
-      const r = isVideo(format) ? await provider.generateVideo(req) : await provider.generateImage(req);
-      if (r.status !== "ready" || !r.assetUrl) throw new Error("O provedor não devolveu a mídia pronta.");
-      cost += r.cost;
-      const url = await storeToIgMedia(workspaceId, postId, r.assetUrl, isVideo(format));
-      const [w, h] = ASPECT[format] === "1:1" ? [1080, 1080] : ASPECT[format] === "4:5" ? [1080, 1350] : [1080, 1920];
-      media.push({ url, type: isVideo(format) ? "video" : "image", order: i, width: w, height: h, duration: isVideo(format) ? 8 : null });
-    }
-    await patchPost(postId, {
-      media,
-      status: plan?.requires_approval === false ? "ready" : "pending_approval",
-      ai_provider: provider.id,
-      ai_generation_log: await appendLog(post, { step: "media", provider: provider.id, items: media.length, cost, instructions }),
-    });
-    return { ok: true as const, items: media.length, provider: provider.id };
+    return await continueAssets(post, provider, prompts, 0, [], 0, instructions);
   } catch (e) {
     console.error("[instagram] mídia falhou:", errMsg(e));
     await patchPost(postId, { status: "failed", last_error: errMsg(e) });
     return { ok: false as const, error: errMsg(e) };
+  }
+}
+
+/** Consulta os provedores para posts com geração assíncrona pendente e conclui os prontos. */
+export async function pollPendingMedia() {
+  const s = await db();
+  const { data } = await s.from("ig_posts").select("*").eq("status", "generating").limit(20);
+  const out: { post: string; status: string; error?: string }[] = [];
+  for (const post of (data ?? []) as any[]) {
+    const pj = post.creative_brief?.pending_job as PendingJob | undefined;
+    if (!pj?.jobId) continue;
+    try {
+      const provider = await resolveProvider(s as any, post.workspace_id, choiceFor(pj.provider));
+      const r = await provider.getGenerationStatus(pj.jobId);
+      if (r.status === "generating") {
+        if (Date.now() - new Date(pj.started_at).getTime() > 60 * 60e3)
+          throw new Error("O provedor não concluiu a mídia em 1 hora.");
+        out.push({ post: post.id, status: "generating" });
+        continue;
+      }
+      const assetUrl = r.assetUrl ?? (r.status === "ready" ? await provider.getAsset(pj.jobId) : null);
+      if (r.status !== "ready" || !assetUrl) throw new Error("O provedor informou falha na geração da mídia.");
+      const format = post.format as IgFormat;
+      const [w, h] = ASPECT[format] === "1:1" ? [1080, 1080] : ASPECT[format] === "4:5" ? [1080, 1350] : [1080, 1920];
+      const url = await storeToIgMedia(post.workspace_id, post.id, assetUrl, isVideo(format));
+      const media = [
+        ...pj.media,
+        { url, type: isVideo(format) ? "video" : "image", order: pj.index, width: w, height: h, duration: isVideo(format) ? 8 : null },
+      ];
+      const res = await continueAssets(post, provider, pj.prompts, pj.index + 1, media, pj.cost + (r.cost ?? 0), pj.instructions);
+      if (res.pending) {
+        out.push({ post: post.id, status: "generating" });
+        continue;
+      }
+      await afterMediaReady(post);
+      out.push({ post: post.id, status: "ready" });
+    } catch (e) {
+      const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
+      await patchPost(post.id, { status: "failed", last_error: errMsg(e), creative_brief: brief });
+      out.push({ post: post.id, status: "failed", error: errMsg(e) });
+    }
+  }
+  return out;
+}
+
+/** Após mídia assíncrona pronta: no piloto automático sem aprovação, agenda no horário previsto. */
+async function afterMediaReady(post: any) {
+  if (!post.plan_id) return;
+  const s = await db();
+  const { data: plan } = await s
+    .from("ig_content_plans")
+    .select("auto_publish, requires_approval, status")
+    .eq("id", post.plan_id)
+    .maybeSingle();
+  const ap = await import("./autopilot.server");
+  await ap.logEvent({
+    workspace_id: post.workspace_id,
+    plan_id: post.plan_id,
+    post_id: post.id,
+    kind: "media",
+    message: "Mídia assíncrona concluída.",
+  });
+  if (plan?.auto_publish && !plan.requires_approval && post.scheduled_at && new Date(post.scheduled_at) > new Date()) {
+    await schedulePost(post.workspace_id, post.id, post.scheduled_at).catch(() => null);
   }
 }
 
