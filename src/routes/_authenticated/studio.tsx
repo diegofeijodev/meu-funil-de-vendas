@@ -16,7 +16,9 @@ import { Link } from "@tanstack/react-router";
 import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
 import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
 import { useServerFn } from "@tanstack/react-start";
-import { generateCreative, retryCreativeJob } from "@/lib/creative.functions";
+import { generateCreative, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
+import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
+import type { TextLayout, Variation } from "@/lib/creative/visual-style";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -35,6 +37,13 @@ function Studio() {
   const qc = useQueryClient();
   const runGenerate = useServerFn(generateCreative);
   const runRetry = useServerFn(retryCreativeJob);
+  const runPreview = useServerFn(previewVisualPrompt);
+  const [art, setArt] = useState<{ ad: Record<string, unknown> | null; prompt: string }>({ ad: null, prompt: "" });
+  const [layout, setLayout] = useState<TextLayout>("limpo");
+  const [overlay, setOverlay] = useState({ headline: "", price: "", cta: "" });
+  const [variationCount, setVariationCount] = useState(3);
+  const [lastVariations, setLastVariations] = useState<Variation[]>([]);
+  const [adjust, setAdjust] = useState("");
 
   
   const [busy, setBusy] = useState(false);
@@ -75,13 +84,51 @@ function Studio() {
     },
   });
 
-  const generate = async () => {
+  const payload = () => {
+    const campaign = data!.campaigns.find((c) => c.id === form.campaignId) ?? data!.campaigns[0];
+    return {
+      workspaceId: workspaceId!,
+      campaignId: campaign?.id ?? null,
+      brandId: campaign?.brand_id ?? data!.brands[0]?.id ?? null,
+      title: form.title,
+      type: form.type,
+      aspectRatio: aspectFor(form.target),
+      targetFormat: form.target,
+      prompt: form.prompt,
+      copyText: form.copyText,
+      provider: form.provider,
+      layout,
+      variations: variationCount,
+      headline: overlay.headline || null,
+      price: overlay.price || null,
+      cta: overlay.cta || null,
+    };
+  };
+
+  const preview = async () => {
+    if (!workspaceId || !data) return;
+    setBusy(true);
+    try {
+      const r = await runPreview({ data: payload() });
+      setArt({ ad: r.artDirection as Record<string, unknown>, prompt: r.artDirection.prompt_final });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível montar o prompt visual.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const generate = async (adjustText?: string) => {
     if (!workspaceId || !data) return;
     setBusy(true);
     try {
       const campaign = data.campaigns.find((c) => c.id === form.campaignId) ?? data.campaigns[0];
       const res = await runGenerate({
         data: {
+          ...payload(),
+          visualPrompt: art.prompt || null,
+          artDirection: art.ad,
+          adjust: adjustText || null,
           workspaceId,
           campaignId: campaign?.id ?? null,
           brandId: campaign?.brand_id ?? data.brands[0]?.id ?? null,
@@ -95,6 +142,8 @@ function Studio() {
         },
       });
       qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
+      if (res.artDirection) setArt({ ad: res.artDirection as Record<string, unknown>, prompt: String((res.artDirection as any).prompt_final ?? "") });
+      setLastVariations((res.variations ?? []) as Variation[]);
       if (res.status === "failed") {
         toast.error(res.error ?? "Não foi possível gerar este criativo. Tente novamente.");
         return;
@@ -248,16 +297,59 @@ function Studio() {
               <Label htmlFor="ct">Texto sobre o criativo</Label>
               <Textarea id="ct" rows={2} value={form.copyText} onChange={(e) => setForm({ ...form, copyText: e.target.value })} />
             </div>
+            {!isVideo && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Texto sobre a imagem</Label>
+                    <LayoutSelect value={layout} onChange={setLayout} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="vc">Variações</Label>
+                    <select id="vc" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={variationCount} onChange={(e) => setVariationCount(Number(e.target.value))}>
+                      {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {layout !== "limpo" && (
+                  <div className="grid gap-2">
+                    <Input placeholder="Título (curto)" maxLength={120} value={overlay.headline} onChange={(e) => setOverlay({ ...overlay, headline: e.target.value })} />
+                    {layout === "preco_destaque" && <Input placeholder="Preço (ex.: R$ 9,90)" maxLength={40} value={overlay.price} onChange={(e) => setOverlay({ ...overlay, price: e.target.value })} />}
+                    {layout === "cta_rodape" && <Input placeholder="Chamada (ex.: Peça já)" maxLength={40} value={overlay.cta} onChange={(e) => setOverlay({ ...overlay, cta: e.target.value })} />}
+                  </div>
+                )}
+              </>
+            )}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="vp">Prompt visual</Label>
+                <Button size="sm" variant="ghost" onClick={preview} disabled={busy}>Montar com diretor de arte</Button>
+              </div>
+              <Textarea id="vp" rows={5} value={art.prompt} onChange={(e) => setArt({ ...art, prompt: e.target.value })} placeholder="Opcional: veja e edite o prompt antes de gerar. Se vazio, é montado na hora." />
+            </div>
             {canEdit && (
-              <Button className="w-full" onClick={generate} disabled={busy}>
+              <Button className="w-full" onClick={() => generate()} disabled={busy}>
                 <Sparkles className="mr-2 size-4" />
-                {busy ? "Gerando..." : "Gerar com IA"}
+                {busy ? "Gerando (pode levar 1–2 min)..." : "Gerar com IA"}
               </Button>
             )}
           </div>
         </Section>
 
         <div className="space-y-6">
+        {lastVariations.length > 0 && (
+          <Section title="Variações da última geração" description="A de maior nota (troféu) virou o criativo final; todas ficam na Biblioteca.">
+            <div className="space-y-3">
+              <VariationsGrid variations={lastVariations} />
+              {canEdit && (
+                <div className="flex gap-2">
+                  <Input value={adjust} onChange={(e) => setAdjust(e.target.value)} maxLength={300} placeholder='Ex.: "mais close no copo", "fundo mais escuro"' />
+                  <Button disabled={busy || !adjust.trim()} onClick={() => generate(adjust.trim())}>Regenerar com ajuste</Button>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
         <Section title="Gerações recentes" description="Acompanhe o processamento de cada solicitação.">
           {data.jobs.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma geração solicitada ainda.</p>
