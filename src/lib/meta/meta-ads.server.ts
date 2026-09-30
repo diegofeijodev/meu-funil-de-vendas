@@ -102,7 +102,48 @@ function mapObjective(obj: string) {
   if (o.includes("aware") || o.includes("reconhec") || o.includes("alcance") || o.includes("brand"))
     return { objective: "OUTCOME_AWARENESS", optimization: "REACH" };
   if (o.includes("engaj") || o.includes("engage")) return { objective: "OUTCOME_ENGAGEMENT", optimization: "POST_ENGAGEMENT" };
+  if (o.includes("sale") || o.includes("venda") || o.includes("convers"))
+    return { objective: "OUTCOME_SALES", optimization: "OFFSITE_CONVERSIONS" };
   return { objective: "OUTCOME_TRAFFIC", optimization: "LINK_CLICKS" };
+}
+
+/** "25-45", "25 a 45", "18+" → faixa de idade aceita pela Meta. */
+function parseAges(aud: Record<string, unknown>) {
+  const a = aud as any;
+  let min = Number(a.age_min ?? a.ageMin) || 0;
+  let max = Number(a.age_max ?? a.ageMax) || 0;
+  const nums = String(a.idade ?? "").match(/\d{2}/g)?.map(Number) ?? [];
+  if (!min && nums[0]) min = nums[0];
+  if (!max && nums[1]) max = nums[1];
+  return { age_min: Math.max(18, Math.min(65, min || 18)), age_max: Math.min(65, Math.max(18, max || 65)) };
+}
+
+/** Converte "Valinhos e região, Vinhedo" em cidades da Meta com raio de 20 km. */
+async function geoFor(aud: Record<string, unknown>) {
+  const a = aud as any;
+  const text = String(a.localizacao ?? a.location ?? a.cities ?? "").trim();
+  const names = text
+    .replace(/\be\s+regi[aã]o\b|\bregi[aã]o\b|\bSP\b|\bBrasil\b/gi, "")
+    .split(/[,;/]|\se\s|\s-\s/)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 2)
+    .slice(0, 10);
+  const cities: { key: string; radius: number; distance_unit: string; name: string }[] = [];
+  for (const q of names) {
+    const r = await graph<{ data?: { key: string; name: string; type: string }[] }>(`/search`, {
+      params: { type: "adgeolocation", q, location_types: JSON.stringify(["city"]), country_code: "BR" },
+    }).catch(() => null);
+    const hit = r?.data?.find((d) => d.type === "city");
+    if (hit && !cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: "kilometer", name: hit.name });
+  }
+  return cities.length
+    ? { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label: `${cities.map((c) => c.name).join(", ")} (raio de 20 km)` }
+    : { geo: { countries: ["BR"] }, label: "Brasil inteiro (localização não reconhecida)" };
+}
+
+async function firstPixel(adAccountId: string) {
+  const r = await graph<{ data?: { id: string; name: string }[] }>(`/${adAccountId}/adspixels`, { params: { fields: "id,name" } }).catch(() => null);
+  return r?.data?.[0] ?? null;
 }
 
 export type PublishInput = {
@@ -122,7 +163,19 @@ export type Step = { key: string; label: string; status: "done" | "failed"; deta
 export async function publishPaused(input: PublishInput) {
   const cfg = await metaConfig();
   const steps: Step[] = [];
-  const { objective, optimization } = mapObjective(input.objective);
+  let { objective, optimization } = mapObjective(input.objective);
+  let promoted: Record<string, unknown> | null = null;
+  if (objective === "OUTCOME_SALES") {
+    const px = cfg.adAccountId ? await firstPixel(cfg.adAccountId) : null;
+    if (px) {
+      promoted = { pixel_id: px.id, custom_event_type: "PURCHASE" };
+      steps.push({ key: "pixel", label: `Otimização por compras no pixel "${px.name}"`, status: "done", detail: px.id });
+    } else {
+      objective = "OUTCOME_TRAFFIC";
+      optimization = "LINK_CLICKS";
+      steps.push({ key: "pixel", label: "Sem pixel na conta: campanha criada como tráfego", status: "failed", detail: "Crie um pixel para otimizar por vendas." });
+    }
+  }
 
   const campaign = await graph<{ id: string }>(`/${cfg.adAccountId}/campaigns`, {
     method: "POST",
@@ -137,8 +190,9 @@ export async function publishPaused(input: PublishInput) {
   steps.push({ key: "campaign", label: "Campanha criada (pausada)", status: "done", detail: campaign.id });
 
   const aud = input.audience ?? {};
-  const ageMin = Number((aud as any).age_min ?? (aud as any).ageMin ?? 18);
-  const ageMax = Number((aud as any).age_max ?? (aud as any).ageMax ?? 65);
+  const ages = parseAges(aud);
+  const geo = await geoFor(aud);
+  steps.push({ key: "geo", label: `Público: ${geo.label}, ${ages.age_min}–${ages.age_max} anos`, status: "done", detail: "" });
   const adset = await graph<{ id: string }>(`/${cfg.adAccountId}/adsets`, {
     method: "POST",
     params: {
@@ -150,11 +204,11 @@ export async function publishPaused(input: PublishInput) {
       bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       status: "PAUSED",
       targeting: {
-        geo_locations: { countries: ["BR"] },
-        age_min: Math.max(18, ageMin || 18),
-        age_max: Math.min(65, ageMax || 65),
+        geo_locations: geo.geo,
+        ...ages,
         targeting_automation: { advantage_audience: 0 },
       },
+      ...(promoted ? { promoted_object: promoted } : {}),
       ...(optimization === "POST_ENGAGEMENT" || optimization === "REACH" ? {} : { destination_type: "WEBSITE" }),
     },
   });
