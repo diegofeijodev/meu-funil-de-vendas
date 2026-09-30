@@ -31,7 +31,8 @@ async function load(bytes: Uint8Array) {
   return Jimp.read(Buffer.from(bytes));
 }
 
-type Img = Awaited<ReturnType<typeof load>>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Img = any;
 
 function hasAlpha(img: Img) {
   const px = img.bitmap.data;
