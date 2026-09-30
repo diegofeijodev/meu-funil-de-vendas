@@ -115,12 +115,12 @@ export async function ingestAsset(input: IngestInput): Promise<MediaAssetRow> {
     let ext: string;
     let thumb: Uint8Array | null = null;
     if (input.normalize === false) {
-      ({ width, height } = imageSize(bytes));
+      ({ width, height } = await imageSize(bytes));
       data = bytes;
       ext = mime?.includes("png") ? "png" : "jpg";
       mime = ext === "png" ? "image/png" : "image/jpeg";
     } else {
-      const n = normalizeImage(bytes, target);
+      const n = await normalizeImage(bytes, target);
       ({ width, height, ext } = n);
       data = n.bytes;
       mime = n.mime;
