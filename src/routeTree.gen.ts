@@ -37,6 +37,7 @@ import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
 import { Route as ApiPublicCronCrmCadencesRouteImport } from './routes/api/public/cron/crm-cadences'
 import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
+import { Route as ApiPublicCronInstagramRouteImport } from './routes/api/public/cron/instagram'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
 import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
@@ -192,6 +193,11 @@ const ApiPublicCronCrmDailyRoute = ApiPublicCronCrmDailyRouteImport.update({
   path: '/api/public/cron/crm-daily',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicCronInstagramRoute = ApiPublicCronInstagramRouteImport.update({
+  id: '/api/public/cron/instagram',
+  path: '/api/public/cron/instagram',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
@@ -237,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
+  '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -268,6 +275,7 @@ export interface FileRoutesByTo {
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
+  '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
+  '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
@@ -336,6 +345,7 @@ export interface FileRouteTypes {
     | '/crm/leads/$id'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
+    | '/api/public/cron/instagram'
     | '/api/public/mcp/callback'
     | '/crm/leads/'
     | '/api/public/webhooks/whatsapp/$token'
@@ -367,6 +377,7 @@ export interface FileRouteTypes {
     | '/crm/leads/$id'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
+    | '/api/public/cron/instagram'
     | '/api/public/mcp/callback'
     | '/crm/leads'
     | '/api/public/webhooks/whatsapp/$token'
@@ -400,6 +411,7 @@ export interface FileRouteTypes {
     | '/_authenticated/crm/leads/$id'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
+    | '/api/public/cron/instagram'
     | '/api/public/mcp/callback'
     | '/_authenticated/crm/leads/'
     | '/api/public/webhooks/whatsapp/$token'
@@ -412,6 +424,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
+  ApiPublicCronInstagramRoute: typeof ApiPublicCronInstagramRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
   ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -615,6 +628,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronCrmDailyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/cron/instagram': {
+      id: '/api/public/cron/instagram'
+      path: '/api/public/cron/instagram'
+      fullPath: '/api/public/cron/instagram'
+      preLoaderRoute: typeof ApiPublicCronInstagramRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
@@ -709,6 +729,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
+  ApiPublicCronInstagramRoute: ApiPublicCronInstagramRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
   ApiPublicWebhooksMetaLeadgenTokenRoute:
