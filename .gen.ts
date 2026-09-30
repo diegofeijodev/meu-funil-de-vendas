@@ -1,0 +1,12 @@
+import { createClient } from "@supabase/supabase-js";
+import { buildBrandBrainPrompt, runGeneration } from "@/lib/creative.server";
+const s:any = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const WS="ab67e8e1-e147-48c9-bb68-a622d5f9c9fe", BRAND="2d46c624-c17a-419f-bf4b-5f0088e0b8fc";
+const provider = process.argv[2] as any, type = process.argv[3], aspect = process.argv[4], title=process.argv[5];
+const prompt = "Anúncio estático de um restaurante e choperia em uma praça de alimentação de shopping: chopp gelado com colarinho cremoso em copo trincando de gelado, espetinhos na brasa fumegantes, mesa da praça de alimentação ao fundo com luz quente e aconchegante, clima de happy hour com amigos. Visual apetitoso e premium, sem texto na imagem.";
+const input = { workspaceId: WS, brandId: BRAND, campaignId: null, prompt, title, type, aspectRatio: aspect, copyText: "" };
+const { brand, finalPrompt, brandContext } = await buildBrandBrainPrompt(s, input);
+const { data: job, error } = await s.from("creative_generation_jobs").insert({ workspace_id: WS, brand_id: BRAND, provider, type, prompt, final_prompt: finalPrompt, aspect_ratio: aspect, status: "queued" }).select().single();
+if (error) throw error;
+const r = await runGeneration(s, { jobId: job.id, workspaceId: WS, brandId: BRAND, campaignId: null, title, type, aspectRatio: aspect, prompt, finalPrompt, copyText: "", kind: type.includes("video")||type.includes("reel") ? "video":"image", brandContext, providerChoice: provider });
+console.log(JSON.stringify(r).slice(0,800));
