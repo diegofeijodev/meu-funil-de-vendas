@@ -2585,6 +2585,7 @@ export type Database = {
           oauth_client_id: string | null
           oauth_client_secret: string | null
           oauth_code_verifier: string | null
+          oauth_redirect_uri: string | null
           oauth_resource: string | null
           oauth_scope: string | null
           oauth_state: string | null
@@ -2609,6 +2610,7 @@ export type Database = {
           oauth_client_id?: string | null
           oauth_client_secret?: string | null
           oauth_code_verifier?: string | null
+          oauth_redirect_uri?: string | null
           oauth_resource?: string | null
           oauth_scope?: string | null
           oauth_state?: string | null
@@ -2633,6 +2635,7 @@ export type Database = {
           oauth_client_id?: string | null
           oauth_client_secret?: string | null
           oauth_code_verifier?: string | null
+          oauth_redirect_uri?: string | null
           oauth_resource?: string | null
           oauth_scope?: string | null
           oauth_state?: string | null
