@@ -28,6 +28,8 @@ import { StatusPill } from "@/components/ui-bits";
 import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, type IgPost } from "./shared";
 import { PickFromLibrary } from "@/components/media/media-picker";
+import { ArtDirectionPanel } from "@/components/creative/art-direction-panel";
+import type { TextLayout } from "@/lib/creative/visual-style";
 
 const toLocal = (iso: string | null) => {
   if (!iso) return "";
@@ -231,6 +233,33 @@ export function PostEditor({
               onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
             />
           </div>
+
+          {post.format !== "reel" && post.format !== "story_video" && (
+            <ArtDirectionPanel
+              key={post.id}
+              prompt={post.creative_brief?.visual_prompt_override ?? post.creative_brief?.visual_prompt ?? ""}
+              layout={(post.creative_brief?.layout ?? "limpo") as TextLayout}
+              variations={post.creative_brief?.variations ?? []}
+              busy={busy === "gen"}
+              showLayout={post.format !== "feed_carousel"}
+              onSave={(prompt, layout) =>
+                run(
+                  "save",
+                  async () => {
+                    const { error } = await supabase
+                      .from("ig_posts")
+                      .update({ creative_brief: { ...(post.creative_brief ?? {}), visual_prompt_override: prompt || null, layout } })
+                      .eq("id", post.id);
+                    if (error) throw error;
+                  },
+                  "Direção de arte salva. Clique em Regenerar mídia para usar.",
+                )
+              }
+              onAdjust={(adjust) =>
+                run("gen", () => fns.gen({ data: { workspaceId, postId: post.id, provider: "auto", adjust } }), "Mídia regenerada com o ajuste.")
+              }
+            />
+          )}
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
