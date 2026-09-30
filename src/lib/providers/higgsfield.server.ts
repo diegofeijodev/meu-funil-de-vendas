@@ -1,8 +1,12 @@
 /**
  * HiggsfieldProvider — implementação real via MCP oficial (https://mcp.higgsfield.ai/mcp).
  * Só roda no servidor. O access token vem da conexão do workspace e nunca é exposto.
+ *
+ * Contrato do MCP (validado): generate_image / generate_video recebem { params: { model, prompt,
+ * aspect_ratio, duration?, use_unlim } } e devolvem um job id; job_status { jobId, sync:true }
+ * espera até ~25s por chamada e devolve a URL quando termina.
  */
-import { callTool, listTools, pickTool, type McpTool } from "@/lib/mcp.server";
+import { callTool } from "@/lib/mcp.server";
 import {
   CREATIVE_COSTS,
   type GenerationRequest,
@@ -11,68 +15,80 @@ import {
 } from "./creative-provider.server";
 
 export const HIGGSFIELD_MCP_URL = "https://mcp.higgsfield.ai/mcp";
-
-const IMAGE_KEYWORDS = ["generate_image", "text2image", "image", "generate"];
-const VIDEO_KEYWORDS = ["generate_video", "text2video", "video", "generate"];
-const STATUS_KEYWORDS = ["status", "job", "get_generation", "poll"];
-const ASSET_KEYWORDS = ["asset", "result", "download", "get_"];
+const IMAGE_MODEL = "gpt_image_2_5";
+const VIDEO_MODEL = "kling2_6"; // texto→vídeo, 5 ou 10 s, 9:16/16:9/1:1
+const VIDEO_RATIOS = new Set(["16:9", "9:16", "1:1"]);
+const MAX_WAIT_MS = 6 * 60 * 1000;
 
 export function createHiggsfieldProvider(opts: {
   serverUrl: string;
   accessToken: string | null;
-  tools: McpTool[];
+  tools?: unknown[];
 }): ServerCreativeProvider {
   const { serverUrl, accessToken } = opts;
 
-  const run = async (keywords: string[], args: Record<string, unknown>) => {
-    const tools = opts.tools.length ? opts.tools : await listTools(serverUrl, accessToken);
-    const tool = pickTool(tools, keywords);
-    if (!tool) throw new Error("O servidor MCP do Higgsfield não expôs ferramentas utilizáveis.");
-    return { tool: tool.name, out: await callTool(serverUrl, accessToken, tool.name, args) };
+  const status = async (jobId: string) => {
+    const out = await callTool(serverUrl, accessToken, "job_status", { jobId, sync: true });
+    const blob = `${out.structured ?? ""}\n${out.text}`;
+    const st = /"status"\s*:\s*"([a-z_]+)"/i.exec(blob)?.[1]?.toLowerCase() ?? "";
+    const url = out.mediaUrl ?? pickUrl(blob);
+    return { st, url, raw: blob };
   };
 
-  const generate = async (req: GenerationRequest, keywords: string[]): Promise<GenerationResult> => {
-    const { out } = await run(keywords, {
+  const generate = async (req: GenerationRequest, video: boolean): Promise<GenerationResult> => {
+    const aspect = video && !VIDEO_RATIOS.has(req.aspectRatio) ? "9:16" : req.aspectRatio;
+    const params: Record<string, unknown> = {
+      model: video ? VIDEO_MODEL : IMAGE_MODEL,
       prompt: req.finalPrompt,
-      aspect_ratio: req.aspectRatio,
-    });
-    const externalJobId = extractJobId(out.structured);
-    return {
-      status: out.mediaUrl ? "ready" : externalJobId ? "generating" : "failed",
-      assetUrl: out.mediaUrl,
-      thumbnailUrl: out.mediaUrl,
-      externalJobId,
-      raw: out.text || out.structured,
-      cost: CREATIVE_COSTS[req.kind],
+      aspect_ratio: aspect,
+      use_unlim: false,
     };
+    if (video) Object.assign(params, { duration: (req as any).durationSeconds && (req as any).durationSeconds <= 5 ? 5 : 10, sound: true });
+    const out = await callTool(serverUrl, accessToken, video ? "generate_video" : "generate_image", { params });
+    const jobId = extractJobId(`${out.structured ?? ""}\n${out.text}`);
+    if (!jobId) throw new Error("O Higgsfield não confirmou a geração.");
+
+    const deadline = Date.now() + MAX_WAIT_MS;
+    while (Date.now() < deadline) {
+      const s = await status(jobId);
+      if (s.url && ["completed", "complete", "succeeded", "success", "done", "ready", ""].includes(s.st)) {
+        return { status: "ready", assetUrl: s.url, thumbnailUrl: s.url, externalJobId: jobId, raw: s.raw.slice(0, 2000), cost: CREATIVE_COSTS[req.kind] };
+      }
+      if (["failed", "error", "nsfw", "cancelled", "canceled", "rejected"].includes(s.st)) {
+        throw new Error(`O Higgsfield não conseguiu gerar (${s.st}).`);
+      }
+    }
+    return { status: "generating", assetUrl: null, thumbnailUrl: null, externalJobId: jobId, raw: null, cost: CREATIVE_COSTS[req.kind] };
   };
 
   return {
     id: "higgsfield",
     label: "Higgsfield (MCP)",
     sandbox: false,
-    generateImage: (req) => generate(req, IMAGE_KEYWORDS),
-    generateVideo: (req) => generate(req, VIDEO_KEYWORDS),
+    generateImage: (req) => generate(req, false),
+    generateVideo: (req) => generate(req, true),
     async getGenerationStatus(externalJobId) {
-      const { out } = await run(STATUS_KEYWORDS, { job_id: externalJobId, id: externalJobId });
+      const s = await status(externalJobId);
       return {
-        status: out.mediaUrl ? "ready" : "generating",
-        assetUrl: out.mediaUrl,
-        thumbnailUrl: out.mediaUrl,
+        status: s.url ? "ready" : ["failed", "error"].includes(s.st) ? "failed" : "generating",
+        assetUrl: s.url,
+        thumbnailUrl: s.url,
         externalJobId,
-        raw: out.text || out.structured,
+        raw: s.raw.slice(0, 2000),
         cost: 0,
       };
     },
     async getAsset(externalJobId) {
-      const { out } = await run(ASSET_KEYWORDS, { job_id: externalJobId, id: externalJobId });
-      return out.mediaUrl;
+      return (await status(externalJobId)).url;
     },
   };
 }
 
-function extractJobId(structured: string | null): string | null {
-  if (!structured) return null;
-  const match = /"(?:job_id|jobId|id|generation_id)"\s*:\s*"([^"]+)"/.exec(structured);
-  return match?.[1] ?? null;
+function extractJobId(blob: string): string | null {
+  return /"id"\s*:\s*"([0-9a-f-]{36})"/i.exec(blob)?.[1] ?? /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(blob)?.[1] ?? null;
+}
+
+function pickUrl(blob: string): string | null {
+  const urls = [...blob.matchAll(/https:\/\/[^\s"'\\)]+/g)].map((m) => m[0]);
+  return urls.find((u) => /\.(mp4|mov|webm|png|jpe?g|webp)(\?|$)/i.test(u)) ?? null;
 }
