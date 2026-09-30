@@ -114,21 +114,35 @@ export type Database = {
       }
       app_credentials: {
         Row: {
+          id: string
           key: string
           updated_at: string
           value: string
+          workspace_id: string | null
         }
         Insert: {
+          id?: string
           key: string
           updated_at?: string
           value: string
+          workspace_id?: string | null
         }
         Update: {
+          id?: string
           key?: string
           updated_at?: string
           value?: string
+          workspace_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "app_credentials_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       approval_requests: {
         Row: {
@@ -2377,6 +2391,7 @@ export type Database = {
           rejection_reason: string | null
           retry_count: number
           scheduled_at: string | null
+          source: string
           status: string
           theme: string | null
           updated_at: string
@@ -2405,6 +2420,7 @@ export type Database = {
           rejection_reason?: string | null
           retry_count?: number
           scheduled_at?: string | null
+          source?: string
           status?: string
           theme?: string | null
           updated_at?: string
@@ -2433,6 +2449,7 @@ export type Database = {
           rejection_reason?: string | null
           retry_count?: number
           scheduled_at?: string | null
+          source?: string
           status?: string
           theme?: string | null
           updated_at?: string

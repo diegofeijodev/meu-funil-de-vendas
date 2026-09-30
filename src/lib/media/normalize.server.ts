@@ -84,3 +84,11 @@ export async function imageSize(bytes: Uint8Array) {
   const img = await load(bytes);
   return { width: img.bitmap.width, height: img.bitmap.height };
 }
+
+/** Miniatura JPEG de 400px de largura. */
+export async function makeThumb(bytes: Uint8Array) {
+  const img = await load(bytes);
+  const w = img.bitmap.width;
+  const h = img.bitmap.height;
+  return encode(img.resize({ w: 400, h: Math.max(1, Math.round((h / w) * 400)) }), false, 80);
+}

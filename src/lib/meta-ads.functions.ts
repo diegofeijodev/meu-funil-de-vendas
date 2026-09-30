@@ -43,10 +43,13 @@ export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
     if (data.instagramId?.trim()) rows.push({ key: "META_INSTAGRAM_ACCOUNT_ID", value: data.instagramId.trim() });
     const { error } = await supabaseAdmin
       .from("app_credentials")
-      .upsert(rows.map((r) => ({ ...r, updated_at: new Date().toISOString() })));
+      .upsert(
+        rows.map((r) => ({ ...r, workspace_id: data.workspaceId, updated_at: new Date().toISOString() })) as never,
+        { onConflict: "workspace_id,key" },
+      );
     if (error) throw new Error(error.message);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = await missingSecrets();
+    const missing = await missingSecrets(data.workspaceId);
     return { ok: true, configured: missing.length === 0, missing };
   });
 
@@ -57,7 +60,7 @@ export const metaAdsStatus = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = await missingSecrets();
+    const missing = await missingSecrets(data.workspaceId);
     return { configured: missing.length === 0, missing };
   });
 
@@ -67,7 +70,8 @@ export const metaAdsTest = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { testConnection } = await import("./meta/meta-ads.server");
-    return testConnection();
+    const { runWithMetaWorkspace } = await import("./meta/graph.server");
+    return runWithMetaWorkspace(data.workspaceId, () => testConnection());
   });
 
 export const metaAdsList = createServerFn({ method: "POST" })
@@ -76,7 +80,8 @@ export const metaAdsList = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { listStructure } = await import("./meta/meta-ads.server");
-    return listStructure();
+    const { runWithMetaWorkspace } = await import("./meta/graph.server");
+    return runWithMetaWorkspace(data.workspaceId, () => listStructure());
   });
 
 export const metaAdsInsights = createServerFn({ method: "POST" })
@@ -97,7 +102,10 @@ export const metaAdsInsights = createServerFn({ method: "POST" })
       if (!metaCampaignId) throw new Error("Esta campanha ainda não foi publicada na Meta.");
     }
     const { fetchInsights } = await import("./meta/meta-ads.server");
-    return fetchInsights({ since: data.since, until: data.until, campaignId: metaCampaignId });
+    const { runWithMetaWorkspace } = await import("./meta/graph.server");
+    return runWithMetaWorkspace(data.workspaceId, () =>
+      fetchInsights({ since: data.since, until: data.until, campaignId: metaCampaignId }),
+    );
   });
 
 /** Publica a campanha aprovada na Meta — tudo PAUSADO. */
@@ -125,7 +133,8 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
     const { publishPaused } = await import("./meta/meta-ads.server");
     let result;
     try {
-      result = await publishPaused({
+      const { runWithMetaWorkspace } = await import("./meta/graph.server");
+      result = await runWithMetaWorkspace(data.workspaceId, () => publishPaused({
         name: c.name,
         objective: c.objective,
         dailyBudget: Number(c.budget_daily ?? 0) || 20,
@@ -134,7 +143,7 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
         headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
         audience: (c.audience ?? {}) as Record<string, unknown>,
         creatives: creatives.map((x: any) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url })),
-      });
+      }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Falha ao publicar na Meta.";
       await db.from("publishing_jobs").insert({ workspace_id: data.workspaceId, campaign_id: c.id, target: "meta", status: "failed", mode: "live", log: msg });
@@ -169,7 +178,10 @@ export const metaAdsSetStatus = createServerFn({ method: "POST" })
     if (data.status === "ACTIVE" && c.status !== "approved" && c.status !== "active")
       throw new Error("Só é possível ativar depois da aprovação em Aprovações.");
     const { setDeliveryStatus } = await import("./meta/meta-ads.server");
-    await setDeliveryStatus({ campaignId: c.meta_campaign_id, adsetId: c.meta_adset_id, adIds: c.meta_ad_ids ?? [] }, data.status);
+    const { runWithMetaWorkspace } = await import("./meta/graph.server");
+    await runWithMetaWorkspace(data.workspaceId, () =>
+      setDeliveryStatus({ campaignId: c.meta_campaign_id!, adsetId: c.meta_adset_id, adIds: c.meta_ad_ids ?? [] }, data.status),
+    );
     await db.from("campaigns").update({
       meta_delivery_status: data.status,
       status: data.status === "ACTIVE" ? "active" : c.status === "active" ? "approved" : c.status,

@@ -6,7 +6,8 @@ import {
   storeBytes,
   MEDIA_BUCKET,
 } from "./assets.server";
-import { convertImage } from "./normalize.server";
+import { convertImage, imageSize, makeThumb } from "./normalize.server";
+import { readVideoMeta, validateImageForInstagram, validateVideoForInstagram } from "./video-meta.server";
 import { IG_FORMATS, TARGET_FORMATS, type TargetFormat } from "./formats";
 
 async function db() {
@@ -338,4 +339,75 @@ export async function useInCampaign(workspaceId: string, ids: string[], campaign
     n++;
   }
   return { count: n };
+}
+
+const isMock = (a: any) => a.provider === "mock" || a.source === "mock" || /picsum\.photos/i.test(a.url ?? "");
+
+/** Baixa o arquivo, recalcula medidas, refaz a validação do Instagram e regrava a miniatura. */
+export async function revalidateAssets(workspaceId: string | null, ids: string[]) {
+  const s = await db();
+  let q = s.from("media_assets" as never).select("*").in("id", ids);
+  if (workspaceId) q = q.eq("workspace_id", workspaceId);
+  const { data } = await q;
+  const results: { id: string; ok: boolean; archived?: boolean; error?: string }[] = [];
+  for (const a of (data ?? []) as any[]) {
+    try {
+      if (isMock(a)) {
+        await s.from("media_assets" as never).update({ status: "archived", ig_ready: false } as never).eq("id", a.id);
+        results.push({ id: a.id, ok: false, archived: true });
+        continue;
+      }
+      const { bytes } = await readAssetBytes(a);
+      const target = a.target_format ?? "other";
+      const patch: Record<string, unknown> = { size_bytes: bytes.length };
+      if (a.kind === "video") {
+        const meta = readVideoMeta(bytes);
+        const report = validateVideoForInstagram(meta, target);
+        Object.assign(patch, {
+          width: meta.width,
+          height: meta.height,
+          duration_seconds: meta.duration,
+          ig_ready: report.ok,
+          quality_report: { ...report, revalidated_at: new Date().toISOString() },
+        });
+      } else {
+        const { width, height } = await imageSize(bytes);
+        const report = validateImageForInstagram(width, height, target);
+        const thumbPath = `${String(a.storage_path ?? `media/${a.workspace_id}/${a.id}`).replace(/\.[^./]+$/, "")}_thumb.jpg`;
+        const thumbUrl = await storeBytes(thumbPath, await makeThumb(bytes), "image/jpeg");
+        Object.assign(patch, {
+          width,
+          height,
+          ig_ready: report.ok,
+          quality_report: { ...report, revalidated_at: new Date().toISOString() },
+          thumbnail_path: thumbPath,
+          thumbnail_url: thumbUrl,
+        });
+      }
+      const { error } = await s.from("media_assets" as never).update(patch as never).eq("id", a.id);
+      if (error) throw new Error(error.message);
+      results.push({ id: a.id, ok: Boolean(patch["ig_ready"]) });
+    } catch (e) {
+      results.push({ id: a.id, ok: false, error: e instanceof Error ? e.message : "falhou" });
+    }
+  }
+  return {
+    total: results.length,
+    ready: results.filter((r) => r.ok).length,
+    archived: results.filter((r) => r.archived).length,
+    failed: results.filter((r) => r.error).length,
+    results,
+  };
+}
+
+/** Revalida (uma vez) todos os assets marcados como backfill. */
+export async function revalidateBackfill(limit = 200) {
+  const s = await db();
+  const { data } = await s
+    .from("media_assets" as never)
+    .select("id")
+    .eq("quality_report->>backfill" as never, "true")
+    .limit(limit);
+  const ids = ((data ?? []) as any[]).map((r) => r.id);
+  return ids.length ? revalidateAssets(null, ids) : { total: 0, ready: 0, archived: 0, failed: 0, results: [] };
 }

@@ -2,7 +2,7 @@
  * Publicação orgânica no Instagram (somente servidor).
  * Token da Meta vem do cofre (metaConfig) — nunca é salvo em instagram_accounts.
  */
-import { graph, metaConfig, MetaError } from "@/lib/meta/graph.server";
+import { graph, metaConfig, MetaError, runWithMetaWorkspace } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
 import { resolveProvider, type ProviderChoice } from "@/lib/creative.server";
@@ -54,8 +54,17 @@ async function appendLog(post: any, entry: Record<string, unknown>) {
 /* ---------------- Conta ---------------- */
 
 export async function connectInstagramAccount(workspaceId: string, pageIdOverride?: string | null) {
+  const r = await runWithMetaWorkspace(workspaceId, () => connectInner(workspaceId, pageIdOverride));
+  if (r.ok) {
+    // Importa o histórico recente logo após conectar (não bloqueia a conexão se falhar).
+    await syncInstagramHistory(workspaceId).catch((e) => console.error("[ig-sync]", errMsg(e)));
+  }
+  return r;
+}
+
+async function connectInner(workspaceId: string, pageIdOverride?: string | null) {
   const s = await db();
-  const cfg = await metaConfig();
+  const cfg = await metaConfig(workspaceId);
   const pageId = pageIdOverride || cfg.pageId;
   try {
     if (!cfg.token)
@@ -102,8 +111,12 @@ export async function connectInstagramAccount(workspaceId: string, pageIdOverrid
 }
 
 /** Lista as Páginas acessíveis pelo token da Meta e o Instagram vinculado a cada uma. */
-export async function listInstagramOptions() {
-  const cfg = await metaConfig();
+export async function listInstagramOptions(workspaceId?: string | null) {
+  return runWithMetaWorkspace(workspaceId, () => listOptionsInner(workspaceId));
+}
+
+async function listOptionsInner(workspaceId?: string | null) {
+  const cfg = await metaConfig(workspaceId);
   if (!cfg.token)
     return { ok: false as const, error: "Salve as credenciais da Meta em Integrações primeiro.", options: [] };
   try {
@@ -706,10 +719,14 @@ async function assertPublicUrl(url: string) {
     );
 }
 
-export async function publishInstagramPost(
-  postId: string,
-): Promise<{ ok: boolean; sandbox: boolean; permalink?: string | null; error?: string }> {
+type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string | null; error?: string };
+
+export async function publishInstagramPost(postId: string): Promise<PublishResult> {
   const post = await getPost(postId);
+  return runWithMetaWorkspace(post.workspace_id, () => publishInner(postId, post));
+}
+
+async function publishInner(postId: string, post: any): Promise<PublishResult> {
   const format = post.format as IgFormat;
   const media: any[] = [...(post.media ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   if (!media.length) throw new Guardrail("Post sem mídia.");
@@ -867,6 +884,10 @@ const METRICS: Record<IgFormat, string[]> = {
 
 export async function collectPostMetrics(postId: string, label?: string) {
   const post = await getPost(postId);
+  return runWithMetaWorkspace(post.workspace_id, () => metricsInner(postId, post, label));
+}
+
+async function metricsInner(postId: string, post: any, label?: string) {
   if (!post.ig_media_id) throw new Error("Post ainda não publicado.");
   const s = await db();
   const values: Record<string, number> = {};
@@ -1106,4 +1127,81 @@ export async function uploadOwnMedia(workspaceId: string, postId: string, file: 
     ai_generation_log: await appendLog(post, { step: "upload", file: file.name }),
   });
   return { ok: true };
+}
+
+/* ---------------- Importar histórico ---------------- */
+
+function formatFromMeta(mediaType?: string, product?: string): IgFormat {
+  if (product === "STORY") return mediaType === "VIDEO" ? "story_video" : "story_image";
+  if (mediaType === "CAROUSEL_ALBUM") return "feed_carousel";
+  if (mediaType === "VIDEO" || product === "REELS") return "reel";
+  return "feed_image";
+}
+
+/** Importa os últimos 30 itens publicados na conta e coleta os insights de cada um. */
+export async function syncInstagramHistory(workspaceId: string) {
+  return runWithMetaWorkspace(workspaceId, async () => {
+    const acc = await liveAccount(workspaceId);
+    if (!acc) throw new Error("Conecte uma conta do Instagram antes de importar o histórico.");
+    const r = await graph<{ data?: any[] }>(`/${acc.ig_user_id}/media`, {
+      params: {
+        fields:
+          "id,caption,media_type,media_product_type,permalink,timestamp,thumbnail_url,media_url",
+        limit: "30",
+      },
+    });
+    const items = (r.data ?? []).slice(0, 30);
+    const s = await db();
+    const { data: existing } = await s
+      .from("ig_posts")
+      .select("id, ig_media_id")
+      .eq("workspace_id", workspaceId)
+      .in("ig_media_id", items.length ? items.map((i) => i.id) : ["-"]);
+    const known = new Map((existing ?? []).map((e: any) => [e.ig_media_id, e.id]));
+    const fresh = items.filter((i) => !known.has(i.id));
+    let imported = 0;
+    if (fresh.length) {
+      const rows = fresh.map((i) => {
+        const caption = String(i.caption ?? "");
+        const hashtags = [...new Set((caption.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((h) => h.slice(1)))].slice(0, 30);
+        const video = i.media_type === "VIDEO";
+        return {
+          workspace_id: workspaceId,
+          format: formatFromMeta(i.media_type, i.media_product_type),
+          status: "published",
+          source: "instagram_import",
+          ig_media_id: i.id,
+          ig_permalink: i.permalink ?? null,
+          published_at: i.timestamp ?? new Date().toISOString(),
+          caption: caption.replace(/#[\p{L}\p{N}_]+/gu, "").trim().slice(0, 2200) || null,
+          hashtags,
+          theme: caption.split("\n")[0]?.slice(0, 120) || "Post importado",
+          media: [
+            {
+              url: i.media_url ?? i.thumbnail_url ?? null,
+              thumbnail_url: i.thumbnail_url ?? null,
+              type: video ? "video" : "image",
+              order: 0,
+            },
+          ],
+          creative_brief: { imported: true },
+          metrics_collected: ["1h", "24h", "7d"],
+        };
+      });
+      const { data: ins, error } = await s.from("ig_posts").insert(rows as never).select("id, ig_media_id");
+      if (error) throw new Error(error.message);
+      for (const x of (ins ?? []) as any[]) known.set(x.ig_media_id, x.id);
+      imported = ins?.length ?? 0;
+    }
+    let metrics = 0;
+    for (const id of known.values()) {
+      try {
+        await collectPostMetrics(id, "import");
+        metrics++;
+      } catch (e) {
+        console.error("[ig-sync] métricas", id, errMsg(e));
+      }
+    }
+    return { ok: true as const, imported, total: items.length, metrics };
+  });
 }

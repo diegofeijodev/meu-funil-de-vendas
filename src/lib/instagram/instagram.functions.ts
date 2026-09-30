@@ -49,7 +49,15 @@ export const listInstagramOptions = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ workspaceId: ws }).parse(d))
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId, ["owner", "admin"]);
-    return (await lib()).listInstagramOptions();
+    return (await lib()).listInstagramOptions(data.workspaceId);
+  });
+
+export const syncInstagramHistory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: ws }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId, ["owner", "admin", "marketing"]);
+    return (await lib()).syncInstagramHistory(data.workspaceId);
   });
 
 export const disconnectInstagramAccount = createServerFn({ method: "POST" })
