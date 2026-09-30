@@ -55,8 +55,11 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
           );
           out["queue"] = await ig.runPublishingQueue();
         }
-        if (all || task === "media")
+        if (all || task === "media") {
+          const { revalidateBackfill } = await import("@/lib/media/library.server");
+          out["revalidate"] = await revalidateBackfill(20).catch((e) => ({ error: String(e) }));
           out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
+        }
         if (all || task === "metrics") out["metrics"] = await ig.collectDueMetrics();
         return Response.json(out);
       },
