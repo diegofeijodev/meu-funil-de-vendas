@@ -115,7 +115,7 @@ const G = "https://generativelanguage.googleapis.com/v1beta";
 
 /** Gemini direto com a chave do cliente. */
 async function geminiDirectImage(key: string, req: GenerationRequest) {
-  const res = await fetch(`${G}/models/gemini-2.5-flash-image:generateContent`, {
+  const res = await fetch(`${G}/models/gemini-3.1-flash-image:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
