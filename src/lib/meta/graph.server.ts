@@ -3,6 +3,13 @@
  * Todas as chamadas levam access_token + appsecret_proof. Credenciais vêm só dos Secrets.
  */
 import { createHmac } from "crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/** Empresa (workspace) atual das chamadas à Meta — definida por runWithMetaWorkspace. */
+const wsStore = new AsyncLocalStorage<string | null>();
+export function runWithMetaWorkspace<T>(workspaceId: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  return wsStore.run(workspaceId ?? null, fn);
+}
 
 export const GRAPH_VERSION = "v24.0";
 const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -24,12 +31,16 @@ export type MetaConfig = {
 const KEYS = ["META_APP_ID", "META_APP_SECRET", "META_SYSTEM_USER_TOKEN", "META_AD_ACCOUNT_ID", "META_PAGE_ID", "META_INSTAGRAM_ACCOUNT_ID"] as const;
 
 /** Lê as credenciais salvas pelo formulário de Integrações (tabela app_credentials, só service_role). */
-async function vaultRead(): Promise<Record<string, string>> {
+async function vaultRead(workspaceId: string | null): Promise<Record<string, string>> {
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data } = await supabaseAdmin.from("app_credentials").select("key, value").in("key", KEYS as unknown as string[]);
+    let q = supabaseAdmin.from("app_credentials").select("key, value, workspace_id").in("key", KEYS as unknown as string[]);
+    q = workspaceId ? q.or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`) : q.is("workspace_id", null);
+    const { data } = await q;
     const out: Record<string, string> = {};
-    for (const row of data ?? []) if (row.value?.trim()) out[row.key as string] = row.value.trim();
+    // Globais primeiro; as da empresa sobrescrevem.
+    const rows = ((data ?? []) as any[]).sort((a, b) => (a.workspace_id ? 1 : 0) - (b.workspace_id ? 1 : 0));
+    for (const row of rows) if (row.value?.trim()) out[row.key as string] = row.value.trim();
     return out;
   } catch {
     return {};
@@ -37,8 +48,8 @@ async function vaultRead(): Promise<Record<string, string>> {
 }
 
 /** Credenciais efetivas: cofre do banco primeiro, Secrets do ambiente como fallback. */
-export async function metaConfig(): Promise<MetaConfig> {
-  const vault = await vaultRead();
+export async function metaConfig(workspaceId?: string | null): Promise<MetaConfig> {
+  const vault = await vaultRead(workspaceId ?? wsStore.getStore() ?? null);
   const pick = (k: (typeof KEYS)[number]) => vault[k] ?? env(k);
   const rawAccount = pick("META_AD_ACCOUNT_ID");
   return {
@@ -51,8 +62,8 @@ export async function metaConfig(): Promise<MetaConfig> {
   };
 }
 
-export async function missingSecrets() {
-  const c = await metaConfig();
+export async function missingSecrets(workspaceId?: string | null) {
+  const c = await metaConfig(workspaceId);
   const missing: string[] = [];
   if (!c.appId) missing.push("META_APP_ID");
   if (!c.appSecret) missing.push("META_APP_SECRET");
@@ -89,9 +100,9 @@ function translate(err: { message?: string; code?: number; error_subcode?: numbe
 
 export async function graph<T = any>(
   path: string,
-  opts: { method?: "GET" | "POST" | "DELETE"; params?: Record<string, unknown>; token?: string } = {},
+  opts: { method?: "GET" | "POST" | "DELETE"; params?: Record<string, unknown>; token?: string; workspaceId?: string | null } = {},
 ): Promise<T> {
-  const cfg = await metaConfig();
+  const cfg = await metaConfig(opts.workspaceId);
   const token = opts.token ?? cfg.token;
   if (!token) throw new MetaError("Token da Meta não configurado no cofre (META_SYSTEM_USER_TOKEN).");
   if (!cfg.appSecret) throw new MetaError("META_APP_SECRET não configurado no cofre.");
