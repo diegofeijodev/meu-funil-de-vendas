@@ -1128,3 +1128,79 @@ export async function uploadOwnMedia(workspaceId: string, postId: string, file: 
   });
   return { ok: true };
 }
+
+/* ---------------- Importar histórico ---------------- */
+
+function formatFromMeta(mediaType?: string, product?: string): IgFormat {
+  if (product === "STORY") return mediaType === "VIDEO" ? "story_video" : "story_image";
+  if (mediaType === "CAROUSEL_ALBUM") return "feed_carousel";
+  if (mediaType === "VIDEO" || product === "REELS") return "reel";
+  return "feed_image";
+}
+
+/** Importa os últimos 30 itens publicados na conta e coleta os insights de cada um. */
+export async function syncInstagramHistory(workspaceId: string) {
+  return runWithMetaWorkspace(workspaceId, async () => {
+    const acc = await liveAccount(workspaceId);
+    if (!acc) throw new Error("Conecte uma conta do Instagram antes de importar o histórico.");
+    const r = await graph<{ data?: any[] }>(`/${acc.ig_user_id}/media`, {
+      params: {
+        fields:
+          "id,caption,media_type,media_product_type,permalink,timestamp,thumbnail_url,media_url",
+        limit: "30",
+      },
+    });
+    const items = (r.data ?? []).slice(0, 30);
+    const s = await db();
+    const { data: existing } = await s
+      .from("ig_posts")
+      .select("id, ig_media_id")
+      .eq("workspace_id", workspaceId)
+      .in("ig_media_id", items.length ? items.map((i) => i.id) : ["-"]);
+    const known = new Map((existing ?? []).map((e: any) => [e.ig_media_id, e.id]));
+    const fresh = items.filter((i) => !known.has(i.id));
+    let imported = 0;
+    if (fresh.length) {
+      const rows = fresh.map((i) => {
+        const caption = String(i.caption ?? "");
+        const hashtags = [...new Set((caption.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((h) => h.slice(1)))].slice(0, 30);
+        const video = i.media_type === "VIDEO";
+        return {
+          workspace_id: workspaceId,
+          format: formatFromMeta(i.media_type, i.media_product_type),
+          status: "published",
+          source: "instagram_import",
+          ig_media_id: i.id,
+          ig_permalink: i.permalink ?? null,
+          published_at: i.timestamp ?? new Date().toISOString(),
+          caption: caption.replace(/#[\p{L}\p{N}_]+/gu, "").trim().slice(0, 2200) || null,
+          hashtags,
+          theme: caption.split("\n")[0]?.slice(0, 120) || "Post importado",
+          media: [
+            {
+              url: i.media_url ?? i.thumbnail_url ?? null,
+              thumbnail_url: i.thumbnail_url ?? null,
+              type: video ? "video" : "image",
+              order: 0,
+            },
+          ],
+          creative_brief: { imported: true },
+        };
+      });
+      const { data: ins, error } = await s.from("ig_posts").insert(rows as never).select("id, ig_media_id");
+      if (error) throw new Error(error.message);
+      for (const x of (ins ?? []) as any[]) known.set(x.ig_media_id, x.id);
+      imported = ins?.length ?? 0;
+    }
+    let metrics = 0;
+    for (const id of known.values()) {
+      try {
+        await collectPostMetrics(id, "import");
+        metrics++;
+      } catch (e) {
+        console.error("[ig-sync] métricas", id, errMsg(e));
+      }
+    }
+    return { ok: true as const, imported, total: items.length, metrics };
+  });
+}
