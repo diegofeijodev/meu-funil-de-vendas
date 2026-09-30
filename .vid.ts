@@ -1,0 +1,14 @@
+import { createClient } from "@supabase/supabase-js";
+import { createHiggsfieldProvider } from "@/lib/providers/higgsfield.server";
+const s:any = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+const WS="ab67e8e1-e147-48c9-bb68-a622d5f9c9fe", BRAND="2d46c624-c17a-419f-bf4b-5f0088e0b8fc";
+const { data } = await s.from("mcp_connections").select("server_url,access_token").eq("provider","higgsfield").single();
+const p = createHiggsfieldProvider({ serverUrl: data.server_url, accessToken: data.access_token });
+const st = await p.getGenerationStatus!("d5e851bd-17f7-4b63-8324-309eda6a8c48");
+console.log("provider parse:", st.status, !!st.assetUrl);
+const buf = new Uint8Array(await (await fetch(st.assetUrl!)).arrayBuffer());
+const path = `2026-09-30/${crypto.randomUUID()}.mp4`;
+const up = await s.storage.from("creative-assets").upload(path, buf, { contentType: "video/mp4" }); if (up.error) throw up.error;
+const signed = (await s.storage.from("creative-assets").createSignedUrl(path, 5*365*86400)).data.signedUrl;
+const { data: c, error } = await s.from("creatives").insert({ workspace_id: WS, brand_id: BRAND, title: "Chopp e Espeto – vídeo 10s Higgsfield", type: "video", aspect_ratio: "9:16", status: "ready", provider: "higgsfield", preview_url: signed, thumbnail_url: signed, external_job_id: "d5e851bd-17f7-4b63-8324-309eda6a8c48", prompt: "Vídeo 10s restaurante praça de alimentação" }).select("id").single();
+if (error) throw error; console.log("creative", c.id, buf.length);
