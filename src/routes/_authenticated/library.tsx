@@ -915,6 +915,7 @@ function AssetDetail({
     ...(a.kind === "video"
       ? ([
           ["Duração", a.duration_seconds ? `${a.duration_seconds}s` : "—"],
+          ["Resolução", String(checks["resolution"] ?? "—")],
           [
             "Codec",
             [checks["videoCodec"], checks["audioCodec"]].filter(Boolean).join(" / ") || "—",
