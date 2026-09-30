@@ -76,7 +76,7 @@ export async function downloadAsset(
     return { url: await signedDownload(path, name), name };
   }
   const { bytes } = await readAssetBytes(a);
-  const out = convertImage(bytes, format);
+  const out = await convertImage(bytes, format);
   const name = fileName(a, format);
   const path = `exports/${workspaceId}/${crypto.randomUUID()}_${name}`;
   await storeBytes(path, out, format === "png" ? "image/png" : "image/jpeg");
@@ -123,7 +123,7 @@ export async function exportPdf(
         ? { storage_path: a.thumbnail_path, url: null }
         : a;
     const { bytes } = await readAssetBytes(src);
-    return pdf.embedJpg(convertImage(bytes, "jpg"));
+    return pdf.embedJpg(await convertImage(bytes, "jpg"));
   }
 
   function videoBox(page: any, x: number, y: number, w: number, h: number) {
