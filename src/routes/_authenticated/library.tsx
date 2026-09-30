@@ -48,6 +48,7 @@ import {
   exportPdf,
   exportZip,
   reformatMedia,
+  revalidateAssets,
   uploadMedia,
   useMediaInCampaign,
   useMediaInInstagram,
@@ -164,6 +165,7 @@ function LibraryPage() {
     pdf: useServerFn(exportPdf),
     zip: useServerFn(exportZip),
     reformat: useServerFn(reformatMedia),
+    revalidate: useServerFn(revalidateAssets),
     upload: useServerFn(uploadMedia),
     ig: useServerFn(useMediaInInstagram),
     campaign: useServerFn(useMediaInCampaign),
@@ -255,6 +257,18 @@ function LibraryPage() {
         refresh();
       },
       msg,
+    );
+
+  const revalidate = (idsToCheck: string[]) =>
+    run(
+      "revalidate",
+      async () => {
+        const r = await fns.revalidate({ data: { workspaceId: workspaceId!, assetIds: idsToCheck } });
+        refresh();
+        return r;
+      },
+      (r) =>
+        `${r.total} revalidada(s): ${r.ready} pronta(s) p/ Instagram${r.archived ? `, ${r.archived} arquivada(s) (simuladas)` : ""}${r.failed ? `, ${r.failed} com erro` : ""}.`,
     );
 
   const addTag = async () => {
@@ -576,6 +590,9 @@ function LibraryPage() {
                 >
                   <Archive className="size-4" /> Arquivar
                 </Button>
+                <Button size="sm" variant="outline" disabled={!!busy} onClick={() => revalidate(picked)}>
+                  {busy === "revalidate" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Revalidar
+                </Button>
                 <Button size="sm" variant="outline" disabled={!!busy} onClick={moveFolder}>
                   <FolderInput className="size-4" /> Mover para pasta
                 </Button>
@@ -688,6 +705,7 @@ function LibraryPage() {
                 )
               }
               onOpenVersion={(id) => setOpenId(id)}
+              onRevalidate={() => revalidate([open.id])}
             />
           )}
         </SheetContent>
@@ -876,6 +894,7 @@ function AssetDetail({
   onDownload,
   onReformat,
   onOpenVersion,
+  onRevalidate,
 }: {
   a: Asset;
   versions: Asset[];
@@ -884,6 +903,7 @@ function AssetDetail({
   onDownload: (f: "original" | "png" | "jpg") => void;
   onReformat: (targets: TargetFormat[]) => void;
   onOpenVersion: (id: string) => void;
+  onRevalidate: () => void;
 }) {
   const [target, setTarget] = useState<TargetFormat>("ig_feed_portrait");
   const checks = (a.quality_report?.checks ?? {}) as Record<string, unknown>;
@@ -989,6 +1009,9 @@ function AssetDetail({
                 neste formato
               </Button>
             </div>
+            <Button size="sm" variant="outline" disabled={!!busy} onClick={onRevalidate}>
+              {busy === "revalidate" && <Loader2 className="size-4 animate-spin" />} Revalidar
+            </Button>
             <Button size="sm" disabled={!!busy} onClick={() => onReformat(IG_FORMATS)}>
               Redimensionar para todos os formatos do Instagram
             </Button>
