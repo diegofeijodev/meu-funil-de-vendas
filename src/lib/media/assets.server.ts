@@ -19,8 +19,8 @@ export type IngestInput = {
   kind: "image" | "video";
   targetFormat: TargetFormat;
   source: string; // higgsfield | chatgpt | gemini | upload | mock
-  bytes?: Uint8Array;
-  sourceUrl?: string;
+  bytes?: Uint8Array | undefined;
+  sourceUrl?: string | undefined;
   mime?: string | null;
   title?: string;
   prompt?: string | null;
