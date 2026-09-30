@@ -115,7 +115,7 @@ export function PostEditor({ workspaceId, post, onClose }: { workspaceId: string
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle className="flex flex-wrap items-center gap-2">
-            {F.label} <StatusPill status={post.status} label={STATUS_LABEL[post.status]} />
+            {F.label} <StatusPill status={post.status} label={STATUS_LABEL[post.status] ?? post.status} />
           </SheetTitle>
           {post.theme && <p className="text-sm text-muted-foreground">{post.theme}</p>}
         </SheetHeader>

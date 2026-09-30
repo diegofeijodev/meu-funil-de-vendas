@@ -546,7 +546,7 @@ export async function runPublishingQueue() {
 
 /* ---------------- Extras da interface ---------------- */
 
-export async function suggestPillars(workspaceId: string, input: { brandId?: string | null; objective?: string; tone?: string; audience?: string }) {
+export async function suggestPillars(workspaceId: string, input: { brandId?: string | null | undefined; objective?: string | undefined; tone?: string | undefined; audience?: string | undefined }) {
   const brand = await brandFor(input.brandId ?? null);
   const prompt = [
     "Sugira 5 pilares de conteúdo para Instagram, em português do Brasil, curtos (2 a 4 palavras).",

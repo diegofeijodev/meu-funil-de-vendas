@@ -120,7 +120,7 @@ export function IgOverview({ workspaceId, posts, onOpen }: { workspaceId: string
                       {Icon && <Icon className="size-3" />} {FORMATS[p.format]?.label} · {fmtDateTime(p.scheduled_at)}
                     </p>
                   </div>
-                  <StatusPill status={p.status} label={STATUS_LABEL[p.status]} />
+                  <StatusPill status={p.status} label={STATUS_LABEL[p.status] ?? p.status} />
                 </button>
               );
             })}

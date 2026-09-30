@@ -22,7 +22,7 @@ export function IgCalendar({ workspaceId, posts, onOpen }: { workspaceId: string
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [fmt, setFmt] = useState("all");
   const [st, setSt] = useState("all");
-  const [batch, setBatch] = useState<{ done: number; total: number; current?: string } | null>(null);
+  const [batch, setBatch] = useState<{ done: number; total: number; current?: string | undefined } | null>(null);
   const gen = useServerFn(generatePostAssets);
   const sched = useServerFn(schedulePost);
 
@@ -107,7 +107,7 @@ export function IgCalendar({ workspaceId, posts, onOpen }: { workspaceId: string
             {p.scheduled_at ? new Date(p.scheduled_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}
           </p>
           <p className="truncate text-xs font-medium">{p.theme ?? "Post"}</p>
-          <StatusPill status={p.status} label={STATUS_LABEL[p.status]} />
+          <StatusPill status={p.status} label={STATUS_LABEL[p.status] ?? p.status} />
         </div>
       </button>
     );
