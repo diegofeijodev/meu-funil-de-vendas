@@ -2,7 +2,7 @@
  * Publicação orgânica no Instagram (somente servidor).
  * Token da Meta vem do cofre (metaConfig) — nunca é salvo em instagram_accounts.
  */
-import { graph, metaConfig } from "@/lib/meta/graph.server";
+import { graph, metaConfig, MetaError } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
 import { resolveProvider, type ProviderChoice } from "@/lib/creative.server";
@@ -159,6 +159,9 @@ export async function generateContentCalendar(workspaceId: string, planId: strin
     "cta, image_prompt (prompt visual detalhado; para reels/story_video descreva o vídeo cena a cena), slides (3 a 7 prompts só para feed_carousel, senão vazio).",
     "Proporções: 1:1 feed, 4:5 carrossel, 9:16 reels/stories.",
     `Objetivo: ${plan.objective ?? "-"}. Tom de voz: ${plan.tone_of_voice ?? "-"}. Pilares: ${JSON.stringify(plan.content_pillars)}.`,
+    plan.pillar_weights && Object.keys(plan.pillar_weights).length
+      ? `Distribua os posts entre os pilares proporcionalmente a estes pesos (definidos pelo desempenho): ${JSON.stringify(plan.pillar_weights)}.`
+      : "",
     `Estratégia de hashtags: ${JSON.stringify(plan.hashtag_strategy)}. CTA padrão: ${plan.cta_default ?? "-"}.`,
     brand ? `MARCA: ${JSON.stringify(brand)}` : "",
     'Devolva SOMENTE JSON estrito no formato {"posts":[...]}.',
@@ -288,7 +291,12 @@ export async function approvePost(workspaceId: string, postId: string) {
   const post = await getPost(postId);
   if (post.workspace_id !== workspaceId) throw new Error("Post não encontrado.");
   if (!post.media?.length) throw new Error("Gere a mídia antes de aprovar.");
-  await patchPost(postId, { status: "approved", rejection_reason: null });
+  await patchPost(postId, { status: "approved", rejection_reason: null, approved_at: new Date().toISOString() });
+  try {
+    await (await import("./autopilot.server")).afterApproval(workspaceId, postId);
+  } catch (e) {
+    console.error("[instagram] agendamento pós-aprovação falhou:", errMsg(e));
+  }
   return { ok: true };
 }
 
@@ -306,6 +314,11 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
   if (!["approved", "ready", "scheduled", "failed"].includes(post.status))
     throw new Error("O post precisa estar aprovado para ser agendado.");
   const s = await db();
+  if (post.plan_id) {
+    const { data: plan } = await s.from("ig_content_plans").select("requires_approval").eq("id", post.plan_id).maybeSingle();
+    if (plan?.requires_approval && !post.approved_at && post.status !== "approved")
+      throw new Error("Este plano exige aprovação antes de agendar.");
+  }
   await s
     .from("publishing_jobs")
     .update({ status: "cancelled" } as never)
@@ -346,12 +359,40 @@ function fullCaption(post: any) {
 }
 
 export class RateLimited extends Error {}
+export class Guardrail extends Error {}
+
+/** Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). */
+async function assertPublicUrl(url: string) {
+  if (!/^https:\/\//i.test(url ?? "")) throw new Guardrail("Mídia sem URL pública válida (HTTPS).");
+  let res = await fetch(url, { method: "HEAD" }).catch(() => null);
+  if (!res || res.status === 405 || res.status === 403)
+    res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } }).catch(() => null);
+  if (!res || !(res.ok || res.status === 206)) throw new Guardrail(`A mídia não está acessível publicamente (HTTP ${res?.status ?? "sem resposta"}).`);
+}
 
 export async function publishInstagramPost(postId: string): Promise<{ ok: boolean; sandbox: boolean; permalink?: string | null; error?: string }> {
   const post = await getPost(postId);
   const format = post.format as IgFormat;
   const media: any[] = [...(post.media ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  if (!media.length) throw new Error("Post sem mídia.");
+  if (!media.length) throw new Guardrail("Post sem mídia.");
+  const s = await db();
+
+  // Guardrail: nunca publicar sem aprovação quando o plano exige.
+  if (post.plan_id) {
+    const { data: plan } = await s.from("ig_content_plans").select("requires_approval").eq("id", post.plan_id).maybeSingle();
+    if (plan?.requires_approval && !post.approved_at) throw new Guardrail("Post não aprovado — publicação bloqueada.");
+  }
+  // Guardrail: no máximo 25 publicações em 24h por conta (contagem local).
+  const { count } = await s
+    .from("ig_posts")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", post.workspace_id)
+    .eq("status", "published")
+    .gte("published_at", new Date(Date.now() - 24 * 3600e3).toISOString());
+  if ((count ?? 0) >= DAILY_LIMIT) throw new RateLimited("Limite de 25 publicações em 24h atingido.");
+  // Guardrail: toda mídia precisa de URL pública válida.
+  for (const m of media) await assertPublicUrl(m.url);
+
   const acc = await liveAccount(post.workspace_id);
 
   if (!acc) {
@@ -361,8 +402,12 @@ export async function publishInstagramPost(postId: string): Promise<{ ok: boolea
   }
 
   const ig = acc.ig_user_id as string;
-  const limit = await graph<{ data?: { quota_usage?: number }[] }>(`/${ig}/content_publishing_limit`, { params: { fields: "quota_usage" } }).catch(() => null);
+  const limit = await graph<{ data?: { quota_usage?: number }[] }>(`/${ig}/content_publishing_limit`, { params: { fields: "quota_usage" } }).catch((e) => {
+    if (e instanceof MetaError && e.code === 190) throw e;
+    return null;
+  });
   if ((limit?.data?.[0]?.quota_usage ?? 0) >= DAILY_LIMIT) throw new RateLimited("Limite de 25 publicações em 24h atingido.");
+
 
   await patchPost(postId, { status: "publishing", last_error: null });
   const caption = fullCaption(post);
@@ -514,12 +559,35 @@ export async function runPublishingQueue() {
         .from("publishing_jobs")
         .update({ status: "done", locked_at: null, mode: r.sandbox ? "mock" : "live", log: `${job.log ?? ""}\n[${stamp}] publicado ${r.permalink ?? ""}`.trim() } as never)
         .eq("id", job.id);
+      const pub = await getPost(job.ig_post_id).catch(() => null);
+      if (pub)
+        await (await import("./autopilot.server")).logEvent({
+          workspace_id: pub.workspace_id,
+          plan_id: pub.plan_id,
+          post_id: pub.id,
+          kind: "publish",
+          message: r.sandbox ? "Publicado em modo simulado (sem conta conectada)." : `Publicado no Instagram ${r.permalink ?? ""}`.trim(),
+        });
       results.push({ job: job.id, status: "done" });
     } catch (e) {
       const msg = errMsg(e);
       const attempts = job.attempts + 1;
       const rate = e instanceof RateLimited;
-      const retry = rate || attempts < MAX_ATTEMPTS;
+      const tokenExpired = e instanceof MetaError && e.code === 190;
+      const blocked = e instanceof Guardrail;
+      const retry = !tokenExpired && !blocked && (rate || attempts < MAX_ATTEMPTS);
+      const ap = await import("./autopilot.server");
+      const failed = await getPost(job.ig_post_id).catch(() => null);
+      if (tokenExpired && failed) await ap.handleTokenExpired(failed.workspace_id, msg);
+      if (failed)
+        await ap.logEvent({
+          workspace_id: failed.workspace_id,
+          plan_id: failed.plan_id,
+          post_id: failed.id,
+          kind: blocked ? "guardrail" : "failure",
+          level: retry ? "warn" : "error",
+          message: `${retry ? "Falha (nova tentativa)" : "Falha"} ao publicar: ${msg}`,
+        });
       const delay = rate ? 60 * 60e3 : 5 * 60e3 * 2 ** (attempts - 1); // backoff 5, 10 min
       await s
         .from("publishing_jobs")
