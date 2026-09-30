@@ -84,7 +84,7 @@ export function IgAutopilotPanel({ workspaceId }: { workspaceId: string }) {
               const Icon = k.icon;
               return (
                 <li key={e.id} className="flex items-start gap-3 p-3 text-sm">
-                  <Icon className={`mt-0.5 size-4 shrink-0 ${e.level === "error" ? "text-destructive" : e.level === "warn" ? "text-amber-500" : "text-primary"}`} />
+                  <Icon className={`mt-0.5 size-4 shrink-0 ${e.level === "error" ? "text-destructive" : e.level === "warn" ? "text-warning" : "text-primary"}`} />
                   <div className="min-w-0 flex-1">
                     <p className="break-words">{e.message}</p>
                     <p className="text-xs text-muted-foreground">{k.label} · {fmtDateTime(e.created_at)}</p>
