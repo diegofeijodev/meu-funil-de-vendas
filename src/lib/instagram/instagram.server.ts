@@ -2,7 +2,7 @@
  * Publicação orgânica no Instagram (somente servidor).
  * Token da Meta vem do cofre (metaConfig) — nunca é salvo em instagram_accounts.
  */
-import { graph, metaConfig, MetaError } from "@/lib/meta/graph.server";
+import { graph, metaConfig, MetaError, runWithMetaWorkspace } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
 import { resolveProvider, type ProviderChoice } from "@/lib/creative.server";
@@ -54,8 +54,17 @@ async function appendLog(post: any, entry: Record<string, unknown>) {
 /* ---------------- Conta ---------------- */
 
 export async function connectInstagramAccount(workspaceId: string, pageIdOverride?: string | null) {
+  const r = await runWithMetaWorkspace(workspaceId, () => connectInner(workspaceId, pageIdOverride));
+  if (r.ok) {
+    // Importa o histórico recente logo após conectar (não bloqueia a conexão se falhar).
+    await syncInstagramHistory(workspaceId).catch((e) => console.error("[ig-sync]", errMsg(e)));
+  }
+  return r;
+}
+
+async function connectInner(workspaceId: string, pageIdOverride?: string | null) {
   const s = await db();
-  const cfg = await metaConfig();
+  const cfg = await metaConfig(workspaceId);
   const pageId = pageIdOverride || cfg.pageId;
   try {
     if (!cfg.token)
@@ -102,8 +111,12 @@ export async function connectInstagramAccount(workspaceId: string, pageIdOverrid
 }
 
 /** Lista as Páginas acessíveis pelo token da Meta e o Instagram vinculado a cada uma. */
-export async function listInstagramOptions() {
-  const cfg = await metaConfig();
+export async function listInstagramOptions(workspaceId?: string | null) {
+  return runWithMetaWorkspace(workspaceId, () => listOptionsInner(workspaceId));
+}
+
+async function listOptionsInner(workspaceId?: string | null) {
+  const cfg = await metaConfig(workspaceId);
   if (!cfg.token)
     return { ok: false as const, error: "Salve as credenciais da Meta em Integrações primeiro.", options: [] };
   try {
@@ -706,10 +719,14 @@ async function assertPublicUrl(url: string) {
     );
 }
 
-export async function publishInstagramPost(
-  postId: string,
-): Promise<{ ok: boolean; sandbox: boolean; permalink?: string | null; error?: string }> {
+type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string | null; error?: string };
+
+export async function publishInstagramPost(postId: string): Promise<PublishResult> {
   const post = await getPost(postId);
+  return runWithMetaWorkspace(post.workspace_id, () => publishInner(postId, post));
+}
+
+async function publishInner(postId: string, post: any): Promise<PublishResult> {
   const format = post.format as IgFormat;
   const media: any[] = [...(post.media ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   if (!media.length) throw new Guardrail("Post sem mídia.");
@@ -867,6 +884,10 @@ const METRICS: Record<IgFormat, string[]> = {
 
 export async function collectPostMetrics(postId: string, label?: string) {
   const post = await getPost(postId);
+  return runWithMetaWorkspace(post.workspace_id, () => metricsInner(postId, post, label));
+}
+
+async function metricsInner(postId: string, post: any, label?: string) {
   if (!post.ig_media_id) throw new Error("Post ainda não publicado.");
   const s = await db();
   const values: Record<string, number> = {};
