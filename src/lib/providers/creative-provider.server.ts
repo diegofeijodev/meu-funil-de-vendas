@@ -23,6 +23,8 @@ export type GenerationResult = {
   externalJobId: string | null;
   raw?: string | null;
   cost: number;
+  /** Caminho usado (vai para o log do job). */
+  note?: string | null;
 };
 
 export interface ServerCreativeProvider {

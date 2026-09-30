@@ -69,3 +69,20 @@ export const aiKeysRemove = createServerFn({ method: "POST" })
     await setWorkspaceAiKey(data.workspaceId, data.vendor, null);
     return { ok: true };
   });
+
+/** Testa as chaves salvas e diz quais estão sem crédito/limite (aviso no Studio). */
+export const aiKeysHealth = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context as Ctx, data.workspaceId);
+    const { getWorkspaceAiKey, testAiKey } = await import("./ai-keys.server");
+    const out: { vendor: "openai" | "gemini"; error: string }[] = [];
+    for (const v of ["openai", "gemini"] as const) {
+      const k = await getWorkspaceAiKey(data.workspaceId, v);
+      if (!k) continue;
+      const t = await testAiKey(v, k);
+      if (!t.ok && /saldo|cota|limite|cr[ée]dito|quota/i.test(t.error ?? "")) out.push({ vendor: v, error: t.error ?? "" });
+    }
+    return { outOfCredit: out };
+  });

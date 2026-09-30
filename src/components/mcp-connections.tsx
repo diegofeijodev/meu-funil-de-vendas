@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useWorkspace, logActivity } from "@/lib/workspace";
+import { supabase } from "@/integrations/supabase/client";
 import { fetchMcpConnections, type McpProvider } from "@/lib/mcp-client";
 import { mcpConnect, mcpDisconnect, mcpOAuthStart } from "@/lib/mcp.functions";
 
@@ -44,7 +45,7 @@ const STATUS_LABEL: Record<string, { label: string; pill: string }> = {
 };
 
 export function McpConnections() {
-  const { workspaceId, canEdit } = useWorkspace();
+  const { workspaceId, canEdit, memberships, workspaceName } = useWorkspace();
   const qc = useQueryClient();
   const connect = useServerFn(mcpConnect);
   const disconnect = useServerFn(mcpDisconnect);
@@ -60,11 +61,27 @@ export function McpConnections() {
       (q.state.data ?? []).some((c) => c.status === "connecting") ? 3000 : false,
   });
 
+  // Status do Higgsfield em todas as empresas do usuário (a conexão é por empresa).
+  const wsIds = memberships.map((m) => m.workspace_id);
+  const { data: perCompany } = useQuery({
+    queryKey: ["mcp-all", wsIds.join(",")],
+    enabled: wsIds.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("mcp_connections")
+        .select("workspace_id, provider, status")
+        .in("workspace_id", wsIds)
+        .eq("provider", "higgsfield");
+      return data ?? [];
+    },
+  });
+
   // Ao voltar da janela de autorização, recarrega o status da integração.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if ((e.data as { type?: string })?.type === "mcp-oauth") {
         qc.invalidateQueries({ queryKey: ["mcp", workspaceId] });
+        qc.invalidateQueries({ queryKey: ["mcp-all"] });
       }
     };
     window.addEventListener("message", onMessage);
@@ -112,6 +129,7 @@ export function McpConnections() {
       await disconnect({ data: { workspaceId, provider } });
       await logActivity(workspaceId, "mcp.disconnected", "integration", { provider });
       await qc.invalidateQueries({ queryKey: ["mcp", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["mcp-all"] });
       toast.success("Conexão removida. O provedor volta ao modo simulado.");
     } finally {
       setBusy(null);
@@ -140,6 +158,28 @@ export function McpConnections() {
                 <StatusPill status={info.pill} label={info.label} />
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{p.hint}</p>
+              {p.id === "higgsfield" && (
+                <div className="mt-3 rounded-lg border border-border/60 bg-background/40 p-3 text-xs">
+                  <p className="font-medium">A conexão é por empresa.</p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    Cada empresa precisa conectar a sua. Empresa atual: <strong>{workspaceName}</strong>.
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    {memberships.map((m) => {
+                      const on = perCompany?.find((c) => c.workspace_id === m.workspace_id)?.status === "connected";
+                      return (
+                        <li key={m.workspace_id} className="flex items-center justify-between gap-2">
+                          <span className="truncate">
+                            {m.workspaces?.name ?? "Empresa"}
+                            {m.workspace_id === workspaceId && " (atual)"}
+                          </span>
+                          <StatusPill status={on ? "connected" : "disconnected"} label={on ? "Conectado" : "Não conectado"} />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
               <details className="mt-3 rounded-lg border border-border/60 bg-background/40 p-3">
                 <summary className="cursor-pointer text-xs font-medium">Passo a passo para conectar</summary>
@@ -203,7 +243,13 @@ export function McpConnections() {
                     onClick={() => handleConnect(p.id, draft.url, draft.token)}
                   >
                     {busy === p.id && <Loader2 className="mr-2 size-4 animate-spin" />}
-                    {connected ? "Testar conexão" : status === "disconnected" ? "Conectar" : "Reconectar"}
+                    {connected
+                      ? "Testar conexão"
+                      : status !== "disconnected"
+                        ? "Reconectar"
+                        : p.id === "higgsfield" && perCompany?.some((c) => c.status === "connected")
+                          ? "Conectar também nesta empresa"
+                          : "Conectar"}
                   </Button>
                   {conn && (
                     <Button variant="outline" disabled={busy === p.id} onClick={() => handleDisconnect(p.id)}>

@@ -10,6 +10,7 @@ import { getWorkspaceAiKey } from "./ai-keys.server";
 import {
   mockServerProvider,
   type CreativeKind,
+  type GenerationResult,
   type ServerCreativeProvider,
 } from "./providers/creative-provider.server";
 
@@ -108,20 +109,80 @@ export async function buildBrandBrainPrompt(
 
 export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
 
-export async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto") {
+const CREDIT_ERR = /\b(402|429)\b|cr[ée]dito|saldo|quota|cota|limite|esgotad|rate.?limit|insufficient|billing/i;
+export const isCreditError = (e: unknown) => CREDIT_ERR.test(errMessage(e));
+
+/** Provedor que tenta a lista em ordem, passando ao próximo só em falha de crédito/limite. */
+function chainProviders(list: ServerCreativeProvider[]): ServerCreativeProvider & { log: string[] } {
+  let current = list[0]!;
+  const log: string[] = [];
+  const run = async (fn: (p: ServerCreativeProvider) => Promise<GenerationResult>) => {
+    let lastErr: unknown = null;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i]!;
+      try {
+        const r = await fn(p);
+        current = p;
+        const msg = `Usado: ${r.note ?? p.label}`;
+        if (log[log.length - 1] !== msg) log.push(msg);
+        return r;
+      } catch (e) {
+        lastErr = e;
+        if (!isCreditError(e) || i === list.length - 1) throw e;
+        console.warn(`[creative-chain] ${p.id} sem crédito/limite, tentando o próximo:`, errMessage(e));
+        log.push(`${p.label}: ${errMessage(e)} → tentando o próximo`);
+        list = list.slice(i); // não volta para quem já falhou
+        list.shift();
+        i = -1;
+      }
+    }
+    throw lastErr;
+  };
+  return {
+    get id() { return current.id; },
+    get label() { return current.label; },
+    get sandbox() { return current.sandbox; },
+    log,
+    generateImage: (req) => run((p) => p.generateImage(req)),
+    generateVideo: (req) => run((p) => p.generateVideo(req)),
+    getGenerationStatus: (id) => current.getGenerationStatus(id),
+    getAsset: (id) => current.getAsset(id),
+  } as ServerCreativeProvider & { log: string[] };
+}
+
+export async function resolveProvider(supabase: DB, workspaceId: string, choice: ProviderChoice = "auto"): Promise<ServerCreativeProvider> {
   if (choice === "chatgpt") return createChatgptProvider(await getWorkspaceAiKey(workspaceId, "openai"));
   if (choice === "gemini") return createGeminiProvider(await getWorkspaceAiKey(workspaceId, "gemini"));
   const conn = await getLiveConnection(supabase, workspaceId, "higgsfield");
-  if (conn && conn.status === "connected") {
-    return createHiggsfieldProvider({
-      serverUrl: conn.server_url,
-      accessToken: conn.access_token,
-      tools: (conn.tools ?? []) as { name: string; description?: string | undefined }[],
-    });
+  const higgs =
+    conn && conn.status === "connected"
+      ? createHiggsfieldProvider({
+          serverUrl: conn.server_url,
+          accessToken: conn.access_token,
+          tools: (conn.tools ?? []) as { name: string; description?: string | undefined }[],
+        })
+      : null;
+  if (choice === "higgsfield") {
+    if (!higgs) throw new Error("Higgsfield não está conectado nesta empresa. Conecte em Integrações.");
+    return higgs;
   }
-  if (choice === "higgsfield") throw new Error("Higgsfield não está conectado. Conecte em Integrações.");
-  return mockServerProvider;
+  // Automático: Higgsfield → Gemini (chave) → ChatGPT (chave) → créditos do app.
+  const [gKey, oKey] = await Promise.all([getWorkspaceAiKey(workspaceId, "gemini"), getWorkspaceAiKey(workspaceId, "openai")]);
+  const list: ServerCreativeProvider[] = [];
+  if (higgs) list.push(higgs);
+  if (gKey) list.push(createGeminiProvider(gKey, { strict: true }));
+  if (oKey) list.push(createChatgptProvider(oKey, { strict: true }));
+  if (!list.length) return mockServerProvider;
+  const app = createGeminiProvider(null);
+  list.push({ ...app, label: "Créditos de IA do app" });
+  return chainProviders(list);
 }
+
+const providerLog = (p: ServerCreativeProvider, r?: GenerationResult | null) => {
+  const log = (p as { log?: string[] }).log;
+  if (log?.length) return log.join("\n");
+  return r?.note ? `Usado: ${r.note}` : `Usado: ${p.label}`;
+};
 
 export type RunGenerationInput = {
   jobId: string;
@@ -180,6 +241,10 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
     };
     const result =
       input.kind === "video" ? await provider.generateVideo(req) : await provider.generateImage(req);
+    await supabase
+      .from("creative_generation_jobs")
+      .update({ provider: provider.id, provider_log: providerLog(provider, result) } as never)
+      .eq("id", input.jobId);
 
     // Geração assíncrona: guarda o job externo e deixa o poller concluir depois.
     if (result.status === "generating" && result.externalJobId) {
@@ -326,8 +391,9 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
         status: "failed",
         provider: provider.id,
         error_message: errMessage(e),
+        provider_log: providerLog(provider),
         completed_at: new Date().toISOString(),
-      })
+      } as never)
       .eq("id", input.jobId);
 
     return {
@@ -337,7 +403,7 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
       assetUrl: null as string | null,
       provider: provider.id,
       sandbox: provider.sandbox,
-      error: "Não foi possível gerar este criativo. Tente novamente.",
+      error: errMessage(e),
     };
   }
 }
@@ -579,10 +645,12 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
         final_prompt: providerPrompt(res.ad),
         asset_url: res.finalUrl,
         thumbnail_url: res.finalThumb,
+        provider: provider.id,
+        provider_log: providerLog(provider),
         estimated_cost: res.cost,
         actual_cost: res.cost,
         completed_at: new Date().toISOString(),
-      })
+      } as never)
       .eq("id", job.id);
     return {
       jobId: job.id,
@@ -599,7 +667,7 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
     console.error("[art-pipeline] falhou", e);
     await supabase
       .from("creative_generation_jobs")
-      .update({ status: "failed", error_message: errMessage(e), completed_at: new Date().toISOString() })
+      .update({ status: "failed", provider: provider.id, error_message: errMessage(e), provider_log: providerLog(provider), completed_at: new Date().toISOString() } as never)
       .eq("id", job.id);
     return {
       jobId: job.id,
@@ -608,7 +676,7 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
       assetUrl: null,
       provider: provider.id,
       sandbox: false,
-      error: `Não foi possível gerar este criativo: ${errMessage(e)}`,
+      error: errMessage(e),
       artDirection: ad,
       variations: [],
     };

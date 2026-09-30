@@ -683,6 +683,7 @@ export type Database = {
           id: string
           prompt: string | null
           provider: string
+          provider_log: string | null
           status: string
           thumbnail_url: string | null
           type: string
@@ -705,6 +706,7 @@ export type Database = {
           id?: string
           prompt?: string | null
           provider?: string
+          provider_log?: string | null
           status?: string
           thumbnail_url?: string | null
           type?: string
@@ -727,6 +729,7 @@ export type Database = {
           id?: string
           prompt?: string | null
           provider?: string
+          provider_log?: string | null
           status?: string
           thumbnail_url?: string | null
           type?: string

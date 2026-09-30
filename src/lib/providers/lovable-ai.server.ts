@@ -33,8 +33,8 @@ async function upload(bytes: Uint8Array, ext: string, contentType: string) {
   return data.signedUrl;
 }
 
-function ready(url: string, cost: number, externalJobId: string | null = null): GenerationResult {
-  return { status: "ready", assetUrl: url, thumbnailUrl: url, externalJobId, cost };
+function ready(url: string, cost: number, externalJobId: string | null = null, note: string | null = null): GenerationResult {
+  return { status: "ready", assetUrl: url, thumbnailUrl: url, externalJobId, cost, note };
 }
 
 const OPENAI_SIZE: Record<string, string> = {
@@ -192,9 +192,26 @@ async function geminiDirectImage(key: string, req: GenerationRequest) {
   return upload(new Uint8Array(Buffer.from(part.inlineData.data, "base64")), mime.includes("jpeg") ? "jpg" : "png", mime);
 }
 
+const VEO_DIRECT_MODELS = ["veo-3.1-fast-generate-preview", "veo-3.0-fast-generate-preview"];
+
+/** Tenta os modelos Veo da chave Gemini em ordem; 404 = modelo inexistente, passa para o próximo. */
 async function geminiDirectVideo(key: string, req: GenerationRequest) {
+  let lastErr: unknown = null;
+  for (const model of VEO_DIRECT_MODELS) {
+    try {
+      const r = await geminiDirectVideoModel(key, req, model);
+      return { ...r, model };
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[gemini] vídeo com ${model} falhou:`, e instanceof Error ? e.message : e);
+    }
+  }
+  throw lastErr ?? new Error("Nenhum modelo Veo disponível na sua chave Gemini.");
+}
+
+async function geminiDirectVideoModel(key: string, req: GenerationRequest, model: string) {
   const create = (resolution: string) =>
-    fetch(`${G}/models/veo-3.0-fast-generate-001:predictLongRunning`, {
+    fetch(`${G}/models/${model}:predictLongRunning`, {
       method: "POST",
       headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -235,7 +252,8 @@ const idle = {
 };
 
 /** userKey preenchida = usa a conta do cliente (custo 0 para o app). */
-export function createChatgptProvider(userKey: string | null): ServerCreativeProvider {
+/** strict = não cai para os créditos do app (a cadeia automática decide o próximo). */
+export function createChatgptProvider(userKey: string | null, opts: { strict?: boolean } = {}): ServerCreativeProvider {
   return {
     id: "chatgpt",
     label: userKey ? "ChatGPT (sua conta OpenAI)" : "ChatGPT (OpenAI)",
@@ -243,8 +261,9 @@ export function createChatgptProvider(userKey: string | null): ServerCreativePro
     async generateImage(req) {
       if (userKey) {
         try {
-          return ready(await openaiDirectImage(userKey, req), 0);
+          return ready(await openaiDirectImage(userKey, req), 0, null, "ChatGPT (chave do workspace)");
         } catch (e) {
+          if (opts.strict) throw e;
           // Chave do cliente sem crédito/inválida: cai para os créditos de IA do app em vez de travar.
           console.warn("[chatgpt] chave própria falhou, usando créditos do app:", e instanceof Error ? e.message : e);
         }
@@ -269,7 +288,7 @@ export function createChatgptProvider(userKey: string | null): ServerCreativePro
   };
 }
 
-export function createGeminiProvider(userKey: string | null): ServerCreativeProvider {
+export function createGeminiProvider(userKey: string | null, opts: { strict?: boolean } = {}): ServerCreativeProvider {
   return {
     id: "gemini",
     label: userKey ? "Gemini (sua conta Google)" : "Gemini (Google)",
@@ -277,8 +296,9 @@ export function createGeminiProvider(userKey: string | null): ServerCreativeProv
     async generateImage(req) {
       if (userKey) {
         try {
-          return ready(await geminiDirectImage(userKey, req), 0);
+          return ready(await geminiDirectImage(userKey, req), 0, null, "Gemini (chave do workspace)");
         } catch (e) {
+          if (opts.strict) throw e;
           console.warn("[gemini] chave própria falhou, usando créditos do app:", e instanceof Error ? e.message : e);
         }
       }
@@ -304,11 +324,16 @@ export function createGeminiProvider(userKey: string | null): ServerCreativeProv
     },
     async generateVideo(req) {
       if (userKey) {
-        const { url, id } = await geminiDirectVideo(userKey, req);
-        return ready(url, 0, id);
+        try {
+          const { url, id, model } = await geminiDirectVideo(userKey, req);
+          return ready(url, 0, id, `Vídeo pela chave Gemini (${model})`);
+        } catch (e) {
+          if (opts.strict) throw e;
+          console.warn("[gemini] vídeo pela chave falhou, usando Veo com créditos do app:", e instanceof Error ? e.message : e);
+        }
       }
       const { url, id } = await veoVideo(req, "google/veo-3.1-fast");
-      return ready(url, 6.0, id);
+      return ready(url, 6.0, id, userKey ? "Chave Gemini falhou; vídeo pelo Veo com créditos do app (google/veo-3.1-fast)" : "Vídeo pelo Veo com créditos do app (google/veo-3.1-fast)");
     },
     ...idle,
   };
