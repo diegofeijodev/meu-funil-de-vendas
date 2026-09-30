@@ -184,7 +184,10 @@ function WorkspacePicker({
     setBusy(true);
     const { data, error } = await supabase.rpc("create_workspace" as never, { _name: name.trim() } as never);
     setBusy(false);
-    if (error) return toast.error("Não foi possível criar a empresa.");
+    if (error) {
+      toast.error("Não foi possível criar a empresa.");
+      return;
+    }
     await qc.invalidateQueries({ queryKey: ["memberships"] });
     onChange(data as unknown as string);
     qc.invalidateQueries();
