@@ -1,10 +1,15 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Instagram, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { connectInstagramAccount } from "@/lib/instagram/instagram.functions";
+import {
+  connectInstagramAccount,
+  listInstagramOptions,
+  disconnectInstagramAccount,
+} from "@/lib/instagram/instagram.functions";
 import { Section, StatCard, StatusPill, SandboxBadge, EmptyState } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { IgAutopilotPanel } from "./autopilot-panel";
@@ -30,14 +35,32 @@ export function IgOverview({
   const qc = useQueryClient();
   const { data: account, isLoading } = useIgAccount(workspaceId);
   const connect = useServerFn(connectInstagramAccount);
+  const list = useServerFn(listInstagramOptions);
+  const disconnect = useServerFn(disconnectInstagramAccount);
+  const [picking, setPicking] = useState(false);
+  const opts = useMutation({ mutationFn: () => list({ data: { workspaceId } }) });
+  const loadOptions = () => {
+    setPicking(true);
+    opts.mutate();
+  };
   const m = useMutation({
-    mutationFn: () => connect({ data: { workspaceId } }),
+    mutationFn: (pageId: string) => connect({ data: { workspaceId, pageId } }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["ig-account", workspaceId] });
-      if (r.ok) toast.success(`Instagram @${r.username} conectado.`);
-      else toast.error(r.error);
+      if (r.ok) {
+        setPicking(false);
+        toast.success(`Instagram @${r.username} conectado.`);
+      } else toast.error(r.error);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível conectar."),
+  });
+  const dis = useMutation({
+    mutationFn: () => disconnect({ data: { workspaceId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ig-account", workspaceId] });
+      toast.success("Instagram desconectado.");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível desconectar."),
   });
 
   const since = Date.now() - 30 * 86400e3;
@@ -118,10 +141,54 @@ export function IgOverview({
                 </div>
               </div>
             </div>
-            <Button onClick={() => m.mutate()} disabled={m.isPending}>
-              {m.isPending && <Loader2 className="size-4 animate-spin" />}
-              {account?.status === "connected" ? "Reconectar" : "Conectar Instagram"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={loadOptions} disabled={opts.isPending || m.isPending}>
+                {(opts.isPending || m.isPending) && <Loader2 className="size-4 animate-spin" />}
+                {account?.status === "connected" ? "Trocar conta" : "Conectar Instagram"}
+              </Button>
+              {account && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (confirm("Desconectar esta conta do Instagram? Os posts ficam salvos, mas nada será publicado até conectar outra.")) dis.mutate();
+                  }}
+                  disabled={dis.isPending}
+                >
+                  {dis.isPending && <Loader2 className="size-4 animate-spin" />}
+                  Desconectar
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+        {picking && (
+          <div className="mt-4 space-y-2 rounded-lg border border-border p-3">
+            <p className="text-sm font-medium">Escolha qual conta do Instagram usar nesta empresa:</p>
+            {(opts.data?.options ?? []).length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                {opts.data?.ok === false ? opts.data.error : "Nenhuma Página encontrada. Dê acesso às Páginas ao usuário do sistema no Business Manager."}
+              </p>
+            )}
+            {(opts.data?.options ?? []).map((o) => (
+              <button
+                key={o.pageId}
+                disabled={!o.igUserId || m.isPending}
+                onClick={() => m.mutate(o.pageId)}
+                className="flex w-full items-center gap-3 rounded-lg border border-border p-2 text-left hover:bg-muted/40 disabled:opacity-50"
+              >
+                {o.picture ? (
+                  <img src={o.picture} alt="" className="size-9 rounded-full object-cover" />
+                ) : (
+                  <div className="flex size-9 items-center justify-center rounded-full bg-muted"><Instagram className="size-4" /></div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{o.username ? `@${o.username}` : "Sem Instagram profissional vinculado"}</p>
+                  <p className="text-xs text-muted-foreground">Página: {o.pageName}</p>
+                </div>
+                {account?.ig_user_id === o.igUserId && <span className="text-xs text-primary">Atual</span>}
+              </button>
+            ))}
+            <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>Cancelar</Button>
           </div>
         )}
         {err && account?.last_error && (
@@ -134,11 +201,12 @@ export function IgOverview({
         )}
         {!account?.status || account.status === "disconnected" ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            Sem conta conectada, as publicações são simuladas. Salve as credenciais da Meta em{" "}
+            Sem conta conectada, as publicações são simuladas. Clique em Conectar Instagram e escolha a conta.
+            Aparecem as contas profissionais ligadas às Páginas que o usuário do sistema da Meta acessa (credenciais em{" "}
             <Link to="/integrations" className="text-primary underline">
               Integrações
-            </Link>{" "}
-            e clique em Conectar.
+            </Link>
+            ).
           </p>
         ) : null}
       </Section>
