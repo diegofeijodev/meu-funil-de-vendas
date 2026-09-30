@@ -169,9 +169,9 @@ export type ComposeInput = {
   image: Uint8Array;
   aspectRatio: string;
   layout: TextLayout;
-  title?: string | null;
-  price?: string | null;
-  cta?: string | null;
+  title?: string | null | undefined;
+  price?: string | null | undefined;
+  cta?: string | null | undefined;
   logo?: Uint8Array | null;
   logoPosition?: LogoPosition;
   font: ArrayBuffer;
@@ -289,8 +289,8 @@ export async function composeCreative(inp: ComposeInput): Promise<Uint8Array> {
       // Evita a faixa do título quando o layout usa o topo.
       const busyTop = top && (inp.layout === "titulo_topo" || inp.layout === "preco_destaque") && !!title;
       const ly = top && !busyTop ? topSafe : bottomSafe - logo.bitmap.height - H * 0.02;
-      const shiftX = !top && inp.layout === "cta_rodape" ? 0 : 0;
-      img.composite(logo, Math.round(lx + shiftX), Math.round(busyTop ? bottomSafe - logo.bitmap.height - H * 0.02 : ly));
+      
+      img.composite(logo, Math.round(lx), Math.round(busyTop ? bottomSafe - logo.bitmap.height - H * 0.02 : ly));
     } catch (e) {
       console.warn("[compose] logo ignorada", e instanceof Error ? e.message : e);
     }

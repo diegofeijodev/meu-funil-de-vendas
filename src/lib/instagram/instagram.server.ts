@@ -269,7 +269,7 @@ export async function generateContentCalendar(
     `Frequência semanal por formato: ${JSON.stringify(plan.posting_frequency)} (feed = feed_image ou feed_carousel; reels = reel; stories = story_image ou story_video).`,
     `Horários preferidos: ${JSON.stringify(plan.preferred_times)}.`,
     "Para cada post: format, scheduled_at, theme, hook, caption (com quebras de linha), hashtags (15 a 25, sem #, misturando nicho, amplas e locais),",
-    "cta, image_prompt (prompt visual detalhado; para reels/story_video descreva o vídeo cena a cena), slides (3 a 7 prompts só para feed_carousel, senão vazio).",
+    "cta, image_prompt (briefing visual curto em português: o que deve aparecer; o diretor de arte transforma no prompt final), slides (3 a 7 prompts só para feed_carousel, senão vazio).",
     "Proporções: 1:1 feed, 4:5 carrossel, 9:16 reels/stories.",
     `Objetivo: ${plan.objective ?? "-"}. Tom de voz: ${plan.tone_of_voice ?? "-"}. Pilares: ${JSON.stringify(plan.content_pillars)}.`,
     plan.pillar_weights && Object.keys(plan.pillar_weights).length
@@ -430,6 +430,7 @@ async function continueAssets(
   media: any[],
   cost: number,
   instructions?: string | null,
+  extra: { referenceImages?: { bytes: Uint8Array; mime: string }[]; referenceUrls?: string[] } = {},
 ): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
   const format = post.format as IgFormat;
   const s = await db();
@@ -439,6 +440,7 @@ async function continueAssets(
         `${prompts[i]} ${format === "feed_carousel" ? `(slide ${i + 1} de ${prompts.length})` : ""}`.trim(),
       aspectRatio: ASPECT[format],
       kind: (isVideo(format) ? "video" : "image") as "image" | "video",
+      ...(isVideo(format) ? {} : extra),
     };
     const r = isVideo(format)
       ? await provider.generateVideo(req)
@@ -511,23 +513,155 @@ export async function generatePostAssets(
   try {
     const provider = await resolveProvider(s as any, workspaceId, providerChoice);
     const brief = post.creative_brief ?? {};
-    const base = [
-      brief.prompt || post.theme || "Post de Instagram",
-      instructions,
-      brand ? `Marca: ${brand.name}.` : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const prompts: string[] =
-      format === "feed_carousel"
-        ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10)
-        : [base];
-    return await continueAssets(post, provider, prompts, 0, [], 0, instructions);
+    const { buildVisualPrompt, providerPrompt } = await import("@/lib/creative/art-director.server");
+    const { loadBrandRefs } = await import("@/lib/creative/refs.server");
+    const vs = (brand?.visual_style ?? {}) as { referencias?: string[] };
+    const refs = isVideo(format)
+      ? []
+      : await loadBrandRefs(brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined });
+    const base = brief.prompt || post.theme || "Post de Instagram";
+    const briefs: string[] =
+      format === "feed_carousel" ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
+    const artBrief = (userPrompt: string, i: number) => ({
+      workspaceId,
+      brand,
+      theme: post.theme,
+      hook: post.hook,
+      offer: post.cta,
+      userPrompt,
+      aspectRatio: ASPECT[format],
+      kind: (isVideo(format) ? "video" : "image") as "image" | "video",
+      provider: provider.id,
+      hasProductRef: refs.some((r) => r.tag === "produto"),
+      adjust: instructions ?? null,
+      previousPrompt: instructions ? (brief.visual_prompt ?? null) : null,
+      slide: format === "feed_carousel" ? { index: i, total: briefs.length } : null,
+    });
+    // Prompt editado pelo usuário (sem novo ajuste) vale para o post de mídia única.
+    const override = !instructions && format !== "feed_carousel" && brief.visual_prompt_override;
+    const ads = await Promise.all(
+      briefs.map(async (p, i) =>
+        override && brief.art_direction
+          ? { ...brief.art_direction, prompt_final: String(brief.visual_prompt_override) }
+          : buildVisualPrompt(artBrief(p, i)),
+      ),
+    );
+    const prompts = ads.map((ad) => providerPrompt(ad));
+    post.creative_brief = {
+      ...brief,
+      art_direction: ads[0],
+      art_directions: format === "feed_carousel" ? ads : undefined,
+      visual_prompt: ads[0]!.prompt_final,
+    };
+    await patchPost(postId, { creative_brief: post.creative_brief });
+
+    // Imagem única: variações + crítico + composição.
+    if (!isVideo(format) && format !== "feed_carousel" && !provider.sandbox) {
+      const { runImagePipeline } = await import("@/lib/creative/pipeline.server");
+      const { targetForIgFormat } = await import("@/lib/media/formats");
+      const layout = (brief.layout ?? "limpo") as import("@/lib/creative/visual-style").TextLayout;
+      const res = await runImagePipeline({
+        workspaceId,
+        brand,
+        provider,
+        ad: ads[0]!,
+        aspectRatio: ASPECT[format],
+        targetFormat: targetForIgFormat(format),
+        refs,
+        variations: Number(brief.variations ?? 3),
+        layout,
+        text: { title: brief.headline ?? post.hook ?? null, price: brief.price ?? null, cta: post.cta ?? null },
+        title: post.theme ?? "Post do Instagram",
+        igPostId: post.id,
+        rebuild: (motivo) =>
+          buildVisualPrompt({ ...artBrief(base, 0), previousPrompt: ads[0]!.prompt_final, adjust: `Corrija: ${motivo}` }),
+      });
+      if (!res.pending) {
+        const { data: planRow } = post.plan_id
+          ? await s.from("ig_content_plans").select("requires_approval").eq("id", post.plan_id).maybeSingle()
+          : { data: null as any };
+        const media = [
+          {
+            url: res.finalUrl,
+            type: "image",
+            order: 0,
+            width: res.width,
+            height: res.height,
+            duration: null,
+            asset_id: res.finalAssetId,
+            ig_ready: res.igReady,
+            issues: [],
+          },
+        ];
+        await patchPost(postId, {
+          media,
+          creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
+          status: planRow?.requires_approval === false ? "ready" : "pending_approval",
+          ai_provider: provider.id,
+          ai_generation_log: await appendLog(post, {
+            step: "media",
+            provider: provider.id,
+            items: 1,
+            variations: res.variations.length,
+            best_score: res.winner.score?.total ?? null,
+            cost: res.cost,
+            instructions,
+          }),
+        });
+        return { ok: true as const, items: 1, provider: provider.id };
+      }
+      // Provedor assíncrono: segue o fluxo de pendência de sempre.
+      return await continueAssets(post, provider, prompts, 0, [], 0, instructions);
+    }
+    return await continueAssets(post, provider, prompts, 0, [], 0, instructions, {
+      referenceImages: refs.map((r) => ({ bytes: r.bytes, mime: r.mime })),
+      referenceUrls: refs.map((r) => r.url),
+    });
   } catch (e) {
     console.error("[instagram] mídia falhou:", errMsg(e));
     await patchPost(postId, { status: "failed", last_error: errMsg(e) });
     return { ok: false as const, error: errMsg(e) };
   }
+}
+
+/** Aprendizado: prompts dos posts no top 20% (alcance + salvamentos) viram exemplos da marca. */
+export async function learnFromTopPosts() {
+  const s = await db();
+  const { data: rows } = await s
+    .from("ig_post_metrics")
+    .select("post_id, workspace_id, reach, saves, collected_at")
+    .gte("collected_at", new Date(Date.now() - 60 * 864e5).toISOString())
+    .limit(5000);
+  const best = new Map<string, { ws: string; v: number }>();
+  for (const r of (rows ?? []) as any[]) {
+    const v = Number(r.reach ?? 0) + 5 * Number(r.saves ?? 0);
+    if ((best.get(r.post_id)?.v ?? -1) < v) best.set(r.post_id, { ws: r.workspace_id, v });
+  }
+  const byWs = new Map<string, { id: string; v: number }[]>();
+  for (const [id, b] of best) byWs.set(b.ws, [...(byWs.get(b.ws) ?? []), { id, v: b.v }]);
+  let added = 0;
+  for (const list of byWs.values()) {
+    if (list.length < 5) continue;
+    list.sort((a, b) => b.v - a.v);
+    const top = list.slice(0, Math.max(1, Math.ceil(list.length * 0.2))).map((x) => x.id);
+    const { data: posts } = await s.from("ig_posts").select("id, plan_id, creative_brief, updated_at").in("id", top);
+    for (const p of (posts ?? []) as any[]) {
+      const prompt = p.creative_brief?.art_direction?.prompt_final;
+      if (!prompt || !p.plan_id) continue;
+      const { data: plan } = await s.from("ig_content_plans").select("brand_id").eq("id", p.plan_id).maybeSingle();
+      if (!plan?.brand_id) continue;
+      const { data: brand } = await s.from("brands").select("visual_style").eq("id", plan.brand_id).maybeSingle();
+      const vs = ((brand as any)?.visual_style ?? {}) as { exemplos_prompt?: string[] };
+      const ex = Array.isArray(vs.exemplos_prompt) ? vs.exemplos_prompt : [];
+      if (ex.includes(prompt)) continue;
+      await s
+        .from("brands")
+        .update({ visual_style: { ...vs, exemplos_prompt: [...ex, prompt].slice(-10) } } as never)
+        .eq("id", plan.brand_id);
+      added++;
+    }
+  }
+  return { added };
 }
 
 /** Consulta os provedores para posts com geração assíncrona pendente e conclui os prontos. */

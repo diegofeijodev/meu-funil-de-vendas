@@ -93,12 +93,14 @@ export const generateContentCalendar = createServerFn({ method: "POST" })
 export const generatePostAssets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ workspaceId: ws, postId: z.string().uuid(), provider }).parse(d),
+    z
+      .object({ workspaceId: ws, postId: z.string().uuid(), provider, adjust: z.string().max(300).optional() })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     await requireMember(context, data.workspaceId);
     await requirePost(context, data.workspaceId, data.postId);
-    return (await lib()).generatePostAssets(data.workspaceId, data.postId, data.provider);
+    return (await lib()).generatePostAssets(data.workspaceId, data.postId, data.provider, data.adjust || undefined);
   });
 
 export const regenerateCaption = createServerFn({ method: "POST" })

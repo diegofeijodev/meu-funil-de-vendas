@@ -27,7 +27,7 @@ export type BrandRef = Img & { id: string; tag: string | null; url: string };
 
 export async function loadBrandRefs(
   brandId: string | null | undefined,
-  opts: { max?: number; ids?: string[] } = {},
+  opts: { max?: number; ids?: string[] | undefined } = {},
 ): Promise<BrandRef[]> {
   if (!brandId) return [];
   const s = await db();
@@ -77,9 +77,9 @@ export async function loadLogo(brandId: string | null | undefined): Promise<Uint
 
 let defaultFont: ArrayBuffer | null = null;
 const DEFAULT_FONT_URL =
-  "https://github.com/google/fonts/raw/main/ofl/manrope/Manrope%5Bwght%5D.ttf";
+  "https://github.com/google/fonts/raw/main/ofl/archivoblack/ArchivoBlack-Regular.ttf";
 
-/** Fonte .ttf/.otf enviada na marca; senão Manrope (fonte da identidade Meu Funil). */
+/** Fonte .ttf/.otf enviada na marca; senão Archivo Black (forte e legível em anúncios). */
 export async function loadFont(brandId: string | null | undefined): Promise<ArrayBuffer> {
   if (brandId) {
     const s = await db();
