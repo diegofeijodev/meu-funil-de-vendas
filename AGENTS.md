@@ -8,3 +8,4 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+- Instagram orgânico vive em src/lib/instagram/ (não src/server/, que é bloqueado do cliente); fila em publishing_jobs com channel=instagram_organic, processada por /api/public/cron/instagram — reaproveita a fila existente.
