@@ -10,6 +10,10 @@ export type GenerationRequest = {
   aspectRatio: string;
   kind: CreativeKind;
   brandContext?: Record<string, unknown>;
+  /** Fotos reais da marca (produto/ambiente) para o modelo seguir. */
+  referenceImages?: { bytes: Uint8Array; mime: string }[];
+  /** Mesmas referências como links (provedores que só aceitam URL). */
+  referenceUrls?: string[];
 };
 
 export type GenerationResult = {

@@ -211,6 +211,8 @@ export type Database = {
           id: string
           kind: string
           name: string | null
+          storage_path: string | null
+          tag: string | null
           url: string | null
           workspace_id: string
         }
@@ -220,6 +222,8 @@ export type Database = {
           id?: string
           kind?: string
           name?: string | null
+          storage_path?: string | null
+          tag?: string | null
           url?: string | null
           workspace_id: string
         }
@@ -229,6 +233,8 @@ export type Database = {
           id?: string
           kind?: string
           name?: string | null
+          storage_path?: string | null
+          tag?: string | null
           url?: string | null
           workspace_id?: string
         }
@@ -317,6 +323,7 @@ export type Database = {
           tone_of_voice: string | null
           typography: string | null
           updated_at: string
+          visual_style: Json
           website: string | null
           workspace_id: string
         }
@@ -339,6 +346,7 @@ export type Database = {
           tone_of_voice?: string | null
           typography?: string | null
           updated_at?: string
+          visual_style?: Json
           website?: string | null
           workspace_id: string
         }
@@ -361,6 +369,7 @@ export type Database = {
           tone_of_voice?: string | null
           typography?: string | null
           updated_at?: string
+          visual_style?: Json
           website?: string | null
           workspace_id?: string
         }

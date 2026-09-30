@@ -106,9 +106,53 @@ async function veoFinish(res: Response) {
 
 import { vendorError } from "../ai-keys.server";
 
+function editForm(model: string, req: GenerationRequest, size: string) {
+  const fd = new FormData();
+  fd.append("model", model);
+  fd.append("prompt", req.finalPrompt.slice(0, 30000));
+  fd.append("size", size);
+  fd.append("quality", "high");
+  (req.referenceImages ?? []).slice(0, 4).forEach((r, i) =>
+    fd.append("image[]", new Blob([r.bytes as BlobPart], { type: r.mime }), `ref${i}.jpg`),
+  );
+  return fd;
+}
+
+/** Gateway: edição com as fotos de referência; se o endpoint recusar, gera sem elas. */
+async function imageEditFromGateway(model: string, req: GenerationRequest, size: string) {
+  const res = await fetch(`${BASE}/v1/images/edits`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key()}` },
+    body: editForm(model, req, size),
+  });
+  if (res.status === 400 || res.status === 404 || res.status === 415 || res.status === 422) {
+    console.warn("[chatgpt] edição com referências recusada:", res.status, (await res.text()).slice(0, 200));
+    return null;
+  }
+  if (!res.ok) throw await gatewayError(res);
+  const json = (await res.json()) as { data?: { b64_json?: string }[] };
+  const b64 = json.data?.[0]?.b64_json;
+  if (!b64) throw new Error("A IA não devolveu imagem (possível recusa de conteúdo).");
+  return upload(new Uint8Array(Buffer.from(b64, "base64")), "png", "image/png");
+}
+
+const b64of = (b: Uint8Array) => Buffer.from(b).toString("base64");
+
 /** OpenAI direto com a chave do cliente. */
 async function openaiDirectImage(key: string, req: GenerationRequest) {
   const size = req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "1024x1536" : req.aspectRatio === "16:9" ? "1536x1024" : "1024x1024";
+  if (req.referenceImages?.length) {
+    const r = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: editForm("gpt-image-1", req, size),
+    });
+    if (!r.ok) throw await vendorError("openai", r);
+    const j = (await r.json()) as { data?: { b64_json?: string }[] };
+    const b = j.data?.[0]?.b64_json;
+    if (!b) throw new Error("A OpenAI não devolveu imagem (possível recusa de conteúdo).");
+    return upload(new Uint8Array(Buffer.from(b, "base64")), "png", "image/png");
+  }
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -129,7 +173,14 @@ async function geminiDirectImage(key: string, req: GenerationRequest) {
     method: "POST",
     headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.` }] }],
+      contents: [
+        {
+          parts: [
+            ...(req.referenceImages ?? []).slice(0, 4).map((r) => ({ inlineData: { mimeType: r.mime, data: b64of(r.bytes) } })),
+            { text: `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.` },
+          ],
+        },
+      ],
       generationConfig: { responseModalities: ["IMAGE", "TEXT"], imageConfig: { aspectRatio: req.aspectRatio } },
     }),
   });
@@ -198,6 +249,11 @@ export function createChatgptProvider(userKey: string | null): ServerCreativePro
           console.warn("[chatgpt] chave própria falhou, usando créditos do app:", e instanceof Error ? e.message : e);
         }
       }
+      const size = OPENAI_SIZE[req.aspectRatio] ?? "1024x1024";
+      if (req.referenceImages?.length) {
+        const edited = await imageEditFromGateway("openai/gpt-image-2.5-sunburst", req, size);
+        if (edited) return ready(edited, 1.5);
+      }
       const url = await imageFromGateway({
         model: "openai/gpt-image-2.5-sunburst",
         prompt: req.finalPrompt,
@@ -228,7 +284,20 @@ export function createGeminiProvider(userKey: string | null): ServerCreativeProv
       }
       const url = await imageFromGateway({
         model: "google/gemini-3.1-flash-image",
-        messages: [{ role: "user", content: `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.` }],
+        messages: [
+          {
+            role: "user",
+            content: req.referenceImages?.length
+              ? [
+                  ...req.referenceImages.slice(0, 4).map((r) => ({
+                    type: "image_url",
+                    image_url: { url: `data:${r.mime};base64,${b64of(r.bytes)}` },
+                  })),
+                  { type: "text", text: `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.` },
+                ]
+              : `${req.finalPrompt}\nProporção da imagem: ${req.aspectRatio}.`,
+          },
+        ],
         modalities: ["image", "text"],
       });
       return ready(url, 1.0);
