@@ -50,6 +50,20 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/auth" });
   };
 
+  const { data: igPending = 0 } = useQuery({
+    queryKey: ["ig-pending-badge", workspaceId],
+    enabled: !!workspaceId,
+    refetchInterval: 120_000,
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("ig_posts")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspaceId!)
+        .eq("status", "pending_approval");
+      return count ?? 0;
+    },
+  });
+
   const nav = (
     <nav className="flex flex-1 flex-col gap-0.5 px-3">
       {NAV.map((item) => {
@@ -69,6 +83,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Icon className={cn("size-4", active && "text-sidebar-primary")} />
             {item.label}
+            {item.to === "/instagram" && igPending > 0 && (
+              <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground" title="Posts aguardando aprovação">
+                {igPending}
+              </span>
+            )}
           </Link>
         );
       })}
