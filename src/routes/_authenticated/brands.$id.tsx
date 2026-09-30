@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { brl } from "@/lib/format";
 import { useServerFn } from "@tanstack/react-start";
 import { generateBrandGuide } from "@/lib/creative.functions";
-import { LOGO_POSITIONS, REFERENCE_TAGS, listField, type VisualStyle } from "@/lib/creative/visual-style";
+import { LOGO_POSITIONS, REFERENCE_TAGS, listField, type LogoPosition, type VisualStyle } from "@/lib/creative/visual-style";
 
 export const Route = createFileRoute("/_authenticated/brands/$id")({
   head: () => ({
@@ -550,7 +550,10 @@ function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: any;
     for (const l of GUIDE_LISTS) (next as any)[l.key] = toList(lists[l.key] ?? "");
     const { error } = await supabase.from("brands").update({ visual_style: next } as never).eq("id", brandId);
     setBusy(null);
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     qc.invalidateQueries({ queryKey: ["brand", brandId] });
     toast.success("Guia visual salvo. Os próximos criativos já seguem este guia.");
   };
@@ -611,7 +614,7 @@ function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: any;
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={vs.posicao_logo ?? "none"}
-            onChange={(e) => setVs({ ...vs, posicao_logo: e.target.value as VisualStyle["posicao_logo"] })}
+            onChange={(e) => setVs({ ...vs, posicao_logo: e.target.value as LogoPosition })}
           >
             {Object.entries(LOGO_POSITIONS).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
