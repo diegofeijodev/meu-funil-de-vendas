@@ -141,9 +141,14 @@ export type RunGenerationInput = {
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
+  return finalizeWith(supabase, null, input);
+}
+
+async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | null, input: RunGenerationInput) {
   let provider: ServerCreativeProvider;
   try {
-    provider = await resolveProvider(supabase, input.workspaceId, input.providerChoice);
+    if (injected) provider = injected;
+    else provider = await resolveProvider(supabase, input.workspaceId, input.providerChoice);
   } catch (e) {
     await supabase
       .from("creative_generation_jobs")
@@ -175,6 +180,22 @@ export async function runGeneration(supabase: DB, input: RunGenerationInput) {
     const result =
       input.kind === "video" ? await provider.generateVideo(req) : await provider.generateImage(req);
 
+    // Geração assíncrona: guarda o job externo e deixa o poller concluir depois.
+    if (result.status === "generating" && result.externalJobId) {
+      await supabase
+        .from("creative_generation_jobs")
+        .update({ status: "generating", provider: provider.id, external_job_id: result.externalJobId, creative_id: input.existingCreativeId ?? null })
+        .eq("id", input.jobId);
+      return {
+        jobId: input.jobId,
+        creativeId: input.existingCreativeId ?? null,
+        status: "generating" as const,
+        assetUrl: null as string | null,
+        provider: provider.id,
+        sandbox: provider.sandbox,
+        error: null as string | null,
+      };
+    }
     if (result.status !== "ready" || !result.assetUrl) {
       throw new Error("O provedor não devolveu um ativo pronto.");
     }
@@ -287,4 +308,60 @@ export async function runGeneration(supabase: DB, input: RunGenerationInput) {
       error: "Não foi possível gerar este criativo. Tente novamente.",
     };
   }
+}
+
+const choiceForProvider = (id: string): ProviderChoice =>
+  id === "higgsfield" || id === "chatgpt" || id === "gemini" ? id : "auto";
+
+/** Conclui jobs do Creative Studio que ficaram "generating" com job externo (chamado pelo cron). */
+export async function pollPendingCreatives(supabase: DB) {
+  const { data } = await supabase
+    .from("creative_generation_jobs")
+    .select("*")
+    .eq("status", "generating")
+    .not("external_job_id", "is", null)
+    .limit(20);
+  const out: { job: string; status: string }[] = [];
+  for (const job of (data ?? []) as any[]) {
+    try {
+      const provider = await resolveProvider(supabase, job.workspace_id, choiceForProvider(job.provider));
+      const r = await provider.getGenerationStatus(job.external_job_id);
+      if (r.status === "generating") {
+        if (Date.now() - new Date(job.created_at).getTime() > 60 * 60e3) throw new Error("Tempo esgotado no provedor.");
+        out.push({ job: job.id, status: "generating" });
+        continue;
+      }
+      const assetUrl = r.assetUrl ?? (r.status === "ready" ? await provider.getAsset(job.external_job_id) : null);
+      if (r.status !== "ready" || !assetUrl) throw new Error("O provedor informou falha na geração.");
+      const kind: CreativeKind = /video|reel|story_video/i.test(job.type ?? "") ? ("video" as CreativeKind) : ("image" as CreativeKind);
+      const fixed: ServerCreativeProvider = {
+        ...provider,
+        generateImage: async () => ({ ...r, status: "ready", assetUrl, externalJobId: job.external_job_id }),
+        generateVideo: async () => ({ ...r, status: "ready", assetUrl, externalJobId: job.external_job_id }),
+      };
+      const res = await finalizeWith(supabase, fixed, {
+        jobId: job.id,
+        workspaceId: job.workspace_id,
+        brandId: job.brand_id,
+        campaignId: job.campaign_id,
+        title: String(job.prompt ?? "Criativo").slice(0, 80),
+        type: job.type,
+        aspectRatio: job.aspect_ratio ?? "1:1",
+        prompt: job.prompt ?? "",
+        finalPrompt: job.final_prompt ?? job.prompt ?? "",
+        copyText: "",
+        kind,
+        brandContext: {},
+        existingCreativeId: job.creative_id,
+      });
+      out.push({ job: job.id, status: res.status });
+    } catch (e) {
+      await supabase
+        .from("creative_generation_jobs")
+        .update({ status: "failed", error_message: errMessage(e), completed_at: new Date().toISOString() })
+        .eq("id", job.id);
+      out.push({ job: job.id, status: "failed" });
+    }
+  }
+  return out;
 }
