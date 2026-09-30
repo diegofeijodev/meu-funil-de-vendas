@@ -9,6 +9,7 @@ import {
   connectInstagramAccount,
   listInstagramOptions,
   disconnectInstagramAccount,
+  syncInstagramHistory,
 } from "@/lib/instagram/instagram.functions";
 import { Section, StatCard, StatusPill, SandboxBadge, EmptyState } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,17 @@ export function IgOverview({
   const connect = useServerFn(connectInstagramAccount);
   const list = useServerFn(listInstagramOptions);
   const disconnect = useServerFn(disconnectInstagramAccount);
+  const sync = useServerFn(syncInstagramHistory);
   const [picking, setPicking] = useState(false);
+  const imp = useMutation({
+    mutationFn: () => sync({ data: { workspaceId } }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["ig-metrics", workspaceId] });
+      toast.success(`${r.imported} post(s) novo(s) importado(s) · resultados de ${r.metrics} atualizados.`);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível importar."),
+  });
   const opts = useMutation({ mutationFn: () => list({ data: { workspaceId } }) });
   const loadOptions = () => {
     setPicking(true);
@@ -49,6 +60,8 @@ export function IgOverview({
       qc.invalidateQueries({ queryKey: ["ig-account", workspaceId] });
       if (r.ok) {
         setPicking(false);
+        qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
+        qc.invalidateQueries({ queryKey: ["ig-metrics", workspaceId] });
         toast.success(`Instagram @${r.username} conectado.`);
       } else toast.error(r.error);
     },
@@ -146,6 +159,12 @@ export function IgOverview({
                 {(opts.isPending || m.isPending) && <Loader2 className="size-4 animate-spin" />}
                 {account?.status === "connected" ? "Trocar conta" : "Conectar Instagram"}
               </Button>
+              {account?.status === "connected" && (
+                <Button variant="outline" onClick={() => imp.mutate()} disabled={imp.isPending}>
+                  {imp.isPending && <Loader2 className="size-4 animate-spin" />}
+                  Importar histórico
+                </Button>
+              )}
               {account && (
                 <Button
                   variant="outline"
