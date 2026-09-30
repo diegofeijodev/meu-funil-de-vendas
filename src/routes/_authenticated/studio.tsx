@@ -17,6 +17,7 @@ import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from
 import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { generateCreative, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
+import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
 
@@ -38,6 +39,13 @@ function Studio() {
   const runGenerate = useServerFn(generateCreative);
   const runRetry = useServerFn(retryCreativeJob);
   const runPreview = useServerFn(previewVisualPrompt);
+  const checkKeys = useServerFn(aiKeysHealth);
+  const { data: keyHealth } = useQuery({
+    queryKey: ["ai-keys-health", workspaceId],
+    enabled: !!workspaceId,
+    staleTime: 10 * 60e3,
+    queryFn: () => checkKeys({ data: { workspaceId: workspaceId! } }),
+  });
   const [art, setArt] = useState<{ ad: Record<string, unknown> | null; prompt: string }>({ ad: null, prompt: "" });
   const [layout, setLayout] = useState<TextLayout>("limpo");
   const [overlay, setOverlay] = useState({ headline: "", price: "", cta: "" });
@@ -215,6 +223,18 @@ function Studio() {
         actions={<SandboxBadge label={`Custo acumulado ${brl(totalCost)}`} />}
       />
 
+      {!!keyHealth?.outOfCredit.length && (
+        <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+          <strong>
+            {keyHealth.outOfCredit.map((k) => (k.vendor === "openai" ? "ChatGPT" : "Gemini")).join(" e ")} sem crédito.
+          </strong>{" "}
+          No modo Automático o Studio passa para o próximo provedor disponível.{" "}
+          <Link to="/integrations" className="font-medium underline">
+            Ver Integrações
+          </Link>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
         <Section title="Novo criativo">
           <div className="space-y-4">
@@ -364,9 +384,7 @@ function Studio() {
                     </div>
                   </div>
                   {j.error_message && (
-                    <p className="mt-1 text-xs text-destructive">
-                      Não foi possível gerar este criativo. Tente novamente.
-                    </p>
+                    <p className="mt-1 text-xs text-destructive">{j.error_message}</p>
                   )}
                 </div>
               ))}
