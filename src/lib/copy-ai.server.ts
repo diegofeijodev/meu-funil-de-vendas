@@ -135,7 +135,15 @@ export async function generateCopyAI(
 ): Promise<{ content: any; engine: string }> {
   const p = prompt(brand, brief, seed);
   const [o, g] = await Promise.all([getWorkspaceAiKey(workspaceId, "openai"), getWorkspaceAiKey(workspaceId, "gemini")]);
-  if ((engine === "chatgpt" || engine === "auto") && o) return { content: await viaOpenAI(o, p), engine: "Sua conta OpenAI" };
-  if ((engine === "gemini" || engine === "auto") && g) return { content: await viaGemini(g, p), engine: "Sua conta Gemini" };
-  return { content: await viaGateway(p), engine: "IA do app" };
+  const fails: string[] = [];
+  if ((engine === "chatgpt" || engine === "auto") && o) {
+    try { return { content: await viaOpenAI(o, p), engine: "Sua conta OpenAI" }; }
+    catch (e) { fails.push(`OpenAI: ${e instanceof Error ? e.message : "falhou"}`); }
+  }
+  if ((engine === "gemini" || engine === "auto") && g) {
+    try { return { content: await viaGemini(g, p), engine: "Sua conta Gemini" }; }
+    catch (e) { fails.push(`Gemini: ${e instanceof Error ? e.message : "falhou"}`); }
+  }
+  if (fails.length) console.warn("[copy] chaves próprias falharam:", fails.join(" | "));
+  return { content: await viaGateway(p), engine: fails.length ? "IA do app (sua chave falhou)" : "IA do app" };
 }
