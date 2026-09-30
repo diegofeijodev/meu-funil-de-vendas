@@ -72,7 +72,7 @@ export const approvePost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ workspaceId: ws, postId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    await requireMember(context, data.workspaceId, ["owner", "admin", "manager", "approver"]);
+    await requireMember(context, data.workspaceId, ["owner", "admin", "marketing"]);
     await requirePost(context, data.workspaceId, data.postId);
     return (await lib()).approvePost(data.workspaceId, data.postId);
   });
@@ -81,7 +81,7 @@ export const rejectPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ workspaceId: ws, postId: z.string().uuid(), reason: z.string().min(1).max(1000) }).parse(d))
   .handler(async ({ data, context }) => {
-    await requireMember(context, data.workspaceId, ["owner", "admin", "manager", "approver"]);
+    await requireMember(context, data.workspaceId, ["owner", "admin", "marketing"]);
     await requirePost(context, data.workspaceId, data.postId);
     return (await lib()).rejectPost(data.workspaceId, data.postId, data.reason);
   });
@@ -99,7 +99,7 @@ export const publishInstagramPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ workspaceId: ws, postId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    await requireMember(context, data.workspaceId, ["owner", "admin", "manager"]);
+    await requireMember(context, data.workspaceId, ["owner", "admin", "marketing"]);
     await requirePost(context, data.workspaceId, data.postId);
     const { publishInstagramPost: run } = await lib();
     try {
