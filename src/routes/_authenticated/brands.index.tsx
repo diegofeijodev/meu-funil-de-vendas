@@ -126,9 +126,22 @@ function BrandsPage() {
               <p className="mt-4 line-clamp-2 text-sm text-muted-foreground">
                 {b.description || "Sem descrição cadastrada."}
               </p>
-              <div className="mt-4 flex gap-4 text-xs text-muted-foreground">
+              <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
                 <span>{b.campaigns?.[0]?.count ?? 0} campanhas</span>
                 <span>{b.products?.[0]?.count ?? 0} produtos</span>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="ml-auto text-destructive/80 transition-colors hover:text-destructive"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeleting({ id: b.id, name: b.name });
+                    }}
+                  >
+                    Excluir
+                  </button>
+                )}
               </div>
             </Link>
           ))}
@@ -160,6 +173,26 @@ function BrandsPage() {
           </div>
           <DialogFooter>
             <Button onClick={create}>Criar marca</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleting} onOpenChange={(v) => !v && setDeleting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir marca</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Tem certeza que deseja excluir a marca <strong className="text-foreground">{deleting?.name}</strong>?
+            Campanhas, produtos, criativos e demais dados vinculados também serão removidos. Essa ação não pode ser desfeita.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleting(null)} disabled={deletingBusy}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deletingBusy}>
+              {deletingBusy ? "Excluindo..." : "Excluir marca"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
