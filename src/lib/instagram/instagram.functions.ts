@@ -44,6 +44,22 @@ export const connectInstagramAccount = createServerFn({ method: "POST" })
     return (await lib()).connectInstagramAccount(data.workspaceId, data.pageId);
   });
 
+export const listInstagramOptions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: ws }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId, ["owner", "admin"]);
+    return (await lib()).listInstagramOptions();
+  });
+
+export const disconnectInstagramAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: ws }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId, ["owner", "admin"]);
+    return (await lib()).disconnectInstagramAccount(data.workspaceId);
+  });
+
 export const generateContentCalendar = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
