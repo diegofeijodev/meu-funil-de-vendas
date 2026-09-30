@@ -2148,8 +2148,64 @@ export type Database = {
         }
         Relationships: []
       }
+      ig_autopilot_events: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          level: string
+          message: string
+          plan_id: string | null
+          post_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          level?: string
+          message: string
+          plan_id?: string | null
+          post_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          level?: string
+          message?: string
+          plan_id?: string | null
+          post_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_autopilot_events_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_autopilot_events_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "ig_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_autopilot_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ig_content_plans: {
         Row: {
+          ai_notes: Json
           auto_publish: boolean
           brand_id: string | null
           content_pillars: Json
@@ -2157,8 +2213,10 @@ export type Database = {
           cta_default: string | null
           hashtag_strategy: Json
           id: string
+          last_autopilot_at: string | null
           name: string
           objective: string | null
+          pillar_weights: Json
           posting_frequency: Json
           preferred_times: Json
           requires_approval: boolean
@@ -2168,6 +2226,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          ai_notes?: Json
           auto_publish?: boolean
           brand_id?: string | null
           content_pillars?: Json
@@ -2175,8 +2234,10 @@ export type Database = {
           cta_default?: string | null
           hashtag_strategy?: Json
           id?: string
+          last_autopilot_at?: string | null
           name: string
           objective?: string | null
+          pillar_weights?: Json
           posting_frequency?: Json
           preferred_times?: Json
           requires_approval?: boolean
@@ -2186,6 +2247,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          ai_notes?: Json
           auto_publish?: boolean
           brand_id?: string | null
           content_pillars?: Json
@@ -2193,8 +2255,10 @@ export type Database = {
           cta_default?: string | null
           hashtag_strategy?: Json
           id?: string
+          last_autopilot_at?: string | null
           name?: string
           objective?: string | null
+          pillar_weights?: Json
           posting_frequency?: Json
           preferred_times?: Json
           requires_approval?: boolean
@@ -2293,6 +2357,7 @@ export type Database = {
         Row: {
           ai_generation_log: Json
           ai_provider: string | null
+          approved_at: string | null
           caption: string | null
           created_at: string
           creative_brief: Json
@@ -2319,6 +2384,7 @@ export type Database = {
         Insert: {
           ai_generation_log?: Json
           ai_provider?: string | null
+          approved_at?: string | null
           caption?: string | null
           created_at?: string
           creative_brief?: Json
@@ -2345,6 +2411,7 @@ export type Database = {
         Update: {
           ai_generation_log?: Json
           ai_provider?: string | null
+          approved_at?: string | null
           caption?: string | null
           created_at?: string
           creative_brief?: Json

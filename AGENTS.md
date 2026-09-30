@@ -9,3 +9,4 @@
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
 - Instagram orgânico vive em src/lib/instagram/ (não src/server/, que é bloqueado do cliente); fila em publishing_jobs com channel=instagram_organic, processada por /api/public/cron/instagram — reaproveita a fila existente.
+- Piloto automático do Instagram vive em src/lib/instagram/autopilot.server.ts; eventos em ig_autopilot_events; tarefas weekly/optimize pelo mesmo cron /api/public/cron/instagram (body.task) — um só endpoint protegido.

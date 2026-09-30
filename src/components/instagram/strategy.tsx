@@ -291,12 +291,61 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
             {plans.map((p: any) => (
               <button key={p.id} onClick={() => load(p)} className={cn("w-full rounded-lg border p-3 text-left text-sm hover:bg-muted/40", f.id === p.id ? "border-primary" : "border-border")}>
                 <p className="font-medium">{p.name}</p>
-                <div className="mt-1"><StatusPill status={p.status} label={p.status === "active" ? "Ativo" : p.status === "paused" ? "Pausado" : "Rascunho"} /></div>
+                <div className="mt-1 flex items-center gap-2">
+                  <StatusPill status={p.status} label={p.status === "active" ? "Ativo" : p.status === "paused" ? "Pausado" : "Rascunho"} />
+                  {p.auto_publish && <span className="text-xs text-primary">Piloto automático</span>}
+                  {p.status === "paused" && (
+                    <span
+                      role="button"
+                      className="ml-auto text-xs text-primary underline"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const { error } = await supabase.from("ig_content_plans").update({ status: "active" }).eq("id", p.id);
+                        if (error) toast.error(error.message);
+                        else { toast.success("Plano reativado."); qc.invalidateQueries(); }
+                      }}
+                    >
+                      Reativar
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </div>
         )}
       </Section>
+
+      {(() => {
+        const cur = plans.find((p: any) => p.id === f.id) as any;
+        const notes = Array.isArray(cur?.ai_notes) ? [...cur.ai_notes].reverse() : [];
+        if (!cur) return null;
+        return (
+          <Section title="Notas do agente de otimização" description="Toda segunda a IA revisa os últimos 14 dias e ajusta horários e pilares.">
+            {notes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Ainda sem ajustes. A primeira análise acontece na segunda-feira, com pelo menos 3 posts publicados.</p>
+            ) : (
+              <div className="space-y-3">
+                {notes.slice(0, 6).map((n: any, i: number) => (
+                  <div key={i} className="rounded-lg border border-border p-3 text-sm">
+                    <p className="text-xs text-muted-foreground">{new Date(n.at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })} · {n.posts_analyzed} posts</p>
+                    <p className="mt-1">{n.summary}</p>
+                    {n.pillar_weights && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {Object.entries(n.pillar_weights).map(([k, v]: any) => (
+                          <span key={k} className="rounded-full bg-muted px-2 py-0.5 text-xs">{k}: {Math.round(v * 100)}%</span>
+                        ))}
+                      </div>
+                    )}
+                    {n.preferred_times?.after && (
+                      <p className="mt-2 text-xs text-muted-foreground">Horários: {JSON.stringify(n.preferred_times.before)} → {JSON.stringify(n.preferred_times.after)}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        );
+      })()}
     </div>
   );
 }

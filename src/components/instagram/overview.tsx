@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { connectInstagramAccount } from "@/lib/instagram/instagram.functions";
 import { Section, StatCard, StatusPill, SandboxBadge, EmptyState } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
+import { IgAutopilotPanel } from "./autopilot-panel";
 import { FORMATS, STATUS_LABEL, MediaThumb, fmtDateTime, fmtNum, useIgAccount, type IgPost } from "./shared";
 
 export function IgOverview({ workspaceId, posts, onOpen }: { workspaceId: string; posts: IgPost[]; onOpen: (id: string) => void }) {
@@ -103,6 +104,8 @@ export function IgOverview({ workspaceId, posts, onOpen }: { workspaceId: string
         <StatCard label="Plays de Reels" value={fmtNum(sum("plays"))} tone="accent" />
         <StatCard label="Taxa de falha" value={`${failRate.toFixed(0)}%`} tone={failRate > 10 ? "negative" : "default"} />
       </div>
+
+      <IgAutopilotPanel workspaceId={workspaceId} />
 
       <Section title="Fila dos próximos 7 dias">
         {queue.length === 0 ? (
