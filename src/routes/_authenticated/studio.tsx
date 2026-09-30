@@ -386,6 +386,11 @@ function Studio() {
                   {j.error_message && (
                     <p className="mt-1 text-xs text-destructive">{j.error_message}</p>
                   )}
+                  {(j as { provider_log?: string | null }).provider_log && (
+                    <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+                      {(j as { provider_log?: string | null }).provider_log}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
