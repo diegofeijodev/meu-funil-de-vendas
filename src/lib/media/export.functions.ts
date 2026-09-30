@@ -179,3 +179,11 @@ export const attachMediaToPost = createServerFn({ method: "POST" })
       .in("id", data.assetIds);
     return { ok: true, items: media.length };
   });
+
+export const revalidateAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: ws, assetIds: ids }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId, EDIT);
+    return (await lib()).revalidateAssets(data.workspaceId, data.assetIds);
+  });

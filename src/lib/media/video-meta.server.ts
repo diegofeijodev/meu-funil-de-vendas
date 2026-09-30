@@ -127,7 +127,9 @@ export function validateVideoForInstagram(m: VideoMeta, target: TargetFormat): Q
   if (m.fps != null && (m.fps < 23 || m.fps > 60))
     issues.push(`${m.fps} quadros por segundo; o Instagram pede entre 23 e 60.`);
   if (m.size > 1024 * 1024 * 1024) issues.push("Arquivo maior que 1 GB.");
-  return { ok: issues.length === 0, issues, checks: { ...m } };
+  const short = m.width && m.height ? Math.min(m.width, m.height) : null;
+  const resolution = short ? (short >= 2160 ? "4K" : short >= 1080 ? "1080p" : short >= 720 ? "720p" : `${short}p`) : null;
+  return { ok: issues.length === 0, issues, checks: { ...m, resolution, resolution_px: m.width && m.height ? `${m.width}x${m.height}` : null } };
 }
 
 export function validateImageForInstagram(
