@@ -35,6 +35,23 @@ function BrandsPage() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [segment, setSegment] = useState("");
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!deleting || !workspaceId) return;
+    setDeletingBusy(true);
+    const { error } = await supabase.from("brands").delete().eq("id", deleting.id);
+    setDeletingBusy(false);
+    if (error) {
+      toast.error("Não foi possível excluir: " + error.message);
+      return;
+    }
+    await logActivity(workspaceId, "brand.deleted", "brand", { name: deleting.name });
+    qc.invalidateQueries({ queryKey: ["brands", workspaceId] });
+    setDeleting(null);
+    toast.success(`Marca "${deleting.name}" excluída.`);
+  };
 
   const { data: brands = [], isLoading } = useQuery({
     queryKey: ["brands", workspaceId],
