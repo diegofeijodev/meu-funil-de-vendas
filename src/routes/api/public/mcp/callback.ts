@@ -31,7 +31,7 @@ export const Route = createFileRoute("/api/public/mcp/callback")({
             codeVerifier: conn.oauth_code_verifier!,
             clientId: conn.oauth_client_id!,
             clientSecret: conn.oauth_client_secret,
-            redirectUri: `${url.origin}/api/public/mcp/callback`,
+            redirectUri: (conn as any).oauth_redirect_uri ?? `${publicOrigin(request, url)}/api/public/mcp/callback`,
             resource: conn.oauth_resource,
           });
 
@@ -76,4 +76,10 @@ function page(ok: boolean, message: string) {
 <script>try{window.opener&&window.opener.postMessage({type:"mcp-oauth",ok:${ok}},"*");setTimeout(function(){window.close()},1200)}catch(e){}</script>
 </body></html>`;
   return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+function publicOrigin(req: Request, url: URL) {
+  const host = req.headers.get("x-forwarded-host");
+  const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+  return host ? `${proto}://${host}` : url.origin;
 }

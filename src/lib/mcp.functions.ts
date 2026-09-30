@@ -113,9 +113,12 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
       .maybeSingle();
 
 
-    let clientId = existing?.oauth_client_id ?? null;
-    let clientSecret = existing?.oauth_client_secret ?? null;
-    if (!clientId) {
+    // Registra de novo sempre: o cliente antigo pode ter sido registrado com outro
+    // endereço de retorno (preview x domínio), o que causa invalid_grant na volta.
+    let clientId: string | null = null;
+    let clientSecret: string | null = null;
+    void existing;
+    {
       if (!discovery.metadata.registration_endpoint) {
         throw new Error(
           "Este servidor MCP não aceita registro automático de aplicativo. Informe uma chave de acesso manualmente.",
@@ -140,6 +143,7 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
       oauth_client_secret: clientSecret,
       oauth_state: state,
       oauth_code_verifier: verifier,
+      oauth_redirect_uri: redirectUri,
       oauth_authorization_endpoint: discovery.metadata.authorization_endpoint,
       oauth_token_endpoint: discovery.metadata.token_endpoint,
       oauth_scope: discovery.scope ?? null,
