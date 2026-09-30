@@ -215,7 +215,7 @@ export async function useInInstagram(workspaceId: string, ids: string[]) {
     .insert({
       workspace_id: workspaceId,
       format,
-      status: "draft",
+      status: "idea",
       theme: first.title,
       media,
       creative_brief: { from_library: ids },
