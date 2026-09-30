@@ -101,6 +101,44 @@ export async function connectInstagramAccount(workspaceId: string, pageIdOverrid
   }
 }
 
+/** Lista as Páginas acessíveis pelo token da Meta e o Instagram vinculado a cada uma. */
+export async function listInstagramOptions() {
+  const cfg = await metaConfig();
+  if (!cfg.token)
+    return { ok: false as const, error: "Salve as credenciais da Meta em Integrações primeiro.", options: [] };
+  try {
+    const r = await graph<{
+      data?: {
+        id: string;
+        name: string;
+        instagram_business_account?: { id: string; username?: string; profile_picture_url?: string };
+      }[];
+    }>(`/me/accounts`, {
+      params: {
+        fields: "id,name,instagram_business_account{id,username,profile_picture_url}",
+        limit: "100",
+      },
+    });
+    const options = (r.data ?? []).map((p) => ({
+      pageId: p.id,
+      pageName: p.name,
+      igUserId: p.instagram_business_account?.id ?? null,
+      username: p.instagram_business_account?.username ?? null,
+      picture: p.instagram_business_account?.profile_picture_url ?? null,
+    }));
+    return { ok: true as const, options };
+  } catch (e) {
+    return { ok: false as const, error: errMsg(e), options: [] };
+  }
+}
+
+export async function disconnectInstagramAccount(workspaceId: string) {
+  const s = await db();
+  const { error } = await s.from("instagram_accounts").delete().eq("workspace_id", workspaceId);
+  if (error) throw new Error(error.message);
+  return { ok: true as const };
+}
+
 async function liveAccount(workspaceId: string) {
   const s = await db();
   const { data } = await s
