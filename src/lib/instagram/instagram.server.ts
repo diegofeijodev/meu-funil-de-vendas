@@ -543,3 +543,42 @@ export async function runPublishingQueue() {
   }
   return results;
 }
+
+/* ---------------- Extras da interface ---------------- */
+
+export async function suggestPillars(workspaceId: string, input: { brandId?: string | null | undefined; objective?: string | undefined; tone?: string | undefined; audience?: string | undefined }) {
+  const brand = await brandFor(input.brandId ?? null);
+  const prompt = [
+    "Sugira 5 pilares de conteúdo para Instagram, em português do Brasil, curtos (2 a 4 palavras).",
+    `Objetivo: ${input.objective ?? "-"}. Tom: ${input.tone ?? "-"}. Público: ${input.audience ?? "-"}.`,
+    brand ? `MARCA: ${JSON.stringify(brand)}` : "",
+    'Devolva SOMENTE JSON {"pillars":["..."]}.',
+  ].join("\n");
+  const schema = { type: "object", additionalProperties: false, required: ["pillars"], properties: { pillars: { type: "array", items: { type: "string" } } } };
+  const { json } = await aiJson(workspaceId, "auto", prompt, schema, "ig_pillars");
+  return { pillars: ((json?.pillars ?? []) as string[]).slice(0, 5) };
+}
+
+export async function uploadOwnMedia(workspaceId: string, postId: string, file: File) {
+  const post = await getPost(postId);
+  if (post.workspace_id !== workspaceId) throw new Error("Post não encontrado.");
+  const video = file.type.startsWith("video/");
+  if (!video && !file.type.startsWith("image/")) throw new Error("Envie uma imagem ou um vídeo MP4.");
+  if (file.size > 100 * 1024 * 1024) throw new Error("Arquivo acima de 100 MB.");
+  const ext = video ? "mp4" : file.type.includes("png") ? "png" : "jpg";
+  const path = `${workspaceId}/${postId}/${crypto.randomUUID()}.${ext}`;
+  const s = await db();
+  const { error } = await s.storage.from(BUCKET).upload(path, new Uint8Array(await file.arrayBuffer()), { contentType: file.type });
+  if (error) throw new Error(`Falha ao salvar: ${error.message}`);
+  const { data } = await s.storage.from(BUCKET).createSignedUrl(path, 60 * 60 * 24 * 365);
+  if (!data) throw new Error("Falha ao gerar o link.");
+  const format = post.format as IgFormat;
+  const current: any[] = format === "feed_carousel" ? post.media ?? [] : [];
+  const media = [...current, { url: data.signedUrl, type: video ? "video" : "image", order: current.length, width: null, height: null, duration: null }];
+  await patchPost(postId, {
+    media,
+    status: post.status === "idea" || post.status === "failed" ? "pending_approval" : post.status,
+    ai_generation_log: await appendLog(post, { step: "upload", file: file.name }),
+  });
+  return { ok: true };
+}

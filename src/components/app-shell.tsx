@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   X,
+  Instagram,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
@@ -30,6 +31,7 @@ const NAV = [
   { to: "/crm", label: "CRM", icon: Users },
   { to: "/studio", label: "Creative Studio", icon: Images },
   { to: "/calendar", label: "Content Calendar", icon: CalendarDays },
+  { to: "/instagram", label: "Instagram", icon: Instagram },
   { to: "/performance", label: "Performance", icon: BarChart3 },
   { to: "/insights", label: "AI Insights", icon: Lightbulb },
   { to: "/approvals", label: "Approvals", icon: ShieldCheck },
