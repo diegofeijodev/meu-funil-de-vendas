@@ -61,7 +61,7 @@ async function imageFromGateway(body: Record<string, unknown>) {
 async function veoVideo(req: GenerationRequest, model: string) {
   // Pede 1080p; se o modelo não aceitar, repete em 720p.
   let res = await veoCreate(req, model, "1080p");
-  if (res.status === 400) res = await veoCreate(req, model, "720p");
+  if (res.status === 400 || res.status === 422) res = await veoCreate(req, model, "720p");
   return veoFinish(res);
 }
 
@@ -142,14 +142,21 @@ async function geminiDirectImage(key: string, req: GenerationRequest) {
 }
 
 async function geminiDirectVideo(key: string, req: GenerationRequest) {
-  const res = await fetch(`${G}/models/veo-3.0-fast-generate-001:predictLongRunning`, {
-    method: "POST",
-    headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      instances: [{ prompt: req.finalPrompt.slice(0, 3000) }],
-      parameters: { aspectRatio: req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "9:16" : "16:9" },
-    }),
-  });
+  const create = (resolution: string) =>
+    fetch(`${G}/models/veo-3.0-fast-generate-001:predictLongRunning`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instances: [{ prompt: req.finalPrompt.slice(0, 3000) }],
+        parameters: {
+          aspectRatio: req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "9:16" : "16:9",
+          resolution,
+        },
+      }),
+    });
+  // 1080p quando o modelo aceitar; senão 720p.
+  let res = await create("1080p");
+  if (res.status === 400 || res.status === 422) res = await create("720p");
   if (!res.ok) throw await vendorError("gemini", res);
   let op = (await res.json()) as any;
   while (!op.done) {

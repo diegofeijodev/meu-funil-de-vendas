@@ -44,7 +44,16 @@ export function createHiggsfieldProvider(opts: {
       use_unlim: false,
     };
     if (video) Object.assign(params, { duration: (req as any).durationSeconds && (req as any).durationSeconds <= 5 ? 5 : 10, sound: true });
-    const out = await callTool(serverUrl, accessToken, video ? "generate_video" : "generate_image", { params });
+    // Pede a maior resolução disponível; se o modelo recusar o parâmetro, repete sem ele.
+    const tool = video ? "generate_video" : "generate_image";
+    let out;
+    try {
+      out = await callTool(serverUrl, accessToken, tool, { params: { ...params, resolution: video ? "1080p" : "2k" } });
+      if (/invalid|unknown|not (allowed|supported)|resolution/i.test(out.text ?? "") && !extractJobId(`${out.structured ?? ""}\n${out.text}`))
+        throw new Error("resolution rejected");
+    } catch {
+      out = await callTool(serverUrl, accessToken, tool, { params });
+    }
     const jobId = extractJobId(`${out.structured ?? ""}\n${out.text}`);
     if (!jobId) throw new Error("O Higgsfield não confirmou a geração.");
 
