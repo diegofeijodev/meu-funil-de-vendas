@@ -384,12 +384,6 @@ async function continueAssets(
 ): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
   const format = post.format as IgFormat;
   const s = await db();
-  const [w, h] =
-    ASPECT[format] === "1:1"
-      ? [1080, 1080]
-      : ASPECT[format] === "4:5"
-        ? [1080, 1350]
-        : [1080, 1920];
   for (let i = start; i < prompts.length; i++) {
     const req = {
       finalPrompt:
@@ -508,15 +502,6 @@ export async function pollPendingMedia() {
         r.assetUrl ?? (r.status === "ready" ? await provider.getAsset(pj.jobId) : null);
       if (r.status !== "ready" || !assetUrl)
         throw new Error("O provedor informou falha na geração da mídia.");
-      const format = post.format as IgFormat;
-      const [w, h] =
-        ASPECT[format] === "1:1"
-          ? [1080, 1080]
-          : ASPECT[format] === "4:5"
-            ? [1080, 1350]
-            : [1080, 1920];
-      void w;
-      void h;
       const media = [
         ...pj.media,
         await libraryItem(post, { sourceUrl: assetUrl }, pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
