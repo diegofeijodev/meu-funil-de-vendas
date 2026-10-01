@@ -15,6 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/brands/")({
   head: () => ({
@@ -94,6 +96,9 @@ function BrandsPage() {
         subtitle="Cada marca guarda o DNA usado como contexto por todos os agentes de IA da plataforma."
         actions={canEdit && <Button onClick={() => setOpen(true)}>Nova marca</Button>}
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.brands.title} steps={GUIDES.brands.steps} references={GUIDES.brands.references ?? []} />
+      </div>
 
       {isLoading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

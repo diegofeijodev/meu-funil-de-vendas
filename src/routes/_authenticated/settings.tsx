@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
+import { SetupChecklist } from "@/components/setup-checklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -85,6 +86,7 @@ function Settings() {
       <PageHeader title="Configurações" subtitle="Workspace, perfil e permissões do time." />
 
       <div className="space-y-6">
+        <SetupChecklist />
         <Section title="Workspace">
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">

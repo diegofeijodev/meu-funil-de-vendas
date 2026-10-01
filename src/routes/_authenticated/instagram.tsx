@@ -11,6 +11,8 @@ import { PostEditor } from "@/components/instagram/post-editor";
 import { IgApprovalList } from "@/components/instagram/approvals";
 import { IgResults } from "@/components/instagram/results";
 import { IgAccountInsights } from "@/components/instagram/account-insights";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/instagram")({
   head: () => ({
@@ -56,6 +58,9 @@ function InstagramPage() {
         subtitle="Feed, carrossel, Reels e Stories com criativo, legenda e hashtags gerados por IA — da estratégia à publicação."
         actions={account?.status !== "connected" ? <SandboxBadge label="Instagram não conectado" /> : undefined}
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.instagram.title} steps={GUIDES.instagram.steps} references={GUIDES.instagram.references ?? []} />
+      </div>
       <Tabs value={tab} onValueChange={(v) => navigate({ search: { tab: v as IgTab }, replace: true })}>
         <TabsList className="mb-6 flex h-auto flex-wrap justify-start">
           <TabsTrigger value="overview">Visão geral</TabsTrigger>

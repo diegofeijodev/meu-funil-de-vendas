@@ -20,6 +20,8 @@ import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.
 import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
 import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
 import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -306,6 +308,9 @@ function CampaignDetail() {
           </>
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
+      </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Verba total" value={brl(c.budget_total)} hint={`${brl(c.budget_daily)}/dia`} />

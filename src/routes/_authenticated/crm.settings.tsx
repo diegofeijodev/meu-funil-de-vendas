@@ -12,6 +12,8 @@ import { Select } from "@/routes/_authenticated/crm.index";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { ROLE_LABELS } from "@/lib/labels";
 import { SdrAgentPanel } from "@/components/crm/sdr-agent-panel";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/crm/settings")({
   head: () => ({
@@ -217,6 +219,7 @@ function CrmSettings() {
       </div>
 
       <div className="mt-6">
+        <HowTo title={GUIDES.sdr.title} steps={GUIDES.sdr.steps} />
         <SdrAgentPanel workspaceId={workspaceId} />
       </div>
     </div>

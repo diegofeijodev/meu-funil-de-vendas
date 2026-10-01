@@ -15,6 +15,8 @@ import { generateCopySmart, type CampaignBrief, type BrandContext } from "@/lib/
 import { useServerFn } from "@tanstack/react-start";
 import { generateCampaignStrategy } from "@/lib/ai/strategist.functions";
 import { cn } from "@/lib/utils";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/campaigns/new")({
   head: () => ({
@@ -154,6 +156,9 @@ function NewCampaign() {
         title="Nova campanha"
         subtitle="Responda o briefing e os agentes montam estratégia e copies automaticamente."
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.campaignNew.title} steps={GUIDES.campaignNew.steps} references={GUIDES.campaignNew.references ?? []} />
+      </div>
 
       <div className="mb-6 flex flex-wrap gap-2">
         {STEPS.map((s, i) => (

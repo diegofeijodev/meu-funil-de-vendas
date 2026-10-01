@@ -10,12 +10,13 @@ export const Route = createFileRoute("/api/public/cron/ads")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { isCronAuthorized } = await import("@/lib/cron-auth.server");
+        const { isCronAuthorized, heartbeat } = await import("@/lib/cron-auth.server");
         if (!(await isCronAuthorized(request, ["ads"]))) return new Response("Unauthorized", { status: 401 });
         const body = (await request.json().catch(() => ({}))) as { task?: string };
         const ops = await import("@/lib/meta/ads-ops.server");
         const out: Record<string, unknown> = { sync: await ops.syncAllInsights() };
         if (body.task === "rules") out["rules"] = await ops.runAllRules();
+        await heartbeat(`ads-${body.task ?? "sync"}`);
         return Response.json(out);
       },
     },

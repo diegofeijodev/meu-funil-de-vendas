@@ -9,7 +9,7 @@ export const Route = createFileRoute("/api/public/cron/crm-daily")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { isCronAuthorized } = await import("@/lib/cron-auth.server");
+        const { isCronAuthorized, heartbeat } = await import("@/lib/cron-auth.server");
         if (!(await isCronAuthorized(request, ["crm_daily"]))) return new Response("Unauthorized", { status: 401 });
 
         const { admin } = await import("@/lib/crm/integrations.server");
@@ -38,6 +38,7 @@ export const Route = createFileRoute("/api/public/cron/crm-daily")({
           }
         }
 
+        await heartbeat("crm-daily", results.some((r) => r.error) ? "error" : "ok", results.find((r) => r.error)?.error ?? null);
         return Response.json({ costs: results });
       },
     },

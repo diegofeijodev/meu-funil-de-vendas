@@ -56,6 +56,8 @@ import {
   useMediaInCampaign,
   useMediaInInstagram,
 } from "@/lib/media/export.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/library")({
   head: () => ({
@@ -434,6 +436,9 @@ function LibraryPage() {
           )
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.library.title} steps={GUIDES.library.steps} references={GUIDES.library.references ?? []} />
+      </div>
 
       <div
         className={cn(

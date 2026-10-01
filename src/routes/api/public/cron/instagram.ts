@@ -14,12 +14,13 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { isCronAuthorized } = await import("@/lib/cron-auth.server");
+        const { isCronAuthorized, heartbeat } = await import("@/lib/cron-auth.server");
         const ok = await isCronAuthorized(request, ["instagram"]);
         if (!ok) return new Response("Unauthorized", { status: 401 });
 
         const body = (await request.json().catch(() => ({}))) as { task?: string };
         const task = body.task;
+        await heartbeat(`instagram-${task ?? "all"}`);
         const ap = await import("@/lib/instagram/autopilot.server");
         if (task === "weekly") return Response.json({ weekly: await ap.runWeeklyAutopilot() });
         if (task === "optimize") return Response.json({ optimize: await ap.runOptimizer() });

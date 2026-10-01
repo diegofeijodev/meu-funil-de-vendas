@@ -7,6 +7,8 @@ import { useWorkspace } from "@/lib/workspace";
 import { agencyOverview } from "@/lib/agency.functions";
 import { ROLE_LABELS } from "@/lib/labels";
 import { brl, num } from "@/lib/format";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/agency")({
   head: () => ({
@@ -40,6 +42,9 @@ function AgencyPage() {
         title="Agência"
         subtitle={`${rows.length} empresa(s). Verba e leads dos anúncios nos últimos 30 dias (dados reais da Meta); leads do CRM e posts nos últimos 7 dias.`}
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.agency.title} steps={GUIDES.agency.steps} references={GUIDES.agency.references ?? []} />
+      </div>
       {isLoading ? (
         <div className="panel h-64 animate-pulse" />
       ) : !rows.length ? (

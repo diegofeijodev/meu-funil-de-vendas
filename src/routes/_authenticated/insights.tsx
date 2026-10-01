@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { RECO_ACTIONS } from "@/lib/labels";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { brl } from "@/lib/format";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/insights")({
   head: () => ({
@@ -96,6 +98,9 @@ function Insights() {
           )
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.insights.title} steps={GUIDES.insights.steps} references={GUIDES.insights.references ?? []} />
+      </div>
 
       <div className="space-y-6">
         <Section title={`Recomendações pendentes (${pending.length})`}>

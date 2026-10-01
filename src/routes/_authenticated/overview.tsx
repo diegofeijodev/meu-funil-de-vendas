@@ -12,6 +12,7 @@ import {
 import { ArrowUpRight, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { MetaSyncButton } from "@/components/meta-sync-button";
+import { SetupChecklist } from "@/components/setup-checklist";
 import { useWorkspace } from "@/lib/workspace";
 import { computeKpis, groupBy, groupByDay, type PerformanceRow } from "@/lib/metrics";
 import { brl, num, pct, shortDate } from "@/lib/format";
@@ -97,6 +98,10 @@ function Overview() {
           </>
         }
       />
+
+      <div className="mb-6">
+        <SetupChecklist compact />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Investimento (período)" value={brl(kpis.spend)} hint={`Custo total ${brl(kpis.totalCost)} com IA e produção`} />

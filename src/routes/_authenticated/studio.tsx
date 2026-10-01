@@ -22,6 +22,8 @@ import { capcutPackage, generateCreative, newCreativeVersion, previewVisualPromp
 import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -258,6 +260,9 @@ function Studio() {
         subtitle="Gere imagens, vídeos, carrosséis, stories, quizzes e UGC usando o contexto da marca."
         actions={<SandboxBadge label={`Custo acumulado ${brl(totalCost)}`} />}
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.studio.title} steps={GUIDES.studio.steps} references={GUIDES.studio.references ?? []} />
+      </div>
 
       {!!keyHealth?.outOfCredit.length && (
         <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
