@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/routes/_authenticated/crm.index";
 import { cn } from "@/lib/utils";
-import { sendWhatsAppMessage } from "@/lib/crm-integrations.functions";
+import { sendInstagramMessage, sendWhatsAppMessage } from "@/lib/crm-integrations.functions";
 
 type Message = {
   id: string;
@@ -28,20 +28,25 @@ const STATUS_ICON: Record<string, typeof Check> = {
   failed: AlertTriangle,
 };
 
-/** WhatsApp conversation for one lead: sends text, media and templates. */
+/** Conversa do lead no WhatsApp (texto, mídia, templates) ou no Direct do Instagram. */
 export function WhatsAppChat({
   workspaceId,
   leadId,
   phone,
+  instagramId = null,
   unsubscribed,
 }: {
   workspaceId: string;
   leadId: string;
   phone: string | null;
+  instagramId?: string | null;
   unsubscribed: boolean;
 }) {
   const qc = useQueryClient();
   const send = useServerFn(sendWhatsAppMessage);
+  const sendIg = useServerFn(sendInstagramMessage);
+  const [channel, setChannel] = useState<"whatsapp" | "instagram">(!phone && instagramId ? "instagram" : "whatsapp");
+  const isIg = channel === "instagram";
   const [text, setText] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaKind, setMediaKind] = useState<"image" | "audio">("image");
@@ -63,14 +68,12 @@ export function WhatsAppChat({
   });
 
   const { data: conversation } = useQuery({
-    queryKey: ["crm-conversation", leadId],
+    queryKey: ["crm-conversation", leadId, channel],
     refetchInterval: 15000,
     queryFn: async () => {
-      const { data } = await supabase
-        .from("crm_conversations")
-        .select("id, window_expires_at, unread_count")
-        .eq("lead_id", leadId)
-        .maybeSingle();
+      let q = supabase.from("crm_conversations").select("id, window_expires_at, unread_count, provider").eq("lead_id", leadId);
+      q = isIg ? q.eq("provider", "instagram") : q.neq("provider", "instagram");
+      const { data } = await q.order("last_message_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
       return data;
     },
   });
@@ -82,10 +85,10 @@ export function WhatsAppChat({
     queryFn: async () => {
       const { data } = await supabase
         .from("crm_messages")
-        .select("id, direction, kind, body, media_url, status, created_at")
+        .select("id, direction, message_type, body, media_url, status, created_at")
         .eq("conversation_id", conversation!.id)
         .order("created_at");
-      return (data ?? []) as unknown as Message[];
+      return (data ?? []).map((m) => ({ ...m, kind: m.message_type })) as unknown as Message[];
     },
   });
 
@@ -118,20 +121,21 @@ export function WhatsAppChat({
     bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
-  const connected = integration?.status === "connected";
-  const official = integration?.provider === "whatsapp_cloud";
+  const connected = isIg ? true : integration?.status === "connected";
+  const official = isIg || integration?.provider === "whatsapp_cloud";
   const expires = conversation?.window_expires_at ? new Date(conversation.window_expires_at).getTime() : 0;
   const windowOpen = !official || expires > Date.now();
-  const blocked = !connected || unsubscribed || !phone;
+  const blocked = !connected || unsubscribed || (isIg ? !instagramId : !phone);
 
   const doSend = async (payload: Parameters<typeof send>[0]["data"]) => {
     setBusy(true);
     try {
-      await send({ data: payload });
+      if (isIg) await sendIg({ data: { workspaceId, leadId, body: payload.body ?? "" } });
+      else await send({ data: payload });
       setText("");
       setMediaUrl("");
       await qc.invalidateQueries({ queryKey: ["crm-messages", conversation?.id] });
-      await qc.invalidateQueries({ queryKey: ["crm-conversation", leadId] });
+      await qc.invalidateQueries({ queryKey: ["crm-conversation", leadId, channel] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível enviar a mensagem.");
     } finally {
@@ -141,6 +145,12 @@ export function WhatsAppChat({
 
   return (
     <div className="flex h-full flex-col">
+      {phone && instagramId && (
+        <div className="mb-2 flex gap-2">
+          <Button size="sm" variant={isIg ? "outline" : "default"} onClick={() => setChannel("whatsapp")}>WhatsApp</Button>
+          <Button size="sm" variant={isIg ? "default" : "outline"} onClick={() => setChannel("instagram")}>Instagram</Button>
+        </div>
+      )}
       <div className="max-h-[420px] min-h-[180px] flex-1 space-y-2 overflow-y-auto rounded-lg border border-border bg-background/50 p-3">
         {!messages.length && (
           <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma mensagem nesta conversa ainda.</p>
@@ -218,7 +228,7 @@ export function WhatsAppChat({
                   <Send className="size-4" />
                 </Button>
               </div>
-              <div className="flex gap-2">
+              {!isIg && <div className="flex gap-2">
                 <Select value={mediaKind} onChange={(v) => setMediaKind(v as "image" | "audio")}>
                   <option value="image">Imagem</option>
                   <option value="audio">Áudio</option>
@@ -236,8 +246,12 @@ export function WhatsAppChat({
                 >
                   {mediaKind === "image" ? <ImageIcon className="size-4" /> : <Mic className="size-4" />}
                 </Button>
-              </div>
+              </div>}
             </>
+          ) : isIg ? (
+            <p className="rounded-lg border border-amber-500/40 p-3 text-sm text-muted-foreground">
+              Passaram mais de 24 horas desde a última mensagem no Direct. O Instagram só permite responder depois que o contato escrever de novo.
+            </p>
           ) : (
             <div className="space-y-2 rounded-lg border border-amber-500/40 p-3">
               <p className="text-sm text-muted-foreground">

@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 export type Integration = {
   id: string;
   workspace_id: string;
-  kind: "meta_lead_ads" | "whatsapp";
+  kind: "meta_lead_ads" | "whatsapp" | "instagram" | "site_form";
   provider: "meta" | "whatsapp_cloud" | "zapi" | "evolution";
   status: string;
   config: Record<string, unknown>;
@@ -24,6 +24,12 @@ export async function admin() {
 export function secret(name: string): string | null {
   const value = process.env[name];
   return value && value.length ? value : null;
+}
+
+/** Credencial do canal: primeiro a da empresa (salva em CRM → Integrações), depois a global do servidor. */
+export async function workspaceSecret(workspaceId: string, name: string): Promise<string | null> {
+  const { readCredential } = await import("@/lib/credentials.server");
+  return (await readCredential(workspaceId, name)) || secret(name);
 }
 
 export function normalizePhone(raw: string | null | undefined): string | null {
@@ -43,6 +49,78 @@ export function verifyMetaSignature(rawBody: string, header: string | null): boo
   const a = Buffer.from(header.slice(7));
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Assinatura da Meta (x-hub-signature-256): aceita o App Secret do ambiente
+ * ou o salvo em Integrações (da empresa ou global).
+ */
+export async function verifyMetaSignatureFor(
+  rawBody: string,
+  header: string | null,
+  workspaceId: string | null,
+): Promise<boolean> {
+  if (verifyMetaSignature(rawBody, header)) return true;
+  if (!header?.startsWith("sha256=")) return false;
+  const { metaConfig } = await import("@/lib/meta/graph.server");
+  const appSecret = (await metaConfig(workspaceId)).appSecret;
+  if (!appSecret) return false;
+  const expected = createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const a = Buffer.from(header.slice(7));
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Reserva um evento de webhook para processar. Devolve o id do registro, ou null se
+ * ele já foi processado (ou está em processamento agora). Eventos que falharam,
+ * ou que travaram em "processing" há mais de 10 min, são reprocessados no reenvio da Meta.
+ */
+export async function claimEvent(args: {
+  workspaceId: string | null;
+  source: string;
+  externalId?: string | null;
+  payload?: unknown;
+}): Promise<string | null> {
+  const db = await admin();
+  const { data, error } = await db
+    .from("crm_webhook_events")
+    .insert({
+      workspace_id: args.workspaceId,
+      source: args.source,
+      external_id: args.externalId ?? null,
+      payload: (args.payload ?? null) as never,
+      status: "processing",
+    })
+    .select("id")
+    .single();
+  if (!error && data) return data.id as string;
+  if (!args.externalId) return null;
+  const { data: existing } = await db
+    .from("crm_webhook_events")
+    .select("id, status, created_at")
+    .eq("source", args.source)
+    .eq("external_id", args.externalId)
+    .maybeSingle();
+  if (!existing) return null;
+  const stale =
+    existing.status === "processing" && Date.now() - new Date(existing.created_at as string).getTime() > 10 * 60e3;
+  if (existing.status !== "failed" && !stale) return null;
+  const { data: reclaimed } = await db
+    .from("crm_webhook_events")
+    .update({ status: "processing", error_message: null, created_at: new Date().toISOString() })
+    .eq("id", existing.id)
+    .eq("status", existing.status as string)
+    .select("id");
+  return reclaimed?.length ? (existing.id as string) : null;
+}
+
+export async function finishEvent(id: string, error: string | null) {
+  const db = await admin();
+  await db
+    .from("crm_webhook_events")
+    .update({ status: error ? "failed" : "processed", error_message: error })
+    .eq("id", id);
 }
 
 export async function integrationByToken(token: string, kind: Integration["kind"]) {

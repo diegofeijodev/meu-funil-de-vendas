@@ -34,14 +34,17 @@ export type SdrDecision = {
   proxima_etapa: string;
   transferir_humano: boolean;
   motivo: string;
+  /** Horário (ISO) que o lead confirmou entre os livres da agenda; null se não houver. */
+  horario_escolhido?: string | null;
 };
 
 const GATEWAY = "https://ai.gateway.lovable.dev/v1/responses";
+const DEFAULT_MODEL = "openai/gpt-6-astra";
 
 const DECISION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["resposta", "campos_extraidos", "score", "temperatura", "proxima_etapa", "transferir_humano", "motivo"],
+  required: ["resposta", "campos_extraidos", "score", "temperatura", "proxima_etapa", "transferir_humano", "motivo", "horario_escolhido"],
   properties: {
     resposta: { type: "string", description: "Mensagem curta para o lead, uma pergunta por vez." },
     campos_extraidos: {
@@ -65,6 +68,7 @@ const DECISION_SCHEMA = {
     },
     transferir_humano: { type: "boolean" },
     motivo: { type: "string" },
+    horario_escolhido: { type: ["string", "null"], description: "ISO exato de um dos HORARIOS LIVRES quando o lead confirmar." },
   },
 } as const;
 
@@ -112,7 +116,12 @@ export function withinBusinessHours(agent: SdrAgent, now = new Date()) {
   return minutes >= toMin(hours.start, 540) && minutes < toMin(hours.end, 1080);
 }
 
-function buildSystemPrompt(agent: SdrAgent, knowledge: string, lead: Record<string, unknown> | null) {
+function buildSystemPrompt(
+  agent: SdrAgent,
+  knowledge: string,
+  lead: Record<string, unknown> | null,
+  freeSlots: { iso: string; label: string }[] = [],
+) {
   const questions = (agent.questions ?? [])
     .map((q) => `- ${q.question} (chave: ${q.key}, peso ${q.weight})`)
     .join("\n");
@@ -128,11 +137,16 @@ function buildSystemPrompt(agent: SdrAgent, knowledge: string, lead: Record<stri
     "- Nunca invente informacao. Se nao souber ou nao estiver na base de conhecimento, defina transferir_humano = true.",
     `- Transfira para humano quando o assunto envolver: ${(agent.handoff_triggers ?? []).join(", ") || "negociacao de preco, reclamacao, assunto juridico, pedido de atendente"}.`,
     `- Calcule o score de 0 a 100 somando os pesos das perguntas ja respondidas de forma positiva. Nota minima para qualificar: ${agent.min_score}.`,
-    `- Ao atingir a nota minima, defina proxima_etapa = "qualificado" e ofereca horario${agent.scheduling_link ? ` usando o link ${agent.scheduling_link}` : slots ? ` entre as opcoes: ${slots}` : ""}.`,
-    '- Quando o lead confirmar um horario, defina proxima_etapa = "reuniao_agendada".',
+    freeSlots.length
+      ? `- Ao atingir a nota minima, defina proxima_etapa = "qualificado" e ofereca 2 ou 3 dos HORARIOS LIVRES abaixo (agenda real).`
+      : `- Ao atingir a nota minima, defina proxima_etapa = "qualificado" e ofereca horario${agent.scheduling_link ? ` usando o link ${agent.scheduling_link}` : slots ? ` entre as opcoes: ${slots}` : ""}.`,
+    freeSlots.length
+      ? '- Para reservar voce precisa do e-mail do lead: peca antes de confirmar. Quando o lead confirmar um dos horarios E o e-mail estiver disponivel, preencha horario_escolhido com o ISO exato e defina proxima_etapa = "reuniao_agendada". Caso contrario horario_escolhido = null.'
+      : '- Quando o lead confirmar um horario, defina proxima_etapa = "reuniao_agendada". horario_escolhido = null.',
     '- Se o lead nao tiver perfil (sem interesse, fora do publico), defina proxima_etapa = "perdido" e explique em motivo.',
     '- Use proxima_etapa = "manter" quando ainda estiver qualificando.',
     "",
+    freeSlots.length ? `HORARIOS LIVRES (America/Sao_Paulo):\n${freeSlots.map((f) => `- ${f.label} = ${f.iso}`).join("\n")}\n` : "",
     "PERGUNTAS DE QUALIFICACAO:",
     questions || "- Entenda a necessidade do lead.",
     "",
@@ -172,7 +186,7 @@ async function askModel(agent: SdrAgent, system: string, history: Turn[]) {
   ];
 
   const started = Date.now();
-  const response = await fetch(GATEWAY, {
+  const call = (model: string) => fetch(GATEWAY, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -180,7 +194,7 @@ async function askModel(agent: SdrAgent, system: string, history: Turn[]) {
       "X-Lovable-AIG-SDK": "fetch",
     },
     body: JSON.stringify({
-      model: agent.model || "openai/gpt-6-astra",
+      model,
       input,
       stream: true,
       store: false,
@@ -195,6 +209,12 @@ async function askModel(agent: SdrAgent, system: string, history: Turn[]) {
       },
     }),
   });
+  let response = await call(agent.model || DEFAULT_MODEL);
+  // Modelo escolhido indisponível no gateway: responde com o padrão para o lead não ficar sem resposta.
+  if ((response.status === 400 || response.status === 404) && agent.model && agent.model !== DEFAULT_MODEL) {
+    console.warn(`[sdr] modelo ${agent.model} recusado (${response.status}); usando ${DEFAULT_MODEL}`);
+    response = await call(DEFAULT_MODEL);
+  }
 
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => "");
@@ -297,6 +317,15 @@ export async function runSdrAgent(args: {
   }
 
   if (!withinBusinessHours(agent)) {
+    // Mensagem de ausência só uma vez por período fora do horário (não a cada mensagem do lead).
+    const { count: recentAway } = await db
+      .from("crm_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("lead_id", args.leadId)
+      .eq("direction", "out")
+      .eq("body", agent.offhours_message)
+      .gte("created_at", new Date(Date.now() - 12 * 3600e3).toISOString());
+    if ((recentAway ?? 0) > 0) return { offHours: true, reply: null };
     return { offHours: true, reply: agent.offhours_message };
   }
 
@@ -315,11 +344,13 @@ export async function runSdrAgent(args: {
   }
 
   const knowledge = await knowledgeFor(agent);
-  const system = buildSystemPrompt(agent, knowledge, lead);
+  const freeSlots = await slotsFor(args.workspaceId);
+  const system = buildSystemPrompt(agent, knowledge, lead, freeSlots);
 
   try {
     const result = await askModel(agent, system, turns);
-    await applyDecision({ agent, lead, decision: result.decision });
+    const applied = await applyDecision({ agent, lead, decision: result.decision, freeSlots });
+    if (applied.confirmation) result.decision.resposta = `${result.decision.resposta}\n\n${applied.confirmation}`.trim();
     await db.from("crm_sdr_runs").insert({
       workspace_id: args.workspaceId,
       agent_id: agent.id,
@@ -356,12 +387,25 @@ export async function runSdrAgent(args: {
   }
 }
 
+/** Horários livres reais da agenda conectada (Cal.com), formatados para o prompt. */
+async function slotsFor(workspaceId: string) {
+  try {
+    const { availableSlots, formatSlot } = await import("./calendar.server");
+    return (await availableSlots(workspaceId)).map((iso) => ({ iso, label: formatSlot(iso) }));
+  } catch (e) {
+    console.warn("[sdr] agenda indisponível:", e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
 /** Persists everything the decision implies: fields, score, stage, tasks, timeline. */
 export async function applyDecision(args: {
   agent: SdrAgent;
   lead: Record<string, unknown>;
   decision: SdrDecision;
-}) {
+  freeSlots?: { iso: string; label: string }[];
+}): Promise<{ confirmation: string | null }> {
+  let confirmation: string | null = null;
   const db = await admin();
   const { agent, lead, decision } = args;
   const leadId = lead["id"] as string;
@@ -441,12 +485,32 @@ export async function applyDecision(args: {
   }
 
   if (decision.proxima_etapa === "reuniao_agendada") {
+    // Agenda real: reserva o horário escolhido no Cal.com quando ele está entre os livres.
+    let booked: { start: string; url: string | null } | null = null;
+    const chosen = decision.horario_escolhido;
+    const email = (fields["email"] as string | null) || (lead["email"] as string | null);
+    if (chosen && email && (args.freeSlots ?? []).some((f) => f.iso === chosen)) {
+      try {
+        const { bookSlot, formatSlot } = await import("./calendar.server");
+        booked = await bookSlot(workspaceId, {
+          start: chosen,
+          name: (lead["name"] as string) || "Lead",
+          email,
+          phone: (lead["phone"] as string | null) ?? null,
+        });
+        confirmation = `Reuniao confirmada para ${formatSlot(booked.start)}. O convite chega no seu e-mail${booked.url ? ` (link: ${booked.url})` : ""}.`;
+      } catch (e) {
+        console.error("[sdr] reserva falhou:", e);
+      }
+    }
     await db.from("crm_tasks").insert({
       workspace_id: workspaceId,
       lead_id: leadId,
       assignee_id: (lead["owner_id"] as string) ?? null,
-      title: `Reuniao agendada com ${(lead["name"] as string) ?? "lead"}`,
-      due_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      title: booked
+        ? `Reuniao com ${(lead["name"] as string) ?? "lead"} em ${new Date(booked.start).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`
+        : `Confirmar reuniao com ${(lead["name"] as string) ?? "lead"}`,
+      due_at: booked ? booked.start : new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
       status: "open",
     });
     await addInteraction({
@@ -454,9 +518,12 @@ export async function applyDecision(args: {
       leadId,
       kind: "note",
       authorType: "system",
-      content: "Reuniao agendada pelo agente SDR. Responsavel notificado por tarefa.",
+      content: booked
+        ? `Reuniao reservada na agenda pelo agente SDR${booked.url ? ` (${booked.url})` : ""}.`
+        : "Lead aceitou reuniao: confirme o horario (agenda nao conectada ou horario fora da lista).",
     });
   }
+  return { confirmation };
 }
 
 /** Simulated run used by the "Testar agente" screen; nothing is persisted on leads. */
@@ -468,7 +535,7 @@ export async function simulateSdrAgent(args: {
   const agent = await loadAgent(args.workspaceId);
   if (!agent) throw new Error("Configure o agente antes de testar.");
   const knowledge = await knowledgeFor(agent);
-  const system = buildSystemPrompt(agent, knowledge, args.lead ?? { name: "Lead de teste" });
+  const system = buildSystemPrompt(agent, knowledge, args.lead ?? { name: "Lead de teste" }, await slotsFor(args.workspaceId));
   const result = await askModel(agent, system, args.history);
   const db = await admin();
   await db.from("crm_sdr_runs").insert({

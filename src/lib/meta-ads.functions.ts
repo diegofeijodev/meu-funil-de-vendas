@@ -15,6 +15,16 @@ async function requireMember(ctx: Ctx, workspaceId: string, edit = false) {
   if (edit && data.role === "viewer") throw new Error("Seu perfil não pode alterar campanhas.");
 }
 
+async function requireManager(ctx: Ctx, workspaceId: string) {
+  const { data } = await ctx.supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", ctx.userId)
+    .maybeSingle();
+  if (!data || (data.role !== "owner" && data.role !== "admin")) throw new Error("Só o dono ou um administrador conecta a Meta.");
+}
+
 const ws = z.object({ workspaceId: z.string().uuid() });
 
 /** Salva as credenciais da Meta no cofre do servidor (nunca legíveis pelo navegador). */
@@ -32,7 +42,6 @@ export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId, true);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const rows = [
       { key: "META_APP_ID", value: data.appId },
       { key: "META_APP_SECRET", value: data.appSecret },
@@ -41,13 +50,13 @@ export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
       { key: "META_PAGE_ID", value: data.pageId },
     ];
     if (data.instagramId?.trim()) rows.push({ key: "META_INSTAGRAM_ACCOUNT_ID", value: data.instagramId.trim() });
-    const { error } = await supabaseAdmin
-      .from("app_credentials")
-      .upsert(
-        rows.map((r) => ({ ...r, workspace_id: data.workspaceId, updated_at: new Date().toISOString() })) as never,
-        { onConflict: "workspace_id,key" },
-      );
-    if (error) throw new Error(error.message);
+    const { writeCredentials } = await import("./credentials.server");
+    await writeCredentials(data.workspaceId, {
+      ...Object.fromEntries(rows.map((r) => [r.key, r.value])),
+      // Token colado à mão (usuário do sistema) não vence: limpa a data do login com Facebook.
+      META_TOKEN_SOURCE: "system_user",
+      META_TOKEN_EXPIRES_AT: "",
+    });
     const { missingSecrets } = await import("./meta/graph.server");
     const missing = await missingSecrets(data.workspaceId);
     return { ok: true, configured: missing.length === 0, missing };
@@ -60,8 +69,9 @@ export const metaAdsStatus = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = await missingSecrets(data.workspaceId);
-    return { configured: missing.length === 0, missing };
+    const { tokenInfo } = await import("./meta/oauth.server");
+    const [missing, token] = await Promise.all([missingSecrets(data.workspaceId), tokenInfo(data.workspaceId)]);
+    return { configured: missing.length === 0, missing, tokenExpiresAt: token.expiresAt, tokenSource: token.source };
   });
 
 export const metaAdsTest = createServerFn({ method: "POST" })
@@ -122,11 +132,18 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
     if (!c.landing_url) throw new Error("Preencha a página de destino (URL) da campanha antes de publicar.");
 
     const [{ data: creatives }, { data: copies }] = await Promise.all([
-      db.from("creatives").select("id,title,preview_url,thumbnail_url,status").eq("campaign_id", c.id).eq("status", "approved"),
-      db.from("copies").select("content").eq("campaign_id", c.id).order("version", { ascending: false }).limit(1),
+      db.from("creatives").select("id,title,preview_url,thumbnail_url,status,angle").eq("campaign_id", c.id).eq("status", "approved"),
+      db.from("copies").select("content, status").eq("campaign_id", c.id).order("version", { ascending: false }).limit(10),
     ]);
     if (!creatives?.length) throw new Error("Aprove pelo menos um criativo desta campanha antes de publicar.");
-    const copy = (copies?.[0]?.content ?? {}) as any;
+    // Copy aprovada mais recente (senão a última versão) e estratégia em vigor.
+    const copyRows = (copies ?? []) as { content: unknown; status: string }[];
+    const copy = ((copyRows.find((r) => r.status === "approved") ?? copyRows[0])?.content ?? {}) as any;
+    const { currentStrategy } = await import("./ai/strategist.server");
+    const strategy = await currentStrategy(db, c.id);
+    const { readAdsConfig } = await import("./meta/ads-config");
+    const adsConfig = readAdsConfig(c.ads_config);
+    const privacyUrl = ((c.ads_config ?? {}) as { privacyUrl?: string | null }).privacyUrl ?? null;
     const sep = c.landing_url.includes("?") ? "&" : "?";
     const landing = `${c.landing_url}${sep}utm_source=meta&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`;
 
@@ -142,7 +159,11 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
         primaryText: String(copy.meta_ad ?? copy.primary_text ?? c.offer_promise ?? c.name),
         headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
         audience: (c.audience ?? {}) as Record<string, unknown>,
-        creatives: creatives.map((x: any) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url })),
+        creatives: creatives.map((x: any) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url, angle: x.angle ?? null })),
+        config: adsConfig,
+        privacyUrl,
+        strategyAudiences: (strategy?.publicos_meta ?? []).map((a) => ({ nome: a.nome, tipo: a.tipo, interesses: a.interesses })),
+        angles: (strategy?.angulos_detalhados ?? []).map((a) => ({ nome: a.nome, gancho: a.gancho, mensagem: a.mensagem })),
       }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Falha ao publicar na Meta.";
@@ -152,9 +173,12 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
     await db.from("campaigns").update({
       meta_campaign_id: result.campaignId,
       meta_adset_id: result.adsetId,
+      meta_adset_ids: result.adsetIds,
       meta_ad_ids: result.adIds,
+      meta_ad_map: result.adMap,
+      meta_lead_form_id: result.leadFormId,
       meta_delivery_status: "PAUSED",
-    }).eq("id", c.id);
+    } as never).eq("id", c.id);
     await db.from("publishing_jobs").insert({
       workspace_id: data.workspaceId,
       campaign_id: c.id,
@@ -172,19 +196,82 @@ export const metaAdsSetStatus = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ws.extend({ campaignId: z.string().uuid(), status: z.enum(["ACTIVE", "PAUSED"]) }).parse(d))
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId, true);
+    // 7.3 Ativar gasta verba: só dono/admin. Pausar pode qualquer perfil que edita.
+    if (data.status === "ACTIVE") await requireManager(context as Ctx, data.workspaceId);
     const db = context.supabase;
     const { data: c } = await db.from("campaigns").select("*").eq("id", data.campaignId).eq("workspace_id", data.workspaceId).maybeSingle();
     if (!c?.meta_campaign_id) throw new Error("Campanha ainda não publicada na Meta.");
     if (data.status === "ACTIVE" && c.status !== "approved" && c.status !== "active")
       throw new Error("Só é possível ativar depois da aprovação em Aprovações.");
+    const { data: paused } = await db
+      .from("ai_recommendations")
+      .select("payload")
+      .eq("campaign_id", c.id)
+      .eq("action", "pause_ad")
+      .eq("status", "applied");
+    const pausedByOptimizer = new Set(
+      ((paused ?? []) as { payload: { adId?: string } | null }[]).map((r) => r.payload?.adId).filter(Boolean) as string[],
+    );
     const { setDeliveryStatus } = await import("./meta/meta-ads.server");
     const { runWithMetaWorkspace } = await import("./meta/graph.server");
     await runWithMetaWorkspace(data.workspaceId, () =>
-      setDeliveryStatus({ campaignId: c.meta_campaign_id!, adsetId: c.meta_adset_id, adIds: c.meta_ad_ids ?? [] }, data.status),
+      setDeliveryStatus(
+        {
+          campaignId: c.meta_campaign_id!,
+          adsetIds: (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[],
+          // Ao ativar, anúncios pausados pelo otimizador/regras continuam pausados.
+          adIds: (c.meta_ad_ids ?? []).filter((id: string) => data.status === "PAUSED" || !pausedByOptimizer.has(id)),
+        },
+        data.status,
+      ),
     );
     await db.from("campaigns").update({
       meta_delivery_status: data.status,
       status: data.status === "ACTIVE" ? "active" : c.status === "active" ? "approved" : c.status,
     }).eq("id", c.id);
+    return { ok: true };
+  });
+
+/** 5.4 Salva só o app (ID e chave secreta) para poder usar o "Entrar com Facebook". */
+export const metaSaveApp = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    ws.extend({ appId: z.string().trim().min(4), appSecret: z.string().trim().min(8) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { saveApp } = await import("./meta/oauth.server");
+    await saveApp(data.workspaceId, data.appId, data.appSecret);
+    return { ok: true };
+  });
+
+/** 5.4 Link do login com Facebook (volta em /api/public/meta/oauth/callback). */
+export const metaLoginUrl = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ws.extend({ origin: z.string().url() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { buildLoginUrl } = await import("./meta/oauth.server");
+    return { url: await buildLoginUrl(data.workspaceId, (context as Ctx).userId, data.origin) };
+  });
+
+export const metaListAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ws.parse(d))
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { listAssets } = await import("./meta/oauth.server");
+    return listAssets(data.workspaceId);
+  });
+
+export const metaSaveAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    ws.extend({ adAccountId: z.string().min(4), pageId: z.string().min(4), instagramId: z.string().nullable().optional() }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { saveAssets } = await import("./meta/oauth.server");
+    await saveAssets(data.workspaceId, { adAccountId: data.adAccountId, pageId: data.pageId, instagramId: data.instagramId ?? null });
     return { ok: true };
   });

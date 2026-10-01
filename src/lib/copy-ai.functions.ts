@@ -12,6 +12,8 @@ export const generateCopyWithAI = createServerFn({ method: "POST" })
         brand: z.record(z.string(), z.unknown()),
         brief: z.record(z.string(), z.unknown()),
         seed: z.number().int().default(0),
+        campaignId: z.string().uuid().nullable().optional(),
+        angle: z.string().max(200).nullable().optional(),
       })
       .parse(d),
   )
@@ -24,5 +26,8 @@ export const generateCopyWithAI = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!m) throw new Error("Você não tem acesso a esta área de trabalho.");
     const { generateCopyAI } = await import("./copy-ai.server");
-    return generateCopyAI(data.workspaceId, data.engine, data.brand, data.brief, data.seed);
+    // A estratégia aprovada da campanha (big idea, ângulos, objeções) orienta a copy.
+    const { currentStrategy, strategyBrief } = await import("./ai/strategist.server");
+    const strategy = strategyBrief(await currentStrategy(context.supabase, data.campaignId), data.angle);
+    return generateCopyAI(data.workspaceId, data.engine, data.brand, data.brief, data.seed, strategy);
   });

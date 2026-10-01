@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/routes/_authenticated/crm.index";
 import { WhatsAppChat } from "@/components/crm/whatsapp-chat";
+import { useServerFn } from "@tanstack/react-start";
+import { sendLeadEmailNow } from "@/lib/crm-integrations.functions";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { AUTHOR_TYPES, INTERACTION_KINDS, LEAD_SOURCES, TEMPERATURES, TASK_STATUS, type Lead } from "@/lib/crm";
 import { brl, fullDate } from "@/lib/format";
@@ -152,16 +154,23 @@ function LeadDetail() {
             </div>
           </Section>
 
-          <Section title="Chat WhatsApp" description="Conversa em tempo quase real com status de entrega e leitura.">
+          <Section title="Conversa" description="WhatsApp e Direct do Instagram, com status de entrega e leitura.">
             {workspaceId && (
               <WhatsAppChat
                 workspaceId={workspaceId}
                 leadId={lead.id}
                 phone={lead.phone ?? null}
+                instagramId={(lead as { instagram_id?: string | null }).instagram_id ?? null}
                 unsubscribed={!!lead.unsubscribed}
               />
             )}
           </Section>
+
+          {lead.email && !lead.unsubscribed && workspaceId && (
+            <Section title="Enviar e-mail" description="Sai pelo Resend configurado em CRM → Integrações, com link de descadastro.">
+              <LeadEmailForm workspaceId={workspaceId} leadId={lead.id} onSent={refresh} />
+            </Section>
+          )}
         </div>
 
         <div className="space-y-5">
@@ -244,6 +253,38 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p>{value}</p>
+    </div>
+  );
+}
+
+function LeadEmailForm({ workspaceId, leadId, onSent }: { workspaceId: string; leadId: string; onSent: () => void }) {
+  const send = useServerFn(sendLeadEmailNow);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="space-y-2">
+      <Input placeholder="Assunto" value={subject} onChange={(e) => setSubject(e.target.value)} />
+      <Textarea rows={4} placeholder="Mensagem" value={body} onChange={(e) => setBody(e.target.value)} />
+      <Button
+        disabled={busy || !subject.trim() || !body.trim()}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await send({ data: { workspaceId, leadId, subject, body } });
+            setSubject("");
+            setBody("");
+            toast.success("E-mail enviado.");
+            onSent();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Não foi possível enviar.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "Enviando..." : "Enviar e-mail"}
+      </Button>
     </div>
   );
 }

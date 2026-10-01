@@ -21,6 +21,9 @@ const generateInput = z.object({
   headline: z.string().max(120).nullable().optional(),
   price: z.string().max(40).nullable().optional(),
   cta: z.string().max(40).nullable().optional(),
+  angle: z.string().max(200).nullable().optional(),
+  useBrandImage: z.boolean().optional(),
+  coverWithLogo: z.boolean().optional(),
 });
 const CHOICES = new Set(["higgsfield", "chatgpt", "gemini"]);
 
@@ -152,4 +155,101 @@ export const retryCreativeJob = createServerFn({ method: "POST" })
       existingCreativeId: job.creative_id,
       providerChoice: (CHOICES.has(job.provider) ? job.provider : "auto") as "auto",
     });
+  });
+
+/** Nova versão de um criativo existente, pelo mesmo provedor real do servidor (nunca simulado). */
+export const newCreativeVersion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ creativeId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { runGeneration } = await import("./creative.server");
+    const supabase = context.supabase;
+    const { data: cr, error } = await supabase.from("creatives").select("*").eq("id", data.creativeId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!cr) throw new Error("Criativo não encontrado.");
+    const base = cr.final_prompt || cr.prompt || cr.title || "Criativo publicitário";
+    const finalPrompt = `${base}\nNova variação (versão ${(cr.version ?? 1) + 1}): mude composição, enquadramento e cena, mantendo a identidade da marca.`;
+    const providerChoice = (CHOICES.has(cr.provider ?? "") ? cr.provider : "auto") as "auto";
+    const { data: job, error: jobError } = await supabase
+      .from("creative_generation_jobs")
+      .insert({
+        workspace_id: cr.workspace_id,
+        brand_id: cr.brand_id,
+        campaign_id: cr.campaign_id,
+        creative_id: cr.id,
+        provider: providerChoice,
+        type: cr.type,
+        prompt: cr.prompt,
+        final_prompt: finalPrompt,
+        aspect_ratio: cr.aspect_ratio,
+        status: "generating",
+        created_by: context.userId,
+      })
+      .select()
+      .single();
+    if (jobError) throw new Error(jobError.message);
+    return runGeneration(supabase, {
+      jobId: job.id,
+      workspaceId: cr.workspace_id,
+      brandId: cr.brand_id,
+      campaignId: cr.campaign_id,
+      title: cr.title ?? "Criativo",
+      type: cr.type,
+      aspectRatio: cr.aspect_ratio ?? "1:1",
+      prompt: cr.prompt ?? "",
+      finalPrompt,
+      copyText: cr.copy_text ?? "",
+      kind: VIDEO_TYPES.has(cr.type) ? "video" : "image",
+      brandContext: {},
+      existingCreativeId: cr.id,
+      providerChoice,
+    });
+  });
+
+/** 4.7 Pacote para editar no CapCut (ou Premiere): vídeo, legendas .srt, capa e roteiro num .zip. */
+export const capcutPackage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ creativeId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: cr } = await context.supabase.from("creatives").select("*").eq("id", data.creativeId).maybeSingle();
+    if (!cr) throw new Error("Criativo não encontrado.");
+    if (!cr.preview_url) throw new Error("Este criativo ainda não tem arquivo.");
+    const extras = (cr.extras ?? {}) as { captions_srt?: string; cover_url?: string };
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    const get = async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Falha ao baixar ${url.slice(0, 60)}… (${r.status})`);
+      return new Uint8Array(await r.arrayBuffer());
+    };
+    const isVideo = /\.mp4(\?|$)/i.test(cr.preview_url);
+    zip.file(isVideo ? "video.mp4" : "imagem.jpg", await get(cr.preview_url));
+    if (extras.captions_srt) zip.file("legendas.srt", await get(extras.captions_srt));
+    if (extras.cover_url) zip.file("capa.jpg", await get(extras.cover_url));
+    const { data: copy } = cr.campaign_id
+      ? await context.supabase.from("copies").select("content").eq("campaign_id", cr.campaign_id).order("version", { ascending: false }).limit(1).maybeSingle()
+      : { data: null };
+    const c = (copy?.content ?? {}) as { reels?: string; headline?: string; cta?: string };
+    zip.file(
+      "LEIA-ME.txt",
+      [
+        `Criativo: ${cr.title}`,
+        "",
+        "Como montar no CapCut:",
+        "1. Abra o CapCut e crie um projeto novo na proporção do vídeo.",
+        "2. Importe video.mp4 (e capa.jpg, se houver, como primeiro quadro).",
+        "3. Em Texto > Legendas > Importar legendas, escolha legendas.srt.",
+        "4. Ajuste fontes e cores da marca e exporte em 1080p.",
+        "",
+        c.headline ? `Título: ${c.headline}` : "",
+        c.cta ? `Chamada: ${c.cta}` : "",
+        c.reels ? `\nRoteiro do Reels:\n${c.reels}` : "",
+      ]
+        .filter((l) => l !== undefined)
+        .join("\n"),
+    );
+    const bytes = await zip.generateAsync({ type: "uint8array" });
+    const { storeBytes } = await import("./media/assets.server");
+    const url = await storeBytes(`exports/${cr.workspace_id}/${crypto.randomUUID()}-capcut.zip`, bytes, "application/zip");
+    return { url };
   });

@@ -33,6 +33,10 @@ async function upload(bytes: Uint8Array, ext: string, contentType: string) {
   return data.signedUrl;
 }
 
+function pendingResult(externalJobId: string, cost: number, note: string | null): GenerationResult {
+  return { status: "generating", assetUrl: null, thumbnailUrl: null, externalJobId, cost, note };
+}
+
 function ready(url: string, cost: number, externalJobId: string | null = null, note: string | null = null): GenerationResult {
   return { status: "ready", assetUrl: url, thumbnailUrl: url, externalJobId, cost, note };
 }
@@ -57,12 +61,20 @@ async function imageFromGateway(body: Record<string, unknown>) {
   return upload(new Uint8Array(Buffer.from(b64, "base64")), "png", "image/png");
 }
 
-/** Veo (Google) — cria o job, acompanha até terminar e salva o MP4. */
+/** Veo (Google) — cria o job e acompanha até terminar (ou até o prazo, devolvendo o job para o cron). */
 async function veoVideo(req: GenerationRequest, model: string) {
   // Pede 1080p; se o modelo não aceitar, repete em 720p.
   let res = await veoCreate(req, model, "1080p");
   if (res.status === 400 || res.status === 422) res = await veoCreate(req, model, "720p");
-  return veoFinish(res);
+  if (!res.ok) throw await gatewayError(res);
+  const job = (await res.json()) as { id: string; status: string; error?: { message: string } };
+  return veoWait(job.id, Date.now() + (req.maxWaitMs ?? 6 * 60e3));
+}
+
+/** Foto da marca como primeiro quadro (imagem → vídeo) quando houver referência. */
+function veoImage(req: GenerationRequest) {
+  const ref = req.referenceImages?.[0];
+  return ref ? { image: { bytesBase64Encoded: Buffer.from(ref.bytes).toString("base64"), mimeType: ref.mime } } : {};
 }
 
 async function veoCreate(req: GenerationRequest, model: string, resolution: string) {
@@ -71,7 +83,7 @@ async function veoCreate(req: GenerationRequest, model: string, resolution: stri
     headers: { Authorization: `Bearer ${key()}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      instances: [{ prompt: req.finalPrompt.slice(0, 3000) }],
+      instances: [{ prompt: req.finalPrompt.slice(0, 3000), ...veoImage(req) }],
       parameters: {
         durationSeconds: 8,
         resolution,
@@ -83,26 +95,24 @@ async function veoCreate(req: GenerationRequest, model: string, resolution: stri
   });
 }
 
-async function veoFinish(res: Response) {
-  if (!res.ok) throw await gatewayError(res);
-  let job = (await res.json()) as { id: string; status: string; error?: { message: string } };
-  while (job.status !== "completed" && job.status !== "failed") {
-    await new Promise((r) => setTimeout(r, 6000));
-    const p = await fetch(`${BASE}/v1/videos/${encodeURIComponent(job.id)}`, {
-      headers: { Authorization: `Bearer ${key()}` },
-    });
+/** Acompanha o job do Veo; null = ainda gerando quando o prazo acabou. */
+async function veoWait(id: string, deadline: number): Promise<{ url: string; id: string } | { pending: string }> {
+  for (;;) {
+    const p = await fetch(`${BASE}/v1/videos/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${key()}` } });
     if (!p.ok) throw await gatewayError(p);
-    job = await p.json();
+    const job = (await p.json()) as { id: string; status: string; error?: { message: string } };
+    if (job.status === "failed") throw new Error(job.error?.message ?? "Geração de vídeo falhou.");
+    if (job.status === "completed") break;
+    if (Date.now() + 6000 > deadline) return { pending: id };
+    await new Promise((r) => setTimeout(r, 6000));
   }
-  if (job.status === "failed") throw new Error(job.error?.message ?? "Geração de vídeo falhou.");
-  const dl = await fetch(`${BASE}/v1/videos/${encodeURIComponent(job.id)}/content`, {
+  const dl = await fetch(`${BASE}/v1/videos/${encodeURIComponent(id)}/content`, {
     headers: { Authorization: `Bearer ${key()}` },
   });
   if (!dl.ok) throw await gatewayError(dl);
   const url = await upload(new Uint8Array(await dl.arrayBuffer()), "mp4", "video/mp4");
-  return { url, id: job.id };
+  return { url, id };
 }
-
 
 import { vendorError } from "../ai-keys.server";
 
@@ -200,7 +210,7 @@ async function geminiDirectVideo(key: string, req: GenerationRequest) {
   for (const model of VEO_DIRECT_MODELS) {
     try {
       const r = await geminiDirectVideoModel(key, req, model);
-      return { ...r, model };
+      return { r, model };
     } catch (e) {
       lastErr = e;
       console.warn(`[gemini] vídeo com ${model} falhou:`, e instanceof Error ? e.message : e);
@@ -215,7 +225,7 @@ async function geminiDirectVideoModel(key: string, req: GenerationRequest, model
       method: "POST",
       headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
       body: JSON.stringify({
-        instances: [{ prompt: req.finalPrompt.slice(0, 3000) }],
+        instances: [{ prompt: req.finalPrompt.slice(0, 3000), ...veoImage(req) }],
         parameters: {
           aspectRatio: req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "9:16" : "16:9",
           resolution,
@@ -226,12 +236,19 @@ async function geminiDirectVideoModel(key: string, req: GenerationRequest, model
   let res = await create("1080p");
   if (res.status === 400 || res.status === 422) res = await create("720p");
   if (!res.ok) throw await vendorError("gemini", res);
-  let op = (await res.json()) as any;
-  while (!op.done) {
-    await new Promise((r) => setTimeout(r, 8000));
-    const p = await fetch(`${G}/${op.name}`, { headers: { "x-goog-api-key": key } });
+  const op = (await res.json()) as any;
+  return geminiDirectWait(key, op.name as string, Date.now() + (req.maxWaitMs ?? 6 * 60e3));
+}
+
+async function geminiDirectWait(key: string, name: string, deadline: number): Promise<{ url: string; id: string } | { pending: string }> {
+  let op: any = { done: false, name };
+  for (;;) {
+    const p = await fetch(`${G}/${name}`, { headers: { "x-goog-api-key": key } });
     if (!p.ok) throw await vendorError("gemini", p);
     op = await p.json();
+    if (op.done) break;
+    if (Date.now() + 8000 > deadline) return { pending: name };
+    await new Promise((r) => setTimeout(r, 8000));
   }
   if (op.error) throw new Error(op.error.message ?? "Geração de vídeo falhou.");
   const uri = op.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
@@ -239,7 +256,7 @@ async function geminiDirectVideoModel(key: string, req: GenerationRequest, model
   const dl = await fetch(uri, { headers: { "x-goog-api-key": key }, redirect: "follow" });
   if (!dl.ok) throw await vendorError("gemini", dl);
   const url = await upload(new Uint8Array(await dl.arrayBuffer()), "mp4", "video/mp4");
-  return { url, id: op.name as string };
+  return { url, id: name };
 }
 
 const idle = {
@@ -325,17 +342,34 @@ export function createGeminiProvider(userKey: string | null, opts: { strict?: bo
     async generateVideo(req) {
       if (userKey) {
         try {
-          const { url, id, model } = await geminiDirectVideo(userKey, req);
-          return ready(url, 0, id, `Vídeo pela chave Gemini (${model})`);
+          const { r, model } = await geminiDirectVideo(userKey, req);
+          if ("pending" in r) return pendingResult(`gveo:${r.pending}`, 0, `Vídeo pela chave Gemini (${model}), ainda gerando`);
+          return ready(r.url, 0, r.id, `Vídeo pela chave Gemini (${model})`);
         } catch (e) {
           if (opts.strict) throw e;
           console.warn("[gemini] vídeo pela chave falhou, usando Veo com créditos do app:", e instanceof Error ? e.message : e);
         }
       }
-      const { url, id } = await veoVideo(req, "google/veo-3.1-fast");
-      return ready(url, 6.0, id, userKey ? "Chave Gemini falhou; vídeo pelo Veo com créditos do app (google/veo-3.1-fast)" : "Vídeo pelo Veo com créditos do app (google/veo-3.1-fast)");
+      const r = await veoVideo(req, "google/veo-3.1-fast");
+      const note = userKey ? "Chave Gemini falhou; vídeo pelo Veo com créditos do app (google/veo-3.1-fast)" : "Vídeo pelo Veo com créditos do app (google/veo-3.1-fast)";
+      if ("pending" in r) return pendingResult(`veo:${r.pending}`, 6.0, `${note}, ainda gerando`);
+      return ready(r.url, 6.0, r.id, note);
     },
-    ...idle,
+    // Vídeos que passaram do prazo da requisição: o cron consulta aqui até ficarem prontos.
+    async getGenerationStatus(externalJobId) {
+      const wait = Date.now() + 20_000;
+      const r = externalJobId.startsWith("veo:")
+        ? await veoWait(externalJobId.slice(4), wait)
+        : externalJobId.startsWith("gveo:") && userKey
+          ? await geminiDirectWait(userKey, externalJobId.slice(5), wait)
+          : null;
+      if (!r) return { status: "failed" as const, assetUrl: null, thumbnailUrl: null, externalJobId, cost: 0 };
+      if ("pending" in r) return pendingResult(externalJobId, 0, null);
+      return ready(r.url, 0, externalJobId);
+    },
+    async getAsset() {
+      return null;
+    },
   };
 }
 

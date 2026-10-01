@@ -14,6 +14,8 @@ export type GenerationRequest = {
   referenceImages?: { bytes: Uint8Array; mime: string }[];
   /** Mesmas referências como links (provedores que só aceitam URL). */
   referenceUrls?: string[];
+  /** Quanto esperar na própria requisição; depois disso devolve "generating" e o cron conclui. */
+  maxWaitMs?: number;
 };
 
 export type GenerationResult = {
@@ -38,38 +40,5 @@ export interface ServerCreativeProvider {
 }
 
 const COSTS: Record<CreativeKind, number> = { image: 1.2, video: 4.5 };
-
-/** Provedor simulado — usado enquanto nenhum provedor real estiver conectado. */
-export const mockServerProvider: ServerCreativeProvider = {
-  id: "mock",
-  label: "Gerador simulado (sandbox)",
-  sandbox: true,
-  async generateImage(req) {
-    return mockResult(req);
-  },
-  async generateVideo(req) {
-    return mockResult(req);
-  },
-  async getGenerationStatus() {
-    return { status: "ready", assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0 };
-  },
-  async getAsset() {
-    return null;
-  },
-};
-
-function mockResult(req: GenerationRequest): GenerationResult {
-  const seed = encodeURIComponent(req.finalPrompt.slice(0, 40) || "criativo");
-  const [w, h] =
-    req.aspectRatio === "9:16" ? [720, 1280] : req.aspectRatio === "4:5" ? [1080, 1350] : [1080, 1080];
-  const url = `https://picsum.photos/seed/${seed}/${w}/${h}`;
-  return {
-    status: "ready",
-    assetUrl: url,
-    thumbnailUrl: url,
-    externalJobId: null,
-    cost: COSTS[req.kind],
-  };
-}
 
 export const CREATIVE_COSTS = COSTS;

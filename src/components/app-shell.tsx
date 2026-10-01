@@ -8,7 +8,6 @@ import {
   Megaphone,
   Users,
   Images,
-  CalendarDays,
   BarChart3,
   Lightbulb,
   ShieldCheck,
@@ -19,6 +18,7 @@ import {
   X,
   Instagram,
   FolderOpen,
+  Building2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
@@ -28,11 +28,11 @@ import meuFunilLogo from "@/assets/meu-funil-logo.png.asset.json";
 import meuFunilSymbol from "@/assets/meu-funil-symbol.png.asset.json";
 
 const NAV = [
+  { to: "/agency", label: "Agência", icon: Building2 },
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
   { to: "/brands", label: "Brands", icon: Sparkles },
   { to: "/studio", label: "Creative Studio", icon: Images },
   { to: "/library", label: "Biblioteca", icon: FolderOpen },
-  { to: "/calendar", label: "Content Calendar", icon: CalendarDays },
   { to: "/instagram", label: "Instagram", icon: Instagram },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/crm", label: "CRM", icon: Users },

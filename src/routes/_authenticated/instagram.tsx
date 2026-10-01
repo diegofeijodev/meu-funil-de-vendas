@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, SandboxBadge, Section } from "@/components/ui-bits";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +10,9 @@ import { IgCalendar } from "@/components/instagram/calendar";
 import { PostEditor } from "@/components/instagram/post-editor";
 import { IgApprovalList } from "@/components/instagram/approvals";
 import { IgResults } from "@/components/instagram/results";
+import { IgAccountInsights } from "@/components/instagram/account-insights";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/instagram")({
   head: () => ({
@@ -29,8 +32,13 @@ export const Route = createFileRoute("/_authenticated/instagram")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
+  validateSearch: (search: Record<string, unknown>): { tab?: IgTab } =>
+    TABS.includes(search["tab"] as IgTab) ? { tab: search["tab"] as IgTab } : {},
   component: InstagramPage,
 });
+
+const TABS = ["overview", "strategy", "calendar", "approvals", "results"] as const;
+type IgTab = (typeof TABS)[number];
 
 function InstagramPage() {
   const { workspaceId, canEdit } = useWorkspace();
@@ -38,6 +46,8 @@ function InstagramPage() {
   const { data: account } = useIgAccount(workspaceId);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = posts.find((p) => p.id === openId) ?? null;
+  const { tab = "overview" } = Route.useSearch();
+  const navigate = useNavigate({ from: "/instagram" });
 
   if (!workspaceId || isLoading) return <div className="panel h-64 animate-pulse" />;
 
@@ -46,9 +56,12 @@ function InstagramPage() {
       <PageHeader
         title="Instagram"
         subtitle="Feed, carrossel, Reels e Stories com criativo, legenda e hashtags gerados por IA — da estratégia à publicação."
-        actions={account?.status !== "connected" ? <SandboxBadge /> : undefined}
+        actions={account?.status !== "connected" ? <SandboxBadge label="Instagram não conectado" /> : undefined}
       />
-      <Tabs defaultValue="overview">
+      <div className="mb-6">
+        <HowTo title={GUIDES.instagram.title} steps={GUIDES.instagram.steps} references={GUIDES.instagram.references ?? []} />
+      </div>
+      <Tabs value={tab} onValueChange={(v) => navigate({ search: { tab: v as IgTab }, replace: true })}>
         <TabsList className="mb-6 flex h-auto flex-wrap justify-start">
           <TabsTrigger value="overview">Visão geral</TabsTrigger>
           <TabsTrigger value="strategy">Estratégia</TabsTrigger>
@@ -71,7 +84,10 @@ function InstagramPage() {
           </Section>
         </TabsContent>
         <TabsContent value="results">
-          <IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+          <div className="space-y-6">
+            <IgAccountInsights workspaceId={workspaceId} />
+            <IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+          </div>
         </TabsContent>
       </Tabs>
       {open && <PostEditor workspaceId={workspaceId} post={open} onClose={() => setOpenId(null)} />}

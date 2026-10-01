@@ -252,3 +252,12 @@ export const uploadPostMedia = createServerFn({ method: "POST" })
     await requirePost(context, data.workspaceId, data.postId);
     return (await lib()).uploadOwnMedia(data.workspaceId, data.postId, data.file);
   });
+
+/** 5.2 Atualiza agora os insights da conta (seguidores, alcance, visitas, cliques no link). */
+export const collectAccountInsightsNow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ workspaceId: ws }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireMember(context, data.workspaceId);
+    return (await lib()).collectAccountInsights(data.workspaceId);
+  });

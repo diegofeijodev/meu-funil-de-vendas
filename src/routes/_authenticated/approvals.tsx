@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useWorkspace, logActivity } from "@/lib/workspace";
+import { useWorkspace } from "@/lib/workspace";
+import { useServerFn } from "@tanstack/react-start";
+import { decideApproval } from "@/lib/approvals.functions";
 import { PageHeader, Section, EmptyState, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { shortDate } from "@/lib/format";
@@ -28,7 +30,9 @@ const ENTITY: Record<string, string> = {
 };
 
 function Approvals() {
-  const { workspaceId, canEdit, user } = useWorkspace();
+  const { workspaceId, role } = useWorkspace();
+  const canDecide = role === "owner" || role === "admin";
+  const runDecide = useServerFn(decideApproval);
   const qc = useQueryClient();
 
   const { data } = useQuery({
@@ -43,22 +47,14 @@ function Approvals() {
     },
   });
 
-  const decide = async (id: string, status: "approved" | "rejected", entityType: string, entityId: string | null) => {
-    await supabase
-      .from("approval_requests")
-      .update({ status, decided_at: new Date().toISOString(), decided_by: user?.id ?? null })
-      .eq("id", id);
-
-    if (entityId && status === "approved") {
-      if (entityType === "campaign") await supabase.from("campaigns").update({ status: "approved" }).eq("id", entityId);
-      if (entityType === "creative") await supabase.from("creatives").update({ status: "approved" }).eq("id", entityId);
+  const decide = async (id: string, status: "approved" | "rejected") => {
+    try {
+      await runDecide({ data: { approvalId: id, decision: status } });
+      qc.invalidateQueries({ queryKey: ["approvals", workspaceId] });
+      toast.success(status === "approved" ? "Aprovado. A ação foi liberada." : "Rejeitado.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível registrar a decisão.");
     }
-    if (entityId && status === "rejected" && entityType === "creative") {
-      await supabase.from("creatives").update({ status: "rejected" }).eq("id", entityId);
-    }
-    if (workspaceId) await logActivity(workspaceId, `approval.${status}`, entityType, { request_id: id });
-    qc.invalidateQueries({ queryKey: ["approvals", workspaceId] });
-    toast.success(status === "approved" ? "Aprovado. A ação foi liberada." : "Rejeitado.");
   };
 
   if (!data) return <div className="panel h-64 animate-pulse" />;
@@ -70,7 +66,7 @@ function Approvals() {
     <>
       <PageHeader
         title="Aprovações"
-        subtitle="Toda publicação, criativo e recomendação passa por aqui antes de sair do sandbox."
+        subtitle="Toda publicação, criativo e recomendação passa por aqui antes de ir ao ar. Só o dono ou um administrador decide."
       />
 
       <div className="space-y-6">
@@ -90,12 +86,12 @@ function Approvals() {
                     <p className="mt-2 font-medium">{r.title}</p>
                     {r.summary && <p className="mt-1 text-sm text-muted-foreground">{r.summary}</p>}
                   </div>
-                  {canEdit && (
+                  {canDecide && (
                     <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => decide(r.id, "rejected", r.entity_type, r.entity_id)}>
+                      <Button size="sm" variant="ghost" onClick={() => decide(r.id, "rejected")}>
                         Rejeitar
                       </Button>
-                      <Button size="sm" onClick={() => decide(r.id, "approved", r.entity_type, r.entity_id)}>
+                      <Button size="sm" onClick={() => decide(r.id, "approved")}>
                         Aprovar
                       </Button>
                     </div>
@@ -108,7 +104,7 @@ function Approvals() {
 
         {workspaceId && (
           <Section title="Instagram" description="Posts orgânicos aguardando aprovação.">
-            <IgApprovalList workspaceId={workspaceId} canEdit={canEdit} />
+            <IgApprovalList workspaceId={workspaceId} canEdit={role !== "viewer"} />
           </Section>
         )}
 

@@ -14,8 +14,9 @@ import {
   YAxis,
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { MetaSyncButton } from "@/components/meta-sync-button";
 import { useWorkspace } from "@/lib/workspace";
-import { PageHeader, Section, StatCard, SandboxBadge } from "@/components/ui-bits";
+import { PageHeader, Section, StatCard } from "@/components/ui-bits";
 import { brl, num, shortDate } from "@/lib/format";
 import { computeKpis, groupByDay, type PerformanceRow } from "@/lib/metrics";
 
@@ -41,7 +42,7 @@ function Performance() {
     enabled: !!workspaceId,
     queryFn: async () => {
       const [perf, campaigns, creatives, costs] = await Promise.all([
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).order("date"),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).neq("source", "demo").order("date"),
         supabase.from("campaigns").select("id, name, max_cac").eq("workspace_id", workspaceId!),
         supabase.from("creatives").select("id, title, type").eq("workspace_id", workspaceId!),
         supabase.from("campaign_costs").select("*").eq("workspace_id", workspaceId!),
@@ -111,7 +112,7 @@ function Performance() {
             >
               {[7, 14, 30, 90].map((d) => <option key={d} value={d}>Últimos {d} dias</option>)}
             </select>
-            <SandboxBadge />
+            <MetaSyncButton invalidate={["performance", workspaceId]} />
           </>
         }
       />

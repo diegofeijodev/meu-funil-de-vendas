@@ -11,6 +11,7 @@ import { useWorkspace, logActivity } from "@/lib/workspace";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchMcpConnections, type McpProvider } from "@/lib/mcp-client";
 import { mcpConnect, mcpDisconnect, mcpOAuthStart } from "@/lib/mcp.functions";
+import { HowTo, type HowToStep } from "@/components/how-to";
 
 const PROVIDERS: {
   id: McpProvider;
@@ -18,7 +19,8 @@ const PROVIDERS: {
   hint: string;
   placeholder: string;
   defaultUrl: string;
-  steps: string[];
+  steps: HowToStep[];
+  refs: { label: string; url: string }[];
 }[] = [
   {
     id: "higgsfield",
@@ -27,12 +29,28 @@ const PROVIDERS: {
     placeholder: "https://mcp.higgsfield.ai/mcp",
     defaultUrl: "https://mcp.higgsfield.ai/mcp",
     steps: [
-      "Tenha uma conta paga no Higgsfield (é ela que autoriza as gerações e paga os créditos).",
+      { text: "Tenha uma conta paga no Higgsfield (é ela que autoriza as gerações e paga os créditos):", link: { label: "higgsfield.ai", url: "https://higgsfield.ai" } },
       "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
       "Uma janela do Higgsfield abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
       "Ao voltar, o status muda para Conectado e a lista de ferramentas aparece no cartão.",
       "Abra o Creative Studio e gere um criativo: ele passa a usar o Higgsfield de verdade.",
     ],
+    refs: [{ label: "Higgsfield", url: "https://higgsfield.ai" }],
+  },
+  {
+    id: "canva",
+    label: "Canva",
+    hint: "Envie criativos para o Canva, crie designs a partir da copy e traga a versão editada de volta para a Biblioteca.",
+    placeholder: "https://mcp.canva.com/mcp",
+    defaultUrl: "https://mcp.canva.com/mcp",
+    steps: [
+      { text: "Tenha uma conta Canva (Pro ou Teams recomendada para kits de marca):", link: { label: "canva.com", url: "https://www.canva.com" } },
+      "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
+      "Uma janela do Canva abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
+      "Na Biblioteca, use \"Enviar ao Canva\" em uma mídia e \"Importar do Canva\" para trazer o design editado.",
+      "Na campanha, use \"Criar design no Canva\" para montar um layout editável com a copy.",
+    ],
+    refs: [{ label: "Canva para desenvolvedores", url: "https://www.canva.dev" }],
   },
 ];
 
@@ -181,14 +199,9 @@ export function McpConnections() {
                 </div>
               )}
 
-              <details className="mt-3 rounded-lg border border-border/60 bg-background/40 p-3">
-                <summary className="cursor-pointer text-xs font-medium">Passo a passo para conectar</summary>
-                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
-                  {p.steps.map((s) => (
-                    <li key={s}>{s}</li>
-                  ))}
-                </ol>
-              </details>
+              <div className="mt-3">
+                <HowTo title="Passo a passo para conectar" steps={p.steps} references={p.refs} />
+              </div>
 
 
               <div className="mt-4 space-y-3">

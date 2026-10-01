@@ -30,6 +30,8 @@ import {
   installCadenceTemplates,
   runCadencesNow,
 } from "@/lib/crm-cadences.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/crm/cadences")({
   head: () => ({
@@ -220,6 +222,9 @@ function CadencesPage() {
           </div>
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.cadences.title} steps={GUIDES.cadences.steps} references={GUIDES.cadences.references ?? []} />
+      </div>
 
       <Section title="Cadências do workspace" description="Ative para começar a inscrever leads automaticamente.">
         <div className="space-y-3">

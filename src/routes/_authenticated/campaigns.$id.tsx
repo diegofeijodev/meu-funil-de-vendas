@@ -11,10 +11,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
-import { generateCopySmart, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
-import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
+import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
+import type { FullStrategy } from "@/lib/ai/strategy-types";
+import { approveCampaignStrategy, createIgPlanFromStrategy, generateCampaignStrategy } from "@/lib/ai/strategist.functions";
+import type { PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
+import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
+import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
+import { CampaignChannels } from "@/components/campaign-channels";
+import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -30,11 +38,18 @@ export const Route = createFileRoute("/_authenticated/campaigns/$id")({
 
 function CampaignDetail() {
   const { id } = Route.useParams();
-  const { workspaceId, canEdit } = useWorkspace();
+  const { workspaceId, canEdit, role } = useWorkspace();
+  const canManage = role === "owner" || role === "admin";
   const qc = useQueryClient();
+  const runSync = useServerFn(syncAdsInsightsNow);
+  const runRecos = useServerFn(generateAdsRecommendations);
   const metaStatus = useServerFn(metaAdsStatus);
   const metaPublish = useServerFn(metaAdsPublish);
   const metaSetStatus = useServerFn(metaAdsSetStatus);
+  const runStrategy = useServerFn(generateCampaignStrategy);
+  const runApproveStrategy = useServerFn(approveCampaignStrategy);
+  const runIgPlan = useServerFn(createIgPlanFromStrategy);
+  const runCanvaCreate = useServerFn(canvaCreateFromBrief);
 
   
   const [busy, setBusy] = useState<string | null>(null);
@@ -48,7 +63,7 @@ function CampaignDetail() {
         supabase.from("campaign_strategies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("copies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("creatives").select("*").eq("campaign_id", id).order("created_at", { ascending: false }),
-        supabase.from("performance_daily").select("*").eq("campaign_id", id),
+        supabase.from("performance_daily").select("*").eq("campaign_id", id).neq("source", "demo"),
         supabase.from("campaign_costs").select("*").eq("campaign_id", id),
       ]);
       return {
@@ -67,7 +82,8 @@ function CampaignDetail() {
   const brand = c.brands;
   const extra = data.costs.reduce((s, x) => s + Number(x.amount), 0);
   const k = computeKpis(data.perf, extra);
-  const strategy = data.strategy?.content as unknown as StrategyContent | undefined;
+  const strategy = data.strategy?.content as unknown as FullStrategy | undefined;
+  const strategyApproved = data.strategy?.status === "approved";
   const copy = data.copy?.content as unknown as CopyContent | undefined;
 
   const brief = (): CampaignBrief => ({
@@ -91,41 +107,90 @@ function CampaignDetail() {
   });
 
   const regenStrategy = async () => {
-    if (!workspaceId || !brand) return;
+    if (!workspaceId) return;
     setBusy("strategy");
-    const learnings = (await supabase.from("brand_learnings").select("category, value, metric").eq("brand_id", brand.id).limit(5)).data ?? [];
-    const content = await generateStrategy(brand, brief(), learnings);
-    await supabase.from("campaign_strategies").insert({
-      workspace_id: workspaceId,
-      campaign_id: id,
-      content,
-      status: "draft",
-      version: (data.strategy?.version ?? 0) + 1,
-    });
-    await logActivity(workspaceId, "campaign.strategy_generated", "campaign", { campaign_id: id });
-    qc.invalidateQueries({ queryKey: ["campaign", id] });
-    setBusy(null);
-    toast.success("Nova versão da estratégia gerada.");
+    try {
+      const r = await runStrategy({ data: { campaignId: id } });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(`Estratégia v${r.version} gerada pela IA. Revise e aprove para orientar copy e criativos.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a estratégia.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const approveStrategy = async () => {
+    if (!data.strategy) return;
+    setBusy("approve-strategy");
+    try {
+      await runApproveStrategy({ data: { strategyId: data.strategy.id } });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success("Estratégia aprovada. Copy, criativos e vídeos passam a seguir esta versão.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível aprovar.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const createIgPlan = async () => {
+    setBusy("ig-plan");
+    try {
+      await runIgPlan({ data: { campaignId: id } });
+      toast.success("Plano do Instagram criado em rascunho. Revise em Instagram → Estratégia.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar o plano.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const regenCopy = async () => {
     if (!workspaceId || !brand) return;
     setBusy("copy");
-    const version = (data.copy?.version ?? 0) + 1;
-    const { content, engine, error: copyErr } = await generateCopySmart(workspaceId, brand, brief(), version);
-    if (copyErr) toast.warning(`Copy simulada: ${copyErr}`);
-    else toast.message(`Copy gerada com ${engine}.`);
-    await supabase.from("copies").insert({
-      workspace_id: workspaceId,
-      campaign_id: id,
-      content,
-      status: "draft",
-      version,
-    });
-    await logActivity(workspaceId, "campaign.copy_generated", "campaign", { campaign_id: id });
-    qc.invalidateQueries({ queryKey: ["campaign", id] });
-    setBusy(null);
-    toast.success("Novas copies geradas.");
+    try {
+      const version = (data.copy?.version ?? 0) + 1;
+      const { content, engine } = await generateCopySmart(workspaceId, brand, brief(), version, { campaignId: id });
+      await supabase.from("copies").insert({
+        workspace_id: workspaceId,
+        campaign_id: id,
+        content,
+        status: "draft",
+        version,
+      });
+      await logActivity(workspaceId, "campaign.copy_generated", "campaign", { campaign_id: id });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(`Novas copies geradas com ${engine}.`);
+    } catch (e) {
+      toast.error(`Copy não gerada: ${e instanceof Error ? e.message : "erro"}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const canvaFromCopy = async () => {
+    if (!workspaceId || !copy) return;
+    setBusy("canva");
+    try {
+      const brief = [
+        `Post de Instagram para a marca ${brand?.name ?? ""}.`,
+        `Título: ${copy.headline}`,
+        `Texto: ${copy.texto_curto}`,
+        `Chamada: ${copy.cta}`,
+        brand?.primary_color ? `Cores da marca: ${brand.primary_color} e ${brand.secondary_color ?? ""}.` : "",
+        brand?.tone_of_voice ? `Tom: ${brand.tone_of_voice}.` : "",
+      ].filter(Boolean).join("\n");
+      const r = await runCanvaCreate({ data: { workspaceId, brief, format: "Instagram Post (Portrait)" } });
+      if (r.editUrl) {
+        window.open(r.editUrl, "_blank");
+        toast.success("Design criado no Canva. Edite e depois use Importar do Canva na Biblioteca.");
+      } else toast.success("O Canva ainda está montando o design. Ele aparece nos seus designs em instantes.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar no Canva.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const requestApproval = async () => {
@@ -138,6 +203,7 @@ function CampaignDetail() {
       title: `Publicar campanha "${c.name}" na Meta`,
       summary: `Verba diária de ${brl(c.budget_daily)}, ${data.creatives.length} criativo(s), objetivo ${OBJECTIVES[c.objective] ?? c.objective}.`,
       status: "pending",
+      requested_by: (await supabase.auth.getUser()).data.user?.id ?? null,
     });
     await supabase.from("campaigns").update({ status: "pending_approval" }).eq("id", id);
     await logActivity(workspaceId, "campaign.approval_requested", "campaign", { campaign_id: id });
@@ -154,48 +220,19 @@ function CampaignDetail() {
       if (!approved) {
         throw new Error("Publicação bloqueada: a campanha precisa de aprovação humana antes de ir ao ar.");
       }
-      const approvedCreatives = data.creatives.filter((x) => x.status === "approved");
-      const utm = `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`;
-
       const st = await metaStatus({ data: { workspaceId } });
-      if (st.configured) {
-        setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
-        const out = await metaPublish({ data: { workspaceId, campaignId: id } });
-        setSteps(out.steps);
-        await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "live" });
-        qc.invalidateQueries({ queryKey: ["campaign", id] });
-        toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
-        return;
+      if (!st.configured) {
+        // Sem Meta conectada não existe publicação: nada de simular nem marcar como ativa.
+        throw new Error(
+          `Conecte a Meta antes de publicar (faltando: ${(st.missing ?? []).join(", ") || "credenciais"}). Vá em Integrações → Meta Ads.`,
+        );
       }
-
-      const result = await metaMockProvider.publish(
-        {
-          campaignName: c.name,
-          objective: OBJECTIVES[c.objective] ?? c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0),
-          targeting: (c.audience ?? {}) as Record<string, unknown>,
-          placements: ["Instagram Feed", "Reels", "Stories", "Facebook Feed"],
-          creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title })),
-          primaryText: copy?.meta_ad ?? "",
-          utm,
-          approved,
-        },
-        setSteps,
-      );
-      const log = result.map((s) => `${s.label}: ${s.detail}`).join("\n");
-
-      await supabase.from("publishing_jobs").insert({
-        workspace_id: workspaceId,
-        campaign_id: id,
-        target: "meta",
-        status: "done",
-        mode: "mock",
-        log,
-      });
-      await supabase.from("campaigns").update({ status: "active" }).eq("id", id);
-      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "mock" });
+      setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
+      const out = await metaPublish({ data: { workspaceId, campaignId: id } });
+      setSteps(out.steps);
+      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "live" });
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success("Campanha publicada no ambiente sandbox da Meta.");
+      toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao publicar");
     } finally {
@@ -203,6 +240,34 @@ function CampaignDetail() {
     }
   };
 
+
+  const syncNow = async () => {
+    if (!workspaceId) return;
+    setBusy("sync");
+    try {
+      const r = await runSync({ data: { workspaceId } });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(`Resultados da Meta sincronizados (${r.rows} linhas de anúncio por dia).`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const recos = async () => {
+    if (!workspaceId) return;
+    setBusy("recos");
+    try {
+      const r = await runRecos({ data: { workspaceId, campaignId: id } });
+      if (r.errors.length) toast.warning(r.errors.join(" · "));
+      if (r.created) toast.success(`${r.created} recomendações da IA em AI Insights.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar recomendações.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const setDelivery = async (status: "ACTIVE" | "PAUSED") => {
     if (!workspaceId) return;
@@ -230,7 +295,7 @@ function CampaignDetail() {
             <StatusPill status={c.status} label={CAMPAIGN_STATUS[c.status] ?? c.status} />
             <Button variant="outline" asChild><Link to="/campaigns">Voltar</Link></Button>
             {canEdit && c.status === "draft" && <Button onClick={requestApproval}>Solicitar aprovação</Button>}
-            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (
+            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (metaDelivery === "ACTIVE" || canManage) && (
               <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery(metaDelivery === "ACTIVE" ? "PAUSED" : "ACTIVE")}>
                 {metaDelivery === "ACTIVE" ? "Pausar na Meta" : "Ativar na Meta"}
               </Button>
@@ -244,6 +309,9 @@ function CampaignDetail() {
           </>
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
+      </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Verba total" value={brl(c.budget_total)} hint={`${brl(c.budget_daily)}/dia`} />
@@ -256,7 +324,7 @@ function CampaignDetail() {
         <div className="panel mb-6 p-5">
           <div className="mb-3 flex items-center gap-2">
             <span className="text-sm font-semibold">Pipeline de publicação</span>
-            <SandboxBadge label="Meta sandbox" />
+            <SandboxBadge label="Meta Ads" />
           </div>
           <ol className="space-y-2 text-sm">
             {steps.map((s) => (
@@ -275,18 +343,38 @@ function CampaignDetail() {
           <TabsTrigger value="estrategia">Estratégia</TabsTrigger>
           <TabsTrigger value="copies">Copies</TabsTrigger>
           <TabsTrigger value="criativos">Criativos</TabsTrigger>
+          <TabsTrigger value="anuncios">Anúncios e regras</TabsTrigger>
           <TabsTrigger value="briefing">Briefing</TabsTrigger>
         </TabsList>
 
         <TabsContent value="estrategia">
           <Section
             title={`Plano estratégico ${data.strategy ? `v${data.strategy.version}` : ""}`}
+            description={
+              data.strategy
+                ? strategyApproved
+                  ? "Aprovada: copy, criativos, vídeos e públicos seguem esta versão."
+                  : "Rascunho: revise e aprove para que os outros agentes sigam esta estratégia."
+                : "Gere a estratégia com IA: ela orienta copy, criativos, vídeos, públicos e o Instagram."
+            }
             actions={
               canEdit && (
-                <Button size="sm" variant="outline" onClick={regenStrategy} disabled={busy === "strategy"}>
-                  <Sparkles className="mr-1 size-3.5" />
-                  {busy === "strategy" ? "Gerando..." : "Regerar"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {data.strategy && !strategyApproved && (
+                    <Button size="sm" onClick={approveStrategy} disabled={busy === "approve-strategy"}>
+                      Aprovar estratégia
+                    </Button>
+                  )}
+                  {strategy?.plano_instagram && (
+                    <Button size="sm" variant="outline" onClick={createIgPlan} disabled={busy === "ig-plan"}>
+                      Criar plano no Instagram
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={regenStrategy} disabled={busy === "strategy"}>
+                    <Sparkles className="mr-1 size-3.5" />
+                    {busy === "strategy" ? "Gerando (até 1 min)..." : data.strategy ? "Regerar com IA" : "Gerar com IA"}
+                  </Button>
+                </div>
               )
             }
           >
@@ -301,8 +389,61 @@ function CampaignDetail() {
                 <Block title="Oferta">{strategy.oferta}</Block>
                 <Block title="Big idea">{strategy.big_idea}</Block>
                 <Block title="Ângulos criativos">
-                  <ul className="list-disc pl-5">{strategy.angulos.map((a) => <li key={a}>{a}</li>)}</ul>
+                  {strategy.angulos_detalhados?.length ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {strategy.angulos_detalhados.map((a) => (
+                        <div key={a.nome} className="rounded-md border border-border/60 p-3">
+                          <p className="font-medium text-foreground">{a.nome}</p>
+                          <p className="mt-1">Gancho: "{a.gancho}"</p>
+                          <p className="mt-1">{a.mensagem}</p>
+                          <p className="mt-1 text-xs">
+                            {a.formato_sugerido} · {a.etapa_funil} · {a.dor_ou_desejo}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="list-disc pl-5">{strategy.angulos.map((a) => <li key={a}>{a}</li>)}</ul>
+                  )}
                 </Block>
+                {!!strategy.publicos_meta?.length && (
+                  <Block title="Públicos para a Meta">
+                    <ul className="space-y-1">
+                      {strategy.publicos_meta.map((p) => (
+                        <li key={p.nome}>
+                          <span className="text-foreground">{p.nome}</span> ({p.tipo}) — {p.descricao}
+                          {p.interesses.length ? ` · Interesses: ${p.interesses.join(", ")}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </Block>
+                )}
+                {strategy.briefing_criativo && (
+                  <Block title="Briefing para o designer">
+                    <p>{strategy.briefing_criativo.direcao_visual}</p>
+                    <p className="mt-1 text-xs">
+                      Formatos: {strategy.briefing_criativo.formatos.join(", ")} · {strategy.briefing_criativo.quantidade_por_angulo} por ângulo · CTA: {strategy.briefing_criativo.cta}
+                    </p>
+                  </Block>
+                )}
+                {strategy.briefing_video && (
+                  <Block title={`Roteiro de vídeo (${strategy.briefing_video.duracao_segundos}s)`}>
+                    <p>{strategy.briefing_video.roteiro}</p>
+                    <ol className="mt-1 list-decimal pl-5">{strategy.briefing_video.cenas.map((c2) => <li key={c2}>{c2}</li>)}</ol>
+                  </Block>
+                )}
+                {strategy.plano_instagram && (
+                  <Block title="Plano para o Instagram">
+                    <div className="flex flex-wrap gap-2">
+                      {strategy.plano_instagram.pilares.map((p) => (
+                        <span key={p.nome} className="rounded-full border border-border px-2.5 py-0.5 text-xs">
+                          {p.nome} · {Math.round(p.peso * 100)}%
+                        </span>
+                      ))}
+                    </div>
+                    <ul className="mt-2 list-disc pl-5">{strategy.plano_instagram.temas.map((t) => <li key={t}>{t}</li>)}</ul>
+                  </Block>
+                )}
                 <Block title="Funil">{strategy.funil}</Block>
                 <Block title="Objeções e respostas">
                   <ul className="space-y-1">
@@ -344,10 +485,17 @@ function CampaignDetail() {
             title={`Copies ${data.copy ? `v${data.copy.version}` : ""}`}
             actions={
               canEdit && (
-                <Button size="sm" variant="outline" onClick={regenCopy} disabled={busy === "copy"}>
-                  <Sparkles className="mr-1 size-3.5" />
-                  {busy === "copy" ? "Gerando..." : "Gerar variação"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {copy && (
+                    <Button size="sm" variant="outline" onClick={canvaFromCopy} disabled={busy === "canva"}>
+                      {busy === "canva" ? "Criando no Canva..." : "Criar design no Canva"}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={regenCopy} disabled={busy === "copy"}>
+                    <Sparkles className="mr-1 size-3.5" />
+                    {busy === "copy" ? "Gerando..." : "Gerar variação"}
+                  </Button>
+                </div>
               )
             }
           >
@@ -391,11 +539,15 @@ function CampaignDetail() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {data.creatives.map((cr) => (
                   <div key={cr.id} className="overflow-hidden rounded-lg border border-border">
-                    <img
-                      src={cr.preview_url ?? `https://picsum.photos/seed/${cr.id}/600/600`}
-                      alt={cr.title}
-                      className="aspect-square w-full object-cover"
-                    />
+                    {cr.preview_url && /\.mp4(\?|$)/.test(cr.preview_url) ? (
+                      <video src={cr.preview_url} controls className="aspect-square w-full bg-muted object-cover" />
+                    ) : cr.preview_url ? (
+                      <img src={cr.preview_url} alt={cr.title} className="aspect-square w-full object-cover" />
+                    ) : (
+                      <div className="flex aspect-square w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+                        Sem prévia
+                      </div>
+                    )}
                     <div className="space-y-1 p-3">
                       <p className="text-sm font-medium">{cr.title}</p>
                       <p className="text-xs text-muted-foreground">{FORMATS[cr.type] ?? cr.type} · {cr.aspect_ratio}</p>
@@ -406,6 +558,46 @@ function CampaignDetail() {
               </div>
             )}
           </Section>
+        </TabsContent>
+
+        <TabsContent value="anuncios">
+          <div className="space-y-6">
+            <Section
+              title="Resultados reais por anúncio e ângulo"
+              description={
+                (c as { last_insights_sync_at?: string | null }).last_insights_sync_at
+                  ? `Última sincronização com a Meta: ${new Date((c as { last_insights_sync_at: string }).last_insights_sync_at).toLocaleString("pt-BR")}. Atualiza sozinho a cada 3 horas.`
+                  : "Aparece depois que a campanha veicular na Meta. Atualiza sozinho a cada 3 horas."
+              }
+              actions={
+                metaId ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={syncNow} disabled={busy === "sync"}>
+                      {busy === "sync" ? "Sincronizando..." : "Sincronizar agora"}
+                    </Button>
+                    {canEdit && (
+                      <Button size="sm" variant="outline" onClick={recos} disabled={busy === "recos"}>
+                        <Sparkles className="mr-1 size-3.5" />
+                        {busy === "recos" ? "Analisando..." : "Recomendações da IA"}
+                      </Button>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            >
+              <AdBreakdown perf={data.perf} creatives={data.creatives} />
+            </Section>
+            <CampaignChannels campaign={c as never} canEdit={canEdit} canManage={canManage} />
+            {workspaceId && (
+              <CampaignAdsSettings
+                campaign={c as never}
+                workspaceId={workspaceId}
+                canEdit={canEdit}
+                canManage={canManage}
+                hasStrategyAudiences={!!strategy?.publicos_meta?.length}
+              />
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="briefing">
@@ -443,6 +635,75 @@ function Item({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs uppercase tracking-wider text-muted-foreground">{label}</dt>
       <dd className="mt-0.5">{value}</dd>
+    </div>
+  );
+}
+
+type PerfWithAd = PerformanceRow & { meta_ad_id?: string | null; ad_name?: string | null; adset_name?: string | null };
+
+/** Desempenho agregado por anúncio e por ângulo da estratégia (para saber qual ângulo vende mais). */
+function AdBreakdown({ perf, creatives }: { perf: PerformanceRow[]; creatives: { id: string; angle?: string | null }[] }) {
+  if (!perf.length) return <p className="text-sm text-muted-foreground">Ainda sem resultados da Meta.</p>;
+  const angleOf = new Map(creatives.map((cr) => [cr.id, cr.angle ?? null]));
+  type Row = { name: string; spend: number; impressions: number; clicks: number; leads: number; revenue: number };
+  const add = (m: Map<string, Row>, key: string, name: string, r: PerfWithAd) => {
+    const a = m.get(key) ?? { name, spend: 0, impressions: 0, clicks: 0, leads: 0, revenue: 0 };
+    a.spend += Number(r.spend);
+    a.impressions += Number(r.impressions);
+    a.clicks += Number(r.clicks);
+    a.leads += Number(r.leads);
+    a.revenue += Number(r.revenue);
+    m.set(key, a);
+  };
+  const byAd = new Map<string, Row>();
+  const byAngle = new Map<string, Row>();
+  for (const r of perf as PerfWithAd[]) {
+    add(byAd, r.meta_ad_id ?? r.creative_id ?? "?", r.ad_name ?? "Anúncio", r);
+    const ang = (r.creative_id && angleOf.get(r.creative_id)) || "Sem ângulo";
+    add(byAngle, ang, ang, r);
+  }
+  const table = (rows: Row[]) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="py-2 pr-3">Nome</th>
+            <th className="py-2 pr-3">Gasto</th>
+            <th className="py-2 pr-3">CTR</th>
+            <th className="py-2 pr-3">Leads</th>
+            <th className="py-2 pr-3">CPL</th>
+            <th className="py-2">ROAS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows
+            .sort((a, b) => (a.leads ? a.spend / a.leads : 1e9) - (b.leads ? b.spend / b.leads : 1e9))
+            .map((r) => (
+              <tr key={r.name} className="border-t border-border/50">
+                <td className="py-2 pr-3">{r.name}</td>
+                <td className="py-2 pr-3">{brl(r.spend)}</td>
+                <td className="py-2 pr-3">{r.impressions ? `${num((r.clicks / r.impressions) * 100, 2)}%` : "-"}</td>
+                <td className="py-2 pr-3">{num(r.leads)}</td>
+                <td className="py-2 pr-3">{r.leads ? brl(r.spend / r.leads) : "-"}</td>
+                <td className="py-2">{r.spend ? `${num(r.revenue / r.spend, 2)}x` : "-"}</td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+  return (
+    <div className="space-y-5">
+      {byAngle.size > 1 && (
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Por ângulo da estratégia</p>
+          {table([...byAngle.values()])}
+        </div>
+      )}
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Por anúncio</p>
+        {table([...byAd.values()])}
+      </div>
     </div>
   );
 }

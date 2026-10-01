@@ -14,12 +14,16 @@ import { CREATIVE_STATUS, FORMATS } from "@/lib/labels";
 import { brl } from "@/lib/format";
 import { Link } from "@tanstack/react-router";
 import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
-import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
+import type { CreativeType } from "@/lib/providers/creative-provider";
+import type { FullStrategy } from "@/lib/ai/strategy-types";
+import type { CopyContent } from "@/lib/ai/agents";
 import { useServerFn } from "@tanstack/react-start";
-import { generateCreative, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
+import { capcutPackage, generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
 import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/studio")({
   head: () => ({
@@ -39,6 +43,7 @@ function Studio() {
   const runGenerate = useServerFn(generateCreative);
   const runRetry = useServerFn(retryCreativeJob);
   const runPreview = useServerFn(previewVisualPrompt);
+  const runNewVersion = useServerFn(newCreativeVersion);
   const checkKeys = useServerFn(aiKeysHealth);
   const { data: keyHealth } = useQuery({
     queryKey: ["ai-keys-health", workspaceId],
@@ -52,6 +57,8 @@ function Studio() {
   const [variationCount, setVariationCount] = useState(3);
   const [lastVariations, setLastVariations] = useState<Variation[]>([]);
   const [adjust, setAdjust] = useState("");
+  const [angle, setAngle] = useState("");
+  const [videoOpts, setVideoOpts] = useState({ useBrandImage: true, coverWithLogo: false });
 
   
   const [busy, setBusy] = useState(false);
@@ -92,6 +99,45 @@ function Studio() {
     },
   });
 
+  const selectedCampaignId = form.campaignId || data?.campaigns[0]?.id || "";
+  // Estratégia e copy da campanha: o designer segue o ângulo escolhido e usa a copy aprovada (4.3).
+  const { data: campaignBrief } = useQuery({
+    queryKey: ["studio-brief", selectedCampaignId],
+    enabled: !!selectedCampaignId,
+    queryFn: async () => {
+      const [strategies, copies] = await Promise.all([
+        supabase
+          .from("campaign_strategies")
+          .select("content, status, version")
+          .eq("campaign_id", selectedCampaignId)
+          .order("version", { ascending: false })
+          .limit(10),
+        supabase
+          .from("copies")
+          .select("content, status, version")
+          .eq("campaign_id", selectedCampaignId)
+          .order("version", { ascending: false })
+          .limit(10),
+      ]);
+      const sRows = strategies.data ?? [];
+      const cRows = copies.data ?? [];
+      const strategy = (sRows.find((r) => r.status === "approved") ?? sRows[0])?.content as unknown as FullStrategy | undefined;
+      const copy = (cRows.find((r) => r.status === "approved") ?? cRows[0])?.content as unknown as CopyContent | undefined;
+      return { strategy: strategy ?? null, copy: copy ?? null };
+    },
+  });
+  const angles = campaignBrief?.strategy?.angulos_detalhados ?? [];
+
+  const applyCampaignCopy = () => {
+    const c = campaignBrief?.copy;
+    if (!c) return;
+    const chosen = angles.find((a) => a.nome === angle);
+    setOverlay({ headline: (chosen?.gancho || c.headline || "").slice(0, 120), price: overlay.price, cta: (c.cta || "").slice(0, 40) });
+    setForm((f) => ({ ...f, copyText: chosen?.gancho || c.headline || f.copyText }));
+    if (layout === "limpo") setLayout("titulo_topo");
+    toast.success("Título e chamada preenchidos com a copy da campanha.");
+  };
+
   const payload = () => {
     const campaign = data!.campaigns.find((c) => c.id === form.campaignId) ?? data!.campaigns[0];
     return {
@@ -110,6 +156,9 @@ function Studio() {
       headline: overlay.headline || null,
       price: overlay.price || null,
       cta: overlay.cta || null,
+      angle: angle || null,
+      useBrandImage: videoOpts.useBrandImage,
+      coverWithLogo: videoOpts.coverWithLogo,
     };
   };
 
@@ -185,29 +234,18 @@ function Studio() {
 
   const newVersion = async (id: string) => {
     if (!workspaceId || !data) return;
-    const cr = data.creatives.find((x) => x.id === id);
-    if (!cr) return;
-    const provider = resolveCreativeProvider(cr.provider);
-    const result = await provider.generate({
-      prompt: `${cr.prompt ?? cr.title} (variação ${cr.version + 1})`,
-      type: cr.type as CreativeType,
-      aspectRatio: cr.aspect_ratio ?? "1:1",
-    });
-    await supabase.from("creatives").update({
-      version: cr.version + 1,
-      preview_url: result.previewUrl,
-      status: "ready",
-      real_cost: Number(cr.real_cost ?? 0) + result.realCost,
-    }).eq("id", id);
-    await supabase.from("creative_versions").insert({
-      workspace_id: workspaceId,
-      creative_id: id,
-      version: cr.version + 1,
-      prompt: cr.prompt,
-      preview_url: result.previewUrl,
-    });
-    qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
-    toast.success("Nova versão gerada.");
+    setBusy(true);
+    try {
+      const res = await runNewVersion({ data: { creativeId: id } });
+      qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
+      if (res.status === "failed") toast.error(res.error ?? "Não foi possível gerar a nova versão.");
+      else if (res.status === "generating") toast.success("A IA está gerando a nova versão. Ela aparece aqui quando ficar pronta.");
+      else toast.success("Nova versão gerada.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a nova versão.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (!data) return <div className="panel h-64 animate-pulse" />;
@@ -222,6 +260,9 @@ function Studio() {
         subtitle="Gere imagens, vídeos, carrosséis, stories, quizzes e UGC usando o contexto da marca."
         actions={<SandboxBadge label={`Custo acumulado ${brl(totalCost)}`} />}
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.studio.title} steps={GUIDES.studio.steps} references={GUIDES.studio.references ?? []} />
+      </div>
 
       {!!keyHealth?.outOfCredit.length && (
         <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
@@ -253,6 +294,32 @@ function Studio() {
                 {data.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            {angles.length > 0 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="ang">Ângulo da estratégia</Label>
+                <select
+                  id="ang"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={angle}
+                  onChange={(e) => setAngle(e.target.value)}
+                >
+                  <option value="">Big idea geral</option>
+                  {angles.map((a) => (
+                    <option key={a.nome} value={a.nome}>
+                      {a.nome} — {a.formato_sugerido}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  O diretor de arte segue este ângulo e o criativo fica marcado com ele para comparar resultados.
+                </p>
+              </div>
+            )}
+            {campaignBrief?.copy && (
+              <Button size="sm" variant="outline" className="w-full" onClick={applyCampaignCopy}>
+                Usar a copy da campanha no título e na chamada
+              </Button>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="ty">Formato</Label>
@@ -306,6 +373,25 @@ function Studio() {
               <Label htmlFor="ct">Texto sobre o criativo</Label>
               <Textarea id="ct" rows={2} value={form.copyText} onChange={(e) => setForm({ ...form, copyText: e.target.value })} />
             </div>
+            {isVideo && (
+              <div className="space-y-2 rounded-md border border-border/60 p-3 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={videoOpts.useBrandImage} onChange={(e) => setVideoOpts({ ...videoOpts, useBrandImage: e.target.checked })} />
+                  Começar o vídeo pela foto do produto da marca (imagem → vídeo)
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={videoOpts.coverWithLogo} onChange={(e) => setVideoOpts({ ...videoOpts, coverWithLogo: e.target.checked })} />
+                  Gerar capa com logo, título e chamada (custa 1 imagem a mais)
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  As legendas (.srt e .vtt) saem do texto sobre o criativo. O vídeo é gerado em segundo plano: pode fechar a tela.
+                </p>
+                <div className="grid gap-2">
+                  <Input placeholder="Título da capa (curto)" maxLength={120} value={overlay.headline} onChange={(e) => setOverlay({ ...overlay, headline: e.target.value })} />
+                  <Input placeholder="Chamada da capa (ex.: Peça já)" maxLength={40} value={overlay.cta} onChange={(e) => setOverlay({ ...overlay, cta: e.target.value })} />
+                </div>
+              </div>
+            )}
             {!isVideo && (
               <>
                 <div className="grid grid-cols-2 gap-3">
@@ -412,26 +498,30 @@ function Studio() {
                 {c.preview_url && /\.mp4(\?|$)/.test(c.preview_url) ? (
                   <video src={c.preview_url} controls className="aspect-square w-full bg-muted object-cover" />
                 ) : (
-                  <img
-                    src={c.preview_url ?? `https://picsum.photos/seed/${c.id}/600/600`}
-                    alt={c.title}
-                    className="aspect-square w-full object-cover"
-                  />
+                  c.preview_url ? (
+                    <img src={c.preview_url} alt={c.title} className="aspect-square w-full object-cover" />
+                  ) : (
+                    <div className="flex aspect-square w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+                      Sem prévia
+                    </div>
+                  )
                 )}
                 <div className="space-y-2 p-3">
                   <p className="text-sm font-medium">{c.title}</p>
                   <p className="text-xs text-muted-foreground">
                     {FORMATS[c.type] ?? c.type} · v{c.version} · {c.campaigns?.name ?? "sem campanha"}
+                    {(c as { angle?: string | null }).angle ? ` · ângulo: ${(c as { angle?: string | null }).angle}` : ""}
                   </p>
                   <div className="flex items-center justify-between">
                     <StatusPill status={c.status} label={CREATIVE_STATUS[c.status] ?? c.status} />
                     <span className="text-xs text-muted-foreground">{brl(c.real_cost)}</span>
                   </div>
+                  <CreativeExtras extras={(c as { extras?: unknown }).extras} creativeId={c.id} isVideo={!!c.preview_url && /\.mp4(\?|$)/.test(c.preview_url)} />
                   {canEdit && (
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       <Button size="sm" variant="outline" onClick={() => setStatus(c.id, "approved")}>Aprovar</Button>
                       <Button size="sm" variant="ghost" onClick={() => setStatus(c.id, "rejected")}>Rejeitar</Button>
-                      <Button size="sm" variant="ghost" onClick={() => newVersion(c.id)}>Nova versão</Button>
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => newVersion(c.id)}>Nova versão</Button>
                     </div>
                   )}
                 </div>
@@ -462,3 +552,37 @@ const PROVIDER_LABEL: Record<string, string> = {
   gemini: "Gemini",
   mock: "Simulado",
 };
+
+/** Capa, legendas e pacote para CapCut de um criativo de vídeo. */
+function CreativeExtras({ extras, creativeId, isVideo }: { extras: unknown; creativeId: string; isVideo: boolean }) {
+  const pack = useServerFn(capcutPackage);
+  const [busy, setBusy] = useState(false);
+  const e = (extras ?? {}) as { cover_url?: string; captions_vtt?: string; captions_srt?: string; errors?: string[] };
+  if (!isVideo) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {e.cover_url && <a className="text-primary underline" href={e.cover_url} target="_blank" rel="noopener noreferrer">Capa</a>}
+      {e.captions_srt && <a className="text-primary underline" href={e.captions_srt} target="_blank" rel="noopener noreferrer">Legendas .srt</a>}
+      {e.captions_vtt && <a className="text-primary underline" href={e.captions_vtt} target="_blank" rel="noopener noreferrer">Legendas .vtt</a>}
+      <button
+        type="button"
+        className="text-primary underline disabled:opacity-50"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await pack({ data: { creativeId } });
+            window.open(r.url, "_blank");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Não foi possível montar o pacote.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "Montando…" : "Pacote para CapCut (.zip)"}
+      </button>
+      {!!e.errors?.length && <span className="text-destructive">{e.errors.join(" · ")}</span>}
+    </div>
+  );
+}

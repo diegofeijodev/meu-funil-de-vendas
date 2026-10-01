@@ -26,7 +26,7 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
       },
 
       POST: async ({ request, params }) => {
-        const { integrationByToken, verifyMetaSignature, logEvent, touchIntegration } = await import(
+        const { integrationByToken, verifyMetaSignatureFor, claimEvent, finishEvent, touchIntegration } = await import(
           "@/lib/crm/integrations.server"
         );
         const { handleInbound, applyStatusUpdate } = await import("@/lib/crm/whatsapp.server");
@@ -36,7 +36,7 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
         if (!integration) return new Response("Not found", { status: 404 });
 
         if (integration.provider === "whatsapp_cloud") {
-          if (!verifyMetaSignature(raw, request.headers.get("x-hub-signature-256"))) {
+          if (!(await verifyMetaSignatureFor(raw, request.headers.get("x-hub-signature-256"), integration.workspace_id))) {
             console.error("[whatsapp] assinatura inválida");
             return new Response("Invalid signature", { status: 401 });
           }
@@ -67,6 +67,8 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
                   type: normalizeType(m.type),
                   body: m.text?.body ?? m.button?.text ?? m[m.type ?? ""]?.caption ?? null,
                   mediaUrl: null,
+                  mediaId: m[m.type ?? ""]?.id ?? null,
+                  mimeType: m[m.type ?? ""]?.mime_type ?? null,
                   referral: m.referral
                     ? {
                         adId: m.referral.source_id ?? null,
@@ -111,19 +113,21 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
         }
 
         for (const msg of inbound) {
-          const fresh = await logEvent({
+          const eventId = await claimEvent({
             workspaceId: integration.workspace_id,
             source: "whatsapp_message",
             externalId: msg.externalId,
             payload: msg as unknown,
           });
-          if (!fresh) continue;
+          if (!eventId) continue;
           try {
             await handleInbound(integration, msg);
+            await finishEvent(eventId, null);
             await touchIntegration(integration.id, { status: "connected", last_error: null });
           } catch (err) {
             const detail = err instanceof Error ? err.message : "erro desconhecido";
             console.error("[whatsapp] falha ao processar mensagem:", detail);
+            await finishEvent(eventId, detail);
             await touchIntegration(integration.id, { status: "error", last_error: detail });
           }
         }
@@ -140,7 +144,7 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
 
 type CloudValue = {
   contacts?: { wa_id?: string; profile?: { name?: string } }[];
-  messages?: (Record<string, { caption?: string } | undefined> & {
+  messages?: (Record<string, { caption?: string; id?: string; mime_type?: string } | undefined> & {
     id?: string;
     from?: string;
     type?: string;

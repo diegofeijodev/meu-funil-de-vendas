@@ -28,6 +28,7 @@ export type PipelineInput = {
   text: { title?: string | null; price?: string | null; cta?: string | null };
   title: string;
   campaignId?: string | null;
+  angle?: string | null;
   igPostId?: string | null;
   createdBy?: string | null;
   /** Reescreve a direção de arte a partir do motivo do crítico. */
@@ -104,6 +105,7 @@ export async function runImagePipeline(inp: PipelineInput): Promise<PipelineResu
           cost: r.cost,
           brandId: inp.brand?.id ?? null,
           campaignId: inp.campaignId ?? null,
+          angle: inp.angle ?? null,
           igPostId: inp.igPostId ?? null,
           createdBy: inp.createdBy ?? null,
         });
@@ -185,6 +187,7 @@ export async function runImagePipeline(inp: PipelineInput): Promise<PipelineResu
         provider: inp.provider.id,
         brandId: inp.brand?.id ?? null,
         campaignId: inp.campaignId ?? null,
+        angle: inp.angle ?? null,
         igPostId: inp.igPostId ?? null,
         parentId: win.asset.id,
         createdBy: inp.createdBy ?? null,

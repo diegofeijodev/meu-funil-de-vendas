@@ -20,11 +20,15 @@ export type McpConnectionRow = {
   oauth_resource: string | null;
 };
 
-/** Busca a conexão do workspace e renova o token quando estiver perto de expirar. */
+/**
+ * Busca a conexão do workspace e renova o token quando estiver perto de expirar.
+ * 7.1 Sem conexão própria ativa, usa a da empresa de onde esta herda as IAs (conexão da agência).
+ */
 export async function getLiveConnection(
   supabase: SupabaseClient<any, any, any>,
   workspaceId: string,
   provider: string,
+  inherited = false,
 ): Promise<McpConnectionRow | null> {
   const { data } = await supabase
     .from("mcp_connections")
@@ -32,6 +36,15 @@ export async function getLiveConnection(
     .eq("workspace_id", workspaceId)
     .eq("provider", provider)
     .maybeSingle();
+  if ((!data || (data as McpConnectionRow).status !== "connected") && !inherited) {
+    const { inheritSource } = await import("./ai-keys.server");
+    const source = await inheritSource(workspaceId);
+    if (source) {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const shared = await getLiveConnection(supabaseAdmin as never, source, provider, true);
+      if (shared?.status === "connected") return shared;
+    }
+  }
   if (!data) return null;
   let conn = data as McpConnectionRow;
 

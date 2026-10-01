@@ -60,7 +60,7 @@ export function createHiggsfieldProvider(opts: {
     const jobId = extractJobId(`${out.structured ?? ""}\n${out.text}`);
     if (!jobId) throw new Error("O Higgsfield não confirmou a geração.");
 
-    const deadline = Date.now() + MAX_WAIT_MS;
+    const deadline = Date.now() + (req.maxWaitMs ?? MAX_WAIT_MS);
     while (Date.now() < deadline) {
       const s = await status(jobId);
       if (s.url && ["completed", "complete", "succeeded", "success", "done", "ready", ""].includes(s.st)) {

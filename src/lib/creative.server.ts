@@ -8,7 +8,6 @@ import { createHiggsfieldProvider } from "./providers/higgsfield.server";
 import { createChatgptProvider, createGeminiProvider } from "./providers/lovable-ai.server";
 import { getWorkspaceAiKey } from "./ai-keys.server";
 import {
-  mockServerProvider,
   type CreativeKind,
   type GenerationResult,
   type ServerCreativeProvider,
@@ -172,9 +171,10 @@ export async function resolveProvider(supabase: DB, workspaceId: string, choice:
   if (higgs) list.push(higgs);
   if (gKey) list.push(createGeminiProvider(gKey, { strict: true }));
   if (oKey) list.push(createChatgptProvider(oKey, { strict: true }));
-  if (!list.length) return mockServerProvider;
-  const app = createGeminiProvider(null);
-  list.push({ ...app, label: "Créditos de IA do app" });
+  // Sem conexões próprias: créditos de IA do app. Nunca cai no gerador simulado (foto aleatória).
+  const app: ServerCreativeProvider = { ...createGeminiProvider(null), label: "Créditos de IA do app" };
+  if (!list.length) return app;
+  list.push(app);
   return chainProviders(list);
 }
 
@@ -200,6 +200,11 @@ export type RunGenerationInput = {
   existingCreativeId?: string | null;
   providerChoice?: ProviderChoice;
   targetFormat?: string | null | undefined;
+  angle?: string | null | undefined;
+  /** Vídeo: começa pela foto real do produto/marca (imagem → vídeo). Padrão: sim, se houver foto. */
+  useBrandImage?: boolean | undefined;
+  /** Vídeo: capa com logo/CTA e legendas (persistido no job para o cron). */
+  videoOptions?: { coverWithLogo?: boolean; headline?: string | null; cta?: string | null; captionText?: string | null } | null | undefined;
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
@@ -233,12 +238,24 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
     .eq("id", input.jobId);
 
   try {
-    const req = {
+    const req: import("./providers/creative-provider.server").GenerationRequest = {
       finalPrompt: input.finalPrompt,
       aspectRatio: input.aspectRatio,
       kind: input.kind,
       brandContext: input.brandContext,
     };
+    if (input.kind === "video" && !injected) {
+      // Vídeo em segundo plano: espera até 25 s; se não terminar, o cron conclui e o criativo aparece sozinho.
+      req.maxWaitMs = 25_000;
+      if (input.useBrandImage !== false && input.brandId) {
+        const { loadBrandRefs } = await import("./creative/refs.server");
+        const refs = await loadBrandRefs(input.brandId, { max: 1 }).catch(() => []);
+        if (refs.length) {
+          req.referenceImages = refs.map((r) => ({ bytes: r.bytes, mime: r.mime }));
+          req.referenceUrls = refs.map((r) => r.url);
+        }
+      }
+    }
     const result =
       input.kind === "video" ? await provider.generateVideo(req) : await provider.generateImage(req);
     await supabase
@@ -283,6 +300,7 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
           cost: result.cost,
           brandId: input.brandId,
           campaignId: input.campaignId,
+          angle: input.angle ?? null,
         });
         assetId = asset.id;
         result.assetUrl = asset.url;
@@ -332,16 +350,49 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
           thumbnail_url: result.thumbnailUrl,
           external_job_id: result.externalJobId,
           version: 1,
-        })
+          angle: input.angle ?? null,
+        } as never)
         .select("id")
         .single();
       if (error) throw new Error(error.message);
-      creativeId = created.id;
+      creativeId = (created as { id: string }).id;
     }
 
     if (assetId) {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       await supabaseAdmin.from("media_assets" as never).update({ creative_id: creativeId } as never).eq("id", assetId);
+    }
+
+    // 4.2 Vídeo pronto: legendas (.vtt/.srt) e, se pedido, capa com logo e CTA.
+    if (input.kind === "video" && creativeId) {
+      try {
+        const opts = input.videoOptions ?? {};
+        const { buildVideoExtras } = await import("./creative/video-extras.server");
+        const { data: brandRow } = input.brandId
+          ? await supabase.from("brands").select("id, primary_color, secondary_color").eq("id", input.brandId).maybeSingle()
+          : { data: null };
+        const coverProvider = opts.coverWithLogo
+          ? await resolveProvider(supabase, input.workspaceId, choiceForProvider(provider.id)).catch(() => null)
+          : null;
+        const extras = await buildVideoExtras({
+          workspaceId: input.workspaceId,
+          brand: brandRow as never,
+          provider: coverProvider,
+          visualPrompt: input.finalPrompt,
+          aspectRatio: input.aspectRatio,
+          durationSec: provider.id === "higgsfield" ? 10 : 8,
+          headline: opts.headline ?? null,
+          cta: opts.cta ?? null,
+          captionText: opts.captionText ?? input.copyText ?? null,
+          videoAssetId: assetId,
+          campaignId: input.campaignId,
+          title: input.title,
+          withCover: !!opts.coverWithLogo,
+        });
+        await supabase.from("creatives").update({ extras } as never).eq("id", creativeId);
+      } catch (e) {
+        console.error("[video-extras] falhou", errMessage(e));
+      }
     }
 
     await supabase.from("creative_versions").insert({
@@ -451,6 +502,7 @@ export async function pollPendingCreatives(supabase: DB) {
         kind,
         brandContext: {},
         existingCreativeId: job.creative_id,
+        videoOptions: (job.options ?? null) as RunGenerationInput["videoOptions"],
       });
       out.push({ job: job.id, status: res.status });
     } catch (e) {
@@ -486,6 +538,9 @@ export type ArtInput = {
   headline?: string | null | undefined;
   price?: string | null | undefined;
   cta?: string | null | undefined;
+  angle?: string | null | undefined;
+  useBrandImage?: boolean | undefined;
+  coverWithLogo?: boolean | undefined;
   userId: string;
 };
 
@@ -503,10 +558,14 @@ export async function directArt(supabase: DB, input: Omit<ArtInput, "layout" | "
         .in("kind", ["reference", "photo"])
         .eq("tag", "produto")
     : { count: 0 };
+  // A estratégia aprovada da campanha (big idea, ângulo, direção visual) orienta o diretor de arte.
+  const { currentStrategy, strategyBrief } = await import("./ai/strategist.server");
+  const strategy = strategyBrief(await currentStrategy(supabase, input.campaign?.id), input.angle);
   const brief = {
     workspaceId: input.workspaceId,
     brand: input.brand,
     campaign: input.campaign,
+    strategy,
     products: products ?? [],
     theme: input.title,
     hook: input.copyText || null,
@@ -533,6 +592,10 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
   const provider = await resolveProvider(supabase, input.workspaceId, input.providerChoice);
   const { ad, brief } = await directArt(supabase, input, provider.id);
   const finalPrompt = providerPrompt(ad);
+  const videoOptions =
+    input.kind === "video"
+      ? { coverWithLogo: !!input.coverWithLogo, headline: input.headline ?? null, cta: input.cta ?? null, captionText: input.copyText || null }
+      : null;
   const { data: job, error: jobError } = await supabase
     .from("creative_generation_jobs")
     .insert({
@@ -546,7 +609,8 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
       aspect_ratio: input.aspectRatio,
       status: "generating",
       created_by: input.userId,
-    })
+      options: videoOptions,
+    } as never)
     .select()
     .single();
   if (jobError) throw new Error(jobError.message);
@@ -566,6 +630,9 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
     kind: input.kind,
     brandContext: { art_direction: ad },
     providerChoice: input.providerChoice,
+    angle: input.angle ?? null,
+    useBrandImage: input.useBrandImage,
+    videoOptions,
   };
 
   // Vídeo e simulado: só o prompt do diretor de arte, fluxo de sempre.
@@ -593,6 +660,7 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
       text: { title: input.headline ?? input.copyText ?? null, price: input.price ?? null, cta: input.cta ?? null },
       title: base.title,
       campaignId: base.campaignId,
+      angle: input.angle ?? null,
       createdBy: input.userId,
       rebuild: (motivo) =>
         buildVisualPrompt({ ...brief, previousPrompt: ad.prompt_final, adjust: `Corrija este problema apontado pelo crítico: ${motivo}` }),
@@ -621,7 +689,8 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
         preview_url: res.finalUrl,
         thumbnail_url: res.finalThumb,
         version: 1,
-      })
+        angle: input.angle ?? null,
+      } as never)
       .select("id")
       .single();
     if (error) throw new Error(error.message);

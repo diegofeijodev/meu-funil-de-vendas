@@ -11,8 +11,8 @@ import {
   isOptOut,
   normalizePhone,
   pickOwner,
-  secret,
   startCadence,
+  workspaceSecret,
   type Integration,
 } from "./integrations.server";
 
@@ -44,8 +44,8 @@ export interface WhatsAppProvider {
 const cloudProvider: WhatsAppProvider = {
   name: "whatsapp_cloud",
   async send(integration, message) {
-    const token = secret("WHATSAPP_CLOUD_TOKEN");
-    if (!token) throw new Error("WHATSAPP_CLOUD_TOKEN ausente");
+    const token = await workspaceSecret(integration.workspace_id, "WHATSAPP_CLOUD_TOKEN");
+    if (!token) throw new Error("Token do WhatsApp (WHATSAPP_CLOUD_TOKEN) não configurado");
     const phoneNumberId = String((integration.config as Record<string, unknown>)["phone_number_id"] ?? "");
     if (!phoneNumberId) throw new Error("phone_number_id não configurado");
 
@@ -94,8 +94,8 @@ const cloudProvider: WhatsAppProvider = {
     return { externalId: json.messages?.[0]?.id ?? null };
   },
   async listTemplates(integration) {
-    const token = secret("WHATSAPP_CLOUD_TOKEN");
-    if (!token) throw new Error("WHATSAPP_CLOUD_TOKEN ausente");
+    const token = await workspaceSecret(integration.workspace_id, "WHATSAPP_CLOUD_TOKEN");
+    if (!token) throw new Error("Token do WhatsApp (WHATSAPP_CLOUD_TOKEN) não configurado");
     const wabaId = String((integration.config as Record<string, unknown>)["waba_id"] ?? "");
     if (!wabaId) throw new Error("waba_id não configurado");
     const res = await fetch(`${GRAPH}/${wabaId}/message_templates?limit=100`, {
@@ -123,6 +123,15 @@ const cloudProvider: WhatsAppProvider = {
 
 /* --------------------------- Z-API / Evolution -------------------------- */
 
+/** Texto final de uma mensagem (template sem API oficial: corpo com {{1}}, {{2}}... preenchidos). */
+function templateText(message: OutgoingMessage) {
+  let text = message.body ?? "";
+  (message.templateParams ?? []).forEach((v, i) => {
+    text = text.split(`{{${i + 1}}}`).join(v);
+  });
+  return text;
+}
+
 function unofficialBase(integration: Integration) {
   const cfg = integration.config as Record<string, unknown>;
   const base = String(cfg["base_url"] ?? "").replace(/\/$/, "");
@@ -133,13 +142,15 @@ function unofficialBase(integration: Integration) {
 const zapiProvider: WhatsAppProvider = {
   name: "zapi",
   async send(integration, message) {
-    const token = secret("ZAPI_TOKEN");
-    if (!token) throw new Error("ZAPI_TOKEN ausente");
+    const token = await workspaceSecret(integration.workspace_id, "ZAPI_TOKEN");
+    if (!token) throw new Error("Client-Token da Z-API (ZAPI_TOKEN) não configurado");
     const base = unofficialBase(integration);
-    const path = message.kind === "text" ? "send-text" : message.kind === "image" ? "send-image" : "send-audio";
+    // Z-API não tem templates oficiais: template vira texto com o corpo já preenchido.
+    const asText = message.kind === "text" || message.kind === "template";
+    const path = asText ? "send-text" : message.kind === "image" ? "send-image" : "send-audio";
     const body =
-      message.kind === "text"
-        ? { phone: message.to.replace(/\D/g, ""), message: message.body ?? "" }
+      asText
+        ? { phone: message.to.replace(/\D/g, ""), message: templateText(message) }
         : { phone: message.to.replace(/\D/g, ""), [message.kind]: message.mediaUrl, caption: message.body ?? "" };
     const res = await fetch(`${base}/${path}`, {
       method: "POST",
@@ -160,16 +171,17 @@ const zapiProvider: WhatsAppProvider = {
 const evolutionProvider: WhatsAppProvider = {
   name: "evolution",
   async send(integration, message) {
-    const key = secret("EVOLUTION_API_KEY");
-    if (!key) throw new Error("EVOLUTION_API_KEY ausente");
+    const key = await workspaceSecret(integration.workspace_id, "EVOLUTION_API_KEY");
+    if (!key) throw new Error("Chave da Evolution API (EVOLUTION_API_KEY) não configurada");
     const base = unofficialBase(integration);
     const instance = String((integration.config as Record<string, unknown>)["instance"] ?? "");
     if (!instance) throw new Error("instance não configurada");
     const number = message.to.replace(/\D/g, "");
-    const path = message.kind === "text" ? `/message/sendText/${instance}` : `/message/sendMedia/${instance}`;
+    const asText = message.kind === "text" || message.kind === "template";
+    const path = asText ? `/message/sendText/${instance}` : `/message/sendMedia/${instance}`;
     const body =
-      message.kind === "text"
-        ? { number, text: message.body ?? "" }
+      asText
+        ? { number, text: templateText(message) }
         : { number, mediatype: message.kind, media: message.mediaUrl, caption: message.body ?? "" };
     const res = await fetch(`${base}${path}`, {
       method: "POST",
@@ -310,6 +322,9 @@ export type InboundMessage = {
   type: "text" | "image" | "audio" | "video" | "document" | "sticker" | "other";
   body: string | null;
   mediaUrl?: string | null;
+  /** API oficial: id da mídia para baixar com o token. */
+  mediaId?: string | null;
+  mimeType?: string | null;
   referral?: { adId?: string | null; campaignName?: string | null; sourceUrl?: string | null } | null;
 };
 
@@ -364,6 +379,21 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
   const leadId = lead["id"] as string;
   const conversation = await ensureConversation({ integration, phone, waId: msg.waId ?? null, leadId });
 
+  // Mídia da API oficial chega como id: baixa e guarda para aparecer na conversa e para o SDR entender.
+  let mediaFile: { bytes: Uint8Array; mime: string } | null = null;
+  if (!msg.mediaUrl && msg.mediaId && integration.provider === "whatsapp_cloud") {
+    try {
+      const token = await workspaceSecret(integration.workspace_id, "WHATSAPP_CLOUD_TOKEN");
+      if (token) {
+        const { downloadWhatsAppCloudMedia, storeCrmMedia } = await import("./media-understanding.server");
+        mediaFile = await downloadWhatsAppCloudMedia(token, msg.mediaId);
+        msg.mediaUrl = await storeCrmMedia(integration.workspace_id, mediaFile.bytes, mediaFile.mime);
+      }
+    } catch (e) {
+      console.error("[whatsapp] mídia não baixada:", e instanceof Error ? e.message : e);
+    }
+  }
+
   await db.from("crm_messages").insert({
     workspace_id: integration.workspace_id,
     conversation_id: conversation["id"] as string,
@@ -417,7 +447,12 @@ export async function handleInbound(integration: Integration, msg: InboundMessag
 
   const conversationId = conversation["id"] as string;
   if (!patch["unsubscribed"]) {
-    await triggerSdrAgent(integration, leadId, conversationId, msg.body ?? "");
+    let text = msg.body ?? "";
+    if (!text.trim() && (msg.type === "audio" || msg.type === "image") && (mediaFile || msg.mediaUrl)) {
+      const { describeMedia } = await import("./media-understanding.server");
+      text = await describeMedia(integration.workspace_id, mediaFile ?? msg.mediaUrl!, msg.type).catch(() => "");
+    }
+    await triggerSdrAgent(integration, leadId, conversationId, text);
   }
 
   return { leadId, conversationId };

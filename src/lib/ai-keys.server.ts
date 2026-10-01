@@ -8,30 +8,26 @@ const slot = (vendor: AiVendor, workspaceId: string) =>
   `AI_${vendor.toUpperCase()}_KEY:${workspaceId}`;
 
 export async function getWorkspaceAiKey(workspaceId: string, vendor: AiVendor): Promise<string | null> {
+  const { readCredential } = await import("./credentials.server");
+  const own = await readCredential(null, slot(vendor, workspaceId));
+  if (own) return own;
+  // 7.1 Conexões da agência: empresa configurada para herdar as IAs de outra empresa.
+  const source = await inheritSource(workspaceId);
+  return source ? readCredential(null, slot(vendor, source)) : null;
+}
+
+/** Empresa de onde esta herda as conexões de IA (1 nível). */
+export async function inheritSource(workspaceId: string): Promise<string | null> {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data } = await supabaseAdmin
-    .from("app_credentials")
-    .select("value")
-    .eq("key", slot(vendor, workspaceId))
-    .is("workspace_id" as never, null)
-    .maybeSingle();
-  return data?.value?.trim() || null;
+  const { data } = await supabaseAdmin.from("workspaces").select("ai_inherit_from").eq("id", workspaceId).maybeSingle();
+  const src = (data as { ai_inherit_from?: string | null } | null)?.ai_inherit_from ?? null;
+  return src && src !== workspaceId ? src : null;
 }
 
 export async function setWorkspaceAiKey(workspaceId: string, vendor: AiVendor, value: string | null) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  if (!value) {
-    const { error } = await supabaseAdmin.from("app_credentials").delete().eq("key", slot(vendor, workspaceId)).is("workspace_id" as never, null);
-    if (error) throw new Error(error.message);
-    return;
-  }
-  const { error } = await supabaseAdmin
-    .from("app_credentials")
-    .upsert(
-      { key: slot(vendor, workspaceId), value, updated_at: new Date().toISOString() } as never,
-      { onConflict: "workspace_id,key" },
-    );
-  if (error) throw new Error(error.message);
+  const { writeCredentials, deleteCredential } = await import("./credentials.server");
+  if (!value) return deleteCredential(null, slot(vendor, workspaceId));
+  await writeCredentials(null, { [slot(vendor, workspaceId)]: value });
 }
 
 export async function testAiKey(vendor: AiVendor, key: string): Promise<{ ok: boolean; error?: string }> {

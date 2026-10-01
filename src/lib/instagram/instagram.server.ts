@@ -377,7 +377,15 @@ async function libraryItem(
   const { ingestAsset } = await import("@/lib/media/assets.server");
   const { targetForIgFormat } = await import("@/lib/media/formats");
   const video = src.mime ? src.mime.startsWith("video/") : isVideo(post.format as IgFormat);
+  // 6.1 Toda mídia do Instagram fica ligada à marca do plano.
+  let brandId: string | null = post._brandId ?? null;
+  if (!brandId && post.plan_id) {
+    const { data: plan } = await (await db()).from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle();
+    brandId = (plan?.brand_id as string | null) ?? null;
+    post._brandId = brandId;
+  }
   const a = await ingestAsset({
+    brandId,
     workspaceId: post.workspace_id,
     kind: video ? "video" : "image",
     targetFormat: targetForIgFormat(post.format),
@@ -466,10 +474,17 @@ async function continueAssets(
     if (r.status !== "ready" || !r.assetUrl)
       throw new Error("O provedor não devolveu a mídia pronta.");
     cost += r.cost;
-    media = [
-      ...media,
-      await libraryItem(post, { sourceUrl: r.assetUrl }, i, provider.id, req.finalPrompt, r.cost),
-    ];
+    const composed = format === "feed_carousel" ? await composeSlide(post, r.assetUrl, i, prompts.length) : null;
+    const item = await libraryItem(
+      post,
+      composed ? { bytes: composed, mime: "image/jpeg" } : { sourceUrl: r.assetUrl },
+      i,
+      provider.id,
+      req.finalPrompt,
+      r.cost,
+    );
+    if (isVideo(format)) Object.assign(item, await videoCover(post, provider, req.finalPrompt, item.asset_id));
+    media = [...media, item];
   }
   const { data: plan } = post.plan_id
     ? await s
@@ -495,6 +510,73 @@ async function continueAssets(
   return { ok: true, items: media.length, provider: provider.id };
 }
 
+async function brandOfPost(post: any) {
+  if (post._brandId === undefined && post.plan_id) {
+    const { data: plan } = await (await db()).from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle();
+    post._brandId = (plan?.brand_id as string | null) ?? null;
+  }
+  return post._brandId ? brandFor(post._brandId) : null;
+}
+
+/** 5.3 Texto e logo aplicados por cima nos slides do carrossel (gancho no 1º, CTA no último, logo em todos). */
+async function composeSlide(post: any, url: string, index: number, total: number): Promise<Uint8Array | null> {
+  if (post.creative_brief?.compose === false) return null;
+  try {
+    const brand = await brandOfPost(post);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const image = new Uint8Array(await res.arrayBuffer());
+    const { loadFont, loadLogo } = await import("@/lib/creative/refs.server");
+    const { composeCreative } = await import("@/lib/creative/compose.server");
+    const [font, logo] = await Promise.all([loadFont(brand?.id ?? null), loadLogo(brand?.id ?? null)]);
+    const first = index === 0;
+    const last = index === total - 1 && total > 1;
+    const slideText = (post.creative_brief?.slide_texts as string[] | undefined)?.[index] ?? null;
+    return await composeCreative({
+      image,
+      aspectRatio: ASPECT[post.format as IgFormat],
+      layout: last ? "cta_rodape" : first || slideText ? "titulo_topo" : "limpo",
+      title: first ? (post.hook ?? post.theme ?? null) : slideText,
+      cta: last ? (post.cta ?? null) : null,
+      logo,
+      font,
+      primary: brand?.primary_color ?? null,
+      secondary: brand?.secondary_color ?? null,
+    });
+  } catch (e) {
+    console.warn("[instagram] composição do slide falhou:", errMsg(e));
+    return null;
+  }
+}
+
+/** 5.3 Reels/Stories em vídeo: capa com logo, gancho e CTA (usada como capa do Reels). */
+async function videoCover(post: any, provider: Awaited<ReturnType<typeof resolveProvider>>, prompt: string, assetId: string | null) {
+  if (post.creative_brief?.compose === false) return {};
+  try {
+    const brand = await brandOfPost(post);
+    const { buildVideoExtras } = await import("@/lib/creative/video-extras.server");
+    const x = await buildVideoExtras({
+      workspaceId: post.workspace_id,
+      brand: brand as never,
+      provider,
+      visualPrompt: prompt,
+      aspectRatio: "9:16",
+      durationSec: 8,
+      headline: post.hook ?? post.theme ?? null,
+      cta: post.cta ?? null,
+      captionText: post.hook ?? null,
+      videoAssetId: assetId,
+      campaignId: null,
+      title: post.theme ?? "Reels",
+      withCover: true,
+    });
+    return { cover_url: x.cover_url ?? null, captions_srt: x.captions_srt ?? null };
+  } catch (e) {
+    console.warn("[instagram] capa do vídeo falhou:", errMsg(e));
+    return {};
+  }
+}
+
 export async function generatePostAssets(
   workspaceId: string,
   postId: string,
@@ -509,6 +591,7 @@ export async function generatePostAssets(
     ? await s.from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle()
     : { data: null as any };
   const brand = await brandFor(plan?.brand_id ?? null);
+  post._brandId = brand?.id ?? null;
   await patchPost(postId, { status: "generating", last_error: null });
   try {
     const provider = await resolveProvider(s as any, workspaceId, providerChoice);
@@ -841,6 +924,10 @@ function fullCaption(post: any) {
 export class RateLimited extends Error {}
 export class Guardrail extends Error {}
 
+/** Mídia do gerador simulado (picsum) ou marcada como mock — nunca vai ao ar. */
+export const isMockMedia = (m: { url?: string | null; provider?: string | null; source?: string | null }) =>
+  m.provider === "mock" || m.source === "mock" || /picsum\.photos/i.test(m.url ?? "");
+
 /** Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). */
 async function assertPublicUrl(url: string) {
   if (!/^https:\/\//i.test(url ?? "")) throw new Guardrail("Mídia sem URL pública válida (HTTPS).");
@@ -890,8 +977,10 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
   if (assetIds.length) {
     const { data: assets } = await s
       .from("media_assets" as never)
-      .select("id, ig_ready, quality_report")
+      .select("id, ig_ready, quality_report, provider, source, url")
       .in("id", assetIds);
+    if (((assets ?? []) as any[]).some(isMockMedia))
+      throw new Guardrail("Mídia simulada (sem IA real) não pode ser publicada. Gere a mídia de novo com um provedor conectado.");
     const bad = ((assets ?? []) as any[]).find((a) => !a.ig_ready);
     if (bad)
       throw new Guardrail(
@@ -902,6 +991,9 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
     if (bad)
       throw new Guardrail(`Mídia fora do padrão do Instagram: ${(bad.issues ?? []).join(" ")}`);
   }
+  // Guardrail: nunca publicar imagem simulada (foto aleatória de banco de imagens).
+  if (media.some(isMockMedia))
+    throw new Guardrail("Mídia simulada (sem IA real) não pode ser publicada. Gere a mídia de novo com um provedor conectado.");
   // Guardrail: toda mídia precisa de URL pública válida.
   for (const m of media) await assertPublicUrl(m.url);
 
@@ -913,17 +1005,9 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
     return finishPublish(postId, acc.ig_user_id as string, post.ig_creation_id, deadline);
   }
 
-  if (!acc) {
-    const fake = `sim_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    await patchPost(postId, {
-      status: "published",
-      published_at: new Date().toISOString(),
-      ig_media_id: fake,
-      ig_permalink: null,
-      last_error: null,
-    });
-    return { ok: true, sandbox: true };
-  }
+  // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
+  if (!acc)
+    throw new Guardrail("Nenhuma conta do Instagram conectada nesta empresa. Conecte em Instagram → Visão geral e agende de novo.");
 
   const ig = acc.ig_user_id as string;
   const limit = await graph<{ data?: { quota_usage?: number }[] }>(
@@ -967,7 +1051,13 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
     creationId = (
       await graph<{ id: string }>(`/${ig}/media`, {
         method: "POST",
-        params: { media_type: "REELS", video_url: media[0].url, caption, share_to_feed: "true" },
+        params: {
+          media_type: "REELS",
+          video_url: media[0].url,
+          caption,
+          share_to_feed: "true",
+          ...(media[0].cover_url ? { cover_url: media[0].cover_url } : {}),
+        },
       })
     ).id;
   } else {
@@ -1008,12 +1098,17 @@ async function finishPublish(postId: string, ig: string, creationId: string, dea
 
 /* ---------------- Métricas ---------------- */
 
+// Métricas atuais da Graph API (v22+): impressions/plays/exits foram descontinuadas; "views" substitui.
 const METRICS: Record<IgFormat, string[]> = {
-  reel: ["plays", "reach", "likes", "comments", "saved", "shares"],
-  feed_image: ["impressions", "reach", "saved", "likes", "comments", "shares"],
-  feed_carousel: ["impressions", "reach", "saved", "likes", "comments", "shares"],
-  story_image: ["reach", "impressions", "exits", "replies"],
-  story_video: ["reach", "impressions", "exits", "replies"],
+  reel: ["views", "reach", "likes", "comments", "saved", "shares", "total_interactions", "ig_reels_avg_watch_time"],
+  feed_image: ["views", "reach", "likes", "comments", "saved", "shares", "total_interactions", "profile_visits"],
+  feed_carousel: ["views", "reach", "likes", "comments", "saved", "shares", "total_interactions"],
+  story_image: ["views", "reach", "replies", "shares", "total_interactions", "navigation"],
+  story_video: ["views", "reach", "replies", "shares", "total_interactions", "navigation"],
+};
+const ESSENTIAL: Record<"story" | "post", string[]> = {
+  story: ["views", "reach", "replies"],
+  post: ["views", "reach", "likes", "comments", "saved", "shares"],
 };
 
 export async function collectPostMetrics(postId: string, label?: string) {
@@ -1023,32 +1118,37 @@ export async function collectPostMetrics(postId: string, label?: string) {
 
 async function metricsInner(postId: string, post: any, label?: string) {
   if (!post.ig_media_id) throw new Error("Post ainda não publicado.");
+  if (String(post.ig_media_id).startsWith("sim_")) throw new Error("Post antigo do modo simulado: não existe no Instagram.");
   const s = await db();
   const values: Record<string, number> = {};
-  let raw: any = { sandbox: true };
-  if (!String(post.ig_media_id).startsWith("sim_")) {
-    const metrics = METRICS[post.format as IgFormat];
-    try {
-      raw = await graph(`/${post.ig_media_id}/insights`, { params: { metric: metrics.join(",") } });
-    } catch {
-      // Métricas antigas (impressions/plays) foram descontinuadas em algumas versões: tenta o conjunto essencial.
-      raw = await graph(`/${post.ig_media_id}/insights`, {
-        params: { metric: "reach,likes,comments,saved,shares,views" },
-      });
+  const story = String(post.format).startsWith("story");
+  let raw: any;
+  try {
+    raw = await graph(`/${post.ig_media_id}/insights`, { params: { metric: METRICS[post.format as IgFormat].join(",") } });
+  } catch {
+    // Alguma métrica não vale para este tipo de mídia/conta: tenta o conjunto essencial.
+    raw = await graph(`/${post.ig_media_id}/insights`, { params: { metric: ESSENTIAL[story ? "story" : "post"].join(",") } });
+  }
+  for (const m of raw?.data ?? []) {
+    if (m.name === "navigation") {
+      // navigation vem quebrado por tipo (avançar, voltar, sair): guarda o total e cada parte.
+      for (const b of m.total_value?.breakdowns?.[0]?.results ?? [])
+        values[`navigation_${String(b.dimension_values?.[0] ?? "").toLowerCase()}`] = Number(b.value ?? 0);
+      values["navigation"] = Number(m.total_value?.value ?? 0);
+      continue;
     }
-    for (const m of raw?.data ?? [])
-      values[m.name] = Number(m.values?.[0]?.value ?? m.total_value?.value ?? 0);
+    values[m.name] = Number(m.values?.[0]?.value ?? m.total_value?.value ?? 0);
   }
   await s.from("ig_post_metrics").insert({
     workspace_id: post.workspace_id,
     post_id: postId,
     reach: values["reach"] ?? null,
-    impressions: values["impressions"] ?? values["views"] ?? null,
+    impressions: values["views"] ?? null,
     likes: values["likes"] ?? null,
-    comments: values["comments"] ?? null,
+    comments: values["comments"] ?? (story ? (values["replies"] ?? null) : null),
     saves: values["saved"] ?? null,
     shares: values["shares"] ?? null,
-    plays: values["plays"] ?? values["views"] ?? null,
+    plays: values["views"] ?? null,
     profile_visits: values["profile_visits"] ?? null,
     raw: { label: label ?? "manual", ...values, response: raw },
   } as never);
@@ -1062,20 +1162,28 @@ const WINDOWS: [string, number][] = [
   ["24h", 24 * 3600e3],
   ["7d", 7 * 24 * 3600e3],
 ];
+// Stories somem em 24 h: coleta com 1 h e com 20 h (antes de expirar).
+const STORY_WINDOWS: [string, number][] = [
+  ["1h", 3600e3],
+  ["20h", 20 * 3600e3],
+];
 
 export async function collectDueMetrics() {
   const s = await db();
   const since = new Date(Date.now() - 8 * 24 * 3600e3).toISOString();
   const { data } = await s
     .from("ig_posts")
-    .select("id, published_at, metrics_collected")
+    .select("id, format, published_at, metrics_collected, ig_media_id")
     .eq("status", "published")
     .gte("published_at", since)
     .limit(200);
   let done = 0;
   for (const p of (data ?? []) as any[]) {
+    if (String(p.ig_media_id ?? "").startsWith("sim_")) continue;
     const age = Date.now() - new Date(p.published_at).getTime();
-    const due = WINDOWS.filter(
+    const story = String(p.format).startsWith("story");
+    if (story && age > 23.5 * 3600e3) continue;
+    const due = (story ? STORY_WINDOWS : WINDOWS).filter(
       ([l, ms]) => age >= ms && !(p.metrics_collected ?? []).includes(l),
     ).pop();
     if (!due) continue;
@@ -1087,6 +1195,89 @@ export async function collectDueMetrics() {
     }
   }
   return done;
+}
+
+/* ---------------- 5.2 Insights da conta ---------------- */
+
+/** Seguidores e métricas diárias da conta (últimos 30 dias), salvos em ig_account_insights. */
+export async function collectAccountInsights(workspaceId: string) {
+  const acc = await liveAccount(workspaceId);
+  if (!acc) return { skipped: "sem conta conectada" };
+  return runWithMetaWorkspace(workspaceId, async () => {
+    const ig = acc.ig_user_id as string;
+    const s = await db();
+    const profile = await graph<{ followers_count?: number; follows_count?: number; media_count?: number; username?: string }>(`/${ig}`, {
+      params: { fields: "followers_count,follows_count,media_count,username" },
+    });
+    const until = Math.floor(Date.now() / 1000);
+    const since = until - 29 * 86400;
+    const daily: Record<string, Record<string, number>> = {};
+    // reach e follower_count são séries diárias; views/profile_views/website_clicks vêm por dia com total_value.
+    const series = await graph<{ data?: any[] }>(`/${ig}/insights`, {
+      params: { metric: "reach,follower_count", period: "day", since, until },
+    }).catch(() => ({ data: [] as any[] }));
+    for (const m of series.data ?? [])
+      for (const v of m.values ?? []) {
+        const d = String(v.end_time ?? "").slice(0, 10);
+        if (!d) continue;
+        daily[d] = { ...(daily[d] ?? {}), [m.name]: Number(v.value ?? 0) };
+      }
+    // Métricas de total por dia: 1 chamada por dia e métrica, então só os dias que ainda faltam (máx. 7).
+    const { count: have } = await s
+      .from("ig_account_insights" as never)
+      .select("date", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId);
+    const backDays = (have ?? 0) > 0 ? 2 : 7;
+    for (const metric of ["views", "profile_views", "website_clicks", "accounts_engaged", "total_interactions"]) {
+      for (let day = 0; day < backDays; day += 1) {
+        const dSince = until - (backDays - day) * 86400;
+        const r = await graph<{ data?: any[] }>(`/${ig}/insights`, {
+          params: { metric, period: "day", metric_type: "total_value", since: dSince, until: dSince + 86400 },
+        }).catch(() => null);
+        const val = r?.data?.[0]?.total_value?.value;
+        if (val === undefined) {
+          if (day === 0) break; // métrica indisponível nesta conta
+          continue;
+        }
+        const d = new Date((dSince + 86400) * 1000).toISOString().slice(0, 10);
+        daily[d] = { ...(daily[d] ?? {}), [metric]: Number(val) };
+      }
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    daily[today] = { ...(daily[today] ?? {}), followers_total: Number(profile.followers_count ?? 0) };
+    const rows = Object.entries(daily).map(([date, v]) => ({
+      workspace_id: workspaceId,
+      date,
+      followers_total: v["followers_total"] ?? null,
+      new_followers: v["follower_count"] ?? null,
+      reach: v["reach"] ?? null,
+      views: v["views"] ?? null,
+      profile_views: v["profile_views"] ?? null,
+      website_clicks: v["website_clicks"] ?? null,
+      accounts_engaged: v["accounts_engaged"] ?? null,
+      interactions: v["total_interactions"] ?? null,
+    }));
+    if (rows.length) {
+      const { error } = await s.from("ig_account_insights" as never).upsert(rows as never, { onConflict: "workspace_id,date" });
+      if (error) throw new Error(error.message);
+    }
+    return { days: rows.length, followers: profile.followers_count ?? null };
+  });
+}
+
+export async function collectAllAccountInsights() {
+  const s = await db();
+  const { data } = await s.from("instagram_accounts").select("workspace_id").eq("status", "connected");
+  const out: { workspace: string; days?: number; error?: string }[] = [];
+  for (const r of (data ?? []) as { workspace_id: string }[]) {
+    try {
+      const x = await collectAccountInsights(r.workspace_id);
+      out.push({ workspace: r.workspace_id, days: (x as { days?: number }).days ?? 0 });
+    } catch (e) {
+      out.push({ workspace: r.workspace_id, error: errMsg(e) });
+    }
+  }
+  return out;
 }
 
 /* ---------------- Fila ---------------- */
@@ -1109,7 +1300,8 @@ export async function runPublishingQueue() {
     .eq("status", "pending")
     .lte("run_at", now)
     .order("run_at")
-    .limit(10);
+    // Poucos por execução: cada publicação pode levar até ~40 s de processamento na Meta.
+    .limit(4);
 
   const results: { job: string; status: string; error?: string }[] = [];
   for (const job of (jobs ?? []) as any[]) {
@@ -1146,9 +1338,7 @@ export async function runPublishingQueue() {
           plan_id: pub.plan_id,
           post_id: pub.id,
           kind: "publish",
-          message: r.sandbox
-            ? "Publicado em modo simulado (sem conta conectada)."
-            : `Publicado no Instagram ${r.permalink ?? ""}`.trim(),
+          message: `Publicado no Instagram ${r.permalink ?? ""}`.trim(),
         });
       results.push({ job: job.id, status: "done" });
     } catch (e) {
@@ -1326,6 +1516,32 @@ export async function syncInstagramHistory(workspaceId: string) {
       if (error) throw new Error(error.message);
       for (const x of (ins ?? []) as any[]) known.set(x.ig_media_id, x.id);
       imported = ins?.length ?? 0;
+      // 6.5 Os posts antigos também entram na Biblioteca (o link do Instagram expira; o arquivo fica salvo).
+      const { ingestAsset } = await import("@/lib/media/assets.server");
+      const { targetForIgFormat } = await import("@/lib/media/formats");
+      for (const i of fresh) {
+        const url = i.media_url ?? i.thumbnail_url;
+        if (!url) continue;
+        try {
+          const format = formatFromMeta(i.media_type, i.media_product_type);
+          const video = i.media_type === "VIDEO" && !!i.media_url;
+          await ingestAsset({
+            workspaceId,
+            kind: video ? "video" : "image",
+            targetFormat: targetForIgFormat(format),
+            source: "instagram",
+            sourceUrl: url,
+            title: String(i.caption ?? "Post do Instagram").split("\n")[0]!.slice(0, 120) || "Post do Instagram",
+            prompt: null,
+            provider: "instagram",
+            igPostId: known.get(i.id) ?? null,
+            normalize: false,
+            status: "approved",
+          });
+        } catch (e) {
+          console.warn("[ig-sync] mídia não foi para a biblioteca", i.id, errMsg(e));
+        }
+      }
     }
     let metrics = 0;
     for (const id of known.values()) {

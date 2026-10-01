@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -21,6 +21,9 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
 import { EmptyState, PageHeader, StatusPill } from "@/components/ui-bits";
+import { ImportFromCanvaButton, SendToCanvaButton } from "@/components/media/canva-buttons";
+import { AssetAdResults, LibraryTexts } from "@/components/media/library-extras";
+import { deleteMediaAssets, renameMediaFolder, renameMediaTag } from "@/lib/media/manage.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +56,8 @@ import {
   useMediaInCampaign,
   useMediaInInstagram,
 } from "@/lib/media/export.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/library")({
   head: () => ({
@@ -106,6 +111,8 @@ type Asset = {
   created_at: string;
   brands: { name: string } | null;
   campaigns: { name: string } | null;
+  creative_id: string | null;
+  angle?: string | null;
 };
 
 const STATUS: Record<string, string> = {
@@ -119,7 +126,9 @@ const SOURCE: Record<string, string> = {
   chatgpt: "ChatGPT",
   gemini: "Gemini",
   upload: "Upload",
-  mock: "Simulado",
+  canva: "Canva",
+  instagram: "Instagram (histórico)",
+  mock: "Simulado (antigo)",
   other: "Outro",
 };
 const PERIODS: Record<string, number> = { "7": 7, "30": 30, "90": 90 };
@@ -153,6 +162,7 @@ function LibraryPage() {
     sort: "new",
   });
   const [picked, setPicked] = useState<string[]>([]);
+  const [view, setView] = useState<"media" | "texts">("media");
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [campaignDialog, setCampaignDialog] = useState(false);
@@ -169,63 +179,105 @@ function LibraryPage() {
     upload: useServerFn(uploadMedia),
     ig: useServerFn(useMediaInInstagram),
     campaign: useServerFn(useMediaInCampaign),
+    remove: useServerFn(deleteMediaAssets),
+    renameTag: useServerFn(renameMediaTag),
+    renameFolder: useServerFn(renameMediaFolder),
   };
 
+  const removeAssets = (ids: string[]) => {
+    if (!ids.length || !window.confirm(`Excluir ${ids.length} mídia(s) de vez? Os arquivos são apagados e não dá para desfazer.`)) return;
+    return run(
+      "delete",
+      async () => {
+        const r = await fns.remove({ data: { workspaceId: workspaceId!, assetIds: ids } });
+        setPicked([]);
+        setOpenId(null);
+        refresh();
+        return r;
+      },
+      (r) => `${r.deleted} mídia(s) excluída(s).`,
+    );
+  };
+
+  const renameFacet = async (kind: "tag" | "folder") => {
+    const from = kind === "tag" ? f.tag : f.folder;
+    if (!from) return;
+    const to = window.prompt(`Novo nome para ${kind === "tag" ? "a tag" : "a pasta"} "${from}" (vazio remove):`, from);
+    if (to === null) return;
+    await run(
+      "bulk",
+      async () => {
+        const r =
+          kind === "tag"
+            ? await fns.renameTag({ data: { workspaceId: workspaceId!, from, to } })
+            : await fns.renameFolder({ data: { workspaceId: workspaceId!, from, to } });
+        setF((x) => ({ ...x, [kind]: to.trim() }));
+        refresh();
+        return r;
+      },
+      (r) => `${r.updated} mídia(s) atualizada(s).`,
+    );
+  };
+
+  // 6.3 Busca, filtros, ordenação e paginação no servidor (sem limite de 500 itens).
+  const PAGE = 60;
+  const [pages, setPages] = useState(1);
+  useEffect(() => setPages(1), [f]);
   const { data, isLoading } = useQuery({
-    queryKey: ["library", workspaceId],
+    queryKey: ["library", workspaceId, f, pages],
     enabled: !!workspaceId,
+    placeholderData: (prev) => prev,
     queryFn: async () => {
-      const [assets, brands, campaigns] = await Promise.all([
-        supabase
-          .from("media_assets" as never)
-          .select("*, brands(name), campaigns(name)")
-          .eq("workspace_id", workspaceId!)
-          .order("created_at", { ascending: false })
-          .limit(500),
+      let q = supabase
+        .from("media_assets")
+        .select("*, brands(name), campaigns(name)", { count: "exact" })
+        .eq("workspace_id", workspaceId!);
+      const term = f.q.trim().replace(/[%,()]/g, " ").trim();
+      if (term) q = q.or(`title.ilike.%${term}%,prompt.ilike.%${term}%`);
+      if (f.brand) q = q.eq("brand_id", f.brand);
+      if (f.campaign) q = q.eq("campaign_id", f.campaign);
+      if (f.kind) q = q.eq("kind", f.kind);
+      if (f.format) q = q.eq("target_format", f.format);
+      if (f.status === "active") q = q.neq("status", "archived");
+      else if (f.status) q = q.eq("status", f.status);
+      if (f.tag) q = q.contains("tags", [f.tag]);
+      if (f.folder) q = q.eq("folder", f.folder);
+      if (f.source) q = q.eq("source", f.source);
+      if (f.period) q = q.gte("created_at", new Date(Date.now() - PERIODS[f.period]! * 86400e3).toISOString());
+      const order: Record<string, [string, boolean]> = {
+        new: ["created_at", false],
+        old: ["created_at", true],
+        title: ["title", true],
+        size: ["size_bytes", false],
+      };
+      const [col, asc] = order[f.sort] ?? order["new"]!;
+      q = q.order(col, { ascending: asc, nullsFirst: false }).range(0, pages * PAGE - 1);
+      const [assets, brands, campaigns, facets] = await Promise.all([
+        q,
         supabase.from("brands").select("id, name").eq("workspace_id", workspaceId!),
         supabase.from("campaigns").select("id, name").eq("workspace_id", workspaceId!),
+        supabase.from("media_assets").select("tags, folder").eq("workspace_id", workspaceId!).limit(5000),
       ]);
       if (assets.error) throw assets.error;
       return {
         assets: (assets.data ?? []) as unknown as Asset[],
+        total: assets.count ?? 0,
         brands: brands.data ?? [],
         campaigns: campaigns.data ?? [],
+        facets: (facets.data ?? []) as { tags: string[] | null; folder: string | null }[],
       };
     },
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ["library", workspaceId] });
 
   const assets = data?.assets ?? [];
-  const tags = useMemo(() => [...new Set(assets.flatMap((a) => a.tags ?? []))].sort(), [assets]);
+  const tags = useMemo(() => [...new Set((data?.facets ?? []).flatMap((a) => a.tags ?? []))].sort(), [data?.facets]);
   const folders = useMemo(
-    () => [...new Set(assets.map((a) => a.folder).filter(Boolean) as string[])].sort(),
-    [assets],
+    () => [...new Set((data?.facets ?? []).map((a) => a.folder).filter(Boolean) as string[])].sort(),
+    [data?.facets],
   );
-
-  const list = useMemo(() => {
-    const q = f.q.trim().toLowerCase();
-    const since = f.period ? Date.now() - PERIODS[f.period]! * 86400e3 : 0;
-    const out = assets.filter(
-      (a) =>
-        (!q || a.title.toLowerCase().includes(q) || (a.prompt ?? "").toLowerCase().includes(q)) &&
-        (!f.brand || a.brand_id === f.brand) &&
-        (!f.campaign || a.campaign_id === f.campaign) &&
-        (!f.kind || a.kind === f.kind) &&
-        (!f.format || a.target_format === f.format) &&
-        (f.status === "active" ? a.status !== "archived" : !f.status || a.status === f.status) &&
-        (!f.tag || a.tags?.includes(f.tag)) &&
-        (!f.folder || a.folder === f.folder) &&
-        (!f.source || a.source === f.source) &&
-        (!since || new Date(a.created_at).getTime() >= since),
-    );
-    const sorters: Record<string, (a: Asset, b: Asset) => number> = {
-      new: (a, b) => b.created_at.localeCompare(a.created_at),
-      old: (a, b) => a.created_at.localeCompare(b.created_at),
-      title: (a, b) => a.title.localeCompare(b.title),
-      size: (a, b) => (b.size_bytes ?? 0) - (a.size_bytes ?? 0),
-    };
-    return out.sort(sorters[f.sort]);
-  }, [assets, f]);
+  const list = assets;
+  const hasMore = (data?.total ?? 0) > assets.length;
 
   const open = assets.find((a) => a.id === openId) ?? null;
   const toggle = (id: string) =>
@@ -361,6 +413,7 @@ function LibraryPage() {
                 ))}
                 <option value="other">Manter tamanho original</option>
               </select>
+              <ImportFromCanvaButton workspaceId={workspaceId} onImported={() => qc.invalidateQueries()} />
               <Button onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
                 {busy === "upload" ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -383,6 +436,9 @@ function LibraryPage() {
           )
         }
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.library.title} steps={GUIDES.library.steps} references={GUIDES.library.references ?? []} />
+      </div>
 
       <div
         className={cn(
@@ -401,6 +457,18 @@ function LibraryPage() {
           if (canEdit && e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
         }}
       >
+        <div className="flex gap-2">
+          <Button size="sm" variant={view === "media" ? "default" : "outline"} onClick={() => setView("media")}>
+            Imagens e vídeos
+          </Button>
+          <Button size="sm" variant={view === "texts" ? "default" : "outline"} onClick={() => setView("texts")}>
+            Textos (copies, legendas, roteiros)
+          </Button>
+        </div>
+        {view === "texts" ? (
+          <LibraryTexts workspaceId={workspaceId} brandId={f.brand} />
+        ) : (
+        <>
         <div className="panel flex flex-wrap items-end gap-2 p-3">
           <div className="min-w-48 flex-1">
             <Label className="text-xs">Buscar</Label>
@@ -488,6 +556,16 @@ function LibraryPage() {
               ["size", "Maior peso"],
             ]}
           />
+          {canEdit && f.folder && (
+            <Button size="sm" variant="ghost" onClick={() => renameFacet("folder")}>
+              Renomear pasta
+            </Button>
+          )}
+          {canEdit && f.tag && (
+            <Button size="sm" variant="ghost" onClick={() => renameFacet("tag")}>
+              Renomear tag
+            </Button>
+          )}
         </div>
 
         {picked.length > 0 && (
@@ -590,6 +668,9 @@ function LibraryPage() {
                 >
                   <Archive className="size-4" /> Arquivar
                 </Button>
+                <Button size="sm" variant="outline" disabled={!!busy} onClick={() => removeAssets(picked)}>
+                  <X className="size-4" /> Excluir
+                </Button>
                 <Button size="sm" variant="outline" disabled={!!busy} onClick={() => revalidate(picked)}>
                   {busy === "revalidate" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Revalidar
                 </Button>
@@ -625,6 +706,7 @@ function LibraryPage() {
                 >
                   <Megaphone className="size-4" /> Usar em campanha
                 </Button>
+                <SendToCanvaButton workspaceId={workspaceId} assetIds={picked} disabled={!!busy} />
               </>
             )}
             <Button size="sm" variant="ghost" onClick={() => setPicked([])}>
@@ -658,7 +740,7 @@ function LibraryPage() {
                 onCheckedChange={(v) => setPicked(v ? list.map((a) => a.id) : [])}
                 aria-label="Selecionar todas"
               />
-              {list.length} mídia{list.length > 1 ? "s" : ""}
+              {list.length} de {data?.total ?? list.length} mídia{(data?.total ?? 0) > 1 ? "s" : ""}
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-5">
               {list.map((a) => (
@@ -671,7 +753,16 @@ function LibraryPage() {
                 />
               ))}
             </div>
+            {hasMore && (
+              <div className="flex justify-center">
+                <Button variant="outline" onClick={() => setPages((n) => n + 1)}>
+                  Carregar mais
+                </Button>
+              </div>
+            )}
           </>
+        )}
+        </>
         )}
       </div>
 
@@ -679,6 +770,8 @@ function LibraryPage() {
         <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
           {open && (
             <AssetDetail
+              workspaceId={workspaceId}
+              onDelete={() => removeAssets([open.id])}
               a={open}
               versions={assets
                 .filter(
@@ -895,7 +988,11 @@ function AssetDetail({
   onReformat,
   onOpenVersion,
   onRevalidate,
+  workspaceId,
+  onDelete,
 }: {
+  workspaceId: string;
+  onDelete: () => void;
   a: Asset;
   versions: Asset[];
   canEdit: boolean;
@@ -927,6 +1024,7 @@ function AssetDetail({
     ["Custo", a.cost != null ? brl(a.cost) : "—"],
     ["Marca", a.brands?.name ?? "—"],
     ["Campanha", a.campaigns?.name ?? "—"],
+    ["Ângulo da estratégia", a.angle ?? "—"],
     ["Pasta", a.folder ?? "—"],
     ["Tags", a.tags?.length ? a.tags.join(", ") : "—"],
     ["Criada em", new Date(a.created_at).toLocaleString("pt-BR")],
@@ -944,6 +1042,15 @@ function AssetDetail({
         <div className="flex flex-wrap items-center gap-2">
           <ReadyBadge a={a} />
           <StatusPill status={a.status} label={STATUS[a.status] ?? a.status} />
+          {canEdit && (
+            <Button size="sm" variant="ghost" className="ml-auto text-destructive" disabled={!!busy} onClick={onDelete}>
+              Excluir
+            </Button>
+          )}
+        </div>
+        <div className="rounded-md border border-border/60 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">Resultados nos anúncios</p>
+          <AssetAdResults workspaceId={workspaceId} creativeId={a.creative_id} />
         </div>
         {!a.ig_ready && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">

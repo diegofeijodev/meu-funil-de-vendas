@@ -8,33 +8,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useWorkspace } from "@/lib/workspace";
 import { aiKeysStatus, aiKeysSave, aiKeysTest, aiKeysRemove } from "@/lib/ai-keys.functions";
+import { HowTo, type HowToStep } from "@/components/how-to";
 
 type Vendor = "openai" | "gemini";
 
-const INFO: Record<Vendor, { title: string; does: string; placeholder: string; steps: string[] }> = {
+const INFO: Record<Vendor, { title: string; does: string; placeholder: string; steps: HowToStep[]; refs: { label: string; url: string }[] }> = {
   openai: {
     title: "ChatGPT (sua conta OpenAI)",
     does: "Imagens dos criativos e copies das campanhas cobradas na sua conta OpenAI.",
     placeholder: "sk-...",
     steps: [
-      "Acesse platform.openai.com e entre com sua conta (a mesma do ChatGPT serve).",
-      "Em Settings > Billing, adicione um cartão e créditos — a assinatura ChatGPT Plus não vale para a API.",
-      "Em Settings > Organization > Verify, verifique a organização (necessário para gerar imagens).",
-      "Abra API keys > Create new secret key, dê um nome (ex.: Meu Funil) e copie a chave (começa com sk-).",
+      { text: "Entre na plataforma da OpenAI com sua conta (a mesma do ChatGPT serve):", link: { label: "platform.openai.com", url: "https://platform.openai.com" } },
+      { text: "Adicione cartão e créditos — a assinatura ChatGPT Plus não vale para a API:", link: { label: "Faturamento", url: "https://platform.openai.com/settings/organization/billing/overview" } },
+      { text: "Verifique a organização (necessário para gerar imagens com gpt-image-1):", link: { label: "Configurações da organização", url: "https://platform.openai.com/settings/organization/general" } },
+      { text: "Crie uma chave secreta (ex.: Meu Funil) e copie (começa com sk-):", link: { label: "Chaves de API", url: "https://platform.openai.com/api-keys" } },
       "Cole abaixo e clique em Salvar. Testamos a chave antes de guardar no cofre do servidor.",
     ],
+    refs: [{ label: "Documentação da API da OpenAI", url: "https://platform.openai.com/docs" }],
   },
   gemini: {
     title: "Gemini (sua conta Google)",
     does: "Imagens, vídeos (Veo) e copies das campanhas cobrados na sua conta Google.",
     placeholder: "AIza...",
     steps: [
-      "Acesse aistudio.google.com e entre com sua conta Google.",
-      "Clique em Get API key > Create API key e escolha (ou crie) um projeto do Google Cloud.",
-      "Para imagens e vídeos, ative o faturamento do projeto (Set up billing) — no plano grátis só texto funciona.",
+      { text: "Crie a chave no Google AI Studio e escolha (ou crie) um projeto do Google Cloud:", link: { label: "Chaves do AI Studio", url: "https://aistudio.google.com/apikey" } },
+      { text: "Para imagens e vídeos (Veo), ative o faturamento do projeto — no plano grátis só texto funciona:", link: { label: "Faturamento do Google Cloud", url: "https://console.cloud.google.com/billing" } },
       "Copie a chave (começa com AIza).",
       "Cole abaixo e clique em Salvar. Testamos a chave antes de guardar no cofre do servidor.",
     ],
+    refs: [{ label: "Documentação da API Gemini", url: "https://ai.google.dev/gemini-api/docs" }],
   },
 };
 
@@ -82,7 +84,6 @@ function VendorBox({
   const remove = useServerFn(aiKeysRemove);
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
 
   const run = async (kind: string, fn: () => Promise<void>) => {
     setBusy(kind);
@@ -99,14 +100,9 @@ function VendorBox({
       <p className="mt-2 text-sm text-muted-foreground">{info.does}</p>
       {state?.hint && <p className="mt-1 text-xs text-muted-foreground">Chave salva: {state.hint}</p>}
 
-      <button className="mt-3 text-sm font-medium text-primary" onClick={() => setOpen(!open)}>
-        {open ? "Ocultar passo a passo" : "Passo a passo para conectar"}
-      </button>
-      {open && (
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-          {info.steps.map((s) => <li key={s}>{s}</li>)}
-        </ol>
-      )}
+      <div className="mt-3">
+        <HowTo title="Passo a passo para conectar" steps={info.steps} references={info.refs} />
+      </div>
 
       {canEdit && workspaceId && (
         <div className="mt-4 space-y-2">

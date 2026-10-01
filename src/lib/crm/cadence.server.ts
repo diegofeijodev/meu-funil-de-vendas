@@ -163,7 +163,7 @@ async function exitReason(run: RunRow, rules: ExitRules) {
   const leadId = run["lead_id"] as string;
   const { data: lead } = await db
     .from("crm_leads")
-    .select("id, name, city, phone, stage_id, owner_id, unsubscribed, ai_active")
+    .select("id, name, city, phone, email, instagram_id, stage_id, owner_id, unsubscribed, ai_active")
     .eq("id", leadId)
     .maybeSingle();
   if (!lead) return { reason: "lead_removido", lead: null };
@@ -358,6 +358,18 @@ async function executeStep(args: {
     channel: step.channel,
   };
 
+  if (step.channel === "email" && lead["email"] && !lead["unsubscribed"]) {
+    // E-mail de verdade quando o Resend está configurado; senão vira tarefa como antes.
+    const { emailIntegration, sendLeadEmail } = await import("./email.server");
+    const integ = await emailIntegration(workspaceId);
+    if (integ?.status === "connected") {
+      const subject = renderVariables(step.subject || "Seguimos à disposição", vars);
+      await sendLeadEmail({ workspaceId, leadId, subject, body, authorType: "ai" });
+      await logCadenceEvent({ ...logBase, event: "sent", detail: `e-mail: ${subject}` });
+      return;
+    }
+  }
+
   if (step.channel === "call_task" || step.channel === "email") {
     await db.from("crm_tasks").insert({
       workspace_id: workspaceId,
@@ -378,6 +390,18 @@ async function executeStep(args: {
       content: body || "Tarefa da cadência criada.",
     });
     await logCadenceEvent({ ...logBase, event: "task" });
+    return;
+  }
+
+  // Lead que só chegou pelo Instagram (sem telefone): o passo de texto vai pelo Direct, dentro da janela de 24 h.
+  if (!lead["phone"] && lead["instagram_id"] && step.channel === "wa_text") {
+    try {
+      const { sendInstagramAndStore } = await import("./instagram-dm.server");
+      const sent = await sendInstagramAndStore({ workspaceId, leadId, text: body, authorType: "ai" });
+      await logCadenceEvent({ ...logBase, event: "sent", messageId: sent.id, detail: "instagram" });
+    } catch (e) {
+      await logCadenceEvent({ ...logBase, event: "skipped", detail: e instanceof Error ? e.message : "instagram indisponível" });
+    }
     return;
   }
 

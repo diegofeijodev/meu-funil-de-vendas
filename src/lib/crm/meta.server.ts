@@ -214,3 +214,20 @@ export async function listForms(pageId: string, pageToken?: string) {
   };
   return json.data ?? [];
 }
+
+/** 3.6 Inscreve a Página da empresa no app (sem isso a Meta não envia leads/mensagens ao webhook). */
+export async function subscribePage(workspaceId: string, fields: string[]) {
+  const { graph: call, metaConfig, runWithMetaWorkspace } = await import("@/lib/meta/graph.server");
+  return runWithMetaWorkspace(workspaceId, async () => {
+    const cfg = await metaConfig(workspaceId);
+    if (!cfg.pageId) throw new Error("Página do Facebook não configurada em Integrações.");
+    const page = await call<{ access_token?: string }>(`/${cfg.pageId}`, { params: { fields: "access_token" } });
+    if (!page.access_token) throw new Error("Sem acesso à Página: dê ao usuário do sistema acesso total à Página.");
+    await call(`/${cfg.pageId}/subscribed_apps`, {
+      method: "POST",
+      token: page.access_token,
+      params: { subscribed_fields: fields.join(",") },
+    });
+    return { ok: true };
+  });
+}

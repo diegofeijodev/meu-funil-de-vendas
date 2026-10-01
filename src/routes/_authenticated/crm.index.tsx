@@ -13,6 +13,8 @@ import { LEAD_SOURCES, humanDuration, hoursSince, slaBroken, type Lead } from "@
 import { brl } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { notifyMetaConversion } from "@/lib/crm-integrations.functions";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
 
 export const Route = createFileRoute("/_authenticated/crm/")({
   head: () => ({
@@ -108,6 +110,9 @@ function KanbanPage() {
         title="Funil de vendas"
         subtitle="Arraste os cards entre as etapas. Cards em vermelho estouraram o SLA da etapa."
       />
+      <div className="mb-6">
+        <HowTo title={GUIDES.crm.title} steps={GUIDES.crm.steps} references={GUIDES.crm.references ?? []} />
+      </div>
 
       <div className="mb-5 grid gap-2 md:grid-cols-3 lg:grid-cols-6">
         <Input placeholder="Buscar nome, telefone ou e-mail" value={search} onChange={(e) => setSearch(e.target.value)} />

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthenticatedAgencyRouteImport } from './routes/_authenticated/agency'
 import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
 import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
 import { Route as AuthenticatedCrmRouteImport } from './routes/_authenticated/crm'
@@ -37,10 +38,17 @@ import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
+import { Route as ApiPublicCronAdsRouteImport } from './routes/api/public/cron/ads'
 import { Route as ApiPublicCronCrmCadencesRouteImport } from './routes/api/public/cron/crm-cadences'
 import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
 import { Route as ApiPublicCronInstagramRouteImport } from './routes/api/public/cron/instagram'
+import { Route as ApiPublicFormsTokenRouteImport } from './routes/api/public/forms/$token'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
+import { Route as ApiPublicUnsubscribeLeadIdRouteImport } from './routes/api/public/unsubscribe/$leadId'
+import { Route as ApiPublicAdsOauthChannelRouteImport } from './routes/api/public/ads/oauth/$channel'
+import { Route as ApiPublicFormsEmbedTokenRouteImport } from './routes/api/public/forms/embed.$token'
+import { Route as ApiPublicMetaOauthCallbackRouteImport } from './routes/api/public/meta/oauth/callback'
+import { Route as ApiPublicWebhooksInstagramTokenRouteImport } from './routes/api/public/webhooks/instagram/$token'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
 import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
 
@@ -57,6 +65,11 @@ const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAgencyRoute = AuthenticatedAgencyRouteImport.update({
+  id: '/agency',
+  path: '/agency',
+  getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
   id: '/approvals',
@@ -194,6 +207,11 @@ const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
   path: '/leads/$id',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const ApiPublicCronAdsRoute = ApiPublicCronAdsRouteImport.update({
+  id: '/api/public/cron/ads',
+  path: '/api/public/cron/ads',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicCronCrmCadencesRoute =
   ApiPublicCronCrmCadencesRouteImport.update({
     id: '/api/public/cron/crm-cadences',
@@ -210,11 +228,46 @@ const ApiPublicCronInstagramRoute = ApiPublicCronInstagramRouteImport.update({
   path: '/api/public/cron/instagram',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicFormsTokenRoute = ApiPublicFormsTokenRouteImport.update({
+  id: '/api/public/forms/$token',
+  path: '/api/public/forms/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicUnsubscribeLeadIdRoute =
+  ApiPublicUnsubscribeLeadIdRouteImport.update({
+    id: '/api/public/unsubscribe/$leadId',
+    path: '/api/public/unsubscribe/$leadId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicAdsOauthChannelRoute =
+  ApiPublicAdsOauthChannelRouteImport.update({
+    id: '/api/public/ads/oauth/$channel',
+    path: '/api/public/ads/oauth/$channel',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicFormsEmbedTokenRoute =
+  ApiPublicFormsEmbedTokenRouteImport.update({
+    id: '/api/public/forms/embed/$token',
+    path: '/api/public/forms/embed/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicMetaOauthCallbackRoute =
+  ApiPublicMetaOauthCallbackRouteImport.update({
+    id: '/api/public/meta/oauth/callback',
+    path: '/api/public/meta/oauth/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicWebhooksInstagramTokenRoute =
+  ApiPublicWebhooksInstagramTokenRouteImport.update({
+    id: '/api/public/webhooks/instagram/$token',
+    path: '/api/public/webhooks/instagram/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicWebhooksWhatsappTokenRoute =
   ApiPublicWebhooksWhatsappTokenRouteImport.update({
     id: '/api/public/webhooks/whatsapp/$token',
@@ -231,6 +284,7 @@ const ApiPublicWebhooksMetaLeadgenTokenRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/agency': typeof AuthenticatedAgencyRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
   '/crm': typeof AuthenticatedCrmRouteWithChildren
@@ -255,17 +309,25 @@ export interface FileRoutesByFullPath {
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/agency': typeof AuthenticatedAgencyRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
   '/insights': typeof AuthenticatedInsightsRoute
@@ -289,11 +351,18 @@ export interface FileRoutesByTo {
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -302,6 +371,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/agency': typeof AuthenticatedAgencyRoute
   '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
   '/_authenticated/crm': typeof AuthenticatedCrmRouteWithChildren
@@ -326,11 +396,18 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -339,6 +416,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/agency'
     | '/approvals'
     | '/calendar'
     | '/crm'
@@ -363,17 +441,25 @@ export interface FileRouteTypes {
     | '/campaigns/'
     | '/crm/'
     | '/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/crm/leads/'
+    | '/api/public/ads/oauth/$channel'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
+    | '/agency'
     | '/approvals'
     | '/calendar'
     | '/insights'
@@ -397,11 +483,18 @@ export interface FileRouteTypes {
     | '/campaigns'
     | '/crm'
     | '/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/crm/leads'
+    | '/api/public/ads/oauth/$channel'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   id:
@@ -409,6 +502,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/agency'
     | '/_authenticated/approvals'
     | '/_authenticated/calendar'
     | '/_authenticated/crm'
@@ -433,11 +527,18 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
     | '/_authenticated/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/_authenticated/crm/leads/'
+    | '/api/public/ads/oauth/$channel'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesById: FileRoutesById
@@ -446,10 +547,17 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicCronAdsRoute: typeof ApiPublicCronAdsRoute
   ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
   ApiPublicCronInstagramRoute: typeof ApiPublicCronInstagramRoute
+  ApiPublicFormsTokenRoute: typeof ApiPublicFormsTokenRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
+  ApiPublicUnsubscribeLeadIdRoute: typeof ApiPublicUnsubscribeLeadIdRoute
+  ApiPublicAdsOauthChannelRoute: typeof ApiPublicAdsOauthChannelRoute
+  ApiPublicFormsEmbedTokenRoute: typeof ApiPublicFormsEmbedTokenRoute
+  ApiPublicMetaOauthCallbackRoute: typeof ApiPublicMetaOauthCallbackRoute
+  ApiPublicWebhooksInstagramTokenRoute: typeof ApiPublicWebhooksInstagramTokenRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
   ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -476,6 +584,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/agency': {
+      id: '/_authenticated/agency'
+      path: '/agency'
+      fullPath: '/agency'
+      preLoaderRoute: typeof AuthenticatedAgencyRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/approvals': {
       id: '/_authenticated/approvals'
@@ -652,6 +767,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/api/public/cron/ads': {
+      id: '/api/public/cron/ads'
+      path: '/api/public/cron/ads'
+      fullPath: '/api/public/cron/ads'
+      preLoaderRoute: typeof ApiPublicCronAdsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/cron/crm-cadences': {
       id: '/api/public/cron/crm-cadences'
       path: '/api/public/cron/crm-cadences'
@@ -673,11 +795,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronInstagramRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/forms/$token': {
+      id: '/api/public/forms/$token'
+      path: '/api/public/forms/$token'
+      fullPath: '/api/public/forms/$token'
+      preLoaderRoute: typeof ApiPublicFormsTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
       fullPath: '/api/public/mcp/callback'
       preLoaderRoute: typeof ApiPublicMcpCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/unsubscribe/$leadId': {
+      id: '/api/public/unsubscribe/$leadId'
+      path: '/api/public/unsubscribe/$leadId'
+      fullPath: '/api/public/unsubscribe/$leadId'
+      preLoaderRoute: typeof ApiPublicUnsubscribeLeadIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/ads/oauth/$channel': {
+      id: '/api/public/ads/oauth/$channel'
+      path: '/api/public/ads/oauth/$channel'
+      fullPath: '/api/public/ads/oauth/$channel'
+      preLoaderRoute: typeof ApiPublicAdsOauthChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/forms/embed/$token': {
+      id: '/api/public/forms/embed/$token'
+      path: '/api/public/forms/embed/$token'
+      fullPath: '/api/public/forms/embed/$token'
+      preLoaderRoute: typeof ApiPublicFormsEmbedTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/meta/oauth/callback': {
+      id: '/api/public/meta/oauth/callback'
+      path: '/api/public/meta/oauth/callback'
+      fullPath: '/api/public/meta/oauth/callback'
+      preLoaderRoute: typeof ApiPublicMetaOauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/webhooks/instagram/$token': {
+      id: '/api/public/webhooks/instagram/$token'
+      path: '/api/public/webhooks/instagram/$token'
+      fullPath: '/api/public/webhooks/instagram/$token'
+      preLoaderRoute: typeof ApiPublicWebhooksInstagramTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/webhooks/whatsapp/$token': {
@@ -725,6 +889,7 @@ const AuthenticatedCrmRouteWithChildren =
   AuthenticatedCrmRoute._addFileChildren(AuthenticatedCrmRouteChildren)
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAgencyRoute: typeof AuthenticatedAgencyRoute
   AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
   AuthenticatedCrmRoute: typeof AuthenticatedCrmRouteWithChildren
@@ -744,6 +909,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAgencyRoute: AuthenticatedAgencyRoute,
   AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
   AuthenticatedCrmRoute: AuthenticatedCrmRouteWithChildren,
@@ -769,10 +935,17 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicCronAdsRoute: ApiPublicCronAdsRoute,
   ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
   ApiPublicCronInstagramRoute: ApiPublicCronInstagramRoute,
+  ApiPublicFormsTokenRoute: ApiPublicFormsTokenRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
+  ApiPublicUnsubscribeLeadIdRoute: ApiPublicUnsubscribeLeadIdRoute,
+  ApiPublicAdsOauthChannelRoute: ApiPublicAdsOauthChannelRoute,
+  ApiPublicFormsEmbedTokenRoute: ApiPublicFormsEmbedTokenRoute,
+  ApiPublicMetaOauthCallbackRoute: ApiPublicMetaOauthCallbackRoute,
+  ApiPublicWebhooksInstagramTokenRoute: ApiPublicWebhooksInstagramTokenRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
   ApiPublicWebhooksMetaLeadgenTokenRoute:
     ApiPublicWebhooksMetaLeadgenTokenRoute,

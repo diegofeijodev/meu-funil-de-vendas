@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 
-export type McpProvider = "higgsfield" | "meta";
+export type McpProvider = "higgsfield" | "meta" | "canva";
 
 export type McpConnectionView = {
   id: string;

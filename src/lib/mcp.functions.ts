@@ -3,7 +3,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
-const providerSchema = z.enum(["higgsfield", "meta"]);
+const providerSchema = z.enum(["higgsfield", "meta", "canva"]);
 
 const connectInput = z.object({
   workspaceId: z.string().uuid(),
@@ -22,14 +22,18 @@ function originFromRequest() {
 }
 
 /** Confirma que o usuário pertence ao workspace antes de tocar em colunas sensíveis. */
-async function assertMember(supabase: any, workspaceId: string) {
+async function assertMember(supabase: any, workspaceId: string, manage = false) {
+  const { data: auth } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from("workspace_members")
-    .select("id")
+    .select("id, role")
     .eq("workspace_id", workspaceId)
+    .eq("user_id", auth?.user?.id ?? "")
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Você não tem acesso a este workspace.");
+  // 7.3 Conectar/desconectar contas: só dono ou administrador.
+  if (manage && data.role !== "owner" && data.role !== "admin") throw new Error("Só o dono ou um administrador conecta contas.");
 }
 
 /** Salva/testa a conexão MCP do workspace e descobre as ferramentas disponíveis. */
@@ -39,7 +43,7 @@ export const mcpConnect = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { probeConnection } = await import("./mcp-auth.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await assertMember(context.supabase, data.workspaceId);
+    await assertMember(context.supabase, data.workspaceId, true);
     const token = data.accessToken?.trim() ? data.accessToken.trim() : null;
 
     const { data: existing } = await supabaseAdmin
@@ -103,7 +107,7 @@ export const mcpOAuthStart = createServerFn({ method: "POST" })
     const redirectUri = `${originFromRequest()}/api/public/mcp/callback`;
     const discovery = await discoverAuthServer(data.serverUrl);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await assertMember(context.supabase, data.workspaceId);
+    await assertMember(context.supabase, data.workspaceId, true);
 
     const { data: existing } = await supabaseAdmin
       .from("mcp_connections")
@@ -175,6 +179,7 @@ export const mcpDisconnect = createServerFn({ method: "POST" })
     z.object({ workspaceId: z.string().uuid(), provider: providerSchema }).parse(d),
   )
   .handler(async ({ data, context }) => {
+    await assertMember(context.supabase, data.workspaceId, true);
     const { error } = await context.supabase
       .from("mcp_connections")
       .delete()

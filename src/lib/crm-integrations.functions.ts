@@ -19,6 +19,9 @@ async function assertMember(supabase: Authed, workspaceId: string) {
   if (!data) throw new Error("Workspace inválido.");
 }
 
+type CrmKind = "meta_lead_ads" | "whatsapp" | "instagram" | "site_form" | "email" | "calendar";
+type CrmProvider = "meta" | "whatsapp_cloud" | "zapi" | "evolution" | "site" | "resend" | "calcom";
+
 function friendly(err: unknown, fallback: string) {
   console.error("[crm-integrations]", err);
   return new Error(fallback);
@@ -29,9 +32,9 @@ export const saveIntegration = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: {
     workspaceId: string;
-    kind: "meta_lead_ads" | "whatsapp";
-    provider: "meta" | "whatsapp_cloud" | "zapi" | "evolution";
-    config?: Record<string, string>;
+    kind: CrmKind;
+    provider: CrmProvider;
+    config?: Record<string, unknown>;
     fieldMapping?: Record<string, string>;
     status?: "disconnected" | "connecting" | "connected";
   }) => input)
@@ -66,7 +69,7 @@ export const saveIntegration = createServerFn({ method: "POST" })
 /** Checks credentials and marks the integration as connected or error. */
 export const testIntegration = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { workspaceId: string; kind: "meta_lead_ads" | "whatsapp" }) => input)
+  .inputValidator((input: { workspaceId: string; kind: CrmKind }) => input)
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase, data.workspaceId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -78,17 +81,31 @@ export const testIntegration = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!integration) throw new Error("Configure a integração antes de testar.");
 
+    // Mesma leitura de credenciais do resto do app: cofre (Integrações) da empresa/global, depois ambiente.
+    const { metaConfig, runWithMetaWorkspace, graph } = await import("@/lib/meta/graph.server");
+    const { workspaceSecret } = await import("@/lib/crm/integrations.server");
+    const meta = await metaConfig(data.workspaceId);
     const missing: string[] = [];
     if (data.kind === "meta_lead_ads") {
-      if (!process.env["META_APP_SECRET"]) missing.push("META_APP_SECRET");
-      if (!process.env["META_GRAPH_TOKEN"]) missing.push("META_GRAPH_TOKEN");
+      if (!meta.appSecret) missing.push("META_APP_SECRET");
+      if (!meta.token) missing.push("META_SYSTEM_USER_TOKEN");
+    } else if (data.kind === "instagram") {
+      if (!meta.appSecret) missing.push("META_APP_SECRET");
+      if (!meta.token) missing.push("META_SYSTEM_USER_TOKEN");
+      if (!meta.pageId) missing.push("META_PAGE_ID");
+    } else if (data.kind === "email") {
+      if (!(await workspaceSecret(data.workspaceId, "RESEND_API_KEY"))) missing.push("RESEND_API_KEY");
+    } else if (data.kind === "calendar") {
+      if (!(await workspaceSecret(data.workspaceId, "CALCOM_API_KEY"))) missing.push("CALCOM_API_KEY");
+    } else if (data.kind === "site_form") {
+      // Formulário próprio do app: não depende de credenciais externas.
     } else if (integration.provider === "whatsapp_cloud") {
-      if (!process.env["WHATSAPP_CLOUD_TOKEN"]) missing.push("WHATSAPP_CLOUD_TOKEN");
-      if (!process.env["META_APP_SECRET"]) missing.push("META_APP_SECRET");
+      if (!(await workspaceSecret(data.workspaceId, "WHATSAPP_CLOUD_TOKEN"))) missing.push("WHATSAPP_CLOUD_TOKEN");
+      if (!meta.appSecret) missing.push("META_APP_SECRET");
     } else if (integration.provider === "zapi") {
-      if (!process.env["ZAPI_TOKEN"]) missing.push("ZAPI_TOKEN");
+      if (!(await workspaceSecret(data.workspaceId, "ZAPI_TOKEN"))) missing.push("ZAPI_TOKEN");
     } else if (integration.provider === "evolution") {
-      if (!process.env["EVOLUTION_API_KEY"]) missing.push("EVOLUTION_API_KEY");
+      if (!(await workspaceSecret(data.workspaceId, "EVOLUTION_API_KEY"))) missing.push("EVOLUTION_API_KEY");
     }
 
     if (missing.length) {
@@ -100,6 +117,25 @@ export const testIntegration = createServerFn({ method: "POST" })
     }
 
     try {
+      if (data.kind === "meta_lead_ads" || data.kind === "instagram") {
+        // Teste real: o token precisa responder na Graph API e a Página é inscrita no app (3.6).
+        await runWithMetaWorkspace(data.workspaceId, () => graph("/me", { params: { fields: "id,name" } }));
+        const { subscribePage } = await import("@/lib/crm/meta.server");
+        await subscribePage(data.workspaceId, data.kind === "instagram" ? ["messages", "feed"] : ["leadgen"]);
+      }
+      if (data.kind === "email") {
+        const { testEmail } = await import("@/lib/crm/email.server");
+        const domains = await testEmail(data.workspaceId);
+        const from = String((integration.config as Record<string, unknown>)["from_email"] ?? "");
+        const domain = from.split("@")[1]?.toLowerCase();
+        const ok = domains.find((d) => d.name.toLowerCase() === domain);
+        if (!ok) throw new Error(`O domínio ${domain || "do remetente"} não está cadastrado no Resend.`);
+        if (ok.status !== "verified") throw new Error(`O domínio ${domain} ainda não foi verificado no Resend (status: ${ok.status}).`);
+      }
+      if (data.kind === "calendar") {
+        const { testCalendar } = await import("@/lib/crm/calendar.server");
+        await testCalendar(data.workspaceId, String((integration.config as Record<string, unknown>)["event_type_id"] ?? ""));
+      }
       if (data.kind === "whatsapp" && integration.provider === "whatsapp_cloud") {
         const { providerFor } = await import("@/lib/crm/whatsapp.server");
         await providerFor(integration as never).listTemplates(integration as never);
@@ -116,13 +152,13 @@ export const testIntegration = createServerFn({ method: "POST" })
         .from("crm_integrations")
         .update({ status: "error", last_error: detail })
         .eq("id", integration.id);
-      return { ok: false, missing: [] as string[] };
+      return { ok: false, missing: [] as string[], error: detail };
     }
   });
 
 export const disconnectIntegration = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { workspaceId: string; kind: "meta_lead_ads" | "whatsapp" }) => input)
+  .inputValidator((input: { workspaceId: string; kind: CrmKind }) => input)
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase, data.workspaceId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -142,7 +178,8 @@ export const loadMetaFormFields = createServerFn({ method: "POST" })
     await assertAdmin(context.supabase, data.workspaceId);
     try {
       const { listFormFields } = await import("@/lib/crm/meta.server");
-      return await listFormFields(data.formId);
+      const { runWithMetaWorkspace } = await import("@/lib/meta/graph.server");
+      return await runWithMetaWorkspace(data.workspaceId, () => listFormFields(data.formId));
     } catch (err) {
       throw friendly(err, "Não foi possível carregar os campos do formulário.");
     }
@@ -271,13 +308,14 @@ export const notifyMetaConversion = createServerFn({ method: "POST" })
     if (!integration || integration.status !== "connected" || !lead) return { skipped: true };
     try {
       const { sendConversionEvent } = await import("@/lib/crm/meta.server");
-      await sendConversionEvent({
+      const { runWithMetaWorkspace } = await import("@/lib/meta/graph.server");
+      await runWithMetaWorkspace(data.workspaceId, () => sendConversionEvent({
         integration: integration as never,
         eventName: data.event,
         phone: lead.phone,
         email: lead.email,
         value: Number(lead.estimated_value ?? 0),
-      });
+      }));
       return { sent: true };
     } catch (err) {
       console.error("[crm-integrations] CAPI falhou:", err);
@@ -301,9 +339,148 @@ export const importMetaCostsNow = createServerFn({ method: "POST" })
     if (!integration) throw new Error("Conecte o Meta Lead Ads primeiro.");
     try {
       const { importCampaignCosts } = await import("@/lib/crm/meta.server");
-      const imported = await importCampaignCosts(integration as never, "last_7d");
+      const { runWithMetaWorkspace } = await import("@/lib/meta/graph.server");
+      const imported = await runWithMetaWorkspace(data.workspaceId, () => importCampaignCosts(integration as never, "last_7d"));
       return { imported };
     } catch (err) {
       throw friendly(err, "Não foi possível importar os custos das campanhas.");
     }
+  });
+
+/** Credenciais dos canais salvas por empresa (nunca voltam para o navegador). */
+const CHANNEL_SECRETS = ["WHATSAPP_CLOUD_TOKEN", "ZAPI_TOKEN", "EVOLUTION_API_KEY", "RESEND_API_KEY", "CALCOM_API_KEY"] as const;
+
+export const saveChannelSecret = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string; key: (typeof CHANNEL_SECRETS)[number]; value: string }) => {
+    if (!(CHANNEL_SECRETS as readonly string[]).includes(input.key)) throw new Error("Credencial inválida.");
+    if (!input.value || input.value.trim().length < 8) throw new Error("Valor muito curto.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase, data.workspaceId);
+    const { writeCredentials } = await import("@/lib/credentials.server");
+    try {
+      await writeCredentials(data.workspaceId, { [data.key]: data.value.trim() });
+    } catch (error) {
+      throw friendly(error, "Não foi possível salvar a credencial.");
+    }
+    return { ok: true };
+  });
+
+/** Quais credenciais de canal esta empresa já tem (só sim/não). */
+export const channelSecretsStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertMember(context.supabase, data.workspaceId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: rows } = await supabaseAdmin
+      .from("app_credentials")
+      .select("key")
+      .eq("workspace_id", data.workspaceId)
+      .in("key", CHANNEL_SECRETS as unknown as string[]);
+    const own = new Set(((rows ?? []) as { key: string }[]).map((r) => r.key));
+    return Object.fromEntries(
+      CHANNEL_SECRETS.map((k) => [k, own.has(k) ? "empresa" : process.env[k] ? "servidor" : "faltando"]),
+    ) as Record<(typeof CHANNEL_SECRETS)[number], "empresa" | "servidor" | "faltando">;
+  });
+
+/** Eventos de webhook que falharam (3.6), para revisar e reprocessar. */
+export const listFailedEvents = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase, data.workspaceId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: rows } = await supabaseAdmin
+      .from("crm_webhook_events")
+      .select("id, source, external_id, error_message, created_at")
+      .eq("workspace_id", data.workspaceId)
+      .eq("status", "failed")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    return rows ?? [];
+  });
+
+export const reprocessEvent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string; eventId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase, data.workspaceId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: ev } = await supabaseAdmin
+      .from("crm_webhook_events")
+      .select("*")
+      .eq("id", data.eventId)
+      .eq("workspace_id", data.workspaceId)
+      .maybeSingle();
+    if (!ev) throw new Error("Evento não encontrado.");
+    const kindBySource: Record<string, CrmKind> = { meta_leadgen: "meta_lead_ads", whatsapp_message: "whatsapp", instagram: "instagram" };
+    const kind = kindBySource[ev.source as string];
+    if (!kind) throw new Error("Este tipo de evento não pode ser reprocessado.");
+    const { data: integration } = await supabaseAdmin
+      .from("crm_integrations")
+      .select("*")
+      .eq("workspace_id", data.workspaceId)
+      .eq("kind", kind)
+      .maybeSingle();
+    if (!integration) throw new Error("Integração não encontrada.");
+    const { finishEvent } = await import("@/lib/crm/integrations.server");
+    try {
+      if (kind === "meta_lead_ads") {
+        const { ingestLeadgen } = await import("@/lib/crm/meta.server");
+        const { runWithMetaWorkspace } = await import("@/lib/meta/graph.server");
+        await runWithMetaWorkspace(data.workspaceId, () => ingestLeadgen(integration as never, String(ev.external_id)));
+      } else if (kind === "whatsapp") {
+        const { handleInbound } = await import("@/lib/crm/whatsapp.server");
+        await handleInbound(integration as never, ev.payload as never);
+      } else {
+        const { handleInstagramInbound } = await import("@/lib/crm/instagram-dm.server");
+        await handleInstagramInbound(integration as never, ev.payload as never);
+      }
+      await finishEvent(ev.id as string, null);
+      return { ok: true };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "falhou";
+      await finishEvent(ev.id as string, detail);
+      throw new Error(detail);
+    }
+  });
+
+/** Responde no Direct do Instagram pela tela do lead (pausa a IA, como no WhatsApp). */
+export const sendInstagramMessage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string; leadId: string; body: string }) => {
+    if (!input.body?.trim()) throw new Error("Escreva a mensagem.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    await assertMember(context.supabase, data.workspaceId);
+    const { sendInstagramAndStore } = await import("@/lib/crm/instagram-dm.server");
+    const r = await sendInstagramAndStore({
+      workspaceId: data.workspaceId,
+      leadId: data.leadId,
+      text: data.body.trim(),
+      sentBy: context.userId,
+      authorType: "user",
+    });
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("crm_leads").update({ ai_active: false }).eq("id", data.leadId);
+    const { stopCadences } = await import("@/lib/crm/cadence.server");
+    await stopCadences(data.leadId, "human_takeover");
+    return r;
+  });
+
+/** Envia um e-mail avulso para o lead pela tela do lead. */
+export const sendLeadEmailNow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { workspaceId: string; leadId: string; subject: string; body: string }) => {
+    if (!input.subject?.trim() || !input.body?.trim()) throw new Error("Preencha assunto e mensagem.");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    await assertMember(context.supabase, data.workspaceId);
+    const { sendLeadEmail } = await import("@/lib/crm/email.server");
+    return sendLeadEmail({ workspaceId: data.workspaceId, leadId: data.leadId, subject: data.subject.trim(), body: data.body.trim(), authorType: "user" });
   });

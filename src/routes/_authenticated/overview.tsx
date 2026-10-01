@@ -11,10 +11,12 @@ import {
 } from "recharts";
 import { ArrowUpRight, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { MetaSyncButton } from "@/components/meta-sync-button";
+import { SetupChecklist } from "@/components/setup-checklist";
 import { useWorkspace } from "@/lib/workspace";
 import { computeKpis, groupBy, groupByDay, type PerformanceRow } from "@/lib/metrics";
 import { brl, num, pct, shortDate } from "@/lib/format";
-import { PageHeader, StatCard, Section, SandboxBadge, StatusPill } from "@/components/ui-bits";
+import { PageHeader, StatCard, Section, StatusPill } from "@/components/ui-bits";
 import { RECO_ACTIONS, CAMPAIGN_STATUS } from "@/lib/labels";
 import { Button } from "@/components/ui/button";
 
@@ -38,7 +40,7 @@ function Overview() {
     enabled: !!workspaceId,
     queryFn: async () => {
       const [perf, campaigns, costs, recos, creatives] = await Promise.all([
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).neq("source", "demo"),
         supabase.from("campaigns").select("*").eq("workspace_id", workspaceId!),
         supabase.from("campaign_costs").select("amount").eq("workspace_id", workspaceId!),
         supabase
@@ -89,13 +91,17 @@ function Overview() {
         subtitle="Visão consolidada do workspace: investimento, retorno e as próximas decisões recomendadas pela IA."
         actions={
           <>
-            <SandboxBadge />
+            <MetaSyncButton invalidate={["overview", workspaceId]} />
             <Button asChild>
               <Link to="/campaigns/new">Nova campanha</Link>
             </Button>
           </>
         }
       />
+
+      <div className="mb-6">
+        <SetupChecklist compact />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Investimento (período)" value={brl(kpis.spend)} hint={`Custo total ${brl(kpis.totalCost)} com IA e produção`} />
