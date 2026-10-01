@@ -611,9 +611,10 @@ export async function generatePostAssets(
   const brand = await brandFor(plan?.brand_id ?? null);
   post._brandId = brand?.id ?? null;
   await patchPost(postId, { status: "generating", last_error: null });
-  let provider: Awaited<ReturnType<typeof resolveProvider>> | null = null;
+  let used: Awaited<ReturnType<typeof resolveProvider>> | null = null;
   try {
-    provider = await resolveProvider(s as any, workspaceId, providerChoice);
+    const provider = await resolveProvider(s as any, workspaceId, providerChoice);
+    used = provider;
     const brief = post.creative_brief ?? {};
     const { buildVisualPrompt, providerPrompt } = await import("@/lib/creative/art-director.server");
     const { loadBrandRefs } = await import("@/lib/creative/refs.server");
@@ -727,8 +728,8 @@ export async function generatePostAssets(
       ai_generation_log: await appendLog(post, {
         step: "media",
         status: "failed",
-        provider: provider?.id ?? null,
-        provider_log: provider ? providerLog(provider) : null,
+        provider: used?.id ?? null,
+        provider_log: used ? providerLog(used) : null,
         error: errMsg(e),
       }),
     });
