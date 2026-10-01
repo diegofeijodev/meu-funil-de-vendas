@@ -79,6 +79,8 @@ export type ArtBrief = {
   adjust?: string | null;
   previousPrompt?: string | null;
   slide?: { index: number; total: number } | null;
+  /** Resumo da estratégia aprovada (big idea, ângulo, direção visual, roteiro de vídeo). */
+  strategy?: unknown;
 };
 
 export async function buildVisualPrompt(b: ArtBrief): Promise<ArtDirection> {
@@ -126,6 +128,9 @@ export async function buildVisualPrompt(b: ArtBrief): Promise<ArtDirection> {
       produtos: (b.products ?? []).map((p) => ({ nome: p.name, descricao: p.description })).slice(0, 3),
       slide: b.slide ? `${b.slide.index + 1} de ${b.slide.total} de um carrossel (varie o enquadramento)` : null,
     }),
+    b.strategy
+      ? `CONCEITO DA ESTRATÉGIA (traduza em cena visual concreta; nunca escreva estes textos na imagem): ${JSON.stringify(b.strategy)}`
+      : "",
     b.previousPrompt ? `PROMPT ANTERIOR: ${b.previousPrompt}` : "",
     b.adjust ? `AJUSTE PEDIDO (aplique com prioridade): ${b.adjust}` : "",
   ]

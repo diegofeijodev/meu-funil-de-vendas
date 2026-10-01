@@ -15,6 +15,8 @@ import { brl } from "@/lib/format";
 import { Link } from "@tanstack/react-router";
 import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
 import type { CreativeType } from "@/lib/providers/creative-provider";
+import type { FullStrategy } from "@/lib/ai/strategy-types";
+import type { CopyContent } from "@/lib/ai/agents";
 import { useServerFn } from "@tanstack/react-start";
 import { generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
 import { aiKeysHealth } from "@/lib/ai-keys.functions";
@@ -53,6 +55,7 @@ function Studio() {
   const [variationCount, setVariationCount] = useState(3);
   const [lastVariations, setLastVariations] = useState<Variation[]>([]);
   const [adjust, setAdjust] = useState("");
+  const [angle, setAngle] = useState("");
 
   
   const [busy, setBusy] = useState(false);
@@ -93,6 +96,45 @@ function Studio() {
     },
   });
 
+  const selectedCampaignId = form.campaignId || data?.campaigns[0]?.id || "";
+  // Estratégia e copy da campanha: o designer segue o ângulo escolhido e usa a copy aprovada (4.3).
+  const { data: campaignBrief } = useQuery({
+    queryKey: ["studio-brief", selectedCampaignId],
+    enabled: !!selectedCampaignId,
+    queryFn: async () => {
+      const [strategies, copies] = await Promise.all([
+        supabase
+          .from("campaign_strategies")
+          .select("content, status, version")
+          .eq("campaign_id", selectedCampaignId)
+          .order("version", { ascending: false })
+          .limit(10),
+        supabase
+          .from("copies")
+          .select("content, status, version")
+          .eq("campaign_id", selectedCampaignId)
+          .order("version", { ascending: false })
+          .limit(10),
+      ]);
+      const sRows = strategies.data ?? [];
+      const cRows = copies.data ?? [];
+      const strategy = (sRows.find((r) => r.status === "approved") ?? sRows[0])?.content as unknown as FullStrategy | undefined;
+      const copy = (cRows.find((r) => r.status === "approved") ?? cRows[0])?.content as unknown as CopyContent | undefined;
+      return { strategy: strategy ?? null, copy: copy ?? null };
+    },
+  });
+  const angles = campaignBrief?.strategy?.angulos_detalhados ?? [];
+
+  const applyCampaignCopy = () => {
+    const c = campaignBrief?.copy;
+    if (!c) return;
+    const chosen = angles.find((a) => a.nome === angle);
+    setOverlay({ headline: (chosen?.gancho || c.headline || "").slice(0, 120), price: overlay.price, cta: (c.cta || "").slice(0, 40) });
+    setForm((f) => ({ ...f, copyText: chosen?.gancho || c.headline || f.copyText }));
+    if (layout === "limpo") setLayout("titulo_topo");
+    toast.success("Título e chamada preenchidos com a copy da campanha.");
+  };
+
   const payload = () => {
     const campaign = data!.campaigns.find((c) => c.id === form.campaignId) ?? data!.campaigns[0];
     return {
@@ -111,6 +153,7 @@ function Studio() {
       headline: overlay.headline || null,
       price: overlay.price || null,
       cta: overlay.cta || null,
+      angle: angle || null,
     };
   };
 
@@ -243,6 +286,32 @@ function Studio() {
                 {data.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            {angles.length > 0 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="ang">Ângulo da estratégia</Label>
+                <select
+                  id="ang"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={angle}
+                  onChange={(e) => setAngle(e.target.value)}
+                >
+                  <option value="">Big idea geral</option>
+                  {angles.map((a) => (
+                    <option key={a.nome} value={a.nome}>
+                      {a.nome} — {a.formato_sugerido}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  O diretor de arte segue este ângulo e o criativo fica marcado com ele para comparar resultados.
+                </p>
+              </div>
+            )}
+            {campaignBrief?.copy && (
+              <Button size="sm" variant="outline" className="w-full" onClick={applyCampaignCopy}>
+                Usar a copy da campanha no título e na chamada
+              </Button>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="ty">Formato</Label>
@@ -414,6 +483,7 @@ function Studio() {
                   <p className="text-sm font-medium">{c.title}</p>
                   <p className="text-xs text-muted-foreground">
                     {FORMATS[c.type] ?? c.type} · v{c.version} · {c.campaigns?.name ?? "sem campanha"}
+                    {(c as { angle?: string | null }).angle ? ` · ângulo: ${(c as { angle?: string | null }).angle}` : ""}
                   </p>
                   <div className="flex items-center justify-between">
                     <StatusPill status={c.status} label={CREATIVE_STATUS[c.status] ?? c.status} />

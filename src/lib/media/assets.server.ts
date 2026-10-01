@@ -36,6 +36,8 @@ export type IngestInput = {
   creativeId?: string | null;
   igPostId?: string | null;
   parentId?: string | null;
+  /** Ângulo da estratégia que esta mídia testa. */
+  angle?: string | null;
   createdBy?: string | null;
   status?: "draft" | "approved";
   /** Recorta para o tamanho exato (padrão true para imagens). */
@@ -181,6 +183,7 @@ export async function ingestAsset(input: IngestInput): Promise<MediaAssetRow> {
       creative_id: input.creativeId ?? null,
       ig_post_id: input.igPostId ?? null,
       parent_id: input.parentId ?? null,
+      angle: input.angle ?? null,
       title: (input.title || "Mídia").slice(0, 200),
       kind: input.kind,
       source: SOURCES.has(input.source) ? input.source : "other",

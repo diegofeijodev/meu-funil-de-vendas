@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { OBJECTIVES, FORMATS } from "@/lib/labels";
-import { generateStrategy, generateCopySmart, type CampaignBrief, type BrandContext } from "@/lib/ai/agents";
+import { generateCopySmart, type CampaignBrief, type BrandContext } from "@/lib/ai/agents";
+import { useServerFn } from "@tanstack/react-start";
+import { generateCampaignStrategy } from "@/lib/ai/strategist.functions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/campaigns/new")({
@@ -31,6 +33,7 @@ const STEPS = ["Objetivo", "Oferta", "Público", "Verba e metas", "Formatos"];
 function NewCampaign() {
   const { workspaceId } = useWorkspace();
   const navigate = useNavigate();
+  const runStrategy = useServerFn(generateCampaignStrategy);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
 
@@ -111,35 +114,32 @@ function NewCampaign() {
         .single();
       if (error) throw error;
 
-      const { data: learnings } = await supabase
-        .from("brand_learnings")
-        .select("category, value, metric")
-        .eq("brand_id", brand.id)
-        .order("score", { ascending: false })
-        .limit(5);
-
-      const brandCtx: BrandContext = brand;
-      const strategy = await generateStrategy(brandCtx, brief, learnings ?? []);
-      const { content: copy, error: copyErr } = await generateCopySmart(workspaceId!, brandCtx, brief);
-      if (copyErr) toast.warning(`Copy simulada: ${copyErr}`);
-
-      await supabase.from("campaign_strategies").insert({
-        workspace_id: workspaceId,
-        campaign_id: campaign.id,
-        content: strategy,
-        status: "draft",
-        version: 1,
-      });
-      await supabase.from("copies").insert({
-        workspace_id: workspaceId,
-        campaign_id: campaign.id,
-        content: copy,
-        status: "draft",
-        version: 1,
-      });
+      // Estrategista (IA real) → estratégia v1; depois a copy segue a estratégia.
+      let strategyOk = true;
+      try {
+        await runStrategy({ data: { campaignId: campaign.id } });
+      } catch (e) {
+        strategyOk = false;
+        toast.warning(`Estratégia não gerada: ${e instanceof Error ? e.message : "erro"}. Gere de novo na campanha.`);
+      }
+      try {
+        const { content: copy, engine } = await generateCopySmart(workspaceId!, brand as BrandContext, brief, 0, {
+          campaignId: campaign.id,
+        });
+        await supabase.from("copies").insert({
+          workspace_id: workspaceId,
+          campaign_id: campaign.id,
+          content: copy,
+          status: "draft",
+          version: 1,
+        });
+        toast.message(`Copy gerada com ${engine}.`);
+      } catch (e) {
+        toast.warning(`Copy não gerada: ${e instanceof Error ? e.message : "erro"}. Gere de novo na campanha.`);
+      }
 
       await logActivity(workspaceId, "campaign.created", "campaign", { campaign_id: campaign.id, name });
-      toast.success("Campanha criada com estratégia e copies gerados.");
+      if (strategyOk) toast.success("Campanha criada com estratégia gerada pela IA.");
       navigate({ to: "/campaigns/$id", params: { id: campaign.id } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível criar a campanha");

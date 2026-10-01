@@ -200,6 +200,7 @@ export type RunGenerationInput = {
   existingCreativeId?: string | null;
   providerChoice?: ProviderChoice;
   targetFormat?: string | null | undefined;
+  angle?: string | null | undefined;
 };
 
 export async function runGeneration(supabase: DB, input: RunGenerationInput) {
@@ -283,6 +284,7 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
           cost: result.cost,
           brandId: input.brandId,
           campaignId: input.campaignId,
+          angle: input.angle ?? null,
         });
         assetId = asset.id;
         result.assetUrl = asset.url;
@@ -332,11 +334,12 @@ async function finalizeWith(supabase: DB, injected: ServerCreativeProvider | nul
           thumbnail_url: result.thumbnailUrl,
           external_job_id: result.externalJobId,
           version: 1,
-        })
+          angle: input.angle ?? null,
+        } as never)
         .select("id")
         .single();
       if (error) throw new Error(error.message);
-      creativeId = created.id;
+      creativeId = (created as { id: string }).id;
     }
 
     if (assetId) {
@@ -486,6 +489,7 @@ export type ArtInput = {
   headline?: string | null | undefined;
   price?: string | null | undefined;
   cta?: string | null | undefined;
+  angle?: string | null | undefined;
   userId: string;
 };
 
@@ -503,10 +507,14 @@ export async function directArt(supabase: DB, input: Omit<ArtInput, "layout" | "
         .in("kind", ["reference", "photo"])
         .eq("tag", "produto")
     : { count: 0 };
+  // A estratégia aprovada da campanha (big idea, ângulo, direção visual) orienta o diretor de arte.
+  const { currentStrategy, strategyBrief } = await import("./ai/strategist.server");
+  const strategy = strategyBrief(await currentStrategy(supabase, input.campaign?.id), input.angle);
   const brief = {
     workspaceId: input.workspaceId,
     brand: input.brand,
     campaign: input.campaign,
+    strategy,
     products: products ?? [],
     theme: input.title,
     hook: input.copyText || null,
@@ -566,6 +574,7 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
     kind: input.kind,
     brandContext: { art_direction: ad },
     providerChoice: input.providerChoice,
+    angle: input.angle ?? null,
   };
 
   // Vídeo e simulado: só o prompt do diretor de arte, fluxo de sempre.
@@ -593,6 +602,7 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
       text: { title: input.headline ?? input.copyText ?? null, price: input.price ?? null, cta: input.cta ?? null },
       title: base.title,
       campaignId: base.campaignId,
+      angle: input.angle ?? null,
       createdBy: input.userId,
       rebuild: (motivo) =>
         buildVisualPrompt({ ...brief, previousPrompt: ad.prompt_final, adjust: `Corrija este problema apontado pelo crítico: ${motivo}` }),
@@ -621,7 +631,8 @@ export async function runArtDirected(supabase: DB, input: ArtInput) {
         preview_url: res.finalUrl,
         thumbnail_url: res.finalThumb,
         version: 1,
-      })
+        angle: input.angle ?? null,
+      } as never)
       .select("id")
       .single();
     if (error) throw new Error(error.message);

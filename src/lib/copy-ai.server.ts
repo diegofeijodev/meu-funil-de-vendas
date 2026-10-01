@@ -30,17 +30,23 @@ const SCHEMA = {
   },
 };
 
-function prompt(brand: unknown, brief: unknown, seed: number) {
+function prompt(brand: unknown, brief: unknown, seed: number, strategy: unknown = null) {
   return [
     "Você é um copywriter sênior de performance no Brasil. Escreva em português do Brasil.",
     "Respeite o tom de voz, use as palavras preferidas e NUNCA use as palavras proibidas da marca.",
+    strategy
+      ? "Siga a ESTRATÉGIA aprovada: a big idea e a mensagem principal guiam tudo; cada variação de headline explora um ângulo; responda as objeções no texto longo."
+      : "",
     "Devolva SOMENTE um JSON com: headline, headline_variacoes (5), texto_curto, texto_longo, cta, meta_ad,",
     "instagram_feed, reels (roteiro com tempos), stories (4 stories), script_ugc, script_institucional,",
     "carrossel (7 slides), quiz (3 perguntas com 3-4 opções).",
     `Versão ${seed + 1}: traga ângulos diferentes das versões anteriores.`,
     `MARCA: ${JSON.stringify(brand)}`,
     `CAMPANHA: ${JSON.stringify(brief)}`,
-  ].join("\n");
+    strategy ? `ESTRATÉGIA: ${JSON.stringify(strategy)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parse(text: string) {
@@ -132,8 +138,9 @@ export async function generateCopyAI(
   brand: unknown,
   brief: unknown,
   seed: number,
+  strategy: unknown = null,
 ): Promise<{ content: any; engine: string }> {
-  const p = prompt(brand, brief, seed);
+  const p = prompt(brand, brief, seed, strategy);
   const [o, g] = await Promise.all([getWorkspaceAiKey(workspaceId, "openai"), getWorkspaceAiKey(workspaceId, "gemini")]);
   const fails: string[] = [];
   if ((engine === "chatgpt" || engine === "auto") && o) {

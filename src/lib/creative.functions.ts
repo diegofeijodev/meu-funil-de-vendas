@@ -21,6 +21,7 @@ const generateInput = z.object({
   headline: z.string().max(120).nullable().optional(),
   price: z.string().max(40).nullable().optional(),
   cta: z.string().max(40).nullable().optional(),
+  angle: z.string().max(200).nullable().optional(),
 });
 const CHOICES = new Set(["higgsfield", "chatgpt", "gemini"]);
 

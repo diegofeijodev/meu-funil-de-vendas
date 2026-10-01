@@ -1,10 +1,6 @@
-import { OBJECTIVES } from "@/lib/labels";
-
 /**
- * Agentes de IA — camada de serviço.
- * Hoje roda em modo simulado (determinístico, sem custo). A assinatura das
- * funções já é a definitiva: para plugar um modelo real, basta trocar a
- * implementação por uma chamada a um server function no backend.
+ * Agentes de IA — tipos compartilhados e chamadas do navegador.
+ * Estratégia: src/lib/ai/strategist.server.ts · Copy: src/lib/copy-ai.server.ts.
  */
 
 export type BrandContext = {
@@ -90,121 +86,6 @@ const CTA_BY_OBJECTIVE: Record<string, string> = {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function pick<T>(arr: T[], i: number): T {
-  return arr[i % arr.length] as T;
-}
-
-export async function generateStrategy(
-  brand: BrandContext,
-  brief: CampaignBrief,
-  learnings: Learning[] = [],
-): Promise<StrategyContent> {
-  await wait(1400);
-  const objective = OBJECTIVES[brief.objective] ?? brief.objective;
-  const produto = brief.offer_product || "a oferta principal";
-  const cac = brief.max_cac ? `R$ ${brief.max_cac}` : "não definido";
-  const meta = brief.goal_leads ? `${brief.goal_leads} leads` : `${brief.goal_sales ?? 0} vendas`;
-  const aprendizados = learnings.map((l) => `${l.category}: ${l.value}${l.metric ? ` (${l.metric})` : ""}`);
-  const persona = brief.audience["persona"] || brand.target_audience || "público principal da marca";
-  const local = brief.audience["localizacao"] || brand.region || "Brasil";
-  const idade = brief.audience["idade"] || "25-45";
-
-  return {
-    resumo_executivo: `Campanha de ${objective.toLowerCase()} para ${brand.name}, promovendo ${produto}. Verba total de R$ ${brief.budget_total ?? 0} (R$ ${brief.budget_daily ?? 0}/dia) com meta de ${meta} e CAC máximo de ${cac}. A estratégia parte dos diferenciais da marca (${brand.differentials || "posicionamento próprio"}) e dos aprendizados acumulados no histórico.`,
-    problema: `${persona} já foi exposto a ofertas parecidas de ${brand.competitors || "concorrentes diretos"} e desenvolveu ceticismo. A oportunidade está em ancorar a comunicação em prova concreta em vez de promessa genérica.`,
-    objetivo_smart: `Atingir ${meta} em ${brief.start_date && brief.end_date ? "todo o período da campanha" : "30 dias"}, com CAC máximo de ${cac} e ticket médio de R$ ${brief.avg_ticket ?? 0}, mantendo margem em ${brief.margin_percent ?? 0}%.`,
-    icp: `${persona} · ${idade} anos · ${local} · interesses: ${brief.audience["interesses"] || "não informado"} · ${brief.audience["tipo"] || "B2C"}.`,
-    oferta: `${produto}${brief.offer_price ? ` por R$ ${brief.offer_price}` : ""}. Promessa: ${brief.offer_promise || "benefício central da oferta"}. Destino: ${brief.landing_url || "landing page a definir"}.`,
-    big_idea: `${brand.name}: ${brand.differentials?.split(",")[0]?.trim() || "o diferencial que ninguém mostra"} — provado, não prometido.`,
-    angulos: [
-      `Prova concreta: ${brand.differentials || "o diferencial da marca"}`,
-      `Dor imediata do ${persona}`,
-      `Comparativo honesto com ${brand.competitors || "as alternativas do mercado"}`,
-      "Depoimento real em formato UGC",
-      `Autoridade e bastidor de ${brand.name}`,
-    ],
-    funil: `Topo: conteúdo educativo sobre o problema. Meio: ${brief.formats.includes("quiz") ? "quiz de diagnóstico" : "prova social e comparativo"}. Fundo: oferta direta com ${CTA_BY_OBJECTIVE[brief.objective] ?? "CTA principal"}.`,
-    mensagem_principal: `${brief.offer_promise || produto} com ${brand.differentials?.split(",")[0]?.trim() || "o padrão de qualidade da marca"}.`,
-    objecoes: [
-      { objecao: "É caro demais", resposta: `Quebra do custo por uso e comparativo com ${brand.competitors || "as alternativas"}.` },
-      { objecao: "Já tentei algo parecido e não funcionou", resposta: `${brand.differentials || "O diferencial da marca"} muda o resultado — mostramos a prova.` },
-      { objecao: "Não confio na marca", resposta: `Prova social, bastidores e garantia clara de ${brand.name}.` },
-    ],
-    canais: `Meta Ads (Instagram + Facebook) como canal principal${brief.objective === "whatsapp" ? " com destino em WhatsApp" : ""}, apoiado por conteúdo orgânico no Instagram.`,
-    distribuicao_verba: { prospeccao: 60, remarketing: 25, teste_criativos: 15 },
-    kpis: {
-      CPL: brief.max_cac ? `<= R$ ${Math.round(Number(brief.max_cac) * 0.55)}` : "<= R$ 40",
-      CTR: ">= 1,8%",
-      CAC: `<= ${cac}`,
-      ROAS: ">= 3,0",
-    },
-    hipoteses: [
-      "Criativo UGC supera o institucional em CTR",
-      `Ângulo de ${brand.differentials?.split(",")[0]?.trim() || "diferencial"} reduz o CPL em pelo menos 15%`,
-      "Público de remarketing tem CAC no mínimo 35% menor",
-    ],
-    plano_testes: `Teste A/B de headline (dor vs. prova) por 7 dias, 2 criativos por conjunto e corte automático de qualquer criativo com CPL 30% acima da meta. Formatos em teste: ${brief.formats.join(", ") || "a definir"}.`,
-    cronograma: `Semana 1: aquecimento e leitura de sinais. Semana 2: escala do criativo vencedor. Semana 3: ativação do remarketing. Semana 4: oferta de fechamento.`,
-    recomendacoes: [
-      "Validar pixel e eventos de conversão antes do go-live",
-      `Produzir ao menos 3 variações do formato ${pick(brief.formats.length ? brief.formats : ["video"], 0)}`,
-      aprendizados.length
-        ? `Reaproveitar aprendizados da marca: ${aprendizados.slice(0, 3).join(" · ")}`
-        : "Registrar aprendizados desde o primeiro dia para alimentar as próximas campanhas",
-    ],
-  };
-}
-
-export async function generateCopy(
-  brand: BrandContext,
-  brief: CampaignBrief,
-  seed = 0,
-): Promise<CopyContent> {
-  await wait(1100);
-  const produto = brief.offer_product || "nossa solução";
-  const promessa = brief.offer_promise || "o resultado que você procura";
-  const dif = brand.differentials?.split(",")[0]?.trim() || "um padrão diferente de qualidade";
-  const cta = CTA_BY_OBJECTIVE[brief.objective] ?? "Saiba mais";
-  const persona = brief.audience["persona"] || brand.target_audience || "você";
-
-  const headlines = [
-    `${promessa}. Sem promessa vazia.`,
-    `${produto}: ${dif}`,
-    `O que ninguém te conta sobre ${produto.toLowerCase()}`,
-    `${persona.split(",")[0]}, isso muda o seu resultado`,
-    `${dif} — e nós mostramos a prova`,
-    `Pare de tentar. Comece a medir com ${brand.name}.`,
-  ];
-
-  return {
-    headline: pick(headlines, seed),
-    headline_variacoes: headlines.filter((_, i) => i % headlines.length !== seed % headlines.length).slice(0, 5),
-    texto_curto: `${brand.name} apresenta ${produto}: ${promessa}. ${cta}.`,
-    texto_longo: `Se você já testou outras opções e não viu resultado, o problema provavelmente não é você. ${produto} foi construído em cima de ${dif}, e é isso que muda o jogo para ${persona}. ${promessa}${brief.offer_price ? `, a partir de R$ ${brief.offer_price}` : ""}. Tom de voz: ${brand.tone_of_voice || "direto e confiável"}. ${cta}.`,
-    cta,
-    meta_ad: `${promessa} com ${dif}. ${cta}.`,
-    instagram_feed: `${pick(headlines, seed + 1)}\n\n${produto} existe por um motivo simples: ${dif}. ${promessa}.\n\n${cta} — link na bio.`,
-    reels: `[0-3s] Gancho: "${pick(headlines, seed + 2)}"\n[3-8s] Contexto da dor de ${persona}\n[8-15s] Prova: ${dif}\n[15-22s] Demonstração de ${produto}\n[22-28s] CTA: ${cta}`,
-    stories: `Story 1: enquete sobre a dor principal\nStory 2: dado ou prova de ${dif}\nStory 3: bastidor de ${brand.name}\nStory 4: CTA "${cta}" com link`,
-    script_ugc: `Câmera na mão, luz natural. "Eu testei várias opções antes de conhecer ${brand.name}." Corte para uso real de ${produto}. "A diferença é ${dif}." Corte para resultado. "${cta}, link na bio."`,
-    script_institucional: `Plano aberto da operação de ${brand.name}. Narração: "Cada entrega passa por ${dif}." Cortes de bastidor, cliente real, assinatura da marca e ${cta}.`,
-    carrossel: [
-      `Slide 1: ${pick(headlines, seed)}`,
-      `Slide 2: o erro mais comum de ${persona}`,
-      `Slide 3: por que as alternativas falham`,
-      `Slide 4: ${dif}`,
-      `Slide 5: ${promessa}`,
-      `Slide 6: prova social e resultados`,
-      `Slide 7: ${cta}`,
-    ],
-    quiz: [
-      { pergunta: `Qual é hoje o seu maior desafio com ${produto.toLowerCase()}?`, opcoes: ["Preço", "Confiança", "Resultado"] },
-      { pergunta: "Há quanto tempo você busca uma solução?", opcoes: ["Menos de 1 mês", "1 a 6 meses", "Mais de 6 meses"] },
-      { pergunta: "O que faria você decidir hoje?", opcoes: ["Prova concreta", "Condição especial", "Indicação de alguém"] },
-    ],
-  };
-}
-
 export type OptimizerInput = {
   campaignId: string;
   cpl: number;
@@ -283,32 +164,46 @@ export async function generateRecommendations(input: OptimizerInput): Promise<Re
 }
 
 /**
- * Copy com IA real (sua conta OpenAI/Gemini ou créditos do app).
- * Se a IA falhar, volta para o gerador simulado para não travar o fluxo.
+ * Copy com IA real (sua conta OpenAI/Gemini ou créditos do app), orientada pela estratégia da campanha.
+ * Se a IA falhar, o erro sobe para a tela — nunca salvamos copy de modelo como se fosse da IA.
  */
 export async function generateCopySmart(
   workspaceId: string,
   brand: BrandContext,
   brief: CampaignBrief,
   seed = 0,
-): Promise<{ content: CopyContent; engine: string; error?: string }> {
-  try {
-    const { generateCopyWithAI } = await import("@/lib/copy-ai.functions");
-    const r = await generateCopyWithAI({
-      data: {
-        workspaceId,
-        engine: "auto",
-        brand: brand as unknown as Record<string, unknown>,
-        brief: brief as unknown as Record<string, unknown>,
-        seed,
-      },
-    });
-    return { content: { ...(await generateCopy(brand, brief, seed)), ...r.content }, engine: r.engine };
-  } catch (e) {
-    return {
-      content: await generateCopy(brand, brief, seed),
-      engine: "simulado",
-      error: e instanceof Error ? e.message : String(e),
-    };
-  }
+  opts: { campaignId?: string | null; angle?: string | null } = {},
+): Promise<{ content: CopyContent; engine: string }> {
+  const { generateCopyWithAI } = await import("@/lib/copy-ai.functions");
+  const r = await generateCopyWithAI({
+    data: {
+      workspaceId,
+      engine: "auto",
+      brand: brand as unknown as Record<string, unknown>,
+      brief: brief as unknown as Record<string, unknown>,
+      seed,
+      campaignId: opts.campaignId ?? null,
+      angle: opts.angle ?? null,
+    },
+  });
+  const list = (v: unknown) => (Array.isArray(v) ? v : []);
+  const c = r.content as Partial<CopyContent>;
+  return {
+    content: {
+      headline: String(c.headline ?? ""),
+      headline_variacoes: list(c.headline_variacoes),
+      texto_curto: String(c.texto_curto ?? ""),
+      texto_longo: String(c.texto_longo ?? ""),
+      cta: String(c.cta ?? CTA_BY_OBJECTIVE[brief.objective] ?? "Saiba mais"),
+      meta_ad: String(c.meta_ad ?? ""),
+      instagram_feed: String(c.instagram_feed ?? ""),
+      reels: String(c.reels ?? ""),
+      stories: String(c.stories ?? ""),
+      script_ugc: String(c.script_ugc ?? ""),
+      script_institucional: String(c.script_institucional ?? ""),
+      carrossel: list(c.carrossel),
+      quiz: list(c.quiz),
+    },
+    engine: r.engine,
+  };
 }
