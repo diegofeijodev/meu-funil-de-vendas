@@ -1,0 +1,2 @@
+ALTER TABLE public.mcp_connections DROP CONSTRAINT IF EXISTS mcp_connections_provider_check;
+ALTER TABLE public.mcp_connections ADD CONSTRAINT mcp_connections_provider_check CHECK (provider = ANY (ARRAY['higgsfield'::text, 'meta'::text, 'canva'::text]));
