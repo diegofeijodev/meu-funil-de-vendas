@@ -5,7 +5,7 @@
 import { graph, metaConfig, MetaError, runWithMetaWorkspace } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
-import { resolveProvider, type ProviderChoice } from "@/lib/creative.server";
+import { resolveProvider, providerLog, type ProviderChoice } from "@/lib/creative.server";
 
 const BUCKET = "ig-media";
 const MAX_ATTEMPTS = 3;
@@ -611,8 +611,9 @@ export async function generatePostAssets(
   const brand = await brandFor(plan?.brand_id ?? null);
   post._brandId = brand?.id ?? null;
   await patchPost(postId, { status: "generating", last_error: null });
+  let provider: Awaited<ReturnType<typeof resolveProvider>> | null = null;
   try {
-    const provider = await resolveProvider(s as any, workspaceId, providerChoice);
+    provider = await resolveProvider(s as any, workspaceId, providerChoice);
     const brief = post.creative_brief ?? {};
     const { buildVisualPrompt, providerPrompt } = await import("@/lib/creative/art-director.server");
     const { loadBrandRefs } = await import("@/lib/creative/refs.server");
@@ -696,10 +697,12 @@ export async function generatePostAssets(
           media,
           creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
           status: req === false ? "ready" : "pending_approval",
+          last_error: null,
           ai_provider: provider.id,
           ai_generation_log: await appendLog(post, {
             step: "media",
             provider: provider.id,
+            provider_log: providerLog(provider),
             items: 1,
             variations: res.variations.length,
             best_score: res.winner.score?.total ?? null,
@@ -718,7 +721,17 @@ export async function generatePostAssets(
     });
   } catch (e) {
     console.error("[instagram] mídia falhou:", errMsg(e));
-    await patchPost(postId, { status: "failed", last_error: errMsg(e) });
+    await patchPost(postId, {
+      status: "failed",
+      last_error: errMsg(e),
+      ai_generation_log: await appendLog(post, {
+        step: "media",
+        status: "failed",
+        provider: provider?.id ?? null,
+        provider_log: provider ? providerLog(provider) : null,
+        error: errMsg(e),
+      }),
+    });
     return { ok: false as const, error: errMsg(e) };
   }
 }

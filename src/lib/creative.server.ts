@@ -127,8 +127,8 @@ function chainProviders(list: ServerCreativeProvider[]): ServerCreativeProvider 
         return r;
       } catch (e) {
         lastErr = e;
-        if (!isCreditError(e) || i === list.length - 1) throw e;
-        console.warn(`[creative-chain] ${p.id} sem crédito/limite, tentando o próximo:`, errMessage(e));
+        if (i === list.length - 1) throw e;
+        console.warn(`[creative-chain] ${p.id} falhou, tentando o próximo:`, errMessage(e));
         log.push(`${p.label}: ${errMessage(e)} → tentando o próximo`);
         list = list.slice(i); // não volta para quem já falhou
         list.shift();
@@ -165,12 +165,12 @@ export async function resolveProvider(supabase: DB, workspaceId: string, choice:
     if (!higgs) throw new Error("Higgsfield não está conectado nesta empresa. Conecte em Integrações.");
     return higgs;
   }
-  // Automático: Higgsfield → Gemini (chave) → ChatGPT (chave) → créditos do app.
+  // Automático: ChatGPT (chave) → Gemini (chave) → Higgsfield → créditos do app.
   const [gKey, oKey] = await Promise.all([getWorkspaceAiKey(workspaceId, "gemini"), getWorkspaceAiKey(workspaceId, "openai")]);
   const list: ServerCreativeProvider[] = [];
-  if (higgs) list.push(higgs);
-  if (gKey) list.push(createGeminiProvider(gKey, { strict: true }));
   if (oKey) list.push(createChatgptProvider(oKey, { strict: true }));
+  if (gKey) list.push(createGeminiProvider(gKey, { strict: true }));
+  if (higgs) list.push(higgs);
   // Sem conexões próprias: créditos de IA do app. Nunca cai no gerador simulado (foto aleatória).
   const app: ServerCreativeProvider = { ...createGeminiProvider(null), label: "Créditos de IA do app" };
   if (!list.length) return app;
@@ -178,7 +178,7 @@ export async function resolveProvider(supabase: DB, workspaceId: string, choice:
   return chainProviders(list);
 }
 
-const providerLog = (p: ServerCreativeProvider, r?: GenerationResult | null) => {
+export const providerLog = (p: ServerCreativeProvider, r?: GenerationResult | null) => {
   const log = (p as { log?: string[] }).log;
   if (log?.length) return log.join("\n");
   return r?.note ? `Usado: ${r.note}` : `Usado: ${p.label}`;
