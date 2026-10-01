@@ -34,6 +34,20 @@ const PROVIDERS: {
       "Abra o Creative Studio e gere um criativo: ele passa a usar o Higgsfield de verdade.",
     ],
   },
+  {
+    id: "canva",
+    label: "Canva",
+    hint: "Envie criativos para o Canva, crie designs a partir da copy e traga a versão editada de volta para a Biblioteca.",
+    placeholder: "https://mcp.canva.com/mcp",
+    defaultUrl: "https://mcp.canva.com/mcp",
+    steps: [
+      "Tenha uma conta Canva (Pro ou Teams recomendada para kits de marca).",
+      "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
+      "Uma janela do Canva abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
+      "Na Biblioteca, use \"Enviar ao Canva\" em uma mídia e \"Importar do Canva\" para trazer o design editado.",
+      "Na campanha, use \"Criar design no Canva\" para montar um layout editável com a copy.",
+    ],
+  },
 ];
 
 const STATUS_LABEL: Record<string, { label: string; pill: string }> = {

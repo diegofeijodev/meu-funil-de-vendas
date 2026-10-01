@@ -18,7 +18,7 @@ import type { CreativeType } from "@/lib/providers/creative-provider";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
 import type { CopyContent } from "@/lib/ai/agents";
 import { useServerFn } from "@tanstack/react-start";
-import { generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
+import { capcutPackage, generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
 import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
@@ -56,6 +56,7 @@ function Studio() {
   const [lastVariations, setLastVariations] = useState<Variation[]>([]);
   const [adjust, setAdjust] = useState("");
   const [angle, setAngle] = useState("");
+  const [videoOpts, setVideoOpts] = useState({ useBrandImage: true, coverWithLogo: false });
 
   
   const [busy, setBusy] = useState(false);
@@ -154,6 +155,8 @@ function Studio() {
       price: overlay.price || null,
       cta: overlay.cta || null,
       angle: angle || null,
+      useBrandImage: videoOpts.useBrandImage,
+      coverWithLogo: videoOpts.coverWithLogo,
     };
   };
 
@@ -365,6 +368,25 @@ function Studio() {
               <Label htmlFor="ct">Texto sobre o criativo</Label>
               <Textarea id="ct" rows={2} value={form.copyText} onChange={(e) => setForm({ ...form, copyText: e.target.value })} />
             </div>
+            {isVideo && (
+              <div className="space-y-2 rounded-md border border-border/60 p-3 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={videoOpts.useBrandImage} onChange={(e) => setVideoOpts({ ...videoOpts, useBrandImage: e.target.checked })} />
+                  Começar o vídeo pela foto do produto da marca (imagem → vídeo)
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={videoOpts.coverWithLogo} onChange={(e) => setVideoOpts({ ...videoOpts, coverWithLogo: e.target.checked })} />
+                  Gerar capa com logo, título e chamada (custa 1 imagem a mais)
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  As legendas (.srt e .vtt) saem do texto sobre o criativo. O vídeo é gerado em segundo plano: pode fechar a tela.
+                </p>
+                <div className="grid gap-2">
+                  <Input placeholder="Título da capa (curto)" maxLength={120} value={overlay.headline} onChange={(e) => setOverlay({ ...overlay, headline: e.target.value })} />
+                  <Input placeholder="Chamada da capa (ex.: Peça já)" maxLength={40} value={overlay.cta} onChange={(e) => setOverlay({ ...overlay, cta: e.target.value })} />
+                </div>
+              </div>
+            )}
             {!isVideo && (
               <>
                 <div className="grid grid-cols-2 gap-3">
@@ -489,6 +511,7 @@ function Studio() {
                     <StatusPill status={c.status} label={CREATIVE_STATUS[c.status] ?? c.status} />
                     <span className="text-xs text-muted-foreground">{brl(c.real_cost)}</span>
                   </div>
+                  <CreativeExtras extras={(c as { extras?: unknown }).extras} creativeId={c.id} isVideo={!!c.preview_url && /\.mp4(\?|$)/.test(c.preview_url)} />
                   {canEdit && (
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       <Button size="sm" variant="outline" onClick={() => setStatus(c.id, "approved")}>Aprovar</Button>
@@ -524,3 +547,37 @@ const PROVIDER_LABEL: Record<string, string> = {
   gemini: "Gemini",
   mock: "Simulado",
 };
+
+/** Capa, legendas e pacote para CapCut de um criativo de vídeo. */
+function CreativeExtras({ extras, creativeId, isVideo }: { extras: unknown; creativeId: string; isVideo: boolean }) {
+  const pack = useServerFn(capcutPackage);
+  const [busy, setBusy] = useState(false);
+  const e = (extras ?? {}) as { cover_url?: string; captions_vtt?: string; captions_srt?: string; errors?: string[] };
+  if (!isVideo) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {e.cover_url && <a className="text-primary underline" href={e.cover_url} target="_blank" rel="noopener noreferrer">Capa</a>}
+      {e.captions_srt && <a className="text-primary underline" href={e.captions_srt} target="_blank" rel="noopener noreferrer">Legendas .srt</a>}
+      {e.captions_vtt && <a className="text-primary underline" href={e.captions_vtt} target="_blank" rel="noopener noreferrer">Legendas .vtt</a>}
+      <button
+        type="button"
+        className="text-primary underline disabled:opacity-50"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await pack({ data: { creativeId } });
+            window.open(r.url, "_blank");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Não foi possível montar o pacote.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "Montando…" : "Pacote para CapCut (.zip)"}
+      </button>
+      {!!e.errors?.length && <span className="text-destructive">{e.errors.join(" · ")}</span>}
+    </div>
+  );
+}

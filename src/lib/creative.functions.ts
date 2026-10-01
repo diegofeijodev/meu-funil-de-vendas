@@ -22,6 +22,8 @@ const generateInput = z.object({
   price: z.string().max(40).nullable().optional(),
   cta: z.string().max(40).nullable().optional(),
   angle: z.string().max(200).nullable().optional(),
+  useBrandImage: z.boolean().optional(),
+  coverWithLogo: z.boolean().optional(),
 });
 const CHOICES = new Set(["higgsfield", "chatgpt", "gemini"]);
 
@@ -202,4 +204,52 @@ export const newCreativeVersion = createServerFn({ method: "POST" })
       existingCreativeId: cr.id,
       providerChoice,
     });
+  });
+
+/** 4.7 Pacote para editar no CapCut (ou Premiere): vídeo, legendas .srt, capa e roteiro num .zip. */
+export const capcutPackage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ creativeId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: cr } = await context.supabase.from("creatives").select("*").eq("id", data.creativeId).maybeSingle();
+    if (!cr) throw new Error("Criativo não encontrado.");
+    if (!cr.preview_url) throw new Error("Este criativo ainda não tem arquivo.");
+    const extras = (cr.extras ?? {}) as { captions_srt?: string; cover_url?: string };
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    const get = async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Falha ao baixar ${url.slice(0, 60)}… (${r.status})`);
+      return new Uint8Array(await r.arrayBuffer());
+    };
+    const isVideo = /\.mp4(\?|$)/i.test(cr.preview_url);
+    zip.file(isVideo ? "video.mp4" : "imagem.jpg", await get(cr.preview_url));
+    if (extras.captions_srt) zip.file("legendas.srt", await get(extras.captions_srt));
+    if (extras.cover_url) zip.file("capa.jpg", await get(extras.cover_url));
+    const { data: copy } = cr.campaign_id
+      ? await context.supabase.from("copies").select("content").eq("campaign_id", cr.campaign_id).order("version", { ascending: false }).limit(1).maybeSingle()
+      : { data: null };
+    const c = (copy?.content ?? {}) as { reels?: string; headline?: string; cta?: string };
+    zip.file(
+      "LEIA-ME.txt",
+      [
+        `Criativo: ${cr.title}`,
+        "",
+        "Como montar no CapCut:",
+        "1. Abra o CapCut e crie um projeto novo na proporção do vídeo.",
+        "2. Importe video.mp4 (e capa.jpg, se houver, como primeiro quadro).",
+        "3. Em Texto > Legendas > Importar legendas, escolha legendas.srt.",
+        "4. Ajuste fontes e cores da marca e exporte em 1080p.",
+        "",
+        c.headline ? `Título: ${c.headline}` : "",
+        c.cta ? `Chamada: ${c.cta}` : "",
+        c.reels ? `\nRoteiro do Reels:\n${c.reels}` : "",
+      ]
+        .filter((l) => l !== undefined)
+        .join("\n"),
+    );
+    const bytes = await zip.generateAsync({ type: "uint8array" });
+    const { storeBytes } = await import("./media/assets.server");
+    const url = await storeBytes(`exports/${cr.workspace_id}/${crypto.randomUUID()}-capcut.zip`, bytes, "application/zip");
+    return { url };
   });

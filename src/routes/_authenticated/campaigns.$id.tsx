@@ -19,6 +19,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
 import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
 import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
+import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -45,6 +46,7 @@ function CampaignDetail() {
   const runStrategy = useServerFn(generateCampaignStrategy);
   const runApproveStrategy = useServerFn(approveCampaignStrategy);
   const runIgPlan = useServerFn(createIgPlanFromStrategy);
+  const runCanvaCreate = useServerFn(canvaCreateFromBrief);
 
   
   const [busy, setBusy] = useState<string | null>(null);
@@ -159,6 +161,30 @@ function CampaignDetail() {
       toast.success(`Novas copies geradas com ${engine}.`);
     } catch (e) {
       toast.error(`Copy não gerada: ${e instanceof Error ? e.message : "erro"}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const canvaFromCopy = async () => {
+    if (!workspaceId || !copy) return;
+    setBusy("canva");
+    try {
+      const brief = [
+        `Post de Instagram para a marca ${brand?.name ?? ""}.`,
+        `Título: ${copy.headline}`,
+        `Texto: ${copy.texto_curto}`,
+        `Chamada: ${copy.cta}`,
+        brand?.primary_color ? `Cores da marca: ${brand.primary_color} e ${brand.secondary_color ?? ""}.` : "",
+        brand?.tone_of_voice ? `Tom: ${brand.tone_of_voice}.` : "",
+      ].filter(Boolean).join("\n");
+      const r = await runCanvaCreate({ data: { workspaceId, brief, format: "Instagram Post (Portrait)" } });
+      if (r.editUrl) {
+        window.open(r.editUrl, "_blank");
+        toast.success("Design criado no Canva. Edite e depois use Importar do Canva na Biblioteca.");
+      } else toast.success("O Canva ainda está montando o design. Ele aparece nos seus designs em instantes.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar no Canva.");
     } finally {
       setBusy(null);
     }
@@ -453,10 +479,17 @@ function CampaignDetail() {
             title={`Copies ${data.copy ? `v${data.copy.version}` : ""}`}
             actions={
               canEdit && (
-                <Button size="sm" variant="outline" onClick={regenCopy} disabled={busy === "copy"}>
-                  <Sparkles className="mr-1 size-3.5" />
-                  {busy === "copy" ? "Gerando..." : "Gerar variação"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {copy && (
+                    <Button size="sm" variant="outline" onClick={canvaFromCopy} disabled={busy === "canva"}>
+                      {busy === "canva" ? "Criando no Canva..." : "Criar design no Canva"}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={regenCopy} disabled={busy === "copy"}>
+                    <Sparkles className="mr-1 size-3.5" />
+                    {busy === "copy" ? "Gerando..." : "Gerar variação"}
+                  </Button>
+                </div>
               )
             }
           >

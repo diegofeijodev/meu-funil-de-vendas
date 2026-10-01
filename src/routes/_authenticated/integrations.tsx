@@ -7,6 +7,7 @@ import { shortDate } from "@/lib/format";
 import { McpConnections } from "@/components/mcp-connections";
 import { MetaAdsCard } from "@/components/meta-ads-card";
 import { AiKeysCard } from "@/components/ai-keys-card";
+import { AiDiagnosticsCard } from "@/components/ai-diagnostics-card";
 
 export const Route = createFileRoute("/_authenticated/integrations")({
   head: () => ({
@@ -50,6 +51,7 @@ function Integrations() {
         <MetaAdsCard />
         <AiKeysCard />
         <McpConnections />
+        <AiDiagnosticsCard />
 
         <Section title="Histórico de publicações">
           {data.jobs.length === 0 ? (

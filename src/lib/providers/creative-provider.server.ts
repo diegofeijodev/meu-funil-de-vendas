@@ -14,6 +14,8 @@ export type GenerationRequest = {
   referenceImages?: { bytes: Uint8Array; mime: string }[];
   /** Mesmas referências como links (provedores que só aceitam URL). */
   referenceUrls?: string[];
+  /** Quanto esperar na própria requisição; depois disso devolve "generating" e o cron conclui. */
+  maxWaitMs?: number;
 };
 
 export type GenerationResult = {

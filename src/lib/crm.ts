@@ -29,6 +29,7 @@ export const AUTHOR_TYPES: Record<string, string> = {
   user: "Usuário",
   ai: "IA",
   system: "Sistema",
+  contact: "Contato",
 };
 
 export const TASK_STATUS: Record<string, string> = {

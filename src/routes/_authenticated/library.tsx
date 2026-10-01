@@ -21,6 +21,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useWorkspace } from "@/lib/workspace";
 import { EmptyState, PageHeader, StatusPill } from "@/components/ui-bits";
+import { ImportFromCanvaButton, SendToCanvaButton } from "@/components/media/canva-buttons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -361,6 +362,7 @@ function LibraryPage() {
                 ))}
                 <option value="other">Manter tamanho original</option>
               </select>
+              <ImportFromCanvaButton workspaceId={workspaceId} onImported={() => qc.invalidateQueries()} />
               <Button onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
                 {busy === "upload" ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -625,6 +627,7 @@ function LibraryPage() {
                 >
                   <Megaphone className="size-4" /> Usar em campanha
                 </Button>
+                <SendToCanvaButton workspaceId={workspaceId} assetIds={picked} disabled={!!busy} />
               </>
             )}
             <Button size="sm" variant="ghost" onClick={() => setPicked([])}>

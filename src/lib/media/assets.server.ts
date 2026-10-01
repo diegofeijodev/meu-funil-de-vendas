@@ -58,7 +58,7 @@ export type MediaAssetRow = {
   target_format: TargetFormat;
 };
 
-const SOURCES = new Set(["higgsfield", "chatgpt", "gemini", "upload", "mock"]);
+const SOURCES = new Set(["higgsfield", "chatgpt", "gemini", "upload", "mock", "canva", "instagram"]);
 
 async function downloadBytes(url: string) {
   // Assets já no nosso bucket: lê direto pelo storage (evita depender de link assinado).

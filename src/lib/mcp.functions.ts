@@ -3,7 +3,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 
-const providerSchema = z.enum(["higgsfield", "meta"]);
+const providerSchema = z.enum(["higgsfield", "meta", "canva"]);
 
 const connectInput = z.object({
   workspaceId: z.string().uuid(),
