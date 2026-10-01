@@ -327,7 +327,7 @@ async function writeChunk(run: any, slots: Slot[]) {
     "Guia por formato:",
     ...Object.entries(FORMAT_GUIDE).map(([k, v]) => `- ${k}: ${v}.`),
     "Campos: index (o mesmo do horário), theme, pillar, funnel_stage, hook (primeira linha da legenda), headline (texto curto aplicado por cima da arte, até 7 palavras, sem hashtags),",
-    "caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ["valinhos","choppgelado"]), cta, image_prompt (briefing visual em português do que aparece, SEM texto escrito na imagem — o texto é aplicado depois), slides (só carrossel, senão vazio).",
+    "caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta, image_prompt (briefing visual em português do que aparece, SEM texto escrito na imagem — o texto é aplicado depois), slides (só carrossel, senão vazio).",
     "HORÁRIOS:",
     ...slots.map((sl) => `- index ${sl.index}: ${weekdayName(sl.at)} ${fmtDate(sl.at)} · ${sl.format}`),
     'Devolva SOMENTE JSON estrito {"posts":[...]} com um item por horário.',

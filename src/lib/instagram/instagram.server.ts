@@ -288,7 +288,7 @@ export async function generateContentCalendar(
     Array.isArray(plan.posting_days) && plan.posting_days.length && plan.posting_days.length < 7
       ? `Publique SOMENTE nestes dias da semana (0 = domingo): ${JSON.stringify(plan.posting_days)}.`
       : "",
-    "Para cada post: format, scheduled_at, theme, hook, caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ["valinhos","choppgelado"], misturando nicho, amplas e locais),",
+    "Para cada post: format, scheduled_at, theme, hook, caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado'], misturando nicho, amplas e locais),",
     "cta, image_prompt (briefing visual curto em português: o que deve aparecer; o diretor de arte transforma no prompt final), slides (3 a 7 prompts só para feed_carousel, senão vazio).",
     "Proporções: 1:1 feed, 4:5 carrossel, 9:16 reels/stories.",
     `Objetivo: ${plan.objective ?? "-"}. Tom de voz: ${plan.tone_of_voice ?? "-"}. Pilares: ${JSON.stringify(plan.content_pillars)}.`,
@@ -366,7 +366,7 @@ export async function regenerateCaption(
       ? `Tom: ${plan.tone_of_voice ?? "-"}. Hashtags: ${JSON.stringify(plan.hashtag_strategy)}.`
       : "",
     brand ? `MARCA: ${JSON.stringify(brand)}` : "",
-    'Devolva SOMENTE JSON {"caption":"...","hashtags":["valinhos","choppgelado"] (array de 10 a 15 strings sem #),"cta":"..."}.',
+    'Devolva SOMENTE JSON {"caption":"...","hashtags":['valinhos','choppgelado'] (array de 10 a 15 strings sem #),"cta":"..."}.',
   ].join("\n");
   const { json, provider } = await aiJson(
     workspaceId,
