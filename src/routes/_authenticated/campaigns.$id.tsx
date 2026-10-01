@@ -292,7 +292,7 @@ function CampaignDetail() {
             <StatusPill status={c.status} label={CAMPAIGN_STATUS[c.status] ?? c.status} />
             <Button variant="outline" asChild><Link to="/campaigns">Voltar</Link></Button>
             {canEdit && c.status === "draft" && <Button onClick={requestApproval}>Solicitar aprovação</Button>}
-            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (
+            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (metaDelivery === "ACTIVE" || canManage) && (
               <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery(metaDelivery === "ACTIVE" ? "PAUSED" : "ACTIVE")}>
                 {metaDelivery === "ACTIVE" ? "Pausar na Meta" : "Ativar na Meta"}
               </Button>

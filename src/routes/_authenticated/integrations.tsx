@@ -8,6 +8,7 @@ import { McpConnections } from "@/components/mcp-connections";
 import { MetaAdsCard } from "@/components/meta-ads-card";
 import { AiKeysCard } from "@/components/ai-keys-card";
 import { AiDiagnosticsCard } from "@/components/ai-diagnostics-card";
+import { AgencyConnectionsCard } from "@/components/agency-connections-card";
 
 export const Route = createFileRoute("/_authenticated/integrations")({
   head: () => ({
@@ -49,6 +50,7 @@ function Integrations() {
 
       <div className="space-y-6">
         <MetaAdsCard />
+        <AgencyConnectionsCard />
         <AiKeysCard />
         <McpConnections />
         <AiDiagnosticsCard />

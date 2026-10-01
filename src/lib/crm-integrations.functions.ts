@@ -359,14 +359,12 @@ export const saveChannelSecret = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase, data.workspaceId);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
-      .from("app_credentials")
-      .upsert(
-        { workspace_id: data.workspaceId, key: data.key, value: data.value.trim(), updated_at: new Date().toISOString() } as never,
-        { onConflict: "workspace_id,key" },
-      );
-    if (error) throw friendly(error, "Não foi possível salvar a credencial.");
+    const { writeCredentials } = await import("@/lib/credentials.server");
+    try {
+      await writeCredentials(data.workspaceId, { [data.key]: data.value.trim() });
+    } catch (error) {
+      throw friendly(error, "Não foi possível salvar a credencial.");
+    }
     return { ok: true };
   });
 

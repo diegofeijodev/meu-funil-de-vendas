@@ -41,14 +41,8 @@ export async function buildLoginUrl(workspaceId: string, userId: string, origin:
 }
 
 async function save(workspaceId: string, rows: Record<string, string>) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const now = new Date().toISOString();
-  const { error } = await supabaseAdmin
-    .from("app_credentials")
-    .upsert(Object.entries(rows).map(([key, value]) => ({ workspace_id: workspaceId, key, value, updated_at: now })) as never, {
-      onConflict: "workspace_id,key",
-    });
-  if (error) throw new Error(error.message);
+  const { writeCredentials } = await import("@/lib/credentials.server");
+  await writeCredentials(workspaceId, rows);
 }
 
 export async function handleCallback(code: string, state: string, origin: string) {
@@ -119,12 +113,10 @@ export async function saveApp(workspaceId: string, appId: string, appSecret: str
 }
 
 export async function tokenInfo(workspaceId: string) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data } = await supabaseAdmin
-    .from("app_credentials")
-    .select("key, value")
-    .eq("workspace_id", workspaceId)
-    .in("key", ["META_TOKEN_EXPIRES_AT", "META_TOKEN_SOURCE"]);
-  const m = Object.fromEntries(((data ?? []) as { key: string; value: string }[]).map((r) => [r.key, r.value]));
-  return { expiresAt: m["META_TOKEN_EXPIRES_AT"] ?? null, source: m["META_TOKEN_SOURCE"] ?? "system_user" };
+  const { readCredential } = await import("@/lib/credentials.server");
+  const [expiresAt, source] = await Promise.all([
+    readCredential(workspaceId, "META_TOKEN_EXPIRES_AT"),
+    readCredential(workspaceId, "META_TOKEN_SOURCE"),
+  ]);
+  return { expiresAt, source: source ?? "system_user" };
 }

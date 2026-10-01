@@ -40,7 +40,11 @@ async function vaultRead(workspaceId: string | null): Promise<Record<string, str
     const out: Record<string, string> = {};
     // Globais primeiro; as da empresa sobrescrevem.
     const rows = ((data ?? []) as any[]).sort((a, b) => (a.workspace_id ? 1 : 0) - (b.workspace_id ? 1 : 0));
-    for (const row of rows) if (row.value?.trim()) out[row.key as string] = row.value.trim();
+    const { decryptValue } = await import("@/lib/credentials.server");
+    for (const row of rows) {
+      const v = await decryptValue(row.value);
+      if (v) out[row.key as string] = v;
+    }
     return out;
   } catch {
     return {};

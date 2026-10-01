@@ -42,7 +42,6 @@ export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId, true);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const rows = [
       { key: "META_APP_ID", value: data.appId },
       { key: "META_APP_SECRET", value: data.appSecret },
@@ -51,13 +50,13 @@ export const metaAdsSaveCredentials = createServerFn({ method: "POST" })
       { key: "META_PAGE_ID", value: data.pageId },
     ];
     if (data.instagramId?.trim()) rows.push({ key: "META_INSTAGRAM_ACCOUNT_ID", value: data.instagramId.trim() });
-    const { error } = await supabaseAdmin
-      .from("app_credentials")
-      .upsert(
-        rows.map((r) => ({ ...r, workspace_id: data.workspaceId, updated_at: new Date().toISOString() })) as never,
-        { onConflict: "workspace_id,key" },
-      );
-    if (error) throw new Error(error.message);
+    const { writeCredentials } = await import("./credentials.server");
+    await writeCredentials(data.workspaceId, {
+      ...Object.fromEntries(rows.map((r) => [r.key, r.value])),
+      // Token colado à mão (usuário do sistema) não vence: limpa a data do login com Facebook.
+      META_TOKEN_SOURCE: "system_user",
+      META_TOKEN_EXPIRES_AT: "",
+    });
     const { missingSecrets } = await import("./meta/graph.server");
     const missing = await missingSecrets(data.workspaceId);
     return { ok: true, configured: missing.length === 0, missing };
@@ -197,6 +196,8 @@ export const metaAdsSetStatus = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ws.extend({ campaignId: z.string().uuid(), status: z.enum(["ACTIVE", "PAUSED"]) }).parse(d))
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId, true);
+    // 7.3 Ativar gasta verba: só dono/admin. Pausar pode qualquer perfil que edita.
+    if (data.status === "ACTIVE") await requireManager(context as Ctx, data.workspaceId);
     const db = context.supabase;
     const { data: c } = await db.from("campaigns").select("*").eq("id", data.campaignId).eq("workspace_id", data.workspaceId).maybeSingle();
     if (!c?.meta_campaign_id) throw new Error("Campanha ainda não publicada na Meta.");

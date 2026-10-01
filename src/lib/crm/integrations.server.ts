@@ -28,15 +28,8 @@ export function secret(name: string): string | null {
 
 /** Credencial do canal: primeiro a da empresa (salva em CRM → Integrações), depois a global do servidor. */
 export async function workspaceSecret(workspaceId: string, name: string): Promise<string | null> {
-  const db = await admin();
-  const { data } = await db
-    .from("app_credentials")
-    .select("value")
-    .eq("workspace_id", workspaceId)
-    .eq("key", name)
-    .maybeSingle();
-  const v = (data?.value as string | undefined)?.trim();
-  return v || secret(name);
+  const { readCredential } = await import("@/lib/credentials.server");
+  return (await readCredential(workspaceId, name)) || secret(name);
 }
 
 export function normalizePhone(raw: string | null | undefined): string | null {

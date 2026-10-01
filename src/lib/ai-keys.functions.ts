@@ -12,7 +12,8 @@ async function requireMember(ctx: Ctx, workspaceId: string, admin = false) {
     .eq("user_id", ctx.userId)
     .maybeSingle();
   if (!data) throw new Error("Você não tem acesso a esta área de trabalho.");
-  if (admin && data.role === "viewer") throw new Error("Seu perfil não pode alterar integrações.");
+  // 7.3 Conectar contas é ação sensível: só dono ou administrador.
+  if (admin && data.role !== "owner" && data.role !== "admin") throw new Error("Só o dono ou um administrador altera as chaves de IA.");
 }
 
 const vendor = z.enum(["openai", "gemini"]);
