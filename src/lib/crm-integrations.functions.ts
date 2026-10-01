@@ -78,13 +78,16 @@ export const testIntegration = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!integration) throw new Error("Configure a integração antes de testar.");
 
+    // Mesma leitura de credenciais do resto do app: cofre (Integrações) da empresa/global, depois ambiente.
+    const { metaConfig, runWithMetaWorkspace, graph } = await import("@/lib/meta/graph.server");
+    const meta = await metaConfig(data.workspaceId);
     const missing: string[] = [];
     if (data.kind === "meta_lead_ads") {
-      if (!process.env["META_APP_SECRET"]) missing.push("META_APP_SECRET");
-      if (!process.env["META_GRAPH_TOKEN"]) missing.push("META_GRAPH_TOKEN");
+      if (!meta.appSecret) missing.push("META_APP_SECRET");
+      if (!meta.token) missing.push("META_SYSTEM_USER_TOKEN");
     } else if (integration.provider === "whatsapp_cloud") {
       if (!process.env["WHATSAPP_CLOUD_TOKEN"]) missing.push("WHATSAPP_CLOUD_TOKEN");
-      if (!process.env["META_APP_SECRET"]) missing.push("META_APP_SECRET");
+      if (!meta.appSecret) missing.push("META_APP_SECRET");
     } else if (integration.provider === "zapi") {
       if (!process.env["ZAPI_TOKEN"]) missing.push("ZAPI_TOKEN");
     } else if (integration.provider === "evolution") {
@@ -100,6 +103,10 @@ export const testIntegration = createServerFn({ method: "POST" })
     }
 
     try {
+      if (data.kind === "meta_lead_ads") {
+        // Teste real: o token precisa responder na Graph API.
+        await runWithMetaWorkspace(data.workspaceId, () => graph("/me", { params: { fields: "id,name" } }));
+      }
       if (data.kind === "whatsapp" && integration.provider === "whatsapp_cloud") {
         const { providerFor } = await import("@/lib/crm/whatsapp.server");
         await providerFor(integration as never).listTemplates(integration as never);

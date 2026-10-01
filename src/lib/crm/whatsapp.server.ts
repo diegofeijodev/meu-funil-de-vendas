@@ -123,6 +123,15 @@ const cloudProvider: WhatsAppProvider = {
 
 /* --------------------------- Z-API / Evolution -------------------------- */
 
+/** Texto final de uma mensagem (template sem API oficial: corpo com {{1}}, {{2}}... preenchidos). */
+function templateText(message: OutgoingMessage) {
+  let text = message.body ?? "";
+  (message.templateParams ?? []).forEach((v, i) => {
+    text = text.split(`{{${i + 1}}}`).join(v);
+  });
+  return text;
+}
+
 function unofficialBase(integration: Integration) {
   const cfg = integration.config as Record<string, unknown>;
   const base = String(cfg["base_url"] ?? "").replace(/\/$/, "");
@@ -136,10 +145,12 @@ const zapiProvider: WhatsAppProvider = {
     const token = secret("ZAPI_TOKEN");
     if (!token) throw new Error("ZAPI_TOKEN ausente");
     const base = unofficialBase(integration);
-    const path = message.kind === "text" ? "send-text" : message.kind === "image" ? "send-image" : "send-audio";
+    // Z-API não tem templates oficiais: template vira texto com o corpo já preenchido.
+    const asText = message.kind === "text" || message.kind === "template";
+    const path = asText ? "send-text" : message.kind === "image" ? "send-image" : "send-audio";
     const body =
-      message.kind === "text"
-        ? { phone: message.to.replace(/\D/g, ""), message: message.body ?? "" }
+      asText
+        ? { phone: message.to.replace(/\D/g, ""), message: templateText(message) }
         : { phone: message.to.replace(/\D/g, ""), [message.kind]: message.mediaUrl, caption: message.body ?? "" };
     const res = await fetch(`${base}/${path}`, {
       method: "POST",
@@ -166,10 +177,11 @@ const evolutionProvider: WhatsAppProvider = {
     const instance = String((integration.config as Record<string, unknown>)["instance"] ?? "");
     if (!instance) throw new Error("instance não configurada");
     const number = message.to.replace(/\D/g, "");
-    const path = message.kind === "text" ? `/message/sendText/${instance}` : `/message/sendMedia/${instance}`;
+    const asText = message.kind === "text" || message.kind === "template";
+    const path = asText ? `/message/sendText/${instance}` : `/message/sendMedia/${instance}`;
     const body =
-      message.kind === "text"
-        ? { number, text: message.body ?? "" }
+      asText
+        ? { number, text: templateText(message) }
         : { number, mediatype: message.kind, media: message.mediaUrl, caption: message.body ?? "" };
     const res = await fetch(`${base}${path}`, {
       method: "POST",

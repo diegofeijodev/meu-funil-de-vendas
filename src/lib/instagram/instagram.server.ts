@@ -841,6 +841,10 @@ function fullCaption(post: any) {
 export class RateLimited extends Error {}
 export class Guardrail extends Error {}
 
+/** Mídia do gerador simulado (picsum) ou marcada como mock — nunca vai ao ar. */
+export const isMockMedia = (m: { url?: string | null; provider?: string | null; source?: string | null }) =>
+  m.provider === "mock" || m.source === "mock" || /picsum\.photos/i.test(m.url ?? "");
+
 /** Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). */
 async function assertPublicUrl(url: string) {
   if (!/^https:\/\//i.test(url ?? "")) throw new Guardrail("Mídia sem URL pública válida (HTTPS).");
@@ -890,8 +894,10 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
   if (assetIds.length) {
     const { data: assets } = await s
       .from("media_assets" as never)
-      .select("id, ig_ready, quality_report")
+      .select("id, ig_ready, quality_report, provider, source, url")
       .in("id", assetIds);
+    if (((assets ?? []) as any[]).some(isMockMedia))
+      throw new Guardrail("Mídia simulada (sem IA real) não pode ser publicada. Gere a mídia de novo com um provedor conectado.");
     const bad = ((assets ?? []) as any[]).find((a) => !a.ig_ready);
     if (bad)
       throw new Guardrail(
@@ -902,6 +908,9 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
     if (bad)
       throw new Guardrail(`Mídia fora do padrão do Instagram: ${(bad.issues ?? []).join(" ")}`);
   }
+  // Guardrail: nunca publicar imagem simulada (foto aleatória de banco de imagens).
+  if (media.some(isMockMedia))
+    throw new Guardrail("Mídia simulada (sem IA real) não pode ser publicada. Gere a mídia de novo com um provedor conectado.");
   // Guardrail: toda mídia precisa de URL pública válida.
   for (const m of media) await assertPublicUrl(m.url);
 
@@ -913,17 +922,9 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
     return finishPublish(postId, acc.ig_user_id as string, post.ig_creation_id, deadline);
   }
 
-  if (!acc) {
-    const fake = `sim_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    await patchPost(postId, {
-      status: "published",
-      published_at: new Date().toISOString(),
-      ig_media_id: fake,
-      ig_permalink: null,
-      last_error: null,
-    });
-    return { ok: true, sandbox: true };
-  }
+  // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
+  if (!acc)
+    throw new Guardrail("Nenhuma conta do Instagram conectada nesta empresa. Conecte em Instagram → Visão geral e agende de novo.");
 
   const ig = acc.ig_user_id as string;
   const limit = await graph<{ data?: { quota_usage?: number }[] }>(
@@ -1109,7 +1110,8 @@ export async function runPublishingQueue() {
     .eq("status", "pending")
     .lte("run_at", now)
     .order("run_at")
-    .limit(10);
+    // Poucos por execução: cada publicação pode levar até ~40 s de processamento na Meta.
+    .limit(4);
 
   const results: { job: string; status: string; error?: string }[] = [];
   for (const job of (jobs ?? []) as any[]) {
@@ -1146,9 +1148,7 @@ export async function runPublishingQueue() {
           plan_id: pub.plan_id,
           post_id: pub.id,
           kind: "publish",
-          message: r.sandbox
-            ? "Publicado em modo simulado (sem conta conectada)."
-            : `Publicado no Instagram ${r.permalink ?? ""}`.trim(),
+          message: `Publicado no Instagram ${r.permalink ?? ""}`.trim(),
         });
       results.push({ job: job.id, status: "done" });
     } catch (e) {

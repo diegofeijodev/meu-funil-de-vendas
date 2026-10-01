@@ -8,7 +8,6 @@ import { createHiggsfieldProvider } from "./providers/higgsfield.server";
 import { createChatgptProvider, createGeminiProvider } from "./providers/lovable-ai.server";
 import { getWorkspaceAiKey } from "./ai-keys.server";
 import {
-  mockServerProvider,
   type CreativeKind,
   type GenerationResult,
   type ServerCreativeProvider,
@@ -172,9 +171,10 @@ export async function resolveProvider(supabase: DB, workspaceId: string, choice:
   if (higgs) list.push(higgs);
   if (gKey) list.push(createGeminiProvider(gKey, { strict: true }));
   if (oKey) list.push(createChatgptProvider(oKey, { strict: true }));
-  if (!list.length) return mockServerProvider;
-  const app = createGeminiProvider(null);
-  list.push({ ...app, label: "Créditos de IA do app" });
+  // Sem conexões próprias: créditos de IA do app. Nunca cai no gerador simulado (foto aleatória).
+  const app: ServerCreativeProvider = { ...createGeminiProvider(null), label: "Créditos de IA do app" };
+  if (!list.length) return app;
+  list.push(app);
   return chainProviders(list);
 }
 

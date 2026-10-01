@@ -8,21 +8,8 @@ export const Route = createFileRoute("/api/public/cron/crm-cadences")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const provided = request.headers.get("x-cron-secret");
-        if (!provided) return new Response("Unauthorized", { status: 401 });
-
-        const envSecret = process.env["CRM_CRON_SECRET"];
-        let authorized = !!envSecret && provided === envSecret;
-        if (!authorized) {
-          // Fallback: token stored server-side in the database (used by pg_cron).
-          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-          const { data } = await supabaseAdmin
-            .from("cron_tokens")
-            .select("token")
-            .eq("name", "crm_cadences")
-            .maybeSingle();
-          authorized = !!data?.token && data.token === provided;
-        }
+        const { isCronAuthorized } = await import("@/lib/cron-auth.server");
+        const authorized = await isCronAuthorized(request, ["crm_cadences"]);
         if (!authorized) return new Response("Unauthorized", { status: 401 });
 
         try {

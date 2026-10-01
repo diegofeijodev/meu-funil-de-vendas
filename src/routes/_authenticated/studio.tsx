@@ -14,9 +14,9 @@ import { CREATIVE_STATUS, FORMATS } from "@/lib/labels";
 import { brl } from "@/lib/format";
 import { Link } from "@tanstack/react-router";
 import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
-import { resolveCreativeProvider, type CreativeType } from "@/lib/providers/creative-provider";
+import type { CreativeType } from "@/lib/providers/creative-provider";
 import { useServerFn } from "@tanstack/react-start";
-import { generateCreative, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
+import { generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
 import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
@@ -39,6 +39,7 @@ function Studio() {
   const runGenerate = useServerFn(generateCreative);
   const runRetry = useServerFn(retryCreativeJob);
   const runPreview = useServerFn(previewVisualPrompt);
+  const runNewVersion = useServerFn(newCreativeVersion);
   const checkKeys = useServerFn(aiKeysHealth);
   const { data: keyHealth } = useQuery({
     queryKey: ["ai-keys-health", workspaceId],
@@ -185,29 +186,18 @@ function Studio() {
 
   const newVersion = async (id: string) => {
     if (!workspaceId || !data) return;
-    const cr = data.creatives.find((x) => x.id === id);
-    if (!cr) return;
-    const provider = resolveCreativeProvider(cr.provider);
-    const result = await provider.generate({
-      prompt: `${cr.prompt ?? cr.title} (variação ${cr.version + 1})`,
-      type: cr.type as CreativeType,
-      aspectRatio: cr.aspect_ratio ?? "1:1",
-    });
-    await supabase.from("creatives").update({
-      version: cr.version + 1,
-      preview_url: result.previewUrl,
-      status: "ready",
-      real_cost: Number(cr.real_cost ?? 0) + result.realCost,
-    }).eq("id", id);
-    await supabase.from("creative_versions").insert({
-      workspace_id: workspaceId,
-      creative_id: id,
-      version: cr.version + 1,
-      prompt: cr.prompt,
-      preview_url: result.previewUrl,
-    });
-    qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
-    toast.success("Nova versão gerada.");
+    setBusy(true);
+    try {
+      const res = await runNewVersion({ data: { creativeId: id } });
+      qc.invalidateQueries({ queryKey: ["studio", workspaceId] });
+      if (res.status === "failed") toast.error(res.error ?? "Não foi possível gerar a nova versão.");
+      else if (res.status === "generating") toast.success("A IA está gerando a nova versão. Ela aparece aqui quando ficar pronta.");
+      else toast.success("Nova versão gerada.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a nova versão.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (!data) return <div className="panel h-64 animate-pulse" />;
@@ -412,11 +402,13 @@ function Studio() {
                 {c.preview_url && /\.mp4(\?|$)/.test(c.preview_url) ? (
                   <video src={c.preview_url} controls className="aspect-square w-full bg-muted object-cover" />
                 ) : (
-                  <img
-                    src={c.preview_url ?? `https://picsum.photos/seed/${c.id}/600/600`}
-                    alt={c.title}
-                    className="aspect-square w-full object-cover"
-                  />
+                  c.preview_url ? (
+                    <img src={c.preview_url} alt={c.title} className="aspect-square w-full object-cover" />
+                  ) : (
+                    <div className="flex aspect-square w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+                      Sem prévia
+                    </div>
+                  )
                 )}
                 <div className="space-y-2 p-3">
                   <p className="text-sm font-medium">{c.title}</p>
@@ -431,7 +423,7 @@ function Studio() {
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       <Button size="sm" variant="outline" onClick={() => setStatus(c.id, "approved")}>Aprovar</Button>
                       <Button size="sm" variant="ghost" onClick={() => setStatus(c.id, "rejected")}>Rejeitar</Button>
-                      <Button size="sm" variant="ghost" onClick={() => newVersion(c.id)}>Nova versão</Button>
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => newVersion(c.id)}>Nova versão</Button>
                     </div>
                   )}
                 </div>

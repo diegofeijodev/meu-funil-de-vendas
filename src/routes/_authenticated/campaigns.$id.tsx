@@ -12,7 +12,7 @@ import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/lab
 import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, generateStrategy, type CampaignBrief, type CopyContent, type StrategyContent } from "@/lib/ai/agents";
-import { metaMockProvider, type PublishStep } from "@/lib/providers/meta-provider";
+import type { PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
 
@@ -138,6 +138,7 @@ function CampaignDetail() {
       title: `Publicar campanha "${c.name}" na Meta`,
       summary: `Verba diária de ${brl(c.budget_daily)}, ${data.creatives.length} criativo(s), objetivo ${OBJECTIVES[c.objective] ?? c.objective}.`,
       status: "pending",
+      requested_by: (await supabase.auth.getUser()).data.user?.id ?? null,
     });
     await supabase.from("campaigns").update({ status: "pending_approval" }).eq("id", id);
     await logActivity(workspaceId, "campaign.approval_requested", "campaign", { campaign_id: id });
@@ -154,48 +155,19 @@ function CampaignDetail() {
       if (!approved) {
         throw new Error("Publicação bloqueada: a campanha precisa de aprovação humana antes de ir ao ar.");
       }
-      const approvedCreatives = data.creatives.filter((x) => x.status === "approved");
-      const utm = `utm_source=meta&utm_campaign=${encodeURIComponent(c.name)}`;
-
       const st = await metaStatus({ data: { workspaceId } });
-      if (st.configured) {
-        setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
-        const out = await metaPublish({ data: { workspaceId, campaignId: id } });
-        setSteps(out.steps);
-        await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "live" });
-        qc.invalidateQueries({ queryKey: ["campaign", id] });
-        toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
-        return;
+      if (!st.configured) {
+        // Sem Meta conectada não existe publicação: nada de simular nem marcar como ativa.
+        throw new Error(
+          `Conecte a Meta antes de publicar (faltando: ${(st.missing ?? []).join(", ") || "credenciais"}). Vá em Integrações → Meta Ads.`,
+        );
       }
-
-      const result = await metaMockProvider.publish(
-        {
-          campaignName: c.name,
-          objective: OBJECTIVES[c.objective] ?? c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0),
-          targeting: (c.audience ?? {}) as Record<string, unknown>,
-          placements: ["Instagram Feed", "Reels", "Stories", "Facebook Feed"],
-          creatives: approvedCreatives.map((x) => ({ id: x.id, title: x.title })),
-          primaryText: copy?.meta_ad ?? "",
-          utm,
-          approved,
-        },
-        setSteps,
-      );
-      const log = result.map((s) => `${s.label}: ${s.detail}`).join("\n");
-
-      await supabase.from("publishing_jobs").insert({
-        workspace_id: workspaceId,
-        campaign_id: id,
-        target: "meta",
-        status: "done",
-        mode: "mock",
-        log,
-      });
-      await supabase.from("campaigns").update({ status: "active" }).eq("id", id);
-      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "mock" });
+      setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
+      const out = await metaPublish({ data: { workspaceId, campaignId: id } });
+      setSteps(out.steps);
+      await logActivity(workspaceId, "campaign.published", "campaign", { campaign_id: id, mode: "live" });
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success("Campanha publicada no ambiente sandbox da Meta.");
+      toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao publicar");
     } finally {
@@ -256,7 +228,7 @@ function CampaignDetail() {
         <div className="panel mb-6 p-5">
           <div className="mb-3 flex items-center gap-2">
             <span className="text-sm font-semibold">Pipeline de publicação</span>
-            <SandboxBadge label="Meta sandbox" />
+            <SandboxBadge label="Meta Ads" />
           </div>
           <ol className="space-y-2 text-sm">
             {steps.map((s) => (
@@ -391,11 +363,15 @@ function CampaignDetail() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {data.creatives.map((cr) => (
                   <div key={cr.id} className="overflow-hidden rounded-lg border border-border">
-                    <img
-                      src={cr.preview_url ?? `https://picsum.photos/seed/${cr.id}/600/600`}
-                      alt={cr.title}
-                      className="aspect-square w-full object-cover"
-                    />
+                    {cr.preview_url && /\.mp4(\?|$)/.test(cr.preview_url) ? (
+                      <video src={cr.preview_url} controls className="aspect-square w-full bg-muted object-cover" />
+                    ) : cr.preview_url ? (
+                      <img src={cr.preview_url} alt={cr.title} className="aspect-square w-full object-cover" />
+                    ) : (
+                      <div className="flex aspect-square w-full items-center justify-center bg-muted text-xs text-muted-foreground">
+                        Sem prévia
+                      </div>
+                    )}
                     <div className="space-y-1 p-3">
                       <p className="text-sm font-medium">{cr.title}</p>
                       <p className="text-xs text-muted-foreground">{FORMATS[cr.type] ?? cr.type} · {cr.aspect_ratio}</p>

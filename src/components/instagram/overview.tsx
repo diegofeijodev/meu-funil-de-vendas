@@ -122,7 +122,7 @@ export function IgOverview({
     <div className="space-y-6">
       <Section
         title="Conta conectada"
-        actions={account?.status !== "connected" ? <SandboxBadge /> : undefined}
+        actions={account?.status !== "connected" ? <SandboxBadge label="Instagram não conectado" /> : undefined}
       >
         {isLoading ? (
           <div className="h-16 animate-pulse rounded-lg bg-muted" />
@@ -220,7 +220,7 @@ export function IgOverview({
         )}
         {!account?.status || account.status === "disconnected" ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            Sem conta conectada, as publicações são simuladas. Clique em Conectar Instagram e escolha a conta.
+            Sem conta conectada, nada é publicado: posts agendados ficam com erro até você conectar. Clique em Conectar Instagram e escolha a conta.
             Aparecem as contas profissionais ligadas às Páginas que o usuário do sistema da Meta acessa (credenciais em{" "}
             <Link to="/integrations" className="text-primary underline">
               Integrações

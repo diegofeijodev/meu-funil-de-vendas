@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { timingSafeEqual } from "crypto";
 
 /**
  * pg_cron (a cada 5 min):
@@ -10,29 +9,12 @@ import { timingSafeEqual } from "crypto";
  * - sem task: executa queue + media + metrics (compatibilidade).
  * Protegido pelo token "instagram" em cron_tokens (ou CRM_CRON_SECRET).
  */
-function safeEqual(a: string, b: string) {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
 export const Route = createFileRoute("/api/public/cron/instagram")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const provided = request.headers.get("x-cron-secret");
-        if (!provided) return new Response("Unauthorized", { status: 401 });
-        const envSecret = process.env["CRM_CRON_SECRET"];
-        let ok = !!envSecret && safeEqual(provided, envSecret);
-        if (!ok) {
-          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-          const { data } = await supabaseAdmin
-            .from("cron_tokens")
-            .select("token")
-            .eq("name", "instagram")
-            .maybeSingle();
-          ok = !!data?.token && safeEqual(provided, data.token);
-        }
+        const { isCronAuthorized } = await import("@/lib/cron-auth.server");
+        const ok = await isCronAuthorized(request, ["instagram"]);
         if (!ok) return new Response("Unauthorized", { status: 401 });
 
         const body = (await request.json().catch(() => ({}))) as { task?: string };

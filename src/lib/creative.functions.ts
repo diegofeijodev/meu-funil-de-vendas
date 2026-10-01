@@ -153,3 +153,52 @@ export const retryCreativeJob = createServerFn({ method: "POST" })
       providerChoice: (CHOICES.has(job.provider) ? job.provider : "auto") as "auto",
     });
   });
+
+/** Nova versão de um criativo existente, pelo mesmo provedor real do servidor (nunca simulado). */
+export const newCreativeVersion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ creativeId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { runGeneration } = await import("./creative.server");
+    const supabase = context.supabase;
+    const { data: cr, error } = await supabase.from("creatives").select("*").eq("id", data.creativeId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!cr) throw new Error("Criativo não encontrado.");
+    const base = cr.final_prompt || cr.prompt || cr.title || "Criativo publicitário";
+    const finalPrompt = `${base}\nNova variação (versão ${(cr.version ?? 1) + 1}): mude composição, enquadramento e cena, mantendo a identidade da marca.`;
+    const providerChoice = (CHOICES.has(cr.provider ?? "") ? cr.provider : "auto") as "auto";
+    const { data: job, error: jobError } = await supabase
+      .from("creative_generation_jobs")
+      .insert({
+        workspace_id: cr.workspace_id,
+        brand_id: cr.brand_id,
+        campaign_id: cr.campaign_id,
+        creative_id: cr.id,
+        provider: providerChoice,
+        type: cr.type,
+        prompt: cr.prompt,
+        final_prompt: finalPrompt,
+        aspect_ratio: cr.aspect_ratio,
+        status: "generating",
+        created_by: context.userId,
+      })
+      .select()
+      .single();
+    if (jobError) throw new Error(jobError.message);
+    return runGeneration(supabase, {
+      jobId: job.id,
+      workspaceId: cr.workspace_id,
+      brandId: cr.brand_id,
+      campaignId: cr.campaign_id,
+      title: cr.title ?? "Criativo",
+      type: cr.type,
+      aspectRatio: cr.aspect_ratio ?? "1:1",
+      prompt: cr.prompt ?? "",
+      finalPrompt,
+      copyText: cr.copy_text ?? "",
+      kind: VIDEO_TYPES.has(cr.type) ? "video" : "image",
+      brandContext: {},
+      existingCreativeId: cr.id,
+      providerChoice,
+    });
+  });

@@ -297,6 +297,15 @@ export async function runSdrAgent(args: {
   }
 
   if (!withinBusinessHours(agent)) {
+    // Mensagem de ausência só uma vez por período fora do horário (não a cada mensagem do lead).
+    const { count: recentAway } = await db
+      .from("crm_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("lead_id", args.leadId)
+      .eq("direction", "out")
+      .eq("body", agent.offhours_message)
+      .gte("created_at", new Date(Date.now() - 12 * 3600e3).toISOString());
+    if ((recentAway ?? 0) > 0) return { offHours: true, reply: null };
     return { offHours: true, reply: agent.offhours_message };
   }
 
