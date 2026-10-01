@@ -213,7 +213,7 @@ const SIZES: Record<string, [number, number]> = {
 
 /** Cria um design editável (opcionalmente com uma mídia já enviada) e devolve o link de edição. */
 export async function createCanvaDesign(ws: string, input: { title: string; size?: string | null; assetId?: string | null }) {
-  const [width, height] = SIZES[input.size ?? "portrait"] ?? SIZES.portrait!;
+  const [width, height] = SIZES[input.size ?? "portrait"] ?? SIZES["portrait"]!;
   const j = await api(ws, "/designs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
