@@ -3533,6 +3533,7 @@ export type Database = {
       }
       workspaces: {
         Row: {
+          ai_inherit_from: string | null
           created_at: string
           id: string
           name: string
@@ -3541,6 +3542,7 @@ export type Database = {
           slug: string
         }
         Insert: {
+          ai_inherit_from?: string | null
           created_at?: string
           id?: string
           name: string
@@ -3549,6 +3551,7 @@ export type Database = {
           slug: string
         }
         Update: {
+          ai_inherit_from?: string | null
           created_at?: string
           id?: string
           name?: string
@@ -3556,7 +3559,15 @@ export type Database = {
           plan?: string
           slug?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_ai_inherit_from_fkey"
+            columns: ["ai_inherit_from"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
