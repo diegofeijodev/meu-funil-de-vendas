@@ -1516,6 +1516,32 @@ export async function syncInstagramHistory(workspaceId: string) {
       if (error) throw new Error(error.message);
       for (const x of (ins ?? []) as any[]) known.set(x.ig_media_id, x.id);
       imported = ins?.length ?? 0;
+      // 6.5 Os posts antigos também entram na Biblioteca (o link do Instagram expira; o arquivo fica salvo).
+      const { ingestAsset } = await import("@/lib/media/assets.server");
+      const { targetForIgFormat } = await import("@/lib/media/formats");
+      for (const i of fresh) {
+        const url = i.media_url ?? i.thumbnail_url;
+        if (!url) continue;
+        try {
+          const format = formatFromMeta(i.media_type, i.media_product_type);
+          const video = i.media_type === "VIDEO" && !!i.media_url;
+          await ingestAsset({
+            workspaceId,
+            kind: video ? "video" : "image",
+            targetFormat: targetForIgFormat(format),
+            source: "instagram",
+            sourceUrl: url,
+            title: String(i.caption ?? "Post do Instagram").split("\n")[0]!.slice(0, 120) || "Post do Instagram",
+            prompt: null,
+            provider: "instagram",
+            igPostId: known.get(i.id) ?? null,
+            normalize: false,
+            status: "approved",
+          });
+        } catch (e) {
+          console.warn("[ig-sync] mídia não foi para a biblioteca", i.id, errMsg(e));
+        }
+      }
     }
     let metrics = 0;
     for (const id of known.values()) {
