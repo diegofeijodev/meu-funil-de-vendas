@@ -667,6 +667,7 @@ export type Database = {
       }
       copies: {
         Row: {
+          angle: string | null
           campaign_id: string
           content: Json
           created_at: string
@@ -676,6 +677,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           campaign_id: string
           content?: Json
           created_at?: string
@@ -685,6 +687,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           campaign_id?: string
           content?: Json
           created_at?: string
@@ -861,6 +864,7 @@ export type Database = {
       }
       creatives: {
         Row: {
+          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -885,6 +889,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -909,6 +914,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2308,61 +2314,6 @@ export type Database = {
           },
         ]
       }
-      ig_autopilot_events: {
-        Row: {
-          created_at: string
-          id: string
-          kind: string
-          level: string
-          message: string
-          plan_id: string | null
-          post_id: string | null
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          kind: string
-          level?: string
-          message: string
-          plan_id?: string | null
-          post_id?: string | null
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          kind?: string
-          level?: string
-          message?: string
-          plan_id?: string | null
-          post_id?: string | null
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ig_autopilot_events_plan_id_fkey"
-            columns: ["plan_id"]
-            isOneToOne: false
-            referencedRelation: "ig_content_plans"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ig_autopilot_events_post_id_fkey"
-            columns: ["post_id"]
-            isOneToOne: false
-            referencedRelation: "ig_posts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ig_autopilot_events_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       ig_auto_runs: {
         Row: {
           campaign_id: string | null
@@ -2436,7 +2387,91 @@ export type Database = {
           weekdays?: number[]
           workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ig_auto_runs_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_auto_runs_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "ig_auto_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_auto_runs_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_auto_runs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ig_autopilot_events: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          level: string
+          message: string
+          plan_id: string | null
+          post_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          level?: string
+          message: string
+          plan_id?: string | null
+          post_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          level?: string
+          message?: string
+          plan_id?: string | null
+          post_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_autopilot_events_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_autopilot_events_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "ig_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_autopilot_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ig_autopilot_weeks: {
         Row: {
@@ -2720,6 +2755,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "ig_posts_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ig_auto_runs"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "ig_posts_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
@@ -2907,6 +2949,7 @@ export type Database = {
       }
       media_assets: {
         Row: {
+          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -2941,6 +2984,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2975,6 +3019,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
