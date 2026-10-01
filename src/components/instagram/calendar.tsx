@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Loader2, Sparkles } from "lucide-react";
+import { Bot, ChevronLeft, ChevronRight, Loader2, Plus, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { generatePostAssets, schedulePost } from "@/lib/instagram/instagram.functions";
 import { Section, StatusPill, EmptyState } from "@/components/ui-bits";
@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, MediaThumb, type IgPost } from "./shared";
+import { IgAutoCalendar } from "./auto-calendar";
+import { useWorkspace } from "@/lib/workspace";
 
 const DAY = 86400e3;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -32,6 +34,8 @@ export function IgCalendar({
   onOpen: (id: string) => void;
 }) {
   const qc = useQueryClient();
+  const { canEdit } = useWorkspace();
+  const [autoDay, setAutoDay] = useState<string | null>(null);
   const [view, setView] = useState<"week" | "month">("week");
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [fmt, setFmt] = useState("all");
@@ -122,6 +126,10 @@ export function IgCalendar({
   };
 
   const today = key(new Date());
+  const clearAutoDay = useCallback(() => setAutoDay(null), []);
+  const isoDay = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const past = (d: Date) => startOfDay(d).getTime() < startOfDay(new Date()).getTime();
   const title =
     view === "week"
       ? `${days[0]!.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${days[6]!.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}`
@@ -140,6 +148,9 @@ export function IgCalendar({
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
             {Icon && <Icon className="size-3" />}
+            {(p as IgPost & { automation?: string | null }).automation && (
+              <Bot className="size-3 text-primary" aria-label="Programação automática" />
+            )}
             {p.scheduled_at
               ? new Date(p.scheduled_at).toLocaleTimeString("pt-BR", {
                   hour: "2-digit",
@@ -156,6 +167,7 @@ export function IgCalendar({
 
   return (
     <div className="space-y-4">
+      <IgAutoCalendar workspaceId={workspaceId} presetDate={autoDay} onPresetUsed={clearAutoDay} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button size="icon" variant="outline" onClick={() => move(-1)} aria-label="Anterior">
@@ -222,7 +234,7 @@ export function IgCalendar({
       {posts.length === 0 ? (
         <EmptyState
           title="Calendário vazio"
-          description="Crie um plano na aba Estratégia e gere o calendário com IA."
+          description="Clique em Nova programação acima: escolha período, dias e horários e a IA cuida do resto."
         />
       ) : (
         <div className="overflow-x-auto">
@@ -247,7 +259,20 @@ export function IgCalendar({
                     key(d) === today && "border-primary/60",
                   )}
                 >
-                  <span className="text-xs text-muted-foreground">{d.getDate()}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{d.getDate()}</span>
+                    {canEdit && !past(d) && (
+                      <button
+                        type="button"
+                        onClick={() => setAutoDay(isoDay(d))}
+                        className="rounded p-0.5 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                        aria-label="Programar posts com IA neste dia"
+                        title="Programar posts com IA neste dia"
+                      >
+                        <Plus className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
                   {list.map((p) => (
                     <Card key={p.id} p={p} />
                   ))}

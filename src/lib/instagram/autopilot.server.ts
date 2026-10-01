@@ -51,6 +51,7 @@ async function activePlans() {
 /** Domingo 18h: gera a semana seguinte. */
 export async function runWeeklyAutopilot() {
   const out: any[] = [];
+  out.push({ recurring: await (await import("./auto-calendar.server")).renewRecurring().catch((e) => ({ error: errMsg(e) })) });
   // Semana que começa na próxima segunda (BRT): a reserva em ig_autopilot_weeks impede gerar duas vezes.
   const now = new Date(Date.now() - 3 * 3600e3);
   const monday = new Date(now);
@@ -108,17 +109,18 @@ export async function runWeeklyAutopilot() {
 export async function autopilotTick() {
   const s = await db();
   const plans = await activePlans();
-  if (!plans.length) return { media: 0, rescheduled: 0 };
   const byId = new Map(plans.map((p) => [p.id, p]));
   const ids = plans.map((p) => p.id);
   let media = 0;
   let rescheduled = 0;
 
-  // 1) Mídia dos posts "idea" futuros (limite baixo para não estourar o tempo da execução).
+  // 1) Mídia dos posts "idea" futuros, os mais próximos primeiro (limite baixo para não estourar
+  //    o tempo da execução). Entram os planos no piloto e os posts das programações automáticas.
+  const cond = ids.length ? `automation.not.is.null,plan_id.in.(${ids.join(",")})` : "automation.not.is.null";
   const { data: ideas } = await s
     .from("ig_posts")
-    .select("id, workspace_id, plan_id, scheduled_at")
-    .in("plan_id", ids)
+    .select("id, workspace_id, plan_id, scheduled_at, automation")
+    .or(cond)
     .eq("status", "idea")
     .gt("scheduled_at", new Date().toISOString())
     .order("scheduled_at")
@@ -155,7 +157,21 @@ export async function autopilotTick() {
       kind: "media",
       message: `Mídia gerada (${r.provider}).`,
     });
-    if (!plan.requires_approval) {
+    if (p.automation) {
+      const { scheduleAutomated } = await import("./auto-calendar.server");
+      await scheduleAutomated(p.id).catch(async (e) =>
+        logEvent({
+          workspace_id: p.workspace_id,
+          plan_id: p.plan_id,
+          post_id: p.id,
+          kind: "failure",
+          level: "error",
+          message: `Falha ao agendar: ${errMsg(e)}`,
+        }),
+      );
+      continue;
+    }
+    if (!plan?.requires_approval) {
       try {
         await schedulePost(p.workspace_id, p.id, p.scheduled_at);
         await logEvent({
@@ -186,6 +202,7 @@ export async function autopilotTick() {
       .from("ig_posts")
       .select("id, workspace_id, plan_id, scheduled_at")
       .in("plan_id", approvalPlanIds)
+      .is("automation", null)
       .in("status", ["idea", "generating", "pending_approval", "ready"])
       .is("approved_at", null)
       .lt("scheduled_at", limit)
@@ -215,9 +232,14 @@ export async function afterApproval(workspaceId: string, postId: string) {
   const s = await db();
   const { data: post } = await s
     .from("ig_posts")
-    .select("plan_id, scheduled_at")
+    .select("plan_id, scheduled_at, automation")
     .eq("id", postId)
     .maybeSingle();
+  if (post?.automation) {
+    await logEvent({ workspace_id: workspaceId, plan_id: post.plan_id, post_id: postId, kind: "approval", message: "Post aprovado." });
+    await (await import("./auto-calendar.server")).scheduleAutomated(postId);
+    return;
+  }
   if (!post?.plan_id) return;
   const { data: plan } = await s
     .from("ig_content_plans")
