@@ -1,108 +1,275 @@
 /**
- * Canva pelo MCP oficial (somente servidor). A conta Canva da empresa é conectada por OAuth
- * em Integrações (igual ao Higgsfield). Fluxo: criativo do app → biblioteca do Canva →
- * edição no Canva → exportar → volta para a biblioteca do app.
+ * Canva Connect API (REST) — somente servidor. Cada empresa guarda no cofre (app_credentials):
+ * CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, CANVA_TOKENS (JSON) e CANVA_OAUTH (state + verifier).
+ * Empresas configuradas para herdar da "empresa da agência" usam a conexão dela.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { getLiveConnection } from "@/lib/mcp-auth.server";
-import { callTool } from "@/lib/mcp.server";
+import { readCredential, writeCredentials, deleteCredential } from "@/lib/credentials.server";
 
-type DB = SupabaseClient<any, any, any>;
+export const CANVA_API = "https://api.canva.com/rest/v1";
+export const CANVA_AUTHORIZE = "https://www.canva.com/api/oauth/authorize";
+export const CANVA_REDIRECT_URI = "https://www.meufunildevendas.com.br/api/public/canva/oauth/callback";
+export const CANVA_SCOPES = "asset:read asset:write design:content:read design:content:write design:meta:read profile:read";
 
-export const CANVA_MCP_URL = "https://mcp.canva.com/mcp";
+type Tokens = { access_token: string; refresh_token: string; expires_at: number; name?: string | null; email?: string | null };
 
-async function conn(db: DB, workspaceId: string) {
-  const c = await getLiveConnection(db, workspaceId, "canva");
-  if (!c || c.status !== "connected") throw new Error("Canva não está conectado nesta empresa. Conecte em Integrações.");
-  return c;
+export class CanvaAuthError extends Error {}
+
+async function readJSON<T>(ws: string, key: string): Promise<T | null> {
+  const v = await readCredential(ws, key);
+  if (!v) return null;
+  try {
+    return JSON.parse(v) as T;
+  } catch {
+    return null;
+  }
 }
 
-async function call(db: DB, workspaceId: string, tool: string, args: Record<string, unknown>) {
-  const c = await conn(db, workspaceId);
-  return callTool(c.server_url, c.access_token, tool, { ...args, user_intent: "Meu Funil: levar criativos da agência para o Canva e de volta" });
+async function appCreds(ws: string) {
+  const id = (await readCredential(ws, "CANVA_CLIENT_ID")) ?? (await readCredential(null, "CANVA_CLIENT_ID"));
+  const secret = (await readCredential(ws, "CANVA_CLIENT_SECRET")) ?? (await readCredential(null, "CANVA_CLIENT_SECRET"));
+  return id && secret ? { id, secret } : null;
 }
 
-const blob = (r: { text: string; structured: string | null }) => `${r.structured ?? ""}\n${r.text}`;
-
-/** Envia uma mídia da biblioteca para os uploads do Canva. */
-export async function sendAssetToCanva(db: DB, workspaceId: string, asset: { url: string; title: string }) {
-  if (!/^https:\/\//.test(asset.url)) throw new Error("A mídia precisa de um link público HTTPS.");
-  const r = await call(db, workspaceId, "upload-asset-from-url", { url: asset.url, name: asset.title.slice(0, 200) });
-  const mediaId = /"(?:media_id|id)"\s*:\s*"([^"]+)"/.exec(blob(r))?.[1] ?? null;
-  return { mediaId, message: r.text.slice(0, 300) };
+/** Empresa cuja conexão Canva vale para esta (a própria ou a da agência). */
+async function ownerOf(ws: string): Promise<string | null> {
+  if (await readJSON<Tokens>(ws, "CANVA_TOKENS")) return ws;
+  const { inheritSource } = await import("@/lib/ai-keys.server");
+  const src = await inheritSource(ws);
+  if (src && (await readJSON<Tokens>(src, "CANVA_TOKENS"))) return src;
+  return null;
 }
 
-/** Cria um design editável no Canva a partir da copy/briefing da campanha. */
-export async function createCanvaDesign(db: DB, workspaceId: string, brief: string, format?: string | null) {
-  const start = await call(db, workspaceId, "create-design", { brief: brief.slice(0, 4000), ...(format ? { format } : {}) });
-  const b = blob(start);
-  const jobId = /"job_id"\s*:\s*"([^"]+)"/.exec(b)?.[1];
-  let token = /"continuation_token"\s*:\s*"([^"]+)"/.exec(b)?.[1];
-  if (!jobId || !token) throw new Error("O Canva não confirmou a criação do design.");
+function b64url(bytes: Uint8Array) {
+  return Buffer.from(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export async function saveCanvaApp(ws: string, clientId: string, clientSecret: string | null) {
+  const rows: Record<string, string> = { CANVA_CLIENT_ID: clientId.trim() };
+  if (clientSecret?.trim()) rows["CANVA_CLIENT_SECRET"] = clientSecret.trim();
+  await writeCredentials(ws, rows);
+}
+
+export async function canvaStatus(ws: string) {
+  const app = await appCreds(ws);
+  const owner = await ownerOf(ws);
+  const t = owner ? await readJSON<Tokens>(owner, "CANVA_TOKENS") : null;
+  return {
+    appSaved: !!app,
+    clientIdHint: app ? `${app.id.slice(0, 4)}••••` : null,
+    connected: !!t,
+    inherited: !!owner && owner !== ws,
+    name: t?.name ?? null,
+    email: t?.email ?? null,
+  };
+}
+
+export async function startCanvaOAuth(ws: string) {
+  const app = await appCreds(ws);
+  if (!app) throw new Error("Salve o Client ID e o Client secret do app Canva antes de entrar.");
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const state = `${ws}.${b64url(crypto.getRandomValues(new Uint8Array(24)))}`;
+  await writeCredentials(ws, { CANVA_OAUTH: JSON.stringify({ state, verifier, at: Date.now() }) });
+  const u = new URL(CANVA_AUTHORIZE);
+  u.searchParams.set("response_type", "code");
+  u.searchParams.set("client_id", app.id);
+  u.searchParams.set("redirect_uri", CANVA_REDIRECT_URI);
+  u.searchParams.set("scope", CANVA_SCOPES);
+  u.searchParams.set("state", state);
+  u.searchParams.set("code_challenge", challenge);
+  u.searchParams.set("code_challenge_method", "S256");
+  return u.toString();
+}
+
+async function tokenRequest(app: { id: string; secret: string }, body: Record<string, string>) {
+  const res = await fetch(`${CANVA_API}/oauth/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${app.id}:${app.secret}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(body).toString(),
+  });
+  const json = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok || !json.access_token) {
+    console.error("[canva] token", res.status, json);
+    throw new CanvaAuthError(json.error_description || json.message || `O Canva recusou o login (${res.status}).`);
+  }
+  return json as { access_token: string; refresh_token: string; expires_in: number };
+}
+
+/** Callback: valida o state, troca o code e grava os tokens + perfil. Retorna a empresa. */
+export async function finishCanvaOAuth(state: string, code: string) {
+  const ws = state.split(".")[0] ?? "";
+  if (!/^[0-9a-f-]{36}$/.test(ws)) throw new Error("Retorno do Canva inválido.");
+  const saved = await readJSON<{ state: string; verifier: string; at: number }>(ws, "CANVA_OAUTH");
+  if (!saved || saved.state !== state || Date.now() - saved.at > 20 * 60_000) throw new Error("Sessão de login expirada. Tente entrar de novo.");
+  const app = await appCreds(ws);
+  if (!app) throw new Error("App Canva não configurado.");
+  const t = await tokenRequest(app, {
+    grant_type: "authorization_code",
+    code,
+    code_verifier: saved.verifier,
+    redirect_uri: CANVA_REDIRECT_URI,
+  });
+  const tokens: Tokens = { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: Date.now() + t.expires_in * 1000 };
+  const p = await profile(tokens.access_token).catch(() => null);
+  tokens.name = p?.name ?? null;
+  tokens.email = p?.email ?? null;
+  await writeCredentials(ws, { CANVA_TOKENS: JSON.stringify(tokens) });
+  await deleteCredential(ws, "CANVA_OAUTH");
+  return ws;
+}
+
+async function profile(token: string) {
+  const r = await fetch(`${CANVA_API}/users/me/profile`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new CanvaAuthError(`Perfil Canva indisponível (${r.status}).`);
+  const j = (await r.json()) as any;
+  return { name: (j.profile?.display_name as string) ?? null, email: (j.profile?.email as string) ?? null };
+}
+
+export async function disconnectCanva(ws: string) {
+  await deleteCredential(ws, "CANVA_TOKENS");
+  await deleteCredential(ws, "CANVA_OAUTH");
+}
+
+/** Token válido (renova antes de expirar; o refresh_token do Canva é de uso único). */
+async function accessToken(ws: string): Promise<{ token: string; owner: string }> {
+  const owner = await ownerOf(ws);
+  if (!owner) throw new Error("Canva não está conectado nesta empresa. Entre com Canva em Integrações.");
+  const t = (await readJSON<Tokens>(owner, "CANVA_TOKENS"))!;
+  if (t.expires_at - Date.now() > 120_000) return { token: t.access_token, owner };
+  const app = await appCreds(owner);
+  if (!app) throw new Error("App Canva não configurado.");
+  try {
+    const n = await tokenRequest(app, { grant_type: "refresh_token", refresh_token: t.refresh_token });
+    const next: Tokens = { ...t, access_token: n.access_token, refresh_token: n.refresh_token ?? t.refresh_token, expires_at: Date.now() + n.expires_in * 1000 };
+    await writeCredentials(owner, { CANVA_TOKENS: JSON.stringify(next) });
+    return { token: next.access_token, owner };
+  } catch (e) {
+    if (e instanceof CanvaAuthError) {
+      await disconnectCanva(owner);
+      throw new Error("A conexão com o Canva expirou ou foi revogada. Entre com Canva de novo em Integrações.");
+    }
+    throw e;
+  }
+}
+
+async function api(ws: string, path: string, init: RequestInit = {}) {
+  const { token, owner } = await accessToken(ws);
+  const res = await fetch(`${CANVA_API}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
+  const json = (await res.json().catch(() => ({}))) as any;
+  if (res.status === 401) {
+    await disconnectCanva(owner);
+    throw new Error("O Canva recusou o acesso (login revogado). Entre com Canva de novo em Integrações.");
+  }
+  if (!res.ok) {
+    console.error("[canva]", path, res.status, json);
+    throw new Error(`Canva: ${json.message || json.error || `erro ${res.status}`}`);
+  }
+  return json;
+}
+
+async function poll(ws: string, path: string, pick: (j: any) => any) {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
-    const wait = Number(/"wait_seconds"\s*:\s*(\d+)/.exec(b)?.[1] ?? 5);
-    await new Promise((r) => setTimeout(r, Math.min(15, Math.max(2, wait)) * 1000));
-    const st = await call(db, workspaceId, "get-create-design-async-job", { job_id: jobId, continuation_token: token });
-    const sb = blob(st);
-    token = /"continuation_token"\s*:\s*"([^"]+)"/.exec(sb)?.[1] ?? token;
-    const designId = /"(?:design_id|id)"\s*:\s*"(D[A-Za-z0-9_-]{10})"/.exec(sb)?.[1];
-    const editUrl = /https:\/\/www\.canva\.com\/design\/[^\s"'\\]+/.exec(sb)?.[0] ?? null;
-    if (designId || editUrl) return { designId: designId ?? null, editUrl };
-    if (/"status"\s*:\s*"(failed|error)"/i.test(sb)) throw new Error("O Canva não conseguiu gerar o design.");
+    const j = pick(await api(ws, path));
+    if (j?.status === "success") return j;
+    if (j?.status === "failed") throw new Error(`Canva: ${j.error?.message ?? "a tarefa falhou"}`);
+    await new Promise((r) => setTimeout(r, 2000));
   }
-  return { designId: null, editUrl: null, pending: true };
+  throw new Error("O Canva demorou demais para responder. Tente de novo em instantes.");
 }
 
-/** Designs recentes da conta Canva (para escolher qual trazer de volta). */
-export async function listCanvaDesigns(db: DB, workspaceId: string, query?: string | null) {
-  const r = await call(db, workspaceId, "search-designs", {
-    limit: 20,
-    ...(query ? { query, sort_by: "relevance" } : { sort_by: "modified_descending" }),
+export async function testCanva(ws: string) {
+  const j = await api(ws, "/users/me/profile");
+  return { name: (j.profile?.display_name as string) ?? null };
+}
+
+/** Envia uma mídia para os uploads do Canva e devolve o asset_id. */
+export async function sendAssetToCanva(ws: string, asset: { url: string; title: string }) {
+  const file = await fetch(asset.url);
+  if (!file.ok) throw new Error("Não foi possível baixar a mídia da biblioteca.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const start = await api(ws, "/asset-uploads", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Asset-Upload-Metadata": JSON.stringify({ name_base64: Buffer.from(asset.title.slice(0, 50) || "Criativo").toString("base64") }),
+    },
+    body: bytes,
   });
-  let parsed: any = null;
-  try {
-    parsed = JSON.parse(r.structured ?? r.text);
-  } catch {
-    parsed = null;
-  }
-  const items: any[] = parsed?.designs ?? parsed?.items ?? [];
-  if (items.length)
-    return items
-      .map((d) => ({ id: String(d.design_id ?? d.id ?? ""), title: String(d.title ?? "Sem título"), thumbnail: d.thumbnail?.url ?? null, url: d.urls?.edit_url ?? d.url ?? null }))
-      .filter((d) => /^D/.test(d.id));
-  // Formato desconhecido: extrai os IDs do texto.
-  return [...new Set([...blob(r).matchAll(/\b(D[A-Za-z0-9_-]{10})\b/g)].map((m) => m[1]!))].map((id) => ({ id, title: id, thumbnail: null, url: null }));
+  const jobId = start.job?.id as string;
+  const done = start.job?.status === "success" ? start.job : await poll(ws, `/asset-uploads/${jobId}`, (j) => j.job);
+  return { assetId: (done.asset?.id as string) ?? null };
 }
 
-/** Exporta um design do Canva (PNG ou MP4) e salva na biblioteca do app. */
+const SIZES: Record<string, [number, number]> = {
+  square: [1080, 1080],
+  portrait: [1080, 1350],
+  story: [1080, 1920],
+  landscape: [1200, 628],
+};
+
+/** Cria um design editável (opcionalmente com uma mídia já enviada) e devolve o link de edição. */
+export async function createCanvaDesign(ws: string, input: { title: string; size?: string | null; assetId?: string | null }) {
+  const [width, height] = SIZES[input.size ?? "portrait"] ?? SIZES.portrait!;
+  const j = await api(ws, "/designs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      design_type: { type: "custom", width, height },
+      title: input.title.slice(0, 250) || "Meu Funil",
+      ...(input.assetId ? { asset_id: input.assetId } : {}),
+    }),
+  });
+  return { designId: (j.design?.id as string) ?? null, editUrl: (j.design?.urls?.edit_url as string) ?? null };
+}
+
+export async function listCanvaDesigns(ws: string, query?: string | null) {
+  const q = new URLSearchParams({ ownership: "any", sort_by: query ? "relevance" : "modified_descending" });
+  if (query) q.set("query", query);
+  const j = await api(ws, `/designs?${q}`);
+  return ((j.items ?? []) as any[]).map((d) => ({
+    id: String(d.id),
+    title: String(d.title ?? "Sem título"),
+    thumbnail: (d.thumbnail?.url as string) ?? null,
+  }));
+}
+
+/** Exporta um design (png/jpg/mp4) e salva na biblioteca ligado ao design_id. */
 export async function importCanvaDesign(
-  db: DB,
-  workspaceId: string,
-  input: { designId: string; title?: string | null; brandId?: string | null; campaignId?: string | null; createdBy?: string | null },
+  ws: string,
+  input: { designId: string; title?: string | null; format?: "png" | "jpg" | "mp4" | null; brandId?: string | null; campaignId?: string | null; createdBy?: string | null },
 ) {
-  if (!/^D[A-Za-z0-9_-]{10}$/.test(input.designId)) throw new Error("ID de design do Canva inválido (começa com D e tem 11 caracteres).");
-  const formats = blob(await call(db, workspaceId, "get-export-formats", { design_id: input.designId }));
-  const video = /"mp4"/i.test(formats) && !/"png"/i.test(formats);
-  const exp = await call(db, workspaceId, "export-design", {
-    design_id: input.designId,
-    format: video ? { type: "mp4", quality: "vertical_1080p" } : { type: "png", export_quality: "pro", pages: [1] },
+  const fmt = input.format ?? "png";
+  const start = await api(ws, "/exports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ design_id: input.designId, format: fmt === "jpg" ? { type: "jpg", quality: 92 } : { type: fmt } }),
   });
-  const url = exp.mediaUrl ?? /https:\/\/[^\s"'\\]+/.exec(blob(exp))?.[0];
-  if (!url) throw new Error("O Canva não devolveu o arquivo exportado.");
+  const done = start.job?.status === "success" ? start.job : await poll(ws, `/exports/${start.job?.id}`, (j) => j.job);
+  const urls = (done.urls ?? []) as string[];
+  if (!urls.length) throw new Error("O Canva não devolveu o arquivo exportado.");
   const { ingestAsset } = await import("@/lib/media/assets.server");
-  const asset = await ingestAsset({
-    workspaceId,
-    kind: video ? "video" : "image",
-    targetFormat: "other",
-    source: "canva",
-    sourceUrl: url,
-    title: input.title || `Canva ${input.designId}`,
-    provider: "canva",
-    brandId: input.brandId ?? null,
-    campaignId: input.campaignId ?? null,
-    createdBy: input.createdBy ?? null,
-    normalize: false,
-  });
-  return asset;
+  const assets = [];
+  for (const [i, url] of urls.entries()) {
+    assets.push(
+      await ingestAsset({
+        workspaceId: ws,
+        kind: fmt === "mp4" ? "video" : "image",
+        targetFormat: "other",
+        source: "canva",
+        sourceUrl: url,
+        title: `${input.title || `Canva ${input.designId}`}${urls.length > 1 ? ` (${i + 1})` : ""}`,
+        provider: "canva",
+        prompt: `canva_design_id:${input.designId}`,
+        brandId: input.brandId ?? null,
+        campaignId: input.campaignId ?? null,
+        createdBy: input.createdBy ?? null,
+        normalize: false,
+      } as any),
+    );
+  }
+  return assets[0]!;
 }
