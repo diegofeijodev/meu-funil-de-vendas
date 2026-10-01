@@ -667,7 +667,6 @@ export type Database = {
       }
       copies: {
         Row: {
-          angle: string | null
           campaign_id: string
           content: Json
           created_at: string
@@ -677,7 +676,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           campaign_id: string
           content?: Json
           created_at?: string
@@ -687,7 +685,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           campaign_id?: string
           content?: Json
           created_at?: string
@@ -864,7 +861,6 @@ export type Database = {
       }
       creatives: {
         Row: {
-          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -889,7 +885,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -914,7 +909,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2304,7 +2298,15 @@ export type Database = {
           website_clicks?: number | null
           workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ig_account_insights_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ig_autopilot_events: {
         Row: {
@@ -2357,6 +2359,32 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ig_autopilot_weeks: {
+        Row: {
+          created_at: string
+          plan_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          plan_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          plan_id?: string
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_autopilot_weeks_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
             referencedColumns: ["id"]
           },
         ]
@@ -2795,7 +2823,6 @@ export type Database = {
       }
       media_assets: {
         Row: {
-          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -2830,7 +2857,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2865,7 +2891,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -3570,7 +3595,15 @@ export type Database = {
           plan?: string
           slug?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_ai_inherit_from_fkey"
+            columns: ["ai_inherit_from"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

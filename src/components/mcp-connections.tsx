@@ -106,13 +106,15 @@ export function McpConnections() {
     return () => window.removeEventListener("message", onMessage);
   }, [qc, workspaceId]);
 
-  const handleConnect = async (provider: McpProvider, url: string, token: string | null) => {
+  const handleConnect = async (provider: McpProvider, url: string, token: string | null, connected = false) => {
     if (!workspaceId) return;
     if (!url.trim()) {
       toast.error("Informe o endereço do servidor MCP.");
       return;
     }
     setBusy(provider);
+    // Abre a janela já no clique: navegadores bloqueiam pop-ups abertos depois de esperas.
+    const popup = connected ? null : window.open("about:blank", "_blank", "width=520,height=720");
     try {
       const label = PROVIDERS.find((p) => p.id === provider)?.label ?? provider;
       const res = await connect({
@@ -123,17 +125,22 @@ export function McpConnections() {
       if (res.status === "connected") {
         await logActivity(workspaceId, "mcp.connected", "integration", { provider, tools: res.tools.length });
         toast.success(`Conectado. ${res.tools.length} ferramenta(s) disponível(is).`);
+        popup?.close();
         return;
       }
       if (res.needsAuth) {
         toast.info("Abrindo a autorização do provedor…");
         const { authUrl } = await oauthStart({ data: { workspaceId, provider, serverUrl: url.trim(), label } });
         await qc.invalidateQueries({ queryKey: ["mcp", workspaceId] });
-        window.open(authUrl, "_blank", "width=520,height=720");
+        if (popup && !popup.closed) popup.location.href = authUrl;
+        else if (!window.open(authUrl, "_blank", "width=520,height=720"))
+          toast.error("O navegador bloqueou a janela de login. Permita pop-ups para este site e tente de novo.");
         return;
       }
+      popup?.close();
       toast.error(res.error ?? "Não foi possível conectar.");
     } catch (e) {
+      popup?.close();
       toast.error(e instanceof Error ? e.message : "Não foi possível conectar agora. Tente novamente.");
     } finally {
       setBusy(null);
@@ -253,7 +260,7 @@ export function McpConnections() {
                   <Button
                     className="flex-1"
                     disabled={busy === p.id}
-                    onClick={() => handleConnect(p.id, draft.url, draft.token)}
+                    onClick={() => handleConnect(p.id, draft.url, draft.token, connected)}
                   >
                     {busy === p.id && <Loader2 className="mr-2 size-4 animate-spin" />}
                     {connected
