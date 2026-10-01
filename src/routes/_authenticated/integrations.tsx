@@ -5,6 +5,7 @@ import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
 import { shortDate } from "@/lib/format";
 import { McpConnections } from "@/components/mcp-connections";
+import { CanvaCard } from "@/components/canva-card";
 import { MetaAdsCard } from "@/components/meta-ads-card";
 import { AdsChannelsCard } from "@/components/ads-channels-card";
 import { AiKeysCard } from "@/components/ai-keys-card";
@@ -55,6 +56,7 @@ function Integrations() {
         <AgencyConnectionsCard />
         <AiKeysCard />
         <McpConnections />
+        <CanvaCard />
         <AiDiagnosticsCard />
 
         <Section title="Histórico de publicações">

@@ -112,7 +112,7 @@ export function ImportFromCanvaButton({ workspaceId, onImported }: { workspaceId
             {designs && !designs.length && <p className="text-sm text-muted-foreground">Nenhum design encontrado.</p>}
           </div>
           <div className="flex gap-2 border-t border-border pt-3">
-            <Input placeholder="Ou cole o link ou ID do design (começa com D)" value={manual} onChange={(e) => setManual(e.target.value)} />
+            <Input placeholder="Ou cole o link ou ID do design" value={manual} onChange={(e) => setManual(e.target.value)} />
             <Button disabled={!manual.trim() || !!busy} onClick={() => pick(manual.trim())}>
               Importar
             </Button>

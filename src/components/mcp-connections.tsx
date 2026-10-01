@@ -37,21 +37,6 @@ const PROVIDERS: {
     ],
     refs: [{ label: "Higgsfield", url: "https://higgsfield.ai" }],
   },
-  {
-    id: "canva",
-    label: "Canva",
-    hint: "Envie criativos para o Canva, crie designs a partir da copy e traga a versão editada de volta para a Biblioteca.",
-    placeholder: "https://mcp.canva.com/mcp",
-    defaultUrl: "https://mcp.canva.com/mcp",
-    steps: [
-      { text: "Tenha uma conta Canva (Pro ou Teams recomendada para kits de marca):", link: { label: "canva.com", url: "https://www.canva.com" } },
-      "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
-      "Uma janela do Canva abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
-      "Na Biblioteca, use \"Enviar ao Canva\" em uma mídia e \"Importar do Canva\" para trazer o design editado.",
-      "Na campanha, use \"Criar design no Canva\" para montar um layout editável com a copy.",
-    ],
-    refs: [{ label: "Canva para desenvolvedores", url: "https://www.canva.dev" }],
-  },
 ];
 
 const STATUS_LABEL: Record<string, { label: string; pill: string }> = {
@@ -164,7 +149,7 @@ export function McpConnections() {
   return (
     <Section
       title="Conexões MCP"
-      description="Conecte o Higgsfield e a Meta. A autorização e as credenciais ficam no servidor — nada sensível aparece no navegador."
+      description="Conecte o Higgsfield. A autorização e as credenciais ficam no servidor — nada sensível aparece no navegador."
     >
       <div className="grid gap-4 md:grid-cols-2">
         {PROVIDERS.map((p) => {
