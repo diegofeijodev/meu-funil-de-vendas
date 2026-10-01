@@ -58,54 +58,39 @@ export type Database = {
       ai_recommendations: {
         Row: {
           action: string
-          applied_at: string | null
-          applied_by: string | null
           campaign_id: string | null
           created_at: string
           estimated_impact: string | null
           id: string
-          payload: Json
           reason: string
           requires_approval: boolean
-          result: string | null
           severity: string
-          source: string
           status: string
           title: string
           workspace_id: string
         }
         Insert: {
           action: string
-          applied_at?: string | null
-          applied_by?: string | null
           campaign_id?: string | null
           created_at?: string
           estimated_impact?: string | null
           id?: string
-          payload?: Json
           reason: string
           requires_approval?: boolean
-          result?: string | null
           severity?: string
-          source?: string
           status?: string
           title: string
           workspace_id: string
         }
         Update: {
           action?: string
-          applied_at?: string | null
-          applied_by?: string | null
           campaign_id?: string | null
           created_at?: string
           estimated_impact?: string | null
           id?: string
-          payload?: Json
           reason?: string
           requires_approval?: boolean
-          result?: string | null
           severity?: string
-          source?: string
           status?: string
           title?: string
           workspace_id?: string
@@ -490,9 +475,7 @@ export type Database = {
       }
       campaigns: {
         Row: {
-          ads_config: Json
           audience: Json
-          automation_rules: Json
           avg_ticket: number | null
           brand_id: string
           budget_daily: number | null
@@ -502,20 +485,14 @@ export type Database = {
           formats: string[]
           goal_leads: number | null
           goal_sales: number | null
-          google_campaign_id: string | null
-          google_status: string | null
           id: string
           landing_url: string | null
-          last_insights_sync_at: string | null
           margin_percent: number | null
           max_cac: number | null
           meta_ad_ids: string[]
-          meta_ad_map: Json
           meta_adset_id: string | null
-          meta_adset_ids: string[]
           meta_campaign_id: string | null
           meta_delivery_status: string | null
-          meta_lead_form_id: string | null
           name: string
           objective: string
           offer_price: number | null
@@ -523,15 +500,11 @@ export type Database = {
           offer_promise: string | null
           start_date: string | null
           status: string
-          tiktok_campaign_id: string | null
-          tiktok_status: string | null
           updated_at: string
           workspace_id: string
         }
         Insert: {
-          ads_config?: Json
           audience?: Json
-          automation_rules?: Json
           avg_ticket?: number | null
           brand_id: string
           budget_daily?: number | null
@@ -541,20 +514,14 @@ export type Database = {
           formats?: string[]
           goal_leads?: number | null
           goal_sales?: number | null
-          google_campaign_id?: string | null
-          google_status?: string | null
           id?: string
           landing_url?: string | null
-          last_insights_sync_at?: string | null
           margin_percent?: number | null
           max_cac?: number | null
           meta_ad_ids?: string[]
-          meta_ad_map?: Json
           meta_adset_id?: string | null
-          meta_adset_ids?: string[]
           meta_campaign_id?: string | null
           meta_delivery_status?: string | null
-          meta_lead_form_id?: string | null
           name: string
           objective?: string
           offer_price?: number | null
@@ -562,15 +529,11 @@ export type Database = {
           offer_promise?: string | null
           start_date?: string | null
           status?: string
-          tiktok_campaign_id?: string | null
-          tiktok_status?: string | null
           updated_at?: string
           workspace_id: string
         }
         Update: {
-          ads_config?: Json
           audience?: Json
-          automation_rules?: Json
           avg_ticket?: number | null
           brand_id?: string
           budget_daily?: number | null
@@ -580,20 +543,14 @@ export type Database = {
           formats?: string[]
           goal_leads?: number | null
           goal_sales?: number | null
-          google_campaign_id?: string | null
-          google_status?: string | null
           id?: string
           landing_url?: string | null
-          last_insights_sync_at?: string | null
           margin_percent?: number | null
           max_cac?: number | null
           meta_ad_ids?: string[]
-          meta_ad_map?: Json
           meta_adset_id?: string | null
-          meta_adset_ids?: string[]
           meta_campaign_id?: string | null
           meta_delivery_status?: string | null
-          meta_lead_form_id?: string | null
           name?: string
           objective?: string
           offer_price?: number | null
@@ -601,8 +558,6 @@ export type Database = {
           offer_promise?: string | null
           start_date?: string | null
           status?: string
-          tiktok_campaign_id?: string | null
-          tiktok_status?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -667,7 +622,6 @@ export type Database = {
       }
       copies: {
         Row: {
-          angle: string | null
           campaign_id: string
           content: Json
           created_at: string
@@ -677,7 +631,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           campaign_id: string
           content?: Json
           created_at?: string
@@ -687,7 +640,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           campaign_id?: string
           content?: Json
           created_at?: string
@@ -729,7 +681,6 @@ export type Database = {
           external_job_id: string | null
           final_prompt: string | null
           id: string
-          options: Json
           prompt: string | null
           provider: string
           provider_log: string | null
@@ -753,7 +704,6 @@ export type Database = {
           external_job_id?: string | null
           final_prompt?: string | null
           id?: string
-          options?: Json
           prompt?: string | null
           provider?: string
           provider_log?: string | null
@@ -777,7 +727,6 @@ export type Database = {
           external_job_id?: string | null
           final_prompt?: string | null
           id?: string
-          options?: Json
           prompt?: string | null
           provider?: string
           provider_log?: string | null
@@ -864,7 +813,6 @@ export type Database = {
       }
       creatives: {
         Row: {
-          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -873,7 +821,6 @@ export type Database = {
           error_message: string | null
           estimated_cost: number | null
           external_job_id: string | null
-          extras: Json
           final_prompt: string | null
           id: string
           preview_url: string | null
@@ -889,7 +836,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -898,7 +844,6 @@ export type Database = {
           error_message?: string | null
           estimated_cost?: number | null
           external_job_id?: string | null
-          extras?: Json
           final_prompt?: string | null
           id?: string
           preview_url?: string | null
@@ -914,7 +859,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -923,7 +867,6 @@ export type Database = {
           error_message?: string | null
           estimated_cost?: number | null
           external_job_id?: string | null
-          extras?: Json
           final_prompt?: string | null
           id?: string
           preview_url?: string | null
@@ -1398,8 +1341,6 @@ export type Database = {
           form_id: string | null
           form_name: string | null
           id: string
-          instagram_id: string | null
-          instagram_username: string | null
           last_interaction_at: string | null
           lgpd_consent: boolean
           lgpd_consent_at: string | null
@@ -1438,8 +1379,6 @@ export type Database = {
           form_id?: string | null
           form_name?: string | null
           id?: string
-          instagram_id?: string | null
-          instagram_username?: string | null
           last_interaction_at?: string | null
           lgpd_consent?: boolean
           lgpd_consent_at?: string | null
@@ -1478,8 +1417,6 @@ export type Database = {
           form_id?: string | null
           form_name?: string | null
           id?: string
-          instagram_id?: string | null
-          instagram_username?: string | null
           last_interaction_at?: string | null
           lgpd_consent?: boolean
           lgpd_consent_at?: string | null
@@ -2219,27 +2156,6 @@ export type Database = {
           },
         ]
       }
-      cron_heartbeats: {
-        Row: {
-          last_detail: string | null
-          last_run_at: string
-          last_status: string
-          name: string
-        }
-        Insert: {
-          last_detail?: string | null
-          last_run_at?: string
-          last_status?: string
-          name: string
-        }
-        Update: {
-          last_detail?: string | null
-          last_run_at?: string
-          last_status?: string
-          name?: string
-        }
-        Relationships: []
-      }
       cron_tokens: {
         Row: {
           created_at: string
@@ -2255,54 +2171,6 @@ export type Database = {
           created_at?: string
           name?: string
           token?: string
-        }
-        Relationships: []
-      }
-      ig_account_insights: {
-        Row: {
-          accounts_engaged: number | null
-          created_at: string
-          date: string
-          followers_total: number | null
-          id: string
-          interactions: number | null
-          new_followers: number | null
-          profile_views: number | null
-          reach: number | null
-          updated_at: string
-          views: number | null
-          website_clicks: number | null
-          workspace_id: string
-        }
-        Insert: {
-          accounts_engaged?: number | null
-          created_at?: string
-          date: string
-          followers_total?: number | null
-          id?: string
-          interactions?: number | null
-          new_followers?: number | null
-          profile_views?: number | null
-          reach?: number | null
-          updated_at?: string
-          views?: number | null
-          website_clicks?: number | null
-          workspace_id: string
-        }
-        Update: {
-          accounts_engaged?: number | null
-          created_at?: string
-          date?: string
-          followers_total?: number | null
-          id?: string
-          interactions?: number | null
-          new_followers?: number | null
-          profile_views?: number | null
-          reach?: number | null
-          updated_at?: string
-          views?: number | null
-          website_clicks?: number | null
-          workspace_id?: string
         }
         Relationships: []
       }
@@ -2795,7 +2663,6 @@ export type Database = {
       }
       media_assets: {
         Row: {
-          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -2830,7 +2697,6 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2865,7 +2731,6 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -3141,7 +3006,6 @@ export type Database = {
       }
       performance_daily: {
         Row: {
-          ad_name: string | null
           adset_name: string | null
           campaign_id: string
           clicks: number
@@ -3149,21 +3013,15 @@ export type Database = {
           created_at: string
           creative_id: string | null
           date: string
-          external_id: string | null
           id: string
           impressions: number
           leads: number
-          meta_ad_id: string | null
-          meta_adset_id: string | null
           reach: number
           revenue: number
-          source: string
           spend: number
-          synced_at: string | null
           workspace_id: string
         }
         Insert: {
-          ad_name?: string | null
           adset_name?: string | null
           campaign_id: string
           clicks?: number
@@ -3171,21 +3029,15 @@ export type Database = {
           created_at?: string
           creative_id?: string | null
           date: string
-          external_id?: string | null
           id?: string
           impressions?: number
           leads?: number
-          meta_ad_id?: string | null
-          meta_adset_id?: string | null
           reach?: number
           revenue?: number
-          source?: string
           spend?: number
-          synced_at?: string | null
           workspace_id: string
         }
         Update: {
-          ad_name?: string | null
           adset_name?: string | null
           campaign_id?: string
           clicks?: number
@@ -3193,17 +3045,12 @@ export type Database = {
           created_at?: string
           creative_id?: string | null
           date?: string
-          external_id?: string | null
           id?: string
           impressions?: number
           leads?: number
-          meta_ad_id?: string | null
-          meta_adset_id?: string | null
           reach?: number
           revenue?: number
-          source?: string
           spend?: number
-          synced_at?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -3544,7 +3391,6 @@ export type Database = {
       }
       workspaces: {
         Row: {
-          ai_inherit_from: string | null
           created_at: string
           id: string
           name: string
@@ -3553,7 +3399,6 @@ export type Database = {
           slug: string
         }
         Insert: {
-          ai_inherit_from?: string | null
           created_at?: string
           id?: string
           name: string
@@ -3562,7 +3407,6 @@ export type Database = {
           slug: string
         }
         Update: {
-          ai_inherit_from?: string | null
           created_at?: string
           id?: string
           name?: string
