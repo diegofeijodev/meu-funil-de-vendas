@@ -2219,6 +2219,62 @@ export type Database = {
         }
         Relationships: []
       }
+      ig_account_insights: {
+        Row: {
+          accounts_engaged: number | null
+          created_at: string
+          date: string
+          followers_total: number | null
+          id: string
+          interactions: number | null
+          new_followers: number | null
+          profile_views: number | null
+          reach: number | null
+          updated_at: string
+          views: number | null
+          website_clicks: number | null
+          workspace_id: string
+        }
+        Insert: {
+          accounts_engaged?: number | null
+          created_at?: string
+          date: string
+          followers_total?: number | null
+          id?: string
+          interactions?: number | null
+          new_followers?: number | null
+          profile_views?: number | null
+          reach?: number | null
+          updated_at?: string
+          views?: number | null
+          website_clicks?: number | null
+          workspace_id: string
+        }
+        Update: {
+          accounts_engaged?: number | null
+          created_at?: string
+          date?: string
+          followers_total?: number | null
+          id?: string
+          interactions?: number | null
+          new_followers?: number | null
+          profile_views?: number | null
+          reach?: number | null
+          updated_at?: string
+          views?: number | null
+          website_clicks?: number | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_account_insights_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ig_autopilot_events: {
         Row: {
           created_at: string
@@ -2270,6 +2326,32 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ig_autopilot_weeks: {
+        Row: {
+          created_at: string
+          plan_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          plan_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          plan_id?: string
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ig_autopilot_weeks_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "ig_content_plans"
             referencedColumns: ["id"]
           },
         ]
