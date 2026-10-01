@@ -180,7 +180,7 @@ export type ComposeInput = {
 };
 
 export async function composeCreative(inp: ComposeInput): Promise<Uint8Array> {
-  const { Jimp } = await import("jimp");
+  const { Jimp } = await import("@/lib/media/jimp.server");
   const opentype = await import("opentype.js");
   const img = await Jimp.read(Buffer.from(inp.image));
   const W = img.bitmap.width;

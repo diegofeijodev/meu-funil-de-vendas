@@ -19,7 +19,7 @@ export type NormalizedImage = {
 
 async function lib() {
   try {
-    return await import("jimp");
+    return await import("@/lib/media/jimp.server");
   } catch (e) {
     console.error("[media] falha ao carregar jimp", e);
     throw new Error("O processamento de imagens está indisponível no momento.");

@@ -15,7 +15,7 @@ async function bytesOf(a: { storage_path: string | null; url: string | null }) {
 
 /** Reduz para no máx. `max` px (JPEG), para economizar envio à IA. */
 export async function shrink(bytes: Uint8Array, max = 1024): Promise<Img> {
-  const { Jimp } = await import("jimp");
+  const { Jimp } = await import("@/lib/media/jimp.server");
   const img = await Jimp.read(Buffer.from(bytes));
   const { width, height } = img.bitmap;
   if (Math.max(width, height) > max) img.scaleToFit({ w: max, h: max });
