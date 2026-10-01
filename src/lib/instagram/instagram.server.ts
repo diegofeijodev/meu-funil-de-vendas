@@ -516,10 +516,12 @@ async function continueAssets(
     media,
     creative_brief: brief,
     status: req === false ? "ready" : "pending_approval",
+    last_error: null,
     ai_provider: provider.id,
     ai_generation_log: await appendLog(post, {
       step: "media",
       provider: provider.id,
+      provider_log: providerLog(provider),
       items: media.length,
       cost,
       instructions,
