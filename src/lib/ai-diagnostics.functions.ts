@@ -79,10 +79,20 @@ export const diagnoseAi = createServerFn({ method: "POST" })
       }
     }
 
+    try {
+      const { canvaStatus, testCanva } = await import("./creative/canva.server");
+      const cs = await canvaStatus(data.workspaceId);
+      if (!cs.connected) checks.push({ name: "Canva", ok: null, detail: "Não conectado (opcional)." });
+      else {
+        await testCanva(data.workspaceId);
+        checks.push({ name: "Canva", ok: true, detail: `Conectado${cs.name ? ` como ${cs.name}` : ""}.` });
+      }
+    } catch (e) {
+      checks.push({ name: "Canva", ok: false, detail: msg(e) });
+    }
     const { getLiveConnection } = await import("./mcp-auth.server");
     for (const [provider, label, tools] of [
       ["higgsfield", "Higgsfield", ["generate_image", "generate_video", "job_status"]],
-      ["canva", "Canva", ["upload-asset-from-url", "export-design", "create-design"]],
     ] as const) {
       const c = await getLiveConnection(context.supabase, data.workspaceId, provider).catch(() => null);
       if (!c) {

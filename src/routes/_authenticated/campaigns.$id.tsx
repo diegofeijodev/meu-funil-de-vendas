@@ -173,15 +173,7 @@ function CampaignDetail() {
     if (!workspaceId || !copy) return;
     setBusy("canva");
     try {
-      const brief = [
-        `Post de Instagram para a marca ${brand?.name ?? ""}.`,
-        `Título: ${copy.headline}`,
-        `Texto: ${copy.texto_curto}`,
-        `Chamada: ${copy.cta}`,
-        brand?.primary_color ? `Cores da marca: ${brand.primary_color} e ${brand.secondary_color ?? ""}.` : "",
-        brand?.tone_of_voice ? `Tom: ${brand.tone_of_voice}.` : "",
-      ].filter(Boolean).join("\n");
-      const r = await runCanvaCreate({ data: { workspaceId, brief, format: "Instagram Post (Portrait)" } });
+      const r = await runCanvaCreate({ data: { workspaceId, title: `${brand?.name ?? "Campanha"} · ${copy.headline}`, size: "portrait" } });
       if (r.editUrl) {
         window.open(r.editUrl, "_blank");
         toast.success("Design criado no Canva. Edite e depois use Importar do Canva na Biblioteca.");

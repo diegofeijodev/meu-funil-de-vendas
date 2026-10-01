@@ -46,6 +46,7 @@ import { Route as ApiPublicFormsTokenRouteImport } from './routes/api/public/for
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicUnsubscribeLeadIdRouteImport } from './routes/api/public/unsubscribe/$leadId'
 import { Route as ApiPublicAdsOauthChannelRouteImport } from './routes/api/public/ads/oauth/$channel'
+import { Route as ApiPublicCanvaOauthCallbackRouteImport } from './routes/api/public/canva/oauth/callback'
 import { Route as ApiPublicFormsEmbedTokenRouteImport } from './routes/api/public/forms/embed.$token'
 import { Route as ApiPublicMetaOauthCallbackRouteImport } from './routes/api/public/meta/oauth/callback'
 import { Route as ApiPublicWebhooksInstagramTokenRouteImport } from './routes/api/public/webhooks/instagram/$token'
@@ -250,6 +251,12 @@ const ApiPublicAdsOauthChannelRoute =
     path: '/api/public/ads/oauth/$channel',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicCanvaOauthCallbackRoute =
+  ApiPublicCanvaOauthCallbackRouteImport.update({
+    id: '/api/public/canva/oauth/callback',
+    path: '/api/public/canva/oauth/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicFormsEmbedTokenRoute =
   ApiPublicFormsEmbedTokenRouteImport.update({
     id: '/api/public/forms/embed/$token',
@@ -318,6 +325,7 @@ export interface FileRoutesByFullPath {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/canva/oauth/callback': typeof ApiPublicCanvaOauthCallbackRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -360,6 +368,7 @@ export interface FileRoutesByTo {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/canva/oauth/callback': typeof ApiPublicCanvaOauthCallbackRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -405,6 +414,7 @@ export interface FileRoutesById {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
+  '/api/public/canva/oauth/callback': typeof ApiPublicCanvaOauthCallbackRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -450,6 +460,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads/'
     | '/api/public/ads/oauth/$channel'
+    | '/api/public/canva/oauth/callback'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -492,6 +503,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads'
     | '/api/public/ads/oauth/$channel'
+    | '/api/public/canva/oauth/callback'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -536,6 +548,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/_authenticated/crm/leads/'
     | '/api/public/ads/oauth/$channel'
+    | '/api/public/canva/oauth/callback'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -555,6 +568,7 @@ export interface RootRouteChildren {
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicUnsubscribeLeadIdRoute: typeof ApiPublicUnsubscribeLeadIdRoute
   ApiPublicAdsOauthChannelRoute: typeof ApiPublicAdsOauthChannelRoute
+  ApiPublicCanvaOauthCallbackRoute: typeof ApiPublicCanvaOauthCallbackRoute
   ApiPublicFormsEmbedTokenRoute: typeof ApiPublicFormsEmbedTokenRoute
   ApiPublicMetaOauthCallbackRoute: typeof ApiPublicMetaOauthCallbackRoute
   ApiPublicWebhooksInstagramTokenRoute: typeof ApiPublicWebhooksInstagramTokenRoute
@@ -823,6 +837,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAdsOauthChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/canva/oauth/callback': {
+      id: '/api/public/canva/oauth/callback'
+      path: '/api/public/canva/oauth/callback'
+      fullPath: '/api/public/canva/oauth/callback'
+      preLoaderRoute: typeof ApiPublicCanvaOauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/forms/embed/$token': {
       id: '/api/public/forms/embed/$token'
       path: '/api/public/forms/embed/$token'
@@ -943,6 +964,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicUnsubscribeLeadIdRoute: ApiPublicUnsubscribeLeadIdRoute,
   ApiPublicAdsOauthChannelRoute: ApiPublicAdsOauthChannelRoute,
+  ApiPublicCanvaOauthCallbackRoute: ApiPublicCanvaOauthCallbackRoute,
   ApiPublicFormsEmbedTokenRoute: ApiPublicFormsEmbedTokenRoute,
   ApiPublicMetaOauthCallbackRoute: ApiPublicMetaOauthCallbackRoute,
   ApiPublicWebhooksInstagramTokenRoute: ApiPublicWebhooksInstagramTokenRoute,
