@@ -334,12 +334,16 @@ async function writeChunk(run: any, slots: Slot[]) {
     .filter(Boolean)
     .join("\n");
   const { json, provider } = await aiJson(run.workspace_id, "auto", prompt, SCHEMA, "ig_auto_calendar");
-  const items = new Map<number, any>(((json?.posts ?? []) as any[]).map((p) => [Number(p.index), p]));
+  const list = Array.isArray(json?.posts) ? (json.posts as any[]) : [];
+  const items = new Map<number, any>(
+    list.filter((p) => p && typeof p === "object").map((p) => [Number(p.index), p]),
+  );
   if (!items.size) throw new Error("A IA não devolveu conteúdos.");
   const rows = slots.map((sl) => {
-    const p = items.get(sl.index) ?? {};
+    const raw = items.get(sl.index);
+    const at = new Date().toISOString();
     const soon = new Date(sl.at).getTime() - Date.now() < 90 * MIN;
-    return {
+    const base = {
       workspace_id: run.workspace_id,
       plan_id: run.plan_id,
       run_id: run.id,
@@ -347,25 +351,50 @@ async function writeChunk(run: any, slots: Slot[]) {
       format: sl.format,
       status: "idea",
       scheduled_at: sl.at,
-      theme: p.theme ?? `Post de ${weekdayName(sl.at)}`,
-      hook: p.hook ?? null,
-      caption: p.caption ?? null,
-      hashtags: ((p.hashtags ?? []) as string[]).map((h) => String(h).replace(/^#/, "")).slice(0, 30),
-      cta: p.cta || plan.cta_default || null,
-      creative_brief: {
-        prompt: p.image_prompt || p.theme || "",
-        slides: sl.format === "feed_carousel" ? (p.slides ?? []).slice(0, 10) : [],
-        aspect_ratio: ASPECT[sl.format],
-        headline: p.headline || null,
-        pillar: p.pillar ?? null,
-        funnel_stage: p.funnel_stage ?? null,
-        campaign_id: run.campaign_id ?? null,
-        // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
-        variations: soon ? 1 : 3,
-      },
       ai_provider: provider,
-      ai_generation_log: [{ at: new Date().toISOString(), step: "auto_calendar", provider, run_id: run.id }],
     };
+    try {
+      const p = raw ?? {};
+      const issues: string[] = [];
+      if (!raw) issues.push("a IA não devolveu conteúdo para este horário");
+      if (p.hashtags != null && !Array.isArray(p.hashtags)) issues.push("hashtags vieram como texto e foram normalizadas");
+      return {
+        ...base,
+        theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
+        hook: asText(p.hook),
+        caption: asText(p.caption),
+        hashtags: normalizeHashtags(p.hashtags),
+        cta: asText(p.cta) || plan.cta_default || null,
+        creative_brief: {
+          prompt: asText(p.image_prompt) || asText(p.theme) || "",
+          slides: sl.format === "feed_carousel" ? asList(p.slides).slice(0, 10) : [],
+          aspect_ratio: ASPECT[sl.format],
+          headline: asText(p.headline),
+          pillar: asText(p.pillar),
+          funnel_stage: asText(p.funnel_stage),
+          campaign_id: run.campaign_id ?? null,
+          // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
+          variations: soon ? 1 : 3,
+        },
+        ai_generation_log: [
+          { at, step: "auto_calendar", provider, run_id: run.id, ...(issues.length ? { warnings: issues } : {}) },
+        ],
+      };
+    } catch (e) {
+      // Um item malformado não derruba a programação: vira um post simples com o aviso no log.
+      return {
+        ...base,
+        theme: `Post de ${weekdayName(sl.at)}`,
+        hook: null,
+        caption: null,
+        hashtags: [],
+        cta: plan.cta_default || null,
+        creative_brief: { prompt: "", slides: [], aspect_ratio: ASPECT[sl.format], campaign_id: run.campaign_id ?? null, variations: 1 },
+        ai_generation_log: [
+          { at, step: "auto_calendar", provider, run_id: run.id, status: "failed", error: `Item malformado da IA: ${e instanceof Error ? e.message : String(e)}` },
+        ],
+      };
+    }
   });
   const { error } = await s.from("ig_posts").insert(rows);
   if (error) throw new Error(error.message);
