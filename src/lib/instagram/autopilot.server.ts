@@ -51,10 +51,26 @@ async function activePlans() {
 /** Domingo 18h: gera a semana seguinte. */
 export async function runWeeklyAutopilot() {
   const out: any[] = [];
+  // Semana que começa na próxima segunda (BRT): a reserva em ig_autopilot_weeks impede gerar duas vezes.
+  const now = new Date(Date.now() - 3 * 3600e3);
+  const monday = new Date(now);
+  monday.setUTCDate(now.getUTCDate() + ((8 - now.getUTCDay()) % 7 || 7));
+  const weekStart = monday.toISOString().slice(0, 10);
   for (const plan of await activePlans()) {
     try {
-      const r = await generateContentCalendar(plan.workspace_id, plan.id, 1, "auto");
       const s = await db();
+      const { error: dup } = await s
+        .from("ig_autopilot_weeks" as never)
+        .insert({ plan_id: plan.id, week_start: weekStart } as never);
+      if (dup) {
+        out.push({ plan: plan.id, skipped: `semana ${weekStart} já gerada` });
+        continue;
+      }
+      const r = await generateContentCalendar(plan.workspace_id, plan.id, 1, "auto").catch(async (e) => {
+        // Falhou: libera a semana para a próxima tentativa.
+        await s.from("ig_autopilot_weeks" as never).delete().eq("plan_id", plan.id).eq("week_start", weekStart);
+        throw e;
+      });
       await s
         .from("ig_content_plans")
         .update({ last_autopilot_at: new Date().toISOString() })

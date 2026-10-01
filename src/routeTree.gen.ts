@@ -45,6 +45,7 @@ import { Route as ApiPublicFormsTokenRouteImport } from './routes/api/public/for
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicUnsubscribeLeadIdRouteImport } from './routes/api/public/unsubscribe/$leadId'
 import { Route as ApiPublicFormsEmbedTokenRouteImport } from './routes/api/public/forms/embed.$token'
+import { Route as ApiPublicMetaOauthCallbackRouteImport } from './routes/api/public/meta/oauth/callback'
 import { Route as ApiPublicWebhooksInstagramTokenRouteImport } from './routes/api/public/webhooks/instagram/$token'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
 import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
@@ -242,6 +243,12 @@ const ApiPublicFormsEmbedTokenRoute =
     path: '/api/public/forms/embed/$token',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicMetaOauthCallbackRoute =
+  ApiPublicMetaOauthCallbackRouteImport.update({
+    id: '/api/public/meta/oauth/callback',
+    path: '/api/public/meta/oauth/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicWebhooksInstagramTokenRoute =
   ApiPublicWebhooksInstagramTokenRouteImport.update({
     id: '/api/public/webhooks/instagram/$token',
@@ -297,6 +304,7 @@ export interface FileRoutesByFullPath {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -336,6 +344,7 @@ export interface FileRoutesByTo {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -378,6 +387,7 @@ export interface FileRoutesById {
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -420,6 +430,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads/'
     | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
@@ -459,6 +470,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads'
     | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
@@ -500,6 +512,7 @@ export interface FileRouteTypes {
     | '/api/public/unsubscribe/$leadId'
     | '/_authenticated/crm/leads/'
     | '/api/public/forms/embed/$token'
+    | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
@@ -517,6 +530,7 @@ export interface RootRouteChildren {
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicUnsubscribeLeadIdRoute: typeof ApiPublicUnsubscribeLeadIdRoute
   ApiPublicFormsEmbedTokenRoute: typeof ApiPublicFormsEmbedTokenRoute
+  ApiPublicMetaOauthCallbackRoute: typeof ApiPublicMetaOauthCallbackRoute
   ApiPublicWebhooksInstagramTokenRoute: typeof ApiPublicWebhooksInstagramTokenRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
   ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
@@ -776,6 +790,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicFormsEmbedTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/meta/oauth/callback': {
+      id: '/api/public/meta/oauth/callback'
+      path: '/api/public/meta/oauth/callback'
+      fullPath: '/api/public/meta/oauth/callback'
+      preLoaderRoute: typeof ApiPublicMetaOauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/webhooks/instagram/$token': {
       id: '/api/public/webhooks/instagram/$token'
       path: '/api/public/webhooks/instagram/$token'
@@ -880,6 +901,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicUnsubscribeLeadIdRoute: ApiPublicUnsubscribeLeadIdRoute,
   ApiPublicFormsEmbedTokenRoute: ApiPublicFormsEmbedTokenRoute,
+  ApiPublicMetaOauthCallbackRoute: ApiPublicMetaOauthCallbackRoute,
   ApiPublicWebhooksInstagramTokenRoute: ApiPublicWebhooksInstagramTokenRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
   ApiPublicWebhooksMetaLeadgenTokenRoute:

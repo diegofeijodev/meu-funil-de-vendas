@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -8,17 +8,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useWorkspace } from "@/lib/workspace";
-import { metaAdsStatus, metaAdsTest, metaAdsSaveCredentials } from "@/lib/meta-ads.functions";
+import { metaAdsStatus, metaAdsTest, metaAdsSaveCredentials, metaListAssets, metaLoginUrl, metaSaveApp, metaSaveAssets } from "@/lib/meta-ads.functions";
+import { HowTo } from "@/components/how-to";
 
 const STEPS = [
-  "Acesse developers.facebook.com e crie um app do tipo Empresa (Business). Em Configurações > Básico, anote o ID do app e a Chave secreta do app.",
-  "Ainda no app, clique em Adicionar produto e ative a Marketing API.",
-  "Abra business.facebook.com > Configurações do negócio > Usuários > Usuários do sistema e crie um usuário do sistema com função Administrador.",
-  "Nesse usuário, clique em Atribuir ativos e dê controle total sobre: sua conta de anúncios, sua Página do Facebook e sua conta do Instagram.",
-  "Clique em Gerar novo token, escolha o app criado, validade Nunca, e marque as permissões: ads_management, ads_read, business_management, pages_show_list, pages_read_engagement, pages_manage_ads, leads_retrieval e instagram_basic. Copie o token gerado.",
-  "O ID da conta de anúncios aparece no Gerenciador de Anúncios (formato act_123456789). O ID da Página está em Sobre > Transparência da página, ou em Configurações do negócio > Contas > Páginas.",
-  "Cole tudo no formulário abaixo e clique em Salvar credenciais. Os valores vão direto para o cofre do servidor — nunca ficam visíveis nem salvos no navegador.",
-  "Clique em Testar conexão. Ao ficar Conectado, as campanhas aprovadas passam a ser publicadas de verdade na Meta (sempre pausadas até você ativar).",
+  { text: "Crie um app do tipo Empresa (Business) e anote o ID do app e a Chave secreta (Configurações > Básico):", link: { label: "Painel de apps da Meta", url: "https://developers.facebook.com/apps" } },
+  "No app, adicione os produtos Marketing API e Login do Facebook para Empresas. Em Login do Facebook > Configurações, cadastre a URL de redirecionamento mostrada abaixo.",
+  "Caminho recomendado: salve o ID e a chave do app, clique em Entrar com Facebook, autorize e escolha a conta de anúncios, a Página e o Instagram.",
+  { text: "Caminho alternativo (token que não vence): crie um usuário do sistema Administrador e atribua a conta de anúncios, a Página e o Instagram:", link: { label: "Usuários do sistema", url: "https://business.facebook.com/settings/system-users" } },
+  "Gere o token com validade Nunca e as permissões: ads_management, ads_read, business_management, pages_show_list, pages_read_engagement, pages_manage_ads, pages_manage_metadata, leads_retrieval, instagram_basic, instagram_content_publish e instagram_manage_insights.",
+  "O ID da conta de anúncios aparece no Gerenciador de Anúncios (act_123...). Cole tudo no formulário de credenciais e salve.",
+  "Clique em Testar conexão. Conectado, as campanhas aprovadas são publicadas de verdade na Meta (sempre pausadas até você ativar).",
+  "Para gerenciar contas de clientes fora do seu Business, o app precisa de Acesso avançado (revisão do app pela Meta).",
 ];
 
 const EMPTY = { appId: "", appSecret: "", systemUserToken: "", adAccountId: "", pageId: "", instagramId: "" };
@@ -106,7 +107,7 @@ export function MetaAdsCard() {
 
         {data && !data.configured && (
           <p className="mt-3 text-sm text-muted-foreground">
-            Faltam credenciais: <span className="font-medium text-foreground">{data.missing.join(", ")}</span>. Enquanto isso, a publicação continua simulada.
+            Faltam credenciais: <span className="font-medium text-foreground">{data.missing.join(", ")}</span>. Sem elas não é possível publicar na Meta.
           </p>
         )}
 
@@ -134,15 +135,21 @@ export function MetaAdsCard() {
           </dl>
         )}
 
-        <details className="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm" open={!data?.configured}>
-          <summary className="cursor-pointer font-medium">Passo a passo para conectar</summary>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-muted-foreground">
-            {STEPS.map((s) => <li key={s}>{s}</li>)}
-          </ol>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Leads de formulário: em CRM &gt; Integrações, conecte o Meta Lead Ads, copie a URL do webhook e o token de verificação e cole no app da Meta (Webhooks &gt; Page &gt; leadgen).
-          </p>
-        </details>
+        {data?.tokenExpiresAt && <TokenExpiry expiresAt={data.tokenExpiresAt} />}
+
+        <div className="mt-4">
+          <HowTo
+            title="Passo a passo para conectar"
+            defaultOpen={!data?.configured}
+            steps={STEPS}
+            references={[
+              { label: "Marketing API", url: "https://developers.facebook.com/docs/marketing-apis" },
+              { label: "Login do Facebook para Empresas", url: "https://developers.facebook.com/docs/facebook-login/facebook-login-for-business" },
+            ]}
+          />
+        </div>
+
+        {canEdit && workspaceId && <FacebookLogin workspaceId={workspaceId} onDone={() => qc.invalidateQueries({ queryKey: ["meta-ads-status", workspaceId] })} />}
 
         {canEdit && (
           <div className="mt-4 rounded-lg border border-border/60 bg-background/40 p-4">
@@ -166,5 +173,139 @@ export function MetaAdsCard() {
         )}
       </div>
     </Section>
+  );
+}
+
+function TokenExpiry({ expiresAt }: { expiresAt: string }) {
+  const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400e3);
+  const tone = days <= 7 ? "text-destructive" : days <= 15 ? "text-amber-500" : "text-muted-foreground";
+  return (
+    <p className={`mt-3 text-sm ${tone}`}>
+      {days <= 0
+        ? "O login com Facebook venceu: clique em Entrar com Facebook de novo."
+        : `Login com Facebook vence em ${days} dia(s) (${new Date(expiresAt).toLocaleDateString("pt-BR")}). ${days <= 15 ? "Entre de novo para renovar." : ""}`}
+    </p>
+  );
+}
+
+/** 5.4 Entrar com Facebook: salva o app, faz o login e escolhe conta de anúncios, Página e Instagram. */
+function FacebookLogin({ workspaceId, onDone }: { workspaceId: string; onDone: () => void }) {
+  const saveApp = useServerFn(metaSaveApp);
+  const loginUrl = useServerFn(metaLoginUrl);
+  const listAssets = useServerFn(metaListAssets);
+  const saveAssets = useServerFn(metaSaveAssets);
+  const [app, setApp] = useState({ appId: "", appSecret: "" });
+  const [assets, setAssets] = useState<Awaited<ReturnType<typeof metaListAssets>> | null>(null);
+  const [pick, setPick] = useState({ adAccountId: "", pageId: "" });
+  const [busy, setBusy] = useState<string | null>(null);
+  // Lido só no navegador (evita diferença entre a renderização do servidor e a do cliente).
+  const [{ origin, justConnected, loginError }, setLoc] = useState({ origin: "", justConnected: false, loginError: null as string | null });
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    setLoc({ origin: window.location.origin, justConnected: q.get("meta") === "conectado", loginError: q.get("meta_erro") });
+  }, []);
+
+  const act = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    try {
+      await fn();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível concluir.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const loadAssets = () =>
+    act("assets", async () => {
+      const a = await listAssets({ data: { workspaceId } });
+      setAssets(a);
+      setPick({ adAccountId: a.adAccounts[0]?.id ?? "", pageId: a.pages[0]?.id ?? "" });
+    });
+  const page = assets?.pages.find((p) => p.id === pick.pageId);
+  const sel = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
+
+  return (
+    <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+      <p className="text-sm font-medium">Entrar com Facebook (recomendado)</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        URL de redirecionamento para cadastrar no app: <code>{origin}/api/public/meta/oauth/callback</code>
+      </p>
+      {loginError && <p className="mt-2 text-sm text-destructive">O login não foi concluído: {loginError}</p>}
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+        <Input placeholder="ID do app" value={app.appId} onChange={(e) => setApp({ ...app, appId: e.target.value })} />
+        <Input type="password" placeholder="Chave secreta do app" value={app.appSecret} onChange={(e) => setApp({ ...app, appSecret: e.target.value })} />
+        <Button
+          variant="outline"
+          disabled={!!busy || app.appId.trim().length < 4 || app.appSecret.trim().length < 8}
+          onClick={() =>
+            act("app", async () => {
+              await saveApp({ data: { workspaceId, ...app } });
+              setApp({ appId: "", appSecret: "" });
+              toast.success("App salvo. Agora clique em Entrar com Facebook.");
+              onDone();
+            })
+          }
+        >
+          Salvar app
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          disabled={!!busy}
+          onClick={() =>
+            act("login", async () => {
+              const { url } = await loginUrl({ data: { workspaceId, origin } });
+              window.location.href = url;
+            })
+          }
+        >
+          Entrar com Facebook
+        </Button>
+        <Button variant="outline" disabled={!!busy} onClick={loadAssets}>
+          {justConnected ? "Escolher conta, Página e Instagram" : "Carregar contas do login"}
+        </Button>
+      </div>
+      {assets && (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div>
+            <Label className="text-xs">Conta de anúncios</Label>
+            <select className={sel} value={pick.adAccountId} onChange={(e) => setPick({ ...pick, adAccountId: e.target.value })}>
+              {assets.adAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.id}){a.active ? "" : " · inativa"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Página</Label>
+            <select className={sel} value={pick.pageId} onChange={(e) => setPick({ ...pick, pageId: e.target.value })}>
+              {assets.pages.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Instagram</Label>
+            <p className="pt-2 text-sm">{page?.instagramUsername ? `@${page.instagramUsername}` : "Nenhum ligado a esta Página"}</p>
+          </div>
+          <Button
+            className="md:col-span-3"
+            disabled={!!busy || !pick.adAccountId || !pick.pageId}
+            onClick={() =>
+              act("save-assets", async () => {
+                await saveAssets({ data: { workspaceId, ...pick, instagramId: page?.instagramId ?? null } });
+                toast.success("Conta, Página e Instagram salvos. Clique em Testar conexão.");
+                onDone();
+              })
+            }
+          >
+            Salvar escolha
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

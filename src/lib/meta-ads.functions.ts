@@ -15,6 +15,16 @@ async function requireMember(ctx: Ctx, workspaceId: string, edit = false) {
   if (edit && data.role === "viewer") throw new Error("Seu perfil não pode alterar campanhas.");
 }
 
+async function requireManager(ctx: Ctx, workspaceId: string) {
+  const { data } = await ctx.supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", ctx.userId)
+    .maybeSingle();
+  if (!data || (data.role !== "owner" && data.role !== "admin")) throw new Error("Só o dono ou um administrador conecta a Meta.");
+}
+
 const ws = z.object({ workspaceId: z.string().uuid() });
 
 /** Salva as credenciais da Meta no cofre do servidor (nunca legíveis pelo navegador). */
@@ -60,8 +70,9 @@ export const metaAdsStatus = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await requireMember(context as Ctx, data.workspaceId);
     const { missingSecrets } = await import("./meta/graph.server");
-    const missing = await missingSecrets(data.workspaceId);
-    return { configured: missing.length === 0, missing };
+    const { tokenInfo } = await import("./meta/oauth.server");
+    const [missing, token] = await Promise.all([missingSecrets(data.workspaceId), tokenInfo(data.workspaceId)]);
+    return { configured: missing.length === 0, missing, tokenExpiresAt: token.expiresAt, tokenSource: token.source };
   });
 
 export const metaAdsTest = createServerFn({ method: "POST" })
@@ -217,5 +228,49 @@ export const metaAdsSetStatus = createServerFn({ method: "POST" })
       meta_delivery_status: data.status,
       status: data.status === "ACTIVE" ? "active" : c.status === "active" ? "approved" : c.status,
     }).eq("id", c.id);
+    return { ok: true };
+  });
+
+/** 5.4 Salva só o app (ID e chave secreta) para poder usar o "Entrar com Facebook". */
+export const metaSaveApp = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    ws.extend({ appId: z.string().trim().min(4), appSecret: z.string().trim().min(8) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { saveApp } = await import("./meta/oauth.server");
+    await saveApp(data.workspaceId, data.appId, data.appSecret);
+    return { ok: true };
+  });
+
+/** 5.4 Link do login com Facebook (volta em /api/public/meta/oauth/callback). */
+export const metaLoginUrl = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ws.extend({ origin: z.string().url() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { buildLoginUrl } = await import("./meta/oauth.server");
+    return { url: await buildLoginUrl(data.workspaceId, (context as Ctx).userId, data.origin) };
+  });
+
+export const metaListAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ws.parse(d))
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { listAssets } = await import("./meta/oauth.server");
+    return listAssets(data.workspaceId);
+  });
+
+export const metaSaveAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    ws.extend({ adAccountId: z.string().min(4), pageId: z.string().min(4), instagramId: z.string().nullable().optional() }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await requireManager(context as Ctx, data.workspaceId);
+    const { saveAssets } = await import("./meta/oauth.server");
+    await saveAssets(data.workspaceId, { adAccountId: data.adAccountId, pageId: data.pageId, instagramId: data.instagramId ?? null });
     return { ok: true };
   });

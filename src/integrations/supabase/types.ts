@@ -2225,6 +2225,54 @@ export type Database = {
         }
         Relationships: []
       }
+      ig_account_insights: {
+        Row: {
+          accounts_engaged: number | null
+          created_at: string
+          date: string
+          followers_total: number | null
+          id: string
+          interactions: number | null
+          new_followers: number | null
+          profile_views: number | null
+          reach: number | null
+          updated_at: string
+          views: number | null
+          website_clicks: number | null
+          workspace_id: string
+        }
+        Insert: {
+          accounts_engaged?: number | null
+          created_at?: string
+          date: string
+          followers_total?: number | null
+          id?: string
+          interactions?: number | null
+          new_followers?: number | null
+          profile_views?: number | null
+          reach?: number | null
+          updated_at?: string
+          views?: number | null
+          website_clicks?: number | null
+          workspace_id: string
+        }
+        Update: {
+          accounts_engaged?: number | null
+          created_at?: string
+          date?: string
+          followers_total?: number | null
+          id?: string
+          interactions?: number | null
+          new_followers?: number | null
+          profile_views?: number | null
+          reach?: number | null
+          updated_at?: string
+          views?: number | null
+          website_clicks?: number | null
+          workspace_id?: string
+        }
+        Relationships: []
+      }
       ig_autopilot_events: {
         Row: {
           created_at: string

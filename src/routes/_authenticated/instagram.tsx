@@ -10,6 +10,7 @@ import { IgCalendar } from "@/components/instagram/calendar";
 import { PostEditor } from "@/components/instagram/post-editor";
 import { IgApprovalList } from "@/components/instagram/approvals";
 import { IgResults } from "@/components/instagram/results";
+import { IgAccountInsights } from "@/components/instagram/account-insights";
 
 export const Route = createFileRoute("/_authenticated/instagram")({
   head: () => ({
@@ -78,7 +79,10 @@ function InstagramPage() {
           </Section>
         </TabsContent>
         <TabsContent value="results">
-          <IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+          <div className="space-y-6">
+            <IgAccountInsights workspaceId={workspaceId} />
+            <IgResults workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
+          </div>
         </TabsContent>
       </Tabs>
       {open && <PostEditor workspaceId={workspaceId} post={open} onClose={() => setOpenId(null)} />}
