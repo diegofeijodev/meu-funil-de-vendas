@@ -58,39 +58,54 @@ export type Database = {
       ai_recommendations: {
         Row: {
           action: string
+          applied_at: string | null
+          applied_by: string | null
           campaign_id: string | null
           created_at: string
           estimated_impact: string | null
           id: string
+          payload: Json
           reason: string
           requires_approval: boolean
+          result: string | null
           severity: string
+          source: string
           status: string
           title: string
           workspace_id: string
         }
         Insert: {
           action: string
+          applied_at?: string | null
+          applied_by?: string | null
           campaign_id?: string | null
           created_at?: string
           estimated_impact?: string | null
           id?: string
+          payload?: Json
           reason: string
           requires_approval?: boolean
+          result?: string | null
           severity?: string
+          source?: string
           status?: string
           title: string
           workspace_id: string
         }
         Update: {
           action?: string
+          applied_at?: string | null
+          applied_by?: string | null
           campaign_id?: string | null
           created_at?: string
           estimated_impact?: string | null
           id?: string
+          payload?: Json
           reason?: string
           requires_approval?: boolean
+          result?: string | null
           severity?: string
+          source?: string
           status?: string
           title?: string
           workspace_id?: string
@@ -475,7 +490,9 @@ export type Database = {
       }
       campaigns: {
         Row: {
+          ads_config: Json
           audience: Json
+          automation_rules: Json
           avg_ticket: number | null
           brand_id: string
           budget_daily: number | null
@@ -487,12 +504,16 @@ export type Database = {
           goal_sales: number | null
           id: string
           landing_url: string | null
+          last_insights_sync_at: string | null
           margin_percent: number | null
           max_cac: number | null
           meta_ad_ids: string[]
+          meta_ad_map: Json
           meta_adset_id: string | null
+          meta_adset_ids: string[]
           meta_campaign_id: string | null
           meta_delivery_status: string | null
+          meta_lead_form_id: string | null
           name: string
           objective: string
           offer_price: number | null
@@ -504,7 +525,9 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          ads_config?: Json
           audience?: Json
+          automation_rules?: Json
           avg_ticket?: number | null
           brand_id: string
           budget_daily?: number | null
@@ -516,12 +539,16 @@ export type Database = {
           goal_sales?: number | null
           id?: string
           landing_url?: string | null
+          last_insights_sync_at?: string | null
           margin_percent?: number | null
           max_cac?: number | null
           meta_ad_ids?: string[]
+          meta_ad_map?: Json
           meta_adset_id?: string | null
+          meta_adset_ids?: string[]
           meta_campaign_id?: string | null
           meta_delivery_status?: string | null
+          meta_lead_form_id?: string | null
           name: string
           objective?: string
           offer_price?: number | null
@@ -533,7 +560,9 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          ads_config?: Json
           audience?: Json
+          automation_rules?: Json
           avg_ticket?: number | null
           brand_id?: string
           budget_daily?: number | null
@@ -545,12 +574,16 @@ export type Database = {
           goal_sales?: number | null
           id?: string
           landing_url?: string | null
+          last_insights_sync_at?: string | null
           margin_percent?: number | null
           max_cac?: number | null
           meta_ad_ids?: string[]
+          meta_ad_map?: Json
           meta_adset_id?: string | null
+          meta_adset_ids?: string[]
           meta_campaign_id?: string | null
           meta_delivery_status?: string | null
+          meta_lead_form_id?: string | null
           name?: string
           objective?: string
           offer_price?: number | null
@@ -3006,6 +3039,7 @@ export type Database = {
       }
       performance_daily: {
         Row: {
+          ad_name: string | null
           adset_name: string | null
           campaign_id: string
           clicks: number
@@ -3016,12 +3050,17 @@ export type Database = {
           id: string
           impressions: number
           leads: number
+          meta_ad_id: string | null
+          meta_adset_id: string | null
           reach: number
           revenue: number
+          source: string
           spend: number
+          synced_at: string | null
           workspace_id: string
         }
         Insert: {
+          ad_name?: string | null
           adset_name?: string | null
           campaign_id: string
           clicks?: number
@@ -3032,12 +3071,17 @@ export type Database = {
           id?: string
           impressions?: number
           leads?: number
+          meta_ad_id?: string | null
+          meta_adset_id?: string | null
           reach?: number
           revenue?: number
+          source?: string
           spend?: number
+          synced_at?: string | null
           workspace_id: string
         }
         Update: {
+          ad_name?: string | null
           adset_name?: string | null
           campaign_id?: string
           clicks?: number
@@ -3048,9 +3092,13 @@ export type Database = {
           id?: string
           impressions?: number
           leads?: number
+          meta_ad_id?: string | null
+          meta_adset_id?: string | null
           reach?: number
           revenue?: number
+          source?: string
           spend?: number
+          synced_at?: string | null
           workspace_id?: string
         }
         Relationships: [
