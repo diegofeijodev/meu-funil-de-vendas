@@ -17,6 +17,8 @@ import { approveCampaignStrategy, createIgPlanFromStrategy, generateCampaignStra
 import type { PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
+import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
+import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -32,8 +34,11 @@ export const Route = createFileRoute("/_authenticated/campaigns/$id")({
 
 function CampaignDetail() {
   const { id } = Route.useParams();
-  const { workspaceId, canEdit } = useWorkspace();
+  const { workspaceId, canEdit, role } = useWorkspace();
+  const canManage = role === "owner" || role === "admin";
   const qc = useQueryClient();
+  const runSync = useServerFn(syncAdsInsightsNow);
+  const runRecos = useServerFn(generateAdsRecommendations);
   const metaStatus = useServerFn(metaAdsStatus);
   const metaPublish = useServerFn(metaAdsPublish);
   const metaSetStatus = useServerFn(metaAdsSetStatus);
@@ -53,7 +58,7 @@ function CampaignDetail() {
         supabase.from("campaign_strategies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("copies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("creatives").select("*").eq("campaign_id", id).order("created_at", { ascending: false }),
-        supabase.from("performance_daily").select("*").eq("campaign_id", id),
+        supabase.from("performance_daily").select("*").eq("campaign_id", id).eq("source", "meta"),
         supabase.from("campaign_costs").select("*").eq("campaign_id", id),
       ]);
       return {
@@ -207,6 +212,34 @@ function CampaignDetail() {
   };
 
 
+  const syncNow = async () => {
+    if (!workspaceId) return;
+    setBusy("sync");
+    try {
+      const r = await runSync({ data: { workspaceId } });
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(`Resultados da Meta sincronizados (${r.rows} linhas de anúncio por dia).`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const recos = async () => {
+    if (!workspaceId) return;
+    setBusy("recos");
+    try {
+      const r = await runRecos({ data: { workspaceId, campaignId: id } });
+      if (r.errors.length) toast.warning(r.errors.join(" · "));
+      if (r.created) toast.success(`${r.created} recomendações da IA em AI Insights.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar recomendações.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const setDelivery = async (status: "ACTIVE" | "PAUSED") => {
     if (!workspaceId) return;
     setBusy("delivery");
@@ -278,6 +311,7 @@ function CampaignDetail() {
           <TabsTrigger value="estrategia">Estratégia</TabsTrigger>
           <TabsTrigger value="copies">Copies</TabsTrigger>
           <TabsTrigger value="criativos">Criativos</TabsTrigger>
+          <TabsTrigger value="anuncios">Anúncios e regras</TabsTrigger>
           <TabsTrigger value="briefing">Briefing</TabsTrigger>
         </TabsList>
 
@@ -487,6 +521,45 @@ function CampaignDetail() {
           </Section>
         </TabsContent>
 
+        <TabsContent value="anuncios">
+          <div className="space-y-6">
+            <Section
+              title="Resultados reais por anúncio e ângulo"
+              description={
+                (c as { last_insights_sync_at?: string | null }).last_insights_sync_at
+                  ? `Última sincronização com a Meta: ${new Date((c as { last_insights_sync_at: string }).last_insights_sync_at).toLocaleString("pt-BR")}. Atualiza sozinho a cada 3 horas.`
+                  : "Aparece depois que a campanha veicular na Meta. Atualiza sozinho a cada 3 horas."
+              }
+              actions={
+                metaId ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={syncNow} disabled={busy === "sync"}>
+                      {busy === "sync" ? "Sincronizando..." : "Sincronizar agora"}
+                    </Button>
+                    {canEdit && (
+                      <Button size="sm" variant="outline" onClick={recos} disabled={busy === "recos"}>
+                        <Sparkles className="mr-1 size-3.5" />
+                        {busy === "recos" ? "Analisando..." : "Recomendações da IA"}
+                      </Button>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            >
+              <AdBreakdown perf={data.perf} creatives={data.creatives} />
+            </Section>
+            {workspaceId && (
+              <CampaignAdsSettings
+                campaign={c as never}
+                workspaceId={workspaceId}
+                canEdit={canEdit}
+                canManage={canManage}
+                hasStrategyAudiences={!!strategy?.publicos_meta?.length}
+              />
+            )}
+          </div>
+        </TabsContent>
+
         <TabsContent value="briefing">
           <Section title="Briefing original">
             <dl className="grid gap-4 text-sm md:grid-cols-2">
@@ -522,6 +595,75 @@ function Item({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs uppercase tracking-wider text-muted-foreground">{label}</dt>
       <dd className="mt-0.5">{value}</dd>
+    </div>
+  );
+}
+
+type PerfWithAd = PerformanceRow & { meta_ad_id?: string | null; ad_name?: string | null; adset_name?: string | null };
+
+/** Desempenho agregado por anúncio e por ângulo da estratégia (para saber qual ângulo vende mais). */
+function AdBreakdown({ perf, creatives }: { perf: PerformanceRow[]; creatives: { id: string; angle?: string | null }[] }) {
+  if (!perf.length) return <p className="text-sm text-muted-foreground">Ainda sem resultados da Meta.</p>;
+  const angleOf = new Map(creatives.map((cr) => [cr.id, cr.angle ?? null]));
+  type Row = { name: string; spend: number; impressions: number; clicks: number; leads: number; revenue: number };
+  const add = (m: Map<string, Row>, key: string, name: string, r: PerfWithAd) => {
+    const a = m.get(key) ?? { name, spend: 0, impressions: 0, clicks: 0, leads: 0, revenue: 0 };
+    a.spend += Number(r.spend);
+    a.impressions += Number(r.impressions);
+    a.clicks += Number(r.clicks);
+    a.leads += Number(r.leads);
+    a.revenue += Number(r.revenue);
+    m.set(key, a);
+  };
+  const byAd = new Map<string, Row>();
+  const byAngle = new Map<string, Row>();
+  for (const r of perf as PerfWithAd[]) {
+    add(byAd, r.meta_ad_id ?? r.creative_id ?? "?", r.ad_name ?? "Anúncio", r);
+    const ang = (r.creative_id && angleOf.get(r.creative_id)) || "Sem ângulo";
+    add(byAngle, ang, ang, r);
+  }
+  const table = (rows: Row[]) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="py-2 pr-3">Nome</th>
+            <th className="py-2 pr-3">Gasto</th>
+            <th className="py-2 pr-3">CTR</th>
+            <th className="py-2 pr-3">Leads</th>
+            <th className="py-2 pr-3">CPL</th>
+            <th className="py-2">ROAS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows
+            .sort((a, b) => (a.leads ? a.spend / a.leads : 1e9) - (b.leads ? b.spend / b.leads : 1e9))
+            .map((r) => (
+              <tr key={r.name} className="border-t border-border/50">
+                <td className="py-2 pr-3">{r.name}</td>
+                <td className="py-2 pr-3">{brl(r.spend)}</td>
+                <td className="py-2 pr-3">{r.impressions ? `${num((r.clicks / r.impressions) * 100, 2)}%` : "-"}</td>
+                <td className="py-2 pr-3">{num(r.leads)}</td>
+                <td className="py-2 pr-3">{r.leads ? brl(r.spend / r.leads) : "-"}</td>
+                <td className="py-2">{r.spend ? `${num(r.revenue / r.spend, 2)}x` : "-"}</td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+  return (
+    <div className="space-y-5">
+      {byAngle.size > 1 && (
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Por ângulo da estratégia</p>
+          {table([...byAngle.values()])}
+        </div>
+      )}
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Por anúncio</p>
+        {table([...byAd.values()])}
+      </div>
     </div>
   );
 }

@@ -37,6 +37,7 @@ import { Route as AuthenticatedCrmSettingsRouteImport } from './routes/_authenti
 import { Route as AuthenticatedCrmTasksRouteImport } from './routes/_authenticated/crm.tasks'
 import { Route as AuthenticatedCrmLeadsIndexRouteImport } from './routes/_authenticated/crm.leads.index'
 import { Route as AuthenticatedCrmLeadsIdRouteImport } from './routes/_authenticated/crm.leads.$id'
+import { Route as ApiPublicCronAdsRouteImport } from './routes/api/public/cron/ads'
 import { Route as ApiPublicCronCrmCadencesRouteImport } from './routes/api/public/cron/crm-cadences'
 import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
 import { Route as ApiPublicCronInstagramRouteImport } from './routes/api/public/cron/instagram'
@@ -194,6 +195,11 @@ const AuthenticatedCrmLeadsIdRoute = AuthenticatedCrmLeadsIdRouteImport.update({
   path: '/leads/$id',
   getParentRoute: () => AuthenticatedCrmRoute,
 } as any)
+const ApiPublicCronAdsRoute = ApiPublicCronAdsRouteImport.update({
+  id: '/api/public/cron/ads',
+  path: '/api/public/cron/ads',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicCronCrmCadencesRoute =
   ApiPublicCronCrmCadencesRouteImport.update({
     id: '/api/public/cron/crm-cadences',
@@ -255,6 +261,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/crm/': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
@@ -289,6 +296,7 @@ export interface FileRoutesByTo {
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/crm': typeof AuthenticatedCrmIndexRoute
   '/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
@@ -326,6 +334,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/crm/': typeof AuthenticatedCrmIndexRoute
   '/_authenticated/crm/leads/$id': typeof AuthenticatedCrmLeadsIdRoute
+  '/api/public/cron/ads': typeof ApiPublicCronAdsRoute
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
@@ -363,6 +372,7 @@ export interface FileRouteTypes {
     | '/campaigns/'
     | '/crm/'
     | '/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
@@ -397,6 +407,7 @@ export interface FileRouteTypes {
     | '/campaigns'
     | '/crm'
     | '/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
@@ -433,6 +444,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/'
     | '/_authenticated/crm/'
     | '/_authenticated/crm/leads/$id'
+    | '/api/public/cron/ads'
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
@@ -446,6 +458,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicCronAdsRoute: typeof ApiPublicCronAdsRoute
   ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
   ApiPublicCronInstagramRoute: typeof ApiPublicCronInstagramRoute
@@ -652,6 +665,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCrmLeadsIdRouteImport
       parentRoute: typeof AuthenticatedCrmRoute
     }
+    '/api/public/cron/ads': {
+      id: '/api/public/cron/ads'
+      path: '/api/public/cron/ads'
+      fullPath: '/api/public/cron/ads'
+      preLoaderRoute: typeof ApiPublicCronAdsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/cron/crm-cadences': {
       id: '/api/public/cron/crm-cadences'
       path: '/api/public/cron/crm-cadences'
@@ -769,6 +789,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicCronAdsRoute: ApiPublicCronAdsRoute,
   ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
   ApiPublicCronInstagramRoute: ApiPublicCronInstagramRoute,

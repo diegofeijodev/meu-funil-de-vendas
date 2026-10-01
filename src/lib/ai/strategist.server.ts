@@ -88,6 +88,7 @@ async function pastResults(db: DB, brandId: string, excludeCampaignId: string) {
   const { data: perf } = await db
     .from("performance_daily")
     .select("campaign_id, spend, impressions, clicks, leads, conversions, revenue")
+    .eq("source", "meta")
     .in("campaign_id", ids);
   const agg = new Map<string, { spend: number; impressions: number; clicks: number; leads: number; sales: number; revenue: number }>();
   for (const r of (perf ?? []) as any[]) {

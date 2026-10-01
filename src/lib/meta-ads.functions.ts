@@ -122,11 +122,18 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
     if (!c.landing_url) throw new Error("Preencha a página de destino (URL) da campanha antes de publicar.");
 
     const [{ data: creatives }, { data: copies }] = await Promise.all([
-      db.from("creatives").select("id,title,preview_url,thumbnail_url,status").eq("campaign_id", c.id).eq("status", "approved"),
-      db.from("copies").select("content").eq("campaign_id", c.id).order("version", { ascending: false }).limit(1),
+      db.from("creatives").select("id,title,preview_url,thumbnail_url,status,angle").eq("campaign_id", c.id).eq("status", "approved"),
+      db.from("copies").select("content, status").eq("campaign_id", c.id).order("version", { ascending: false }).limit(10),
     ]);
     if (!creatives?.length) throw new Error("Aprove pelo menos um criativo desta campanha antes de publicar.");
-    const copy = (copies?.[0]?.content ?? {}) as any;
+    // Copy aprovada mais recente (senão a última versão) e estratégia em vigor.
+    const copyRows = (copies ?? []) as { content: unknown; status: string }[];
+    const copy = ((copyRows.find((r) => r.status === "approved") ?? copyRows[0])?.content ?? {}) as any;
+    const { currentStrategy } = await import("./ai/strategist.server");
+    const strategy = await currentStrategy(db, c.id);
+    const { readAdsConfig } = await import("./meta/ads-config");
+    const adsConfig = readAdsConfig(c.ads_config);
+    const privacyUrl = ((c.ads_config ?? {}) as { privacyUrl?: string | null }).privacyUrl ?? null;
     const sep = c.landing_url.includes("?") ? "&" : "?";
     const landing = `${c.landing_url}${sep}utm_source=meta&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`;
 
@@ -142,7 +149,11 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
         primaryText: String(copy.meta_ad ?? copy.primary_text ?? c.offer_promise ?? c.name),
         headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
         audience: (c.audience ?? {}) as Record<string, unknown>,
-        creatives: creatives.map((x: any) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url })),
+        creatives: creatives.map((x: any) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url, angle: x.angle ?? null })),
+        config: adsConfig,
+        privacyUrl,
+        strategyAudiences: (strategy?.publicos_meta ?? []).map((a) => ({ nome: a.nome, tipo: a.tipo, interesses: a.interesses })),
+        angles: (strategy?.angulos_detalhados ?? []).map((a) => ({ nome: a.nome, gancho: a.gancho, mensagem: a.mensagem })),
       }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Falha ao publicar na Meta.";
@@ -152,9 +163,12 @@ export const metaAdsPublish = createServerFn({ method: "POST" })
     await db.from("campaigns").update({
       meta_campaign_id: result.campaignId,
       meta_adset_id: result.adsetId,
+      meta_adset_ids: result.adsetIds,
       meta_ad_ids: result.adIds,
+      meta_ad_map: result.adMap,
+      meta_lead_form_id: result.leadFormId,
       meta_delivery_status: "PAUSED",
-    }).eq("id", c.id);
+    } as never).eq("id", c.id);
     await db.from("publishing_jobs").insert({
       workspace_id: data.workspaceId,
       campaign_id: c.id,
@@ -177,10 +191,27 @@ export const metaAdsSetStatus = createServerFn({ method: "POST" })
     if (!c?.meta_campaign_id) throw new Error("Campanha ainda não publicada na Meta.");
     if (data.status === "ACTIVE" && c.status !== "approved" && c.status !== "active")
       throw new Error("Só é possível ativar depois da aprovação em Aprovações.");
+    const { data: paused } = await db
+      .from("ai_recommendations")
+      .select("payload")
+      .eq("campaign_id", c.id)
+      .eq("action", "pause_ad")
+      .eq("status", "applied");
+    const pausedByOptimizer = new Set(
+      ((paused ?? []) as { payload: { adId?: string } | null }[]).map((r) => r.payload?.adId).filter(Boolean) as string[],
+    );
     const { setDeliveryStatus } = await import("./meta/meta-ads.server");
     const { runWithMetaWorkspace } = await import("./meta/graph.server");
     await runWithMetaWorkspace(data.workspaceId, () =>
-      setDeliveryStatus({ campaignId: c.meta_campaign_id!, adsetId: c.meta_adset_id, adIds: c.meta_ad_ids ?? [] }, data.status),
+      setDeliveryStatus(
+        {
+          campaignId: c.meta_campaign_id!,
+          adsetIds: (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[],
+          // Ao ativar, anúncios pausados pelo otimizador/regras continuam pausados.
+          adIds: (c.meta_ad_ids ?? []).filter((id: string) => data.status === "PAUSED" || !pausedByOptimizer.has(id)),
+        },
+        data.status,
+      ),
     );
     await db.from("campaigns").update({
       meta_delivery_status: data.status,

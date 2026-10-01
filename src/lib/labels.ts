@@ -66,6 +66,9 @@ export const RECO_ACTIONS: Record<string, string> = {
   change_cta: "Trocar CTA",
   change_audience: "Mudar público",
   create_remarketing: "Criar remarketing",
+  pause_ad: "Pausar anúncio",
+  activate_ad: "Ativar anúncio",
+  new_audience: "Testar novo público",
 };
 
 export const ROLE_LABELS: Record<string, string> = {

@@ -11,10 +11,11 @@ import {
 } from "recharts";
 import { ArrowUpRight, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { MetaSyncButton } from "@/components/meta-sync-button";
 import { useWorkspace } from "@/lib/workspace";
 import { computeKpis, groupBy, groupByDay, type PerformanceRow } from "@/lib/metrics";
 import { brl, num, pct, shortDate } from "@/lib/format";
-import { PageHeader, StatCard, Section, SandboxBadge, StatusPill } from "@/components/ui-bits";
+import { PageHeader, StatCard, Section, StatusPill } from "@/components/ui-bits";
 import { RECO_ACTIONS, CAMPAIGN_STATUS } from "@/lib/labels";
 import { Button } from "@/components/ui/button";
 
@@ -38,7 +39,7 @@ function Overview() {
     enabled: !!workspaceId,
     queryFn: async () => {
       const [perf, campaigns, costs, recos, creatives] = await Promise.all([
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta"),
         supabase.from("campaigns").select("*").eq("workspace_id", workspaceId!),
         supabase.from("campaign_costs").select("amount").eq("workspace_id", workspaceId!),
         supabase
@@ -89,7 +90,7 @@ function Overview() {
         subtitle="Visão consolidada do workspace: investimento, retorno e as próximas decisões recomendadas pela IA."
         actions={
           <>
-            <SandboxBadge />
+            <MetaSyncButton invalidate={["overview", workspaceId]} />
             <Button asChild>
               <Link to="/campaigns/new">Nova campanha</Link>
             </Button>

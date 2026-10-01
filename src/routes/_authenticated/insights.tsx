@@ -4,12 +4,13 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useWorkspace, logActivity } from "@/lib/workspace";
+import { useWorkspace } from "@/lib/workspace";
+import { useServerFn } from "@tanstack/react-start";
+import { decideAdsRecommendation, generateAdsRecommendations } from "@/lib/meta/ads-ops.functions";
 import { PageHeader, Section, EmptyState, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { RECO_ACTIONS } from "@/lib/labels";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
-import { generateRecommendations } from "@/lib/ai/agents";
 import { brl } from "@/lib/format";
 
 export const Route = createFileRoute("/_authenticated/insights")({
@@ -25,86 +26,55 @@ export const Route = createFileRoute("/_authenticated/insights")({
 });
 
 function Insights() {
-  const { workspaceId, canEdit } = useWorkspace();
+  const { workspaceId, canEdit, role } = useWorkspace();
+  const canManage = role === "owner" || role === "admin";
   const qc = useQueryClient();
   const [running, setRunning] = useState(false);
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const runRecos = useServerFn(generateAdsRecommendations);
+  const runDecide = useServerFn(decideAdsRecommendation);
 
   const { data } = useQuery({
     queryKey: ["insights", workspaceId],
     enabled: !!workspaceId,
     queryFn: async () => {
-      const [recos, campaigns, perf] = await Promise.all([
-        supabase.from("ai_recommendations").select("*, campaigns(name)").eq("workspace_id", workspaceId!).order("created_at", { ascending: false }),
-        supabase.from("campaigns").select("*").eq("workspace_id", workspaceId!),
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!),
+      const [recos, perf] = await Promise.all([
+        supabase.from("ai_recommendations").select("*, campaigns(name)").eq("workspace_id", workspaceId!).order("created_at", { ascending: false }).limit(200),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta"),
       ]);
       return {
         recos: recos.data ?? [],
-        campaigns: campaigns.data ?? [],
         perf: (perf.data ?? []) as unknown as PerformanceRow[],
       };
     },
   });
 
   const runOptimizer = async () => {
-    if (!workspaceId || !data) return;
+    if (!workspaceId) return;
     setRunning(true);
     try {
-      let created = 0;
-      for (const c of data.campaigns) {
-        const rows = data.perf.filter((p) => p.campaign_id === c.id);
-        if (!rows.length) continue;
-        const k = computeKpis(rows);
-        const byCreative = new Map<string, { spend: number; leads: number }>();
-        for (const r of rows) {
-          if (!r.creative_id) continue;
-          const cur = byCreative.get(r.creative_id) ?? { spend: 0, leads: 0 };
-          cur.spend += Number(r.spend);
-          cur.leads += Number(r.leads);
-          byCreative.set(r.creative_id, cur);
-        }
-        const scored = [...byCreative.entries()].map(([id, v]) => ({ id, cpl: v.leads ? v.spend / v.leads : 9999 }));
-        scored.sort((a, b) => a.cpl - b.cpl);
-        const best = scored[0];
-        const worst = scored[scored.length - 1];
-        const recos = await generateRecommendations({
-          campaignId: c.id,
-          cpl: k.cpl,
-          targetCpl: Number(c.max_cac ?? 60) * 0.55,
-          ctr: k.ctr,
-          roas: k.roas,
-          spend: k.spend,
-          bestCreative: best ? { id: best.id, title: "Criativo top", cpl: best.cpl } : null,
-          worstCreative: worst && worst.id !== best?.id ? { id: worst.id, title: "Criativo mais caro", cpl: worst.cpl } : null,
-        });
-        for (const r of recos) {
-          await supabase.from("ai_recommendations").insert({
-            workspace_id: workspaceId,
-            campaign_id: c.id,
-            action: r.action,
-            title: r.title,
-            reason: r.reason,
-            estimated_impact: r.estimated_impact,
-            severity: r.severity,
-            status: "pending",
-            requires_approval: true,
-          });
-          created += 1;
-        }
-      }
-      await logActivity(workspaceId, "optimizer.run", "recommendation", { created });
+      const r = await runRecos({ data: { workspaceId } });
       qc.invalidateQueries({ queryKey: ["insights", workspaceId] });
-      toast.success(`${created} recomendações geradas pelo AI Optimizer.`);
+      if (r.errors.length) toast.warning(r.errors.join(" · "));
+      if (r.created) toast.success(`${r.created} recomendações geradas com os resultados reais da Meta.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível rodar o otimizador.");
     } finally {
       setRunning(false);
     }
   };
 
-  const decide = async (id: string, status: "applied" | "dismissed") => {
-    await supabase.from("ai_recommendations").update({ status }).eq("id", id);
-    if (workspaceId) await logActivity(workspaceId, `recommendation.${status}`, "recommendation", { id });
-    qc.invalidateQueries({ queryKey: ["insights", workspaceId] });
-    toast.success(status === "applied" ? "Recomendação aplicada (modo sandbox)." : "Recomendação descartada.");
+  const decide = async (id: string, decision: "apply" | "dismiss") => {
+    setDeciding(id);
+    try {
+      const r = await runDecide({ data: { id, decision } });
+      qc.invalidateQueries({ queryKey: ["insights", workspaceId] });
+      toast.success(r.result);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível aplicar.");
+    } finally {
+      setDeciding(null);
+    }
   };
 
   if (!data) return <div className="panel h-64 animate-pulse" />;
@@ -116,7 +86,7 @@ function Insights() {
     <>
       <PageHeader
         title="AI Insights"
-        subtitle="O AI Optimizer lê a performance diária e propõe ajustes. Nenhuma mudança é aplicada sem aprovação humana."
+        subtitle="A IA lê os resultados reais da Meta e propõe ajustes. Pausar anúncio e mudar verba são executados na Meta quando o dono ou um admin clica em Aplicar."
         actions={
           canEdit && (
             <Button onClick={runOptimizer} disabled={running}>
@@ -130,7 +100,7 @@ function Insights() {
       <div className="space-y-6">
         <Section title={`Recomendações pendentes (${pending.length})`}>
           {pending.length === 0 ? (
-            <EmptyState title="Tudo otimizado por enquanto" description="Rode o AI Optimizer para reavaliar as campanhas com os dados mais recentes." />
+            <EmptyState title="Nenhuma recomendação pendente" description="Rode o AI Optimizer depois que as campanhas veicularem: ele usa os resultados reais sincronizados da Meta." />
           ) : (
             <div className="space-y-3">
               {pending.map((r) => (
@@ -146,11 +116,18 @@ function Insights() {
                       {r.estimated_impact && (
                         <p className="mt-1 text-sm text-success">Impacto estimado: {r.estimated_impact}</p>
                       )}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {(r.payload as { executable?: boolean } | null)?.executable
+                          ? "Aplicar executa esta ação direto na Meta."
+                          : "Ação manual: aplicar só registra a decisão."}
+                      </p>
                     </div>
-                    {canEdit && (
+                    {canManage && (
                       <div className="flex gap-2">
-                        <Button size="sm" variant="ghost" onClick={() => decide(r.id, "dismissed")}>Descartar</Button>
-                        <Button size="sm" onClick={() => decide(r.id, "applied")}>Aplicar</Button>
+                        <Button size="sm" variant="ghost" disabled={deciding === r.id} onClick={() => decide(r.id, "dismiss")}>Descartar</Button>
+                        <Button size="sm" disabled={deciding === r.id} onClick={() => decide(r.id, "apply")}>
+                          {deciding === r.id ? "Aplicando..." : "Aplicar"}
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -167,9 +144,13 @@ function Insights() {
             <div className="space-y-2">
               {history.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 px-4 py-2.5 text-sm">
-                  <span>{r.title}</span>
+                  <div>
+                    <span>{r.title}</span>
+                    {r.result && <p className="text-xs text-muted-foreground">{r.result}</p>}
+                  </div>
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     <span>{r.campaigns?.name}</span>
+                    {r.source === "rule" && <span>Regra automática</span>}
                     <StatusPill status={r.status === "applied" ? "approved" : "paused"} label={r.status === "applied" ? "Aplicada" : "Descartada"} />
                   </div>
                 </div>

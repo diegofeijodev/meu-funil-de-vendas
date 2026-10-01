@@ -29,7 +29,7 @@ function CampaignsList() {
     queryFn: async () => {
       const [campaigns, perf] = await Promise.all([
         supabase.from("campaigns").select("*, brands(name)").eq("workspace_id", workspaceId!).order("created_at", { ascending: false }),
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta"),
       ]);
       return {
         campaigns: campaigns.data ?? [],
