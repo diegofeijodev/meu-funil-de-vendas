@@ -37,21 +37,6 @@ const PROVIDERS: {
     ],
     refs: [{ label: "Higgsfield", url: "https://higgsfield.ai" }],
   },
-  {
-    id: "canva",
-    label: "Canva",
-    hint: "Envie criativos para o Canva, crie designs a partir da copy e traga a versão editada de volta para a Biblioteca.",
-    placeholder: "https://mcp.canva.com/mcp",
-    defaultUrl: "https://mcp.canva.com/mcp",
-    steps: [
-      { text: "Tenha uma conta Canva (Pro ou Teams recomendada para kits de marca):", link: { label: "canva.com", url: "https://www.canva.com" } },
-      "Deixe o endereço abaixo como está e clique em Conectar. Deixe o campo de chave vazio.",
-      "Uma janela do Canva abre para você entrar e autorizar o acesso. Permita a janela pop-up.",
-      "Na Biblioteca, use \"Enviar ao Canva\" em uma mídia e \"Importar do Canva\" para trazer o design editado.",
-      "Na campanha, use \"Criar design no Canva\" para montar um layout editável com a copy.",
-    ],
-    refs: [{ label: "Canva para desenvolvedores", url: "https://www.canva.dev" }],
-  },
 ];
 
 const STATUS_LABEL: Record<string, { label: string; pill: string }> = {
@@ -106,13 +91,15 @@ export function McpConnections() {
     return () => window.removeEventListener("message", onMessage);
   }, [qc, workspaceId]);
 
-  const handleConnect = async (provider: McpProvider, url: string, token: string | null) => {
+  const handleConnect = async (provider: McpProvider, url: string, token: string | null, connected = false) => {
     if (!workspaceId) return;
     if (!url.trim()) {
       toast.error("Informe o endereço do servidor MCP.");
       return;
     }
     setBusy(provider);
+    // Abre a janela já no clique: navegadores bloqueiam pop-ups abertos depois de esperas.
+    const popup = connected ? null : window.open("about:blank", "_blank", "width=520,height=720");
     try {
       const label = PROVIDERS.find((p) => p.id === provider)?.label ?? provider;
       const res = await connect({
@@ -123,17 +110,22 @@ export function McpConnections() {
       if (res.status === "connected") {
         await logActivity(workspaceId, "mcp.connected", "integration", { provider, tools: res.tools.length });
         toast.success(`Conectado. ${res.tools.length} ferramenta(s) disponível(is).`);
+        popup?.close();
         return;
       }
       if (res.needsAuth) {
         toast.info("Abrindo a autorização do provedor…");
         const { authUrl } = await oauthStart({ data: { workspaceId, provider, serverUrl: url.trim(), label } });
         await qc.invalidateQueries({ queryKey: ["mcp", workspaceId] });
-        window.open(authUrl, "_blank", "width=520,height=720");
+        if (popup && !popup.closed) popup.location.href = authUrl;
+        else if (!window.open(authUrl, "_blank", "width=520,height=720"))
+          toast.error("O navegador bloqueou a janela de login. Permita pop-ups para este site e tente de novo.");
         return;
       }
+      popup?.close();
       toast.error(res.error ?? "Não foi possível conectar.");
     } catch (e) {
+      popup?.close();
       toast.error(e instanceof Error ? e.message : "Não foi possível conectar agora. Tente novamente.");
     } finally {
       setBusy(null);
@@ -157,7 +149,7 @@ export function McpConnections() {
   return (
     <Section
       title="Conexões MCP"
-      description="Conecte o Higgsfield e a Meta. A autorização e as credenciais ficam no servidor — nada sensível aparece no navegador."
+      description="Conecte o Higgsfield. A autorização e as credenciais ficam no servidor — nada sensível aparece no navegador."
     >
       <div className="grid gap-4 md:grid-cols-2">
         {PROVIDERS.map((p) => {
@@ -253,7 +245,7 @@ export function McpConnections() {
                   <Button
                     className="flex-1"
                     disabled={busy === p.id}
-                    onClick={() => handleConnect(p.id, draft.url, draft.token)}
+                    onClick={() => handleConnect(p.id, draft.url, draft.token, connected)}
                   >
                     {busy === p.id && <Loader2 className="mr-2 size-4 animate-spin" />}
                     {connected

@@ -87,7 +87,7 @@ export const setupStatus = createServerFn({ method: "POST" })
       getWorkspaceAiKey(ws, "openai"),
       getWorkspaceAiKey(ws, "gemini"),
       getLiveConnection(db, ws, "higgsfield").catch(() => null),
-      getLiveConnection(db, ws, "canva").catch(() => null),
+      import("./creative/canva.server").then((m) => m.canvaStatus(ws)).then((x) => (x.connected ? { status: "connected" } : null)).catch(() => null),
     ]);
     const own = [oKey && "OpenAI", gKey && "Gemini", higgs?.status === "connected" && "Higgsfield"].filter(Boolean);
     add({
