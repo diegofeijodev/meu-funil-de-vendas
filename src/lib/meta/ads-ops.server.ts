@@ -89,15 +89,66 @@ export async function syncWorkspaceInsights(workspaceId: string, days = 7) {
   return { campaigns: camps.length, rows: upserts.length };
 }
 
+/** 2.8/2.9 Resultados diários das campanhas ligadas no Google Ads e no TikTok Ads. */
+export async function syncExternalChannels(workspaceId: string, days = 7) {
+  const s = await db();
+  const { data } = await s
+    .from("campaigns")
+    .select("id, google_campaign_id, tiktok_campaign_id")
+    .eq("workspace_id", workspaceId)
+    .or("google_campaign_id.not.is.null,tiktok_campaign_id.not.is.null");
+  const camps = (data ?? []) as { id: string; google_campaign_id: string | null; tiktok_campaign_id: string | null }[];
+  if (!camps.length) return { rows: 0 };
+  const now = new Date().toISOString();
+  const rows: Record<string, unknown>[] = [];
+  const errors: string[] = [];
+  const google = camps.filter((c) => c.google_campaign_id);
+  if (google.length) {
+    try {
+      const { googleDailyResults } = await import("@/lib/ads/google-ads.server");
+      const byExt = new Map(google.map((c) => [String(c.google_campaign_id), c.id]));
+      for (const r of await googleDailyResults(workspaceId, [...byExt.keys()], days)) {
+        const id = byExt.get(r.externalCampaignId);
+        if (id) rows.push({ workspace_id: workspaceId, campaign_id: id, date: r.date, spend: r.spend, impressions: r.impressions, clicks: r.clicks, leads: Math.round(r.conversions), conversions: Math.round(r.conversions), revenue: r.revenue, source: "google", external_id: r.externalCampaignId, ad_name: r.name, synced_at: now });
+      }
+    } catch (e) {
+      errors.push(`Google: ${e instanceof Error ? e.message : "falhou"}`);
+    }
+  }
+  const tiktok = camps.filter((c) => c.tiktok_campaign_id);
+  if (tiktok.length) {
+    try {
+      const { tiktokDailyResults } = await import("@/lib/ads/tiktok-ads.server");
+      const byExt = new Map(tiktok.map((c) => [String(c.tiktok_campaign_id), c.id]));
+      for (const r of await tiktokDailyResults(workspaceId, [...byExt.keys()], days)) {
+        const id = byExt.get(r.externalCampaignId);
+        if (id) rows.push({ workspace_id: workspaceId, campaign_id: id, date: r.date, spend: r.spend, impressions: r.impressions, clicks: r.clicks, leads: Math.round(r.conversions), conversions: 0, revenue: 0, source: "tiktok", external_id: r.externalCampaignId, ad_name: r.name, synced_at: now });
+      }
+    } catch (e) {
+      errors.push(`TikTok: ${e instanceof Error ? e.message : "falhou"}`);
+    }
+  }
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await s.from("performance_daily").upsert(rows.slice(i, i + 500) as never, { onConflict: "campaign_id,source,external_id,date" });
+    if (error) errors.push(error.message);
+  }
+  if (errors.length && !rows.length) throw new Error(errors.join(" · "));
+  return { rows: rows.length, errors };
+}
+
 export async function syncAllInsights() {
   const s = await db();
-  const { data } = await s.from("campaigns").select("workspace_id").not("meta_campaign_id", "is", null);
+  const { data } = await s
+    .from("campaigns")
+    .select("workspace_id")
+    .or("meta_campaign_id.not.is.null,google_campaign_id.not.is.null,tiktok_campaign_id.not.is.null");
   const workspaces = [...new Set(((data ?? []) as { workspace_id: string }[]).map((r) => r.workspace_id))];
   const out: { workspace: string; rows?: number; error?: string }[] = [];
   for (const w of workspaces) {
     try {
-      const r = await syncWorkspaceInsights(w, 3);
-      out.push({ workspace: w, rows: r.rows });
+      const meta = await syncWorkspaceInsights(w, 3);
+      const ext = await syncExternalChannels(w, 3).catch((e) => ({ rows: 0, errors: [e instanceof Error ? e.message : "falhou"] }));
+      out.push({ workspace: w, rows: meta.rows + ext.rows, ...(ext.errors?.length ? { error: ext.errors.join(" · ") } : {}) });
     } catch (e) {
       out.push({ workspace: w, error: e instanceof Error ? e.message : "falhou" });
     }

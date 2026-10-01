@@ -12,8 +12,10 @@ export const syncAdsInsightsNow = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ws.parse(d))
   .handler(async ({ data, context }) => {
     await requireRole(context, data.workspaceId);
-    const { syncWorkspaceInsights } = await import("./ads-ops.server");
-    return syncWorkspaceInsights(data.workspaceId, 30);
+    const { syncWorkspaceInsights, syncExternalChannels } = await import("./ads-ops.server");
+    const meta = await syncWorkspaceInsights(data.workspaceId, 30);
+    const ext = await syncExternalChannels(data.workspaceId, 30).catch(() => ({ rows: 0 }));
+    return { campaigns: meta.campaigns, rows: meta.rows + ext.rows };
   });
 
 /** 1.4 Recomendações da IA com os resultados reais (uma campanha ou todas as publicadas). */

@@ -40,7 +40,7 @@ function Overview() {
     enabled: !!workspaceId,
     queryFn: async () => {
       const [perf, campaigns, costs, recos, creatives] = await Promise.all([
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta"),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).neq("source", "demo"),
         supabase.from("campaigns").select("*").eq("workspace_id", workspaceId!),
         supabase.from("campaign_costs").select("amount").eq("workspace_id", workspaceId!),
         supabase

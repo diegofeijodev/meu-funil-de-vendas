@@ -502,6 +502,8 @@ export type Database = {
           formats: string[]
           goal_leads: number | null
           goal_sales: number | null
+          google_campaign_id: string | null
+          google_status: string | null
           id: string
           landing_url: string | null
           last_insights_sync_at: string | null
@@ -521,6 +523,8 @@ export type Database = {
           offer_promise: string | null
           start_date: string | null
           status: string
+          tiktok_campaign_id: string | null
+          tiktok_status: string | null
           updated_at: string
           workspace_id: string
         }
@@ -537,6 +541,8 @@ export type Database = {
           formats?: string[]
           goal_leads?: number | null
           goal_sales?: number | null
+          google_campaign_id?: string | null
+          google_status?: string | null
           id?: string
           landing_url?: string | null
           last_insights_sync_at?: string | null
@@ -556,6 +562,8 @@ export type Database = {
           offer_promise?: string | null
           start_date?: string | null
           status?: string
+          tiktok_campaign_id?: string | null
+          tiktok_status?: string | null
           updated_at?: string
           workspace_id: string
         }
@@ -572,6 +580,8 @@ export type Database = {
           formats?: string[]
           goal_leads?: number | null
           goal_sales?: number | null
+          google_campaign_id?: string | null
+          google_status?: string | null
           id?: string
           landing_url?: string | null
           last_insights_sync_at?: string | null
@@ -591,6 +601,8 @@ export type Database = {
           offer_promise?: string | null
           start_date?: string | null
           status?: string
+          tiktok_campaign_id?: string | null
+          tiktok_status?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -3137,6 +3149,7 @@ export type Database = {
           created_at: string
           creative_id: string | null
           date: string
+          external_id: string | null
           id: string
           impressions: number
           leads: number
@@ -3158,6 +3171,7 @@ export type Database = {
           created_at?: string
           creative_id?: string | null
           date: string
+          external_id?: string | null
           id?: string
           impressions?: number
           leads?: number
@@ -3179,6 +3193,7 @@ export type Database = {
           created_at?: string
           creative_id?: string | null
           date?: string
+          external_id?: string | null
           id?: string
           impressions?: number
           leads?: number

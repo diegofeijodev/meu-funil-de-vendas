@@ -42,7 +42,7 @@ function Insights() {
     queryFn: async () => {
       const [recos, perf] = await Promise.all([
         supabase.from("ai_recommendations").select("*, campaigns(name)").eq("workspace_id", workspaceId!).order("created_at", { ascending: false }).limit(200),
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta"),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).neq("source", "demo"),
       ]);
       return {
         recos: recos.data ?? [],

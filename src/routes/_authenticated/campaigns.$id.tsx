@@ -19,6 +19,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
 import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
 import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
+import { CampaignChannels } from "@/components/campaign-channels";
 import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
@@ -62,7 +63,7 @@ function CampaignDetail() {
         supabase.from("campaign_strategies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("copies").select("*").eq("campaign_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("creatives").select("*").eq("campaign_id", id).order("created_at", { ascending: false }),
-        supabase.from("performance_daily").select("*").eq("campaign_id", id).eq("source", "meta"),
+        supabase.from("performance_daily").select("*").eq("campaign_id", id).neq("source", "demo"),
         supabase.from("campaign_costs").select("*").eq("campaign_id", id),
       ]);
       return {
@@ -586,6 +587,7 @@ function CampaignDetail() {
             >
               <AdBreakdown perf={data.perf} creatives={data.creatives} />
             </Section>
+            <CampaignChannels campaign={c as never} canEdit={canEdit} canManage={canManage} />
             {workspaceId && (
               <CampaignAdsSettings
                 campaign={c as never}

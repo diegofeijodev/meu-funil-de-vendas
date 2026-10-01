@@ -6,6 +6,7 @@ import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
 import { shortDate } from "@/lib/format";
 import { McpConnections } from "@/components/mcp-connections";
 import { MetaAdsCard } from "@/components/meta-ads-card";
+import { AdsChannelsCard } from "@/components/ads-channels-card";
 import { AiKeysCard } from "@/components/ai-keys-card";
 import { AiDiagnosticsCard } from "@/components/ai-diagnostics-card";
 import { AgencyConnectionsCard } from "@/components/agency-connections-card";
@@ -50,6 +51,7 @@ function Integrations() {
 
       <div className="space-y-6">
         <MetaAdsCard />
+        <AdsChannelsCard />
         <AgencyConnectionsCard />
         <AiKeysCard />
         <McpConnections />

@@ -73,7 +73,7 @@ export const mediaAdResults = createServerFn({ method: "POST" })
       .from("performance_daily")
       .select("spend, impressions, clicks, leads, conversions, revenue, campaign_id, campaigns(name)")
       .eq("workspace_id", data.workspaceId)
-      .eq("source", "meta")
+      .neq("source", "demo")
       .eq("creative_id", data.creativeId);
     const t = { spend: 0, impressions: 0, clicks: 0, leads: 0, conversions: 0, revenue: 0, campaigns: new Set<string>() };
     for (const r of (rows ?? []) as any[]) {

@@ -42,7 +42,7 @@ function Performance() {
     enabled: !!workspaceId,
     queryFn: async () => {
       const [perf, campaigns, creatives, costs] = await Promise.all([
-        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).eq("source", "meta").order("date"),
+        supabase.from("performance_daily").select("*").eq("workspace_id", workspaceId!).neq("source", "demo").order("date"),
         supabase.from("campaigns").select("id, name, max_cac").eq("workspace_id", workspaceId!),
         supabase.from("creatives").select("id, title, type").eq("workspace_id", workspaceId!),
         supabase.from("campaign_costs").select("*").eq("workspace_id", workspaceId!),

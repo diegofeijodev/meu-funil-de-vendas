@@ -66,7 +66,7 @@ export const agencyOverview = createServerFn({ method: "POST" })
     const since7 = new Date(Date.now() - 7 * 86400e3).toISOString();
     const weekEnd = new Date(Date.now() + 7 * 86400e3).toISOString();
     const [perf, leads, posts, approvals, igPending, active] = await Promise.all([
-      db.from("performance_daily").select("workspace_id, spend, leads, revenue").in("workspace_id", ids).eq("source", "meta").gte("date", since30).limit(20000),
+      db.from("performance_daily").select("workspace_id, spend, leads, revenue").in("workspace_id", ids).neq("source", "demo").gte("date", since30).limit(20000),
       db.from("crm_leads").select("workspace_id").in("workspace_id", ids).gte("created_at", since7).limit(20000),
       db.from("ig_posts").select("workspace_id, status").in("workspace_id", ids).or(`and(scheduled_at.gte.${since7},scheduled_at.lte.${weekEnd}),published_at.gte.${since7}`).limit(5000),
       db.from("approval_requests").select("workspace_id").in("workspace_id", ids).eq("status", "pending"),

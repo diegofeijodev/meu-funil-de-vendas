@@ -127,6 +127,19 @@ export const setupStatus = createServerFn({ method: "POST" })
       link: "/integrations",
       required: true,
     });
+    const [{ googleMissing }, { tiktokMissing }] = await Promise.all([import("./ads/google-ads.server"), import("./ads/tiktok-ads.server")]);
+    const [gMiss, tMiss] = await Promise.all([googleMissing(ws), tiktokMissing(ws)]);
+    for (const [k, label, miss] of [["google-ads", "Google Ads", gMiss], ["tiktok-ads", "TikTok Ads", tMiss]] as const) {
+      add({
+        key: k,
+        group: "Conexões",
+        label,
+        status: miss.length ? "optional" : "ok",
+        detail: miss.length ? `Opcional: anuncie também neste canal. Falta: ${miss.join(", ")}.` : "Conectado.",
+        link: "/integrations",
+        required: false,
+      });
+    }
     add({
       key: "instagram",
       group: "Conexões",

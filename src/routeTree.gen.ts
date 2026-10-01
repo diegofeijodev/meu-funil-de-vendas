@@ -45,6 +45,7 @@ import { Route as ApiPublicCronInstagramRouteImport } from './routes/api/public/
 import { Route as ApiPublicFormsTokenRouteImport } from './routes/api/public/forms/$token'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
 import { Route as ApiPublicUnsubscribeLeadIdRouteImport } from './routes/api/public/unsubscribe/$leadId'
+import { Route as ApiPublicAdsOauthChannelRouteImport } from './routes/api/public/ads/oauth/$channel'
 import { Route as ApiPublicFormsEmbedTokenRouteImport } from './routes/api/public/forms/embed.$token'
 import { Route as ApiPublicMetaOauthCallbackRouteImport } from './routes/api/public/meta/oauth/callback'
 import { Route as ApiPublicWebhooksInstagramTokenRouteImport } from './routes/api/public/webhooks/instagram/$token'
@@ -243,6 +244,12 @@ const ApiPublicUnsubscribeLeadIdRoute =
     path: '/api/public/unsubscribe/$leadId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicAdsOauthChannelRoute =
+  ApiPublicAdsOauthChannelRouteImport.update({
+    id: '/api/public/ads/oauth/$channel',
+    path: '/api/public/ads/oauth/$channel',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicFormsEmbedTokenRoute =
   ApiPublicFormsEmbedTokenRouteImport.update({
     id: '/api/public/forms/embed/$token',
@@ -310,6 +317,7 @@ export interface FileRoutesByFullPath {
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -351,6 +359,7 @@ export interface FileRoutesByTo {
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -395,6 +404,7 @@ export interface FileRoutesById {
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
   '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/ads/oauth/$channel': typeof ApiPublicAdsOauthChannelRoute
   '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
   '/api/public/meta/oauth/callback': typeof ApiPublicMetaOauthCallbackRoute
   '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
@@ -439,6 +449,7 @@ export interface FileRouteTypes {
     | '/api/public/mcp/callback'
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads/'
+    | '/api/public/ads/oauth/$channel'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -480,6 +491,7 @@ export interface FileRouteTypes {
     | '/api/public/mcp/callback'
     | '/api/public/unsubscribe/$leadId'
     | '/crm/leads'
+    | '/api/public/ads/oauth/$channel'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -523,6 +535,7 @@ export interface FileRouteTypes {
     | '/api/public/mcp/callback'
     | '/api/public/unsubscribe/$leadId'
     | '/_authenticated/crm/leads/'
+    | '/api/public/ads/oauth/$channel'
     | '/api/public/forms/embed/$token'
     | '/api/public/meta/oauth/callback'
     | '/api/public/webhooks/instagram/$token'
@@ -541,6 +554,7 @@ export interface RootRouteChildren {
   ApiPublicFormsTokenRoute: typeof ApiPublicFormsTokenRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
   ApiPublicUnsubscribeLeadIdRoute: typeof ApiPublicUnsubscribeLeadIdRoute
+  ApiPublicAdsOauthChannelRoute: typeof ApiPublicAdsOauthChannelRoute
   ApiPublicFormsEmbedTokenRoute: typeof ApiPublicFormsEmbedTokenRoute
   ApiPublicMetaOauthCallbackRoute: typeof ApiPublicMetaOauthCallbackRoute
   ApiPublicWebhooksInstagramTokenRoute: typeof ApiPublicWebhooksInstagramTokenRoute
@@ -802,6 +816,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicUnsubscribeLeadIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/ads/oauth/$channel': {
+      id: '/api/public/ads/oauth/$channel'
+      path: '/api/public/ads/oauth/$channel'
+      fullPath: '/api/public/ads/oauth/$channel'
+      preLoaderRoute: typeof ApiPublicAdsOauthChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/forms/embed/$token': {
       id: '/api/public/forms/embed/$token'
       path: '/api/public/forms/embed/$token'
@@ -921,6 +942,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicFormsTokenRoute: ApiPublicFormsTokenRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
   ApiPublicUnsubscribeLeadIdRoute: ApiPublicUnsubscribeLeadIdRoute,
+  ApiPublicAdsOauthChannelRoute: ApiPublicAdsOauthChannelRoute,
   ApiPublicFormsEmbedTokenRoute: ApiPublicFormsEmbedTokenRoute,
   ApiPublicMetaOauthCallbackRoute: ApiPublicMetaOauthCallbackRoute,
   ApiPublicWebhooksInstagramTokenRoute: ApiPublicWebhooksInstagramTokenRoute,

@@ -48,6 +48,7 @@ export const GUIDES: Record<
       "Anúncios e regras: escolha estrutura (teste A/B por ângulo), CTA, posicionamentos, públicos e regras automáticas.",
       "Solicite aprovação; o dono ou um admin aprova em Aprovações e a campanha é publicada pausada.",
       "Ative na Meta. Os resultados chegam a cada 3 horas e a IA sugere otimizações em AI Insights.",
+      "Opcional: com Google Ads ou TikTok Ads conectados em Integrações, crie a mesma campanha pausada nesses canais na aba Anúncios e regras.",
     ],
     references: [{ label: "Central de ajuda da Meta para anunciantes", url: "https://www.facebook.com/business/help" }],
   },
