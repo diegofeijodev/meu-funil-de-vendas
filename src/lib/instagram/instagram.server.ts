@@ -366,7 +366,7 @@ export async function regenerateCaption(
       ? `Tom: ${plan.tone_of_voice ?? "-"}. Hashtags: ${JSON.stringify(plan.hashtag_strategy)}.`
       : "",
     brand ? `MARCA: ${JSON.stringify(brand)}` : "",
-    'Devolva SOMENTE JSON {"caption":"...","hashtags":['valinhos','choppgelado'] (array de 10 a 15 strings sem #),"cta":"..."}.',
+    'Devolva SOMENTE JSON {"caption":"...","hashtags":["valinhos","choppgelado"] (array de 10 a 15 strings sem #),"cta":"..."}.',
   ].join("\n");
   const { json, provider } = await aiJson(
     workspaceId,
