@@ -67,6 +67,8 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
                   type: normalizeType(m.type),
                   body: m.text?.body ?? m.button?.text ?? m[m.type ?? ""]?.caption ?? null,
                   mediaUrl: null,
+                  mediaId: m[m.type ?? ""]?.id ?? null,
+                  mimeType: m[m.type ?? ""]?.mime_type ?? null,
                   referral: m.referral
                     ? {
                         adId: m.referral.source_id ?? null,
@@ -142,7 +144,7 @@ export const Route = createFileRoute("/api/public/webhooks/whatsapp/$token")({
 
 type CloudValue = {
   contacts?: { wa_id?: string; profile?: { name?: string } }[];
-  messages?: (Record<string, { caption?: string } | undefined> & {
+  messages?: (Record<string, { caption?: string; id?: string; mime_type?: string } | undefined> & {
     id?: string;
     from?: string;
     type?: string;

@@ -19,12 +19,22 @@ import {
   syncWhatsAppTemplates,
   importMetaCostsNow,
 } from "@/lib/crm-integrations.functions";
+import { HowTo } from "@/components/how-to";
+import {
+  CalendarCard,
+  EmailCard,
+  FailedEventsCard,
+  InstagramCard,
+  SecretField,
+  SiteFormCard,
+  type ChannelIntegration,
+} from "@/components/crm/channel-cards";
 
 export const Route = createFileRoute("/_authenticated/crm/integrations")({
   head: () => ({
     meta: [
       { title: "CRM · Integrações · Meu Funil" },
-      { name: "description", content: "Conecte Meta Lead Ads e WhatsApp por workspace e acompanhe o status." },
+      { name: "description", content: "Conecte Meta Lead Ads, WhatsApp, Instagram, formulário do site, e-mail e agenda por empresa." },
       { property: "og:title", content: "CRM · Integrações" },
       { property: "og:description", content: "Webhooks, mapeamento de formulários e provedores de WhatsApp." },
     ],
@@ -50,7 +60,7 @@ const LEAD_FIELDS = [
 
 type Integration = {
   id: string;
-  kind: "meta_lead_ads" | "whatsapp";
+  kind: "meta_lead_ads" | "whatsapp" | "instagram" | "site_form" | "email" | "calendar";
   provider: string;
   status: string;
   config: Record<string, string>;
@@ -78,6 +88,7 @@ function CrmIntegrations() {
 
   const meta = integrations?.find((i) => i.kind === "meta_lead_ads") ?? null;
   const whatsapp = integrations?.find((i) => i.kind === "whatsapp") ?? null;
+  const byKind = (k: Integration["kind"]) => (integrations?.find((i) => i.kind === k) ?? null) as unknown as ChannelIntegration | null;
   const refresh = () => qc.invalidateQueries({ queryKey: ["crm-integrations", workspaceId] });
 
   return (
@@ -94,6 +105,13 @@ function CrmIntegrations() {
       <div className="grid gap-5 xl:grid-cols-2">
         <MetaCard integration={meta} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
         <WhatsAppCard integration={whatsapp} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
+        <InstagramCard integration={byKind("instagram")} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
+        <SiteFormCard integration={byKind("site_form")} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
+        <EmailCard integration={byKind("email")} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
+        <CalendarCard integration={byKind("calendar")} origin={origin} workspaceId={workspaceId} canEdit={canEdit} onDone={refresh} />
+      </div>
+      <div className="mt-5">
+        <FailedEventsCard workspaceId={workspaceId} canEdit={canEdit} />
       </div>
     </div>
   );
@@ -187,6 +205,19 @@ function MetaCard({
         description="Webhook de leadgen, CPL por campanha e eventos de qualificação."
         status={integration?.status ?? "disconnected"}
       />
+      <div className="mb-4">
+        <HowTo
+          steps={[
+            "Configure antes a Meta em Integrações (app, usuário do sistema e token) — o CRM usa as mesmas credenciais.",
+            "Preencha o ID da página e clique em Salvar para gerar a URL do webhook e o verify token.",
+            { text: "No app da Meta, em Webhooks → objeto Page, cole a URL e o verify token e assine o campo leadgen:", link: { label: "Painel de apps", url: "https://developers.facebook.com/apps" } },
+            "O token precisa de leads_retrieval, pages_manage_metadata e pages_manage_ads.",
+            "Clique em Testar conexão: o app valida o token e inscreve a Página no app automaticamente.",
+            { text: "Teste com a ferramenta oficial de leads de teste:", link: { label: "Lead Ads Testing Tool", url: "https://developers.facebook.com/tools/lead-ads-testing" } },
+          ]}
+          references={[{ label: "Lead Ads (Meta)", url: "https://developers.facebook.com/docs/marketing-api/guides/lead-ads" }]}
+        />
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -383,6 +414,34 @@ function WhatsAppCard({
         status={integration?.status ?? "disconnected"}
       />
 
+      <div className="mb-4">
+        <HowTo
+          steps={
+            official
+              ? [
+                  { text: "Crie o app e o número no WhatsApp Cloud API:", link: { label: "Começar com a Cloud API", url: "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started" } },
+                  { text: "Gere um token permanente de usuário do sistema com whatsapp_business_messaging e whatsapp_business_management:", link: { label: "Usuários do sistema", url: "https://business.facebook.com/settings/system-users" } },
+                  "Cole o token abaixo, preencha Phone number ID e WABA ID (WhatsApp → Configuração da API) e clique em Salvar.",
+                  "No app da Meta, em WhatsApp → Configuração, cole a URL do webhook e o verify token e assine o campo messages.",
+                  "Clique em Testar conexão e depois em Sincronizar templates.",
+                ]
+              : provider === "zapi"
+                ? [
+                    { text: "Crie a instância na Z-API e leia o QR Code com o WhatsApp da empresa:", link: { label: "Z-API", url: "https://z-api.io" } },
+                    "Copie a URL base da instância (https://api.z-api.io/instances/ID/token/TOKEN) e o Client-Token de segurança da conta.",
+                    "Cole aqui, salve e, no painel da Z-API, aponte o webhook \"Ao receber\" para a URL do webhook abaixo.",
+                    "Clique em Testar conexão.",
+                  ]
+                : [
+                    { text: "Suba a Evolution API (servidor próprio) e crie a instância:", link: { label: "Documentação Evolution", url: "https://doc.evolution-api.com" } },
+                    "Copie a URL do servidor, o nome da instância e a API key global.",
+                    "Cole aqui, salve e configure o webhook da instância (evento MESSAGES_UPSERT) para a URL abaixo.",
+                    "Clique em Testar conexão.",
+                  ]
+          }
+        />
+      </div>
+
       <div className="space-y-3">
         <div>
           <label className="text-xs uppercase tracking-wider text-muted-foreground">Provedor</label>
@@ -393,6 +452,12 @@ function WhatsAppCard({
           </Select>
         </div>
 
+        <SecretField
+          workspaceId={workspaceId}
+          secretKey={official ? "WHATSAPP_CLOUD_TOKEN" : provider === "zapi" ? "ZAPI_TOKEN" : "EVOLUTION_API_KEY"}
+          label={official ? "Token permanente do WhatsApp" : provider === "zapi" ? "Client-Token da Z-API" : "API key da Evolution"}
+          canEdit={canEdit}
+        />
         {official ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

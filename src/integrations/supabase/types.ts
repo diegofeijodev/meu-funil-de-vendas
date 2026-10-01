@@ -1380,6 +1380,8 @@ export type Database = {
           form_id: string | null
           form_name: string | null
           id: string
+          instagram_id: string | null
+          instagram_username: string | null
           last_interaction_at: string | null
           lgpd_consent: boolean
           lgpd_consent_at: string | null
@@ -1418,6 +1420,8 @@ export type Database = {
           form_id?: string | null
           form_name?: string | null
           id?: string
+          instagram_id?: string | null
+          instagram_username?: string | null
           last_interaction_at?: string | null
           lgpd_consent?: boolean
           lgpd_consent_at?: string | null
@@ -1456,6 +1460,8 @@ export type Database = {
           form_id?: string | null
           form_name?: string | null
           id?: string
+          instagram_id?: string | null
+          instagram_username?: string | null
           last_interaction_at?: string | null
           lgpd_consent?: boolean
           lgpd_consent_at?: string | null

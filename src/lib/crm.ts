@@ -3,6 +3,8 @@ export const LEAD_SOURCES: Record<string, string> = {
   click_to_whatsapp: "Click-to-WhatsApp",
   site: "Site",
   whatsapp: "WhatsApp",
+  instagram_dm: "Instagram (Direct)",
+  instagram_comment: "Instagram (comentário)",
   manual: "Manual",
   import: "Importação",
 };
@@ -20,6 +22,7 @@ export const INTERACTION_KINDS: Record<string, string> = {
   call: "Ligação",
   stage_change: "Mudança de etapa",
   ai_action: "Ação da IA",
+  email_out: "E-mail enviado",
 };
 
 export const AUTHOR_TYPES: Record<string, string> = {

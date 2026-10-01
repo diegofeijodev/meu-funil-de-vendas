@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 export type Integration = {
   id: string;
   workspace_id: string;
-  kind: "meta_lead_ads" | "whatsapp";
+  kind: "meta_lead_ads" | "whatsapp" | "instagram" | "site_form";
   provider: "meta" | "whatsapp_cloud" | "zapi" | "evolution";
   status: string;
   config: Record<string, unknown>;
@@ -24,6 +24,19 @@ export async function admin() {
 export function secret(name: string): string | null {
   const value = process.env[name];
   return value && value.length ? value : null;
+}
+
+/** Credencial do canal: primeiro a da empresa (salva em CRM → Integrações), depois a global do servidor. */
+export async function workspaceSecret(workspaceId: string, name: string): Promise<string | null> {
+  const db = await admin();
+  const { data } = await db
+    .from("app_credentials")
+    .select("value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", name)
+    .maybeSingle();
+  const v = (data?.value as string | undefined)?.trim();
+  return v || secret(name);
 }
 
 export function normalizePhone(raw: string | null | undefined): string | null {

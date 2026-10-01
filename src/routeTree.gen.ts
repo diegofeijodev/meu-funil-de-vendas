@@ -41,7 +41,11 @@ import { Route as ApiPublicCronAdsRouteImport } from './routes/api/public/cron/a
 import { Route as ApiPublicCronCrmCadencesRouteImport } from './routes/api/public/cron/crm-cadences'
 import { Route as ApiPublicCronCrmDailyRouteImport } from './routes/api/public/cron/crm-daily'
 import { Route as ApiPublicCronInstagramRouteImport } from './routes/api/public/cron/instagram'
+import { Route as ApiPublicFormsTokenRouteImport } from './routes/api/public/forms/$token'
 import { Route as ApiPublicMcpCallbackRouteImport } from './routes/api/public/mcp/callback'
+import { Route as ApiPublicUnsubscribeLeadIdRouteImport } from './routes/api/public/unsubscribe/$leadId'
+import { Route as ApiPublicFormsEmbedTokenRouteImport } from './routes/api/public/forms/embed.$token'
+import { Route as ApiPublicWebhooksInstagramTokenRouteImport } from './routes/api/public/webhooks/instagram/$token'
 import { Route as ApiPublicWebhooksWhatsappTokenRouteImport } from './routes/api/public/webhooks/whatsapp/$token'
 import { Route as ApiPublicWebhooksMetaLeadgenTokenRouteImport } from './routes/api/public/webhooks/meta/leadgen/$token'
 
@@ -216,11 +220,34 @@ const ApiPublicCronInstagramRoute = ApiPublicCronInstagramRouteImport.update({
   path: '/api/public/cron/instagram',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicFormsTokenRoute = ApiPublicFormsTokenRouteImport.update({
+  id: '/api/public/forms/$token',
+  path: '/api/public/forms/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMcpCallbackRoute = ApiPublicMcpCallbackRouteImport.update({
   id: '/api/public/mcp/callback',
   path: '/api/public/mcp/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicUnsubscribeLeadIdRoute =
+  ApiPublicUnsubscribeLeadIdRouteImport.update({
+    id: '/api/public/unsubscribe/$leadId',
+    path: '/api/public/unsubscribe/$leadId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicFormsEmbedTokenRoute =
+  ApiPublicFormsEmbedTokenRouteImport.update({
+    id: '/api/public/forms/embed/$token',
+    path: '/api/public/forms/embed/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicWebhooksInstagramTokenRoute =
+  ApiPublicWebhooksInstagramTokenRouteImport.update({
+    id: '/api/public/webhooks/instagram/$token',
+    path: '/api/public/webhooks/instagram/$token',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicWebhooksWhatsappTokenRoute =
   ApiPublicWebhooksWhatsappTokenRouteImport.update({
     id: '/api/public/webhooks/whatsapp/$token',
@@ -265,8 +292,12 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -300,8 +331,12 @@ export interface FileRoutesByTo {
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/crm/leads': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -338,8 +373,12 @@ export interface FileRoutesById {
   '/api/public/cron/crm-cadences': typeof ApiPublicCronCrmCadencesRoute
   '/api/public/cron/crm-daily': typeof ApiPublicCronCrmDailyRoute
   '/api/public/cron/instagram': typeof ApiPublicCronInstagramRoute
+  '/api/public/forms/$token': typeof ApiPublicFormsTokenRoute
   '/api/public/mcp/callback': typeof ApiPublicMcpCallbackRoute
+  '/api/public/unsubscribe/$leadId': typeof ApiPublicUnsubscribeLeadIdRoute
   '/_authenticated/crm/leads/': typeof AuthenticatedCrmLeadsIndexRoute
+  '/api/public/forms/embed/$token': typeof ApiPublicFormsEmbedTokenRoute
+  '/api/public/webhooks/instagram/$token': typeof ApiPublicWebhooksInstagramTokenRoute
   '/api/public/webhooks/whatsapp/$token': typeof ApiPublicWebhooksWhatsappTokenRoute
   '/api/public/webhooks/meta/leadgen/$token': typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -376,8 +415,12 @@ export interface FileRouteTypes {
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/crm/leads/'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesByTo: FileRoutesByTo
@@ -411,8 +454,12 @@ export interface FileRouteTypes {
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/crm/leads'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   id:
@@ -448,8 +495,12 @@ export interface FileRouteTypes {
     | '/api/public/cron/crm-cadences'
     | '/api/public/cron/crm-daily'
     | '/api/public/cron/instagram'
+    | '/api/public/forms/$token'
     | '/api/public/mcp/callback'
+    | '/api/public/unsubscribe/$leadId'
     | '/_authenticated/crm/leads/'
+    | '/api/public/forms/embed/$token'
+    | '/api/public/webhooks/instagram/$token'
     | '/api/public/webhooks/whatsapp/$token'
     | '/api/public/webhooks/meta/leadgen/$token'
   fileRoutesById: FileRoutesById
@@ -462,7 +513,11 @@ export interface RootRouteChildren {
   ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
   ApiPublicCronInstagramRoute: typeof ApiPublicCronInstagramRoute
+  ApiPublicFormsTokenRoute: typeof ApiPublicFormsTokenRoute
   ApiPublicMcpCallbackRoute: typeof ApiPublicMcpCallbackRoute
+  ApiPublicUnsubscribeLeadIdRoute: typeof ApiPublicUnsubscribeLeadIdRoute
+  ApiPublicFormsEmbedTokenRoute: typeof ApiPublicFormsEmbedTokenRoute
+  ApiPublicWebhooksInstagramTokenRoute: typeof ApiPublicWebhooksInstagramTokenRoute
   ApiPublicWebhooksWhatsappTokenRoute: typeof ApiPublicWebhooksWhatsappTokenRoute
   ApiPublicWebhooksMetaLeadgenTokenRoute: typeof ApiPublicWebhooksMetaLeadgenTokenRoute
 }
@@ -693,11 +748,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronInstagramRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/forms/$token': {
+      id: '/api/public/forms/$token'
+      path: '/api/public/forms/$token'
+      fullPath: '/api/public/forms/$token'
+      preLoaderRoute: typeof ApiPublicFormsTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mcp/callback': {
       id: '/api/public/mcp/callback'
       path: '/api/public/mcp/callback'
       fullPath: '/api/public/mcp/callback'
       preLoaderRoute: typeof ApiPublicMcpCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/unsubscribe/$leadId': {
+      id: '/api/public/unsubscribe/$leadId'
+      path: '/api/public/unsubscribe/$leadId'
+      fullPath: '/api/public/unsubscribe/$leadId'
+      preLoaderRoute: typeof ApiPublicUnsubscribeLeadIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/forms/embed/$token': {
+      id: '/api/public/forms/embed/$token'
+      path: '/api/public/forms/embed/$token'
+      fullPath: '/api/public/forms/embed/$token'
+      preLoaderRoute: typeof ApiPublicFormsEmbedTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/webhooks/instagram/$token': {
+      id: '/api/public/webhooks/instagram/$token'
+      path: '/api/public/webhooks/instagram/$token'
+      fullPath: '/api/public/webhooks/instagram/$token'
+      preLoaderRoute: typeof ApiPublicWebhooksInstagramTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/webhooks/whatsapp/$token': {
@@ -793,7 +876,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
   ApiPublicCronInstagramRoute: ApiPublicCronInstagramRoute,
+  ApiPublicFormsTokenRoute: ApiPublicFormsTokenRoute,
   ApiPublicMcpCallbackRoute: ApiPublicMcpCallbackRoute,
+  ApiPublicUnsubscribeLeadIdRoute: ApiPublicUnsubscribeLeadIdRoute,
+  ApiPublicFormsEmbedTokenRoute: ApiPublicFormsEmbedTokenRoute,
+  ApiPublicWebhooksInstagramTokenRoute: ApiPublicWebhooksInstagramTokenRoute,
   ApiPublicWebhooksWhatsappTokenRoute: ApiPublicWebhooksWhatsappTokenRoute,
   ApiPublicWebhooksMetaLeadgenTokenRoute:
     ApiPublicWebhooksMetaLeadgenTokenRoute,

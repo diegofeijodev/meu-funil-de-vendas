@@ -34,7 +34,11 @@ export type SdrAgentInput = {
   offhoursMessage: string;
   maxMessages: number;
   handoffTriggers: string[];
+  model?: string;
 };
+
+/** Modelos do gateway de IA do app oferecidos para o SDR (3.7). */
+export const SDR_MODELS = ["openai/gpt-6-astra", "google/gemini-3.1-flash", "google/gemini-3.1-pro"] as const;
 
 /** Loads the workspace agent, its documents and the latest execution logs. */
 export const getSdrAgent = createServerFn({ method: "POST" })
@@ -89,6 +93,7 @@ export const saveSdrAgent = createServerFn({ method: "POST" })
           offhours_message: data.offhoursMessage,
           max_messages: data.maxMessages,
           handoff_triggers: data.handoffTriggers as never,
+          ...(data.model && (SDR_MODELS as readonly string[]).includes(data.model) ? { model: data.model } : {}),
         },
         { onConflict: "workspace_id" },
       )
