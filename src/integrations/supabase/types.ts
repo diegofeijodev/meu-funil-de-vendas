@@ -2363,81 +2363,6 @@ export type Database = {
           },
         ]
       }
-      ig_auto_runs: {
-        Row: {
-          campaign_id: string | null
-          created_at: string
-          created_by: string | null
-          end_date: string
-          filled: number
-          focus: string | null
-          formats: string[]
-          id: string
-          last_error: string | null
-          locked_until: string | null
-          mode: string
-          parent_id: string | null
-          plan_id: string
-          recurring: boolean
-          slots: Json
-          start_date: string
-          status: string
-          story_times: string[]
-          times: string[]
-          updated_at: string
-          weekdays: number[]
-          workspace_id: string
-        }
-        Insert: {
-          campaign_id?: string | null
-          created_at?: string
-          created_by?: string | null
-          end_date: string
-          filled?: number
-          focus?: string | null
-          formats?: string[]
-          id?: string
-          last_error?: string | null
-          locked_until?: string | null
-          mode?: string
-          parent_id?: string | null
-          plan_id: string
-          recurring?: boolean
-          slots?: Json
-          start_date: string
-          status?: string
-          story_times?: string[]
-          times?: string[]
-          updated_at?: string
-          weekdays?: number[]
-          workspace_id: string
-        }
-        Update: {
-          campaign_id?: string | null
-          created_at?: string
-          created_by?: string | null
-          end_date?: string
-          filled?: number
-          focus?: string | null
-          formats?: string[]
-          id?: string
-          last_error?: string | null
-          locked_until?: string | null
-          mode?: string
-          parent_id?: string | null
-          plan_id?: string
-          recurring?: boolean
-          slots?: Json
-          start_date?: string
-          status?: string
-          story_times?: string[]
-          times?: string[]
-          updated_at?: string
-          weekdays?: number[]
-          workspace_id?: string
-        }
-        Relationships: []
-      }
       ig_autopilot_weeks: {
         Row: {
           created_at: string
@@ -2478,7 +2403,6 @@ export type Database = {
           name: string
           objective: string | null
           pillar_weights: Json
-          posting_days: number[]
           posting_frequency: Json
           preferred_times: Json
           requires_approval: boolean
@@ -2500,7 +2424,6 @@ export type Database = {
           name: string
           objective?: string | null
           pillar_weights?: Json
-          posting_days?: number[]
           posting_frequency?: Json
           preferred_times?: Json
           requires_approval?: boolean
@@ -2522,7 +2445,6 @@ export type Database = {
           name?: string
           objective?: string | null
           pillar_weights?: Json
-          posting_days?: number[]
           posting_frequency?: Json
           preferred_times?: Json
           requires_approval?: boolean
@@ -2622,7 +2544,6 @@ export type Database = {
           ai_generation_log: Json
           ai_provider: string | null
           approved_at: string | null
-          automation: string | null
           caption: string | null
           created_at: string
           creative_brief: Json
@@ -2641,7 +2562,6 @@ export type Database = {
           published_at: string | null
           rejection_reason: string | null
           retry_count: number
-          run_id: string | null
           scheduled_at: string | null
           source: string
           status: string
@@ -2653,7 +2573,6 @@ export type Database = {
           ai_generation_log?: Json
           ai_provider?: string | null
           approved_at?: string | null
-          automation?: string | null
           caption?: string | null
           created_at?: string
           creative_brief?: Json
@@ -2672,7 +2591,6 @@ export type Database = {
           published_at?: string | null
           rejection_reason?: string | null
           retry_count?: number
-          run_id?: string | null
           scheduled_at?: string | null
           source?: string
           status?: string
@@ -2684,7 +2602,6 @@ export type Database = {
           ai_generation_log?: Json
           ai_provider?: string | null
           approved_at?: string | null
-          automation?: string | null
           caption?: string | null
           created_at?: string
           creative_brief?: Json
@@ -2703,7 +2620,6 @@ export type Database = {
           published_at?: string | null
           rejection_reason?: string | null
           retry_count?: number
-          run_id?: string | null
           scheduled_at?: string | null
           source?: string
           status?: string
