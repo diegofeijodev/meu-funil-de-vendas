@@ -714,6 +714,7 @@ export type Database = {
           external_job_id: string | null
           final_prompt: string | null
           id: string
+          options: Json
           prompt: string | null
           provider: string
           provider_log: string | null
@@ -737,6 +738,7 @@ export type Database = {
           external_job_id?: string | null
           final_prompt?: string | null
           id?: string
+          options?: Json
           prompt?: string | null
           provider?: string
           provider_log?: string | null
@@ -760,6 +762,7 @@ export type Database = {
           external_job_id?: string | null
           final_prompt?: string | null
           id?: string
+          options?: Json
           prompt?: string | null
           provider?: string
           provider_log?: string | null
@@ -854,6 +857,7 @@ export type Database = {
           error_message: string | null
           estimated_cost: number | null
           external_job_id: string | null
+          extras: Json
           final_prompt: string | null
           id: string
           preview_url: string | null
@@ -877,6 +881,7 @@ export type Database = {
           error_message?: string | null
           estimated_cost?: number | null
           external_job_id?: string | null
+          extras?: Json
           final_prompt?: string | null
           id?: string
           preview_url?: string | null
@@ -900,6 +905,7 @@ export type Database = {
           error_message?: string | null
           estimated_cost?: number | null
           external_job_id?: string | null
+          extras?: Json
           final_prompt?: string | null
           id?: string
           preview_url?: string | null
