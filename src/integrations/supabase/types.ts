@@ -2201,6 +2201,27 @@ export type Database = {
           },
         ]
       }
+      cron_heartbeats: {
+        Row: {
+          last_detail: string | null
+          last_run_at: string
+          last_status: string
+          name: string
+        }
+        Insert: {
+          last_detail?: string | null
+          last_run_at?: string
+          last_status?: string
+          name: string
+        }
+        Update: {
+          last_detail?: string | null
+          last_run_at?: string
+          last_status?: string
+          name?: string
+        }
+        Relationships: []
+      }
       cron_tokens: {
         Row: {
           created_at: string
