@@ -21,7 +21,7 @@ async function db() {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "erro desconhecido");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const ASPECT: Record<IgFormat, string> = {
+export const ASPECT: Record<IgFormat, string> = {
   feed_image: "1:1",
   feed_carousel: "4:5",
   reel: "9:16",
@@ -52,6 +52,22 @@ async function appendLog(post: any, entry: Record<string, unknown>) {
 }
 
 /* ---------------- Conta ---------------- */
+
+/**
+ * Exigência de aprovação do post: a programação automática decide pelo próprio modo
+ * ("publish" publica sozinho, "approval" espera aprovação); sem ela, vale o plano.
+ */
+export async function approvalRequired(post: any): Promise<boolean | null> {
+  if (post.automation === "publish") return false;
+  if (post.automation === "approval") return true;
+  if (!post.plan_id) return null;
+  const { data } = await (await db())
+    .from("ig_content_plans")
+    .select("requires_approval")
+    .eq("id", post.plan_id)
+    .maybeSingle();
+  return (data?.requires_approval as boolean | undefined) ?? null;
+}
 
 export async function connectInstagramAccount(workspaceId: string, pageIdOverride?: string | null) {
   const r = await runWithMetaWorkspace(workspaceId, () => connectInner(workspaceId, pageIdOverride));
@@ -165,7 +181,7 @@ async function liveAccount(workspaceId: string) {
 
 /* ---------------- IA de texto ---------------- */
 
-async function aiJson(
+export async function aiJson(
   workspaceId: string,
   engine: Engine,
   prompt: string,
@@ -240,7 +256,7 @@ const CAPTION_SCHEMA = {
   },
 };
 
-async function brandFor(brandId: string | null) {
+export async function brandFor(brandId: string | null) {
   if (!brandId) return null;
   const s = await db();
   const { data } = await s.from("brands").select("*").eq("id", brandId).maybeSingle();
@@ -268,6 +284,9 @@ export async function generateContentCalendar(
     `Crie o calendário de ${weeks} semana(s) começando em ${start} (fuso America/Sao_Paulo, use ISO 8601 com -03:00).`,
     `Frequência semanal por formato: ${JSON.stringify(plan.posting_frequency)} (feed = feed_image ou feed_carousel; reels = reel; stories = story_image ou story_video).`,
     `Horários preferidos: ${JSON.stringify(plan.preferred_times)}.`,
+    Array.isArray(plan.posting_days) && plan.posting_days.length && plan.posting_days.length < 7
+      ? `Publique SOMENTE nestes dias da semana (0 = domingo): ${JSON.stringify(plan.posting_days)}.`
+      : "",
     "Para cada post: format, scheduled_at, theme, hook, caption (com quebras de linha), hashtags (15 a 25, sem #, misturando nicho, amplas e locais),",
     "cta, image_prompt (briefing visual curto em português: o que deve aparecer; o diretor de arte transforma no prompt final), slides (3 a 7 prompts só para feed_carousel, senão vazio).",
     "Proporções: 1:1 feed, 4:5 carrossel, 9:16 reels/stories.",
@@ -286,7 +305,12 @@ export async function generateContentCalendar(
     CALENDAR_SCHEMA,
     "ig_calendar",
   );
-  const posts = Array.isArray(json?.posts) ? json.posts : [];
+  const days: number[] = Array.isArray(plan.posting_days) && plan.posting_days.length ? plan.posting_days : [0, 1, 2, 3, 4, 5, 6];
+  // Garante os dias escolhidos no plano mesmo se a IA errar (dia da semana em São Paulo).
+  const posts = (Array.isArray(json?.posts) ? json.posts : []).filter((p: any) => {
+    const t = new Date(p.scheduled_at).getTime();
+    return isNaN(t) || days.includes(new Date(t - 3 * 3600e3).getUTCDay());
+  });
   if (!posts.length) throw new Error("A IA não devolveu posts.");
   const rows = posts.map((p: any) => {
     const format = (Object.keys(ASPECT).includes(p.format) ? p.format : "feed_image") as IgFormat;
@@ -486,18 +510,12 @@ async function continueAssets(
     if (isVideo(format)) Object.assign(item, await videoCover(post, provider, req.finalPrompt, item.asset_id));
     media = [...media, item];
   }
-  const { data: plan } = post.plan_id
-    ? await s
-        .from("ig_content_plans")
-        .select("requires_approval")
-        .eq("id", post.plan_id)
-        .maybeSingle()
-    : { data: null as any };
+  const req = await approvalRequired(post);
   const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
   await patchPost(post.id, {
     media,
     creative_brief: brief,
-    status: plan?.requires_approval === false ? "ready" : "pending_approval",
+    status: req === false ? "ready" : "pending_approval",
     ai_provider: provider.id,
     ai_generation_log: await appendLog(post, {
       step: "media",
@@ -660,9 +678,7 @@ export async function generatePostAssets(
           buildVisualPrompt({ ...artBrief(base, 0), previousPrompt: ads[0]!.prompt_final, adjust: `Corrija: ${motivo}` }),
       });
       if (!res.pending) {
-        const { data: planRow } = post.plan_id
-          ? await s.from("ig_content_plans").select("requires_approval").eq("id", post.plan_id).maybeSingle()
-          : { data: null as any };
+        const req = await approvalRequired(post);
         const media = [
           {
             url: res.finalUrl,
@@ -679,7 +695,7 @@ export async function generatePostAssets(
         await patchPost(postId, {
           media,
           creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
-          status: planRow?.requires_approval === false ? "ready" : "pending_approval",
+          status: req === false ? "ready" : "pending_approval",
           ai_provider: provider.id,
           ai_generation_log: await appendLog(post, {
             step: "media",
@@ -805,6 +821,11 @@ export async function pollPendingMedia() {
 
 /** Após mídia assíncrona pronta: no piloto automático sem aprovação, agenda no horário previsto. */
 async function afterMediaReady(post: any) {
+  if (post.automation) {
+    const { scheduleAutomated } = await import("./auto-calendar.server");
+    await scheduleAutomated(post.id).catch((e) => console.error("[instagram] agenda automática falhou:", errMsg(e)));
+    return;
+  }
   if (!post.plan_id) return;
   const s = await db();
   const { data: plan } = await s
@@ -863,15 +884,8 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
   if (!["approved", "ready", "scheduled", "failed"].includes(post.status))
     throw new Error("O post precisa estar aprovado para ser agendado.");
   const s = await db();
-  if (post.plan_id) {
-    const { data: plan } = await s
-      .from("ig_content_plans")
-      .select("requires_approval")
-      .eq("id", post.plan_id)
-      .maybeSingle();
-    if (plan?.requires_approval && !post.approved_at && post.status !== "approved")
-      throw new Error("Este plano exige aprovação antes de agendar.");
-  }
+  if ((await approvalRequired(post)) && !post.approved_at && post.status !== "approved")
+    throw new Error("Este post exige aprovação antes de agendar.");
   await s
     .from("publishing_jobs")
     .update({ status: "cancelled" } as never)
@@ -954,15 +968,8 @@ async function publishInner(postId: string, post: any): Promise<PublishResult> {
   const s = await db();
 
   // Guardrail: nunca publicar sem aprovação quando o plano exige.
-  if (post.plan_id) {
-    const { data: plan } = await s
-      .from("ig_content_plans")
-      .select("requires_approval")
-      .eq("id", post.plan_id)
-      .maybeSingle();
-    if (plan?.requires_approval && !post.approved_at)
-      throw new Guardrail("Post não aprovado — publicação bloqueada.");
-  }
+  if ((await approvalRequired(post)) && !post.approved_at)
+    throw new Guardrail("Post não aprovado — publicação bloqueada.");
   // Guardrail: no máximo 25 publicações em 24h por conta (contagem local).
   const { count } = await s
     .from("ig_posts")

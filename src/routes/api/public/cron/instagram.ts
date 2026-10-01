@@ -46,6 +46,8 @@ export const Route = createFileRoute("/api/public/cron/instagram")({
         if (all || task === "media") {
           const { revalidateBackfill } = await import("@/lib/media/library.server");
           out["revalidate"] = await revalidateBackfill(20).catch((e) => ({ error: String(e) }));
+          const auto = await import("@/lib/instagram/auto-calendar.server");
+          out["autoCalendar"] = await auto.autoCalendarTick().catch((e) => ({ error: String(e) }));
           out["autopilot"] = await ap.autopilotTick().catch((e) => ({ error: String(e) }));
         }
         if (all || task === "metrics") {

@@ -78,9 +78,10 @@ export const GUIDES: Record<
     steps: [
       "Conecte a conta profissional em Visão geral (usa a Página e o token da Meta).",
       "Em Estratégia, crie o plano (pilares, frequência, horários) — ou crie a partir da estratégia de uma campanha.",
-      "No Calendário, gere as ideias da semana; depois gere a mídia de cada post (texto e logo entram por cima).",
-      "Aprove em Aprovações e agende: a publicação é automática na hora marcada.",
-      "Ligue o piloto automático para gerar e agendar toda semana. Resultados e insights da conta ficam em Resultados.",
+      "No Calendário, clique em Nova programação (ou no + de um dia): escolha período (pode ser hoje), dias da semana, horários, formatos e um foco opcional.",
+      "A IA estrategista cria o conteúdo de cada horário; os criativos são gerados sozinhos, começando pelos mais próximos (texto e logo entram por cima).",
+      "Modo totalmente automático publica sozinho na hora marcada; no modo com aprovação, aprove em Aprovações. Marque \"repetir toda semana\" para nunca parar.",
+      "Prefere o plano semanal? Ligue o piloto automático no plano (com dias e horários). Resultados e insights da conta ficam em Resultados.",
     ],
     references: [{ label: "Publicação de conteúdo (Meta)", url: "https://developers.facebook.com/docs/instagram-platform/content-publishing" }],
   },

@@ -31,6 +31,7 @@ type Form = {
   content_pillars: string[];
   freq: { feed: number; carousel: number; reels: number; stories: number };
   times: string;
+  days: number[];
   hashtags: string;
   cta_default: string;
   requires_approval: boolean;
@@ -46,6 +47,7 @@ const EMPTY: Form = {
   content_pillars: [],
   freq: { feed: 2, carousel: 1, reels: 2, stories: 5 },
   times: "09:00, 12:30, 19:00",
+  days: [0, 1, 2, 3, 4, 5, 6],
   hashtags: "",
   cta_default: "",
   requires_approval: true,
@@ -97,6 +99,7 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
         stories: fr.stories ?? 0,
       },
       times: (p.preferred_times ?? []).join(", "),
+      days: p.posting_days ?? [0, 1, 2, 3, 4, 5, 6],
       hashtags: p.hashtag_strategy?.notes ?? "",
       cta_default: p.cta_default ?? "",
       requires_approval: p.requires_approval,
@@ -124,6 +127,7 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean),
+      posting_days: f.days.length ? f.days : [0, 1, 2, 3, 4, 5, 6],
       hashtag_strategy: { notes: f.hashtags, audience: f.audience },
       cta_default: f.cta_default,
       requires_approval: f.requires_approval,
@@ -340,6 +344,26 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
             <div className="space-y-1.5">
               <Label>Horários preferidos (separados por vírgula)</Label>
               <Input value={f.times} onChange={(e) => setF({ ...f, times: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Dias da semana em que o piloto publica</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d, i) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() =>
+                      setF({ ...f, days: f.days.includes(i) ? f.days.filter((x) => x !== i) : [...f.days, i].sort() })
+                    }
+                    className={`h-8 w-11 rounded-md border text-xs ${f.days.includes(i) ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground"}`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Para um período específico (hoje, uma data, 15 dias…), use Programar com IA na aba Calendário.
+              </p>
             </div>
           </div>
         )}
