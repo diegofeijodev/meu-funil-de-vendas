@@ -456,10 +456,14 @@ export function PostEditor({
                     .slice()
                     .reverse()
                     .map((l: any, i: number) => (
-                      <p key={i}>
-                        {new Date(l.at).toLocaleString("pt-BR")} · {l.step} ·{" "}
-                        {l.provider ?? l.file ?? ""}
-                      </p>
+                      <div key={i}>
+                        <p>
+                          {new Date(l.at).toLocaleString("pt-BR")} · {l.step} · {l.provider ?? l.file ?? ""}
+                          {l.status === "failed" && <span className="text-destructive"> · falhou</span>}
+                        </p>
+                        {l.provider_log && <p className="whitespace-pre-wrap pl-3">{l.provider_log}</p>}
+                        {l.error && <p className="whitespace-pre-wrap pl-3 text-destructive">{l.error}</p>}
+                      </div>
                     ))}
                   {!(post.ai_generation_log ?? []).length && <p>Sem registros.</p>}
                 </div>
