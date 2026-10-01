@@ -1,0 +1,1 @@
+REVOKE EXECUTE ON FUNCTION public.guard_campaign_delivery() FROM PUBLIC, anon, authenticated;
