@@ -667,6 +667,7 @@ export type Database = {
       }
       copies: {
         Row: {
+          angle: string | null
           campaign_id: string
           content: Json
           created_at: string
@@ -676,6 +677,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           campaign_id: string
           content?: Json
           created_at?: string
@@ -685,6 +687,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           campaign_id?: string
           content?: Json
           created_at?: string
@@ -861,6 +864,7 @@ export type Database = {
       }
       creatives: {
         Row: {
+          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -885,6 +889,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -909,6 +914,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2823,6 +2829,7 @@ export type Database = {
       }
       media_assets: {
         Row: {
+          angle: string | null
           aspect_ratio: string | null
           brand_id: string | null
           campaign_id: string | null
@@ -2857,6 +2864,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
@@ -2891,6 +2899,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          angle?: string | null
           aspect_ratio?: string | null
           brand_id?: string | null
           campaign_id?: string | null
