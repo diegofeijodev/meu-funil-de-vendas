@@ -659,6 +659,9 @@ export async function renewRecurring() {
         story_times: root.story_times,
         formats: root.formats,
         focus: root.focus,
+        // Semana repetida herda a estratégia aprovada (só redistribui os dias).
+        strategy: root.strategy_status === "approved" ? root.strategy : null,
+        strategy_status: root.strategy_status === "approved" ? "approved" : "pending",
         mode: root.mode,
         recurring: false,
         slots,
