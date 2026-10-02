@@ -77,6 +77,8 @@ export class CrmPublicController {
   async form(@Param('token') token: string, @Res() reply: FastifyReply) {
     const integration = await this.integration(token);
     if (!integration) return reply.status(404).header('Content-Type', 'text/plain; charset=utf-8').send('Formulário não encontrado');
+    // o helmet global grava X-Frame-Options direto no `res` cru: tira de lá (e do reply) para o iframe de outros sites funcionar
+    reply.raw?.removeHeader('x-frame-options');
     reply.removeHeader('x-frame-options');
     return reply
       .status(200)

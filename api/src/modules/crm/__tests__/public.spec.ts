@@ -29,6 +29,7 @@ function fakeReply() {
     header: (k: string, v: string) => { st.headers[k.toLowerCase()] = v; return reply; },
     headers: (h: Record<string, string>) => { for (const [k, v] of Object.entries(h)) st.headers[k.toLowerCase()] = v; return reply; },
     removeHeader: (k: string) => { delete st.headers[k.toLowerCase()]; return reply; },
+    raw: { removeHeader: (k: string) => { st.headers[`raw-removed-${k.toLowerCase()}`] = '1'; } },
     send: (b?: unknown) => { st.body = b; return reply; },
   };
   return { reply, state: st };
@@ -193,6 +194,7 @@ describe('formulário do site — GET, embed e OPTIONS', () => {
     expect(r.state.headers['content-type']).toBe('text/html; charset=utf-8');
     expect(r.state.headers['cache-control']).toBe('no-store');
     expect(r.state.headers['content-security-policy']).toContain('frame-ancestors *');
+    expect(r.state.headers['raw-removed-x-frame-options']).toBe('1');
     expect(r.state.body).toContain('Fale &lt;b&gt;já&lt;/b&gt;');
     expect(r.state.body).toContain('background:#112233');
     expect(r.state.body).toContain('name="website"');

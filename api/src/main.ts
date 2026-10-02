@@ -74,7 +74,8 @@ async function bootstrap() {
   };
   // O formulário público do site (`/api/public/forms/*`) recebe POST de ferramentas e páginas de qualquer origem
   // (o protótipo respondia `Access-Control-Allow-Origin: *`): preflight liberado só nessas rotas, sem credenciais.
-  app.enableCors(((req: { url?: string }, cb: (err: Error | null, options: unknown) => void) => {
+  // @fastify/cors: uma função como opção recebe a instância e devolve o delegator `(req, cb)`.
+  app.enableCors((() => (req: { url?: string }, cb: (err: Error | null, options: unknown) => void) => {
     const isPublicForm = (req.url ?? '').startsWith('/api/public/forms/');
     cb(null, isPublicForm ? { origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type'], credentials: false } : baseCors);
   }) as never);
