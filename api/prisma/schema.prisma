@@ -1,0 +1,1319 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum workspace_role {
+  owner
+  admin
+  marketing
+  viewer
+}
+
+model users {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String
+  password_hash String?
+  google_sub    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([email])
+  @@unique([google_sub])
+}
+
+model profiles {
+  id         String   @id @db.Uuid
+  email      String?
+  full_name  String?
+  avatar_url String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model workspaces {
+  id                         String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                       String
+  slug                       String
+  plan                       String                     @default("trial")
+  owner_id                   String                     @db.Uuid
+  created_at                 DateTime                   @default(now()) @db.Timestamptz(6)
+  ai_inherit_from            String?                    @db.Uuid
+  ai_inherit_source          workspaces?                @relation("workspaces_ai_inherit_from", fields: [ai_inherit_from], references: [id], onDelete: SetNull)
+  workspaces_ai_inherit_from workspaces[]               @relation("workspaces_ai_inherit_from")
+  workspace_members          workspace_members[]        @relation("workspace_members_workspace_id")
+  brands                     brands[]                   @relation("brands_workspace_id")
+  brand_assets               brand_assets[]             @relation("brand_assets_workspace_id")
+  products                   products[]                 @relation("products_workspace_id")
+  personas                   personas[]                 @relation("personas_workspace_id")
+  brand_learnings            brand_learnings[]          @relation("brand_learnings_workspace_id")
+  campaigns                  campaigns[]                @relation("campaigns_workspace_id")
+  campaign_strategies        campaign_strategies[]      @relation("campaign_strategies_workspace_id")
+  copies                     copies[]                   @relation("copies_workspace_id")
+  creatives                  creatives[]                @relation("creatives_workspace_id")
+  creative_versions          creative_versions[]        @relation("creative_versions_workspace_id")
+  creative_generation_jobs   creative_generation_jobs[] @relation("creative_generation_jobs_workspace_id")
+  approval_requests          approval_requests[]        @relation("approval_requests_workspace_id")
+  activity_logs              activity_logs[]            @relation("activity_logs_workspace_id")
+  ai_recommendations         ai_recommendations[]       @relation("ai_recommendations_workspace_id")
+  social_posts               social_posts[]             @relation("social_posts_workspace_id")
+  publishing_jobs            publishing_jobs[]          @relation("publishing_jobs_workspace_id")
+  instagram_accounts         instagram_accounts?        @relation("instagram_accounts_workspace_id")
+  ig_content_plans           ig_content_plans[]         @relation("ig_content_plans_workspace_id")
+  ig_posts                   ig_posts[]                 @relation("ig_posts_workspace_id")
+  ig_post_metrics            ig_post_metrics[]          @relation("ig_post_metrics_workspace_id")
+  ig_autopilot_events        ig_autopilot_events[]      @relation("ig_autopilot_events_workspace_id")
+  ig_account_insights        ig_account_insights[]      @relation("ig_account_insights_workspace_id")
+  ig_auto_runs               ig_auto_runs[]             @relation("ig_auto_runs_workspace_id")
+  meta_accounts              meta_accounts[]            @relation("meta_accounts_workspace_id")
+  meta_campaigns             meta_campaigns[]           @relation("meta_campaigns_workspace_id")
+  meta_adsets                meta_adsets[]              @relation("meta_adsets_workspace_id")
+  meta_ads                   meta_ads[]                 @relation("meta_ads_workspace_id")
+  performance_daily          performance_daily[]        @relation("performance_daily_workspace_id")
+  conversions                conversions[]              @relation("conversions_workspace_id")
+  campaign_costs             campaign_costs[]           @relation("campaign_costs_workspace_id")
+  media_assets               media_assets[]             @relation("media_assets_workspace_id")
+  crm_pipelines              crm_pipelines[]            @relation("crm_pipelines_workspace_id")
+  crm_stages                 crm_stages[]               @relation("crm_stages_workspace_id")
+  crm_loss_reasons           crm_loss_reasons[]         @relation("crm_loss_reasons_workspace_id")
+  crm_tags                   crm_tags[]                 @relation("crm_tags_workspace_id")
+  crm_settings               crm_settings?              @relation("crm_settings_workspace_id")
+  crm_leads                  crm_leads[]                @relation("crm_leads_workspace_id")
+  crm_interactions           crm_interactions[]         @relation("crm_interactions_workspace_id")
+  crm_tasks                  crm_tasks[]                @relation("crm_tasks_workspace_id")
+  crm_stage_history          crm_stage_history[]        @relation("crm_stage_history_workspace_id")
+  crm_integrations           crm_integrations[]         @relation("crm_integrations_workspace_id")
+  crm_cadences               crm_cadences[]             @relation("crm_cadences_workspace_id")
+  crm_cadence_runs           crm_cadence_runs[]         @relation("crm_cadence_runs_workspace_id")
+  crm_cadence_events         crm_cadence_events[]       @relation("crm_cadence_events_workspace_id")
+  crm_conversations          crm_conversations[]        @relation("crm_conversations_workspace_id")
+  crm_messages               crm_messages[]             @relation("crm_messages_workspace_id")
+  crm_quick_replies          crm_quick_replies[]        @relation("crm_quick_replies_workspace_id")
+  crm_wa_templates           crm_wa_templates[]         @relation("crm_wa_templates_workspace_id")
+  crm_campaign_costs         crm_campaign_costs[]       @relation("crm_campaign_costs_workspace_id")
+  crm_webhook_events         crm_webhook_events[]       @relation("crm_webhook_events_workspace_id")
+  crm_sdr_agents             crm_sdr_agents?            @relation("crm_sdr_agents_workspace_id")
+  crm_sdr_documents          crm_sdr_documents[]        @relation("crm_sdr_documents_workspace_id")
+  crm_sdr_runs               crm_sdr_runs[]             @relation("crm_sdr_runs_workspace_id")
+  integration_connections    integration_connections[]  @relation("integration_connections_workspace_id")
+  mcp_connections            mcp_connections[]          @relation("mcp_connections_workspace_id")
+  app_credentials            app_credentials[]          @relation("app_credentials_workspace_id")
+}
+
+model workspace_members {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String         @db.Uuid
+  user_id      String         @db.Uuid
+  role         workspace_role @default(marketing)
+  created_at   DateTime       @default(now()) @db.Timestamptz(6)
+  workspace    workspaces     @relation("workspace_members_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, user_id])
+}
+
+model brands {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id             String                     @db.Uuid
+  name                     String
+  description              String?
+  website                  String?
+  segment                  String?
+  differentials            String?
+  target_audience          String?
+  competitors              String?
+  tone_of_voice            String?
+  preferred_words          String[]                   @default([])
+  banned_words             String[]                   @default([])
+  primary_color            String?                    @default("#4F46E5")
+  secondary_color          String?                    @default("#0EA5E9")
+  typography               String?
+  logo_url                 String?
+  region                   String?
+  past_campaigns           String?
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                   @default(now()) @updatedAt @db.Timestamptz(6)
+  visual_style             Json                       @default("{}") @db.JsonB
+  workspace                workspaces                 @relation("brands_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand_assets             brand_assets[]             @relation("brand_assets_brand_id")
+  products                 products[]                 @relation("products_brand_id")
+  personas                 personas[]                 @relation("personas_brand_id")
+  brand_learnings          brand_learnings[]          @relation("brand_learnings_brand_id")
+  campaigns                campaigns[]                @relation("campaigns_brand_id")
+  creatives                creatives[]                @relation("creatives_brand_id")
+  creative_generation_jobs creative_generation_jobs[] @relation("creative_generation_jobs_brand_id")
+  social_posts             social_posts[]             @relation("social_posts_brand_id")
+  ig_content_plans         ig_content_plans[]         @relation("ig_content_plans_brand_id")
+  media_assets             media_assets[]             @relation("media_assets_brand_id")
+
+  @@index([workspace_id])
+}
+
+model brand_assets {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  brand_id     String     @db.Uuid
+  kind         String     @default("photo")
+  name         String?
+  url          String?
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  tag          String?
+  storage_path String?
+  workspace    workspaces @relation("brand_assets_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand        brands     @relation("brand_assets_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model products {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id   String     @db.Uuid
+  brand_id       String     @db.Uuid
+  name           String
+  description    String?
+  price          Decimal?   @db.Decimal
+  margin_percent Decimal?   @db.Decimal
+  created_at     DateTime   @default(now()) @db.Timestamptz(6)
+  workspace      workspaces @relation("products_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand          brands     @relation("products_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model personas {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  brand_id     String     @db.Uuid
+  name         String
+  age_range    String?
+  location     String?
+  interests    String?
+  pains        String?
+  desires      String?
+  segment_type String?    @default("B2C")
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("personas_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand        brands     @relation("personas_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model brand_learnings {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  brand_id     String     @db.Uuid
+  category     String
+  value        String
+  metric       String?
+  score        Decimal?   @default(0) @db.Decimal
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("brand_learnings_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand        brands     @relation("brand_learnings_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model campaigns {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id             String                     @db.Uuid
+  brand_id                 String                     @db.Uuid
+  name                     String
+  objective                String                     @default("leads")
+  status                   String                     @default("draft")
+  offer_product            String?
+  offer_promise            String?
+  landing_url              String?
+  offer_price              Decimal?                   @db.Decimal
+  start_date               DateTime?                  @db.Date
+  end_date                 DateTime?                  @db.Date
+  audience                 Json                       @default("{}") @db.JsonB
+  budget_total             Decimal?                   @default(0) @db.Decimal
+  budget_daily             Decimal?                   @default(0) @db.Decimal
+  goal_leads               Decimal?                   @db.Decimal
+  goal_sales               Decimal?                   @db.Decimal
+  avg_ticket               Decimal?                   @db.Decimal
+  margin_percent           Decimal?                   @db.Decimal
+  max_cac                  Decimal?                   @db.Decimal
+  formats                  String[]                   @default([])
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                   @default(now()) @updatedAt @db.Timestamptz(6)
+  meta_campaign_id         String?
+  meta_adset_id            String?
+  meta_ad_ids              String[]                   @default([])
+  meta_delivery_status     String?
+  meta_adset_ids           String[]                   @default([])
+  meta_ad_map              Json                       @default("{}") @db.JsonB
+  meta_lead_form_id        String?
+  ads_config               Json                       @default("{}") @db.JsonB
+  automation_rules         Json                       @default("{}") @db.JsonB
+  last_insights_sync_at    DateTime?                  @db.Timestamptz(6)
+  google_campaign_id       String?
+  google_status            String?
+  tiktok_campaign_id       String?
+  tiktok_status            String?
+  workspace                workspaces                 @relation("campaigns_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand                    brands                     @relation("campaigns_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  campaign_strategies      campaign_strategies[]      @relation("campaign_strategies_campaign_id")
+  copies                   copies[]                   @relation("copies_campaign_id")
+  creatives                creatives[]                @relation("creatives_campaign_id")
+  creative_generation_jobs creative_generation_jobs[] @relation("creative_generation_jobs_campaign_id")
+  approval_requests        approval_requests[]        @relation("approval_requests_campaign_id")
+  ai_recommendations       ai_recommendations[]       @relation("ai_recommendations_campaign_id")
+  social_posts             social_posts[]             @relation("social_posts_campaign_id")
+  publishing_jobs          publishing_jobs[]          @relation("publishing_jobs_campaign_id")
+  ig_auto_runs             ig_auto_runs[]             @relation("ig_auto_runs_campaign_id")
+  meta_campaigns           meta_campaigns[]           @relation("meta_campaigns_campaign_id")
+  performance_daily        performance_daily[]        @relation("performance_daily_campaign_id")
+  conversions              conversions[]              @relation("conversions_campaign_id")
+  campaign_costs           campaign_costs[]           @relation("campaign_costs_campaign_id")
+  media_assets             media_assets[]             @relation("media_assets_campaign_id")
+
+  @@index([workspace_id])
+  @@index([brand_id])
+}
+
+model campaign_strategies {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  campaign_id  String     @db.Uuid
+  version      Int        @default(1)
+  status       String     @default("draft")
+  content      Json       @default("{}") @db.JsonB
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("campaign_strategies_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns  @relation("campaign_strategies_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model copies {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  campaign_id  String     @db.Uuid
+  version      Int        @default(1)
+  status       String     @default("draft")
+  content      Json       @default("{}") @db.JsonB
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  angle        String?
+  workspace    workspaces @relation("copies_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns  @relation("copies_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model creatives {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id             String                     @db.Uuid
+  campaign_id              String?                    @db.Uuid
+  brand_id                 String?                    @db.Uuid
+  title                    String
+  type                     String                     @default("static_image")
+  prompt                   String?
+  aspect_ratio             String?                    @default("1:1")
+  copy_text                String?
+  status                   String                     @default("draft")
+  version                  Int                        @default(1)
+  provider                 String                     @default("mock")
+  estimated_cost           Decimal?                   @default(0) @db.Decimal
+  real_cost                Decimal?                   @default(0) @db.Decimal
+  preview_url              String?
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                   @default(now()) @updatedAt @db.Timestamptz(6)
+  final_prompt             String?
+  error_message            String?
+  thumbnail_url            String?
+  external_job_id          String?
+  angle                    String?
+  extras                   Json                       @default("{}") @db.JsonB
+  workspace                workspaces                 @relation("creatives_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign                 campaigns?                 @relation("creatives_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+  brand                    brands?                    @relation("creatives_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  creative_versions        creative_versions[]        @relation("creative_versions_creative_id")
+  creative_generation_jobs creative_generation_jobs[] @relation("creative_generation_jobs_creative_id")
+  social_posts             social_posts[]             @relation("social_posts_creative_id")
+  meta_ads                 meta_ads[]                 @relation("meta_ads_creative_id")
+  performance_daily        performance_daily[]        @relation("performance_daily_creative_id")
+  media_assets             media_assets[]             @relation("media_assets_creative_id")
+
+  @@index([workspace_id])
+  @@index([campaign_id, angle], map: "creatives_campaign_angle")
+}
+
+model creative_versions {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  creative_id  String     @db.Uuid
+  version      Int        @default(1)
+  prompt       String?
+  preview_url  String?
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("creative_versions_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  creative     creatives  @relation("creative_versions_creative_id", fields: [creative_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model creative_generation_jobs {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String     @db.Uuid
+  brand_id        String?    @db.Uuid
+  campaign_id     String?    @db.Uuid
+  creative_id     String?    @db.Uuid
+  provider        String     @default("mock")
+  type            String     @default("static_image")
+  prompt          String?
+  final_prompt    String?
+  aspect_ratio    String?
+  status          String     @default("queued")
+  external_job_id String?
+  asset_url       String?
+  thumbnail_url   String?
+  error_message   String?
+  estimated_cost  Decimal?   @default(0) @db.Decimal
+  actual_cost     Decimal?   @default(0) @db.Decimal
+  created_by      String?    @db.Uuid
+  created_at      DateTime   @default(now()) @db.Timestamptz(6)
+  completed_at    DateTime?  @db.Timestamptz(6)
+  provider_log    String?
+  options         Json       @default("{}") @db.JsonB
+  workspace       workspaces @relation("creative_generation_jobs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand           brands?    @relation("creative_generation_jobs_brand_id", fields: [brand_id], references: [id], onDelete: SetNull)
+  campaign        campaigns? @relation("creative_generation_jobs_campaign_id", fields: [campaign_id], references: [id], onDelete: SetNull)
+  creative        creatives? @relation("creative_generation_jobs_creative_id", fields: [creative_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, created_at(sort: Desc)], map: "creative_generation_jobs_ws_idx")
+}
+
+model approval_requests {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  entity_type  String
+  entity_id    String?    @db.Uuid
+  campaign_id  String?    @db.Uuid
+  title        String
+  summary      String?
+  status       String     @default("pending")
+  requested_by String?    @db.Uuid
+  decided_by   String?    @db.Uuid
+  decided_at   DateTime?  @db.Timestamptz(6)
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("approval_requests_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns? @relation("approval_requests_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model activity_logs {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  actor_id     String?    @db.Uuid
+  action       String
+  entity_type  String?
+  entity_id    String?    @db.Uuid
+  metadata     Json       @default("{}") @db.JsonB
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("activity_logs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model ai_recommendations {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id      String     @db.Uuid
+  campaign_id       String?    @db.Uuid
+  action            String
+  title             String
+  reason            String
+  estimated_impact  String?
+  severity          String     @default("medium")
+  requires_approval Boolean    @default(true)
+  status            String     @default("pending")
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  payload           Json       @default("{}") @db.JsonB
+  source            String     @default("ai")
+  applied_at        DateTime?  @db.Timestamptz(6)
+  applied_by        String?    @db.Uuid
+  result            String?
+  workspace         workspaces @relation("ai_recommendations_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign          campaigns? @relation("ai_recommendations_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model social_posts {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String            @db.Uuid
+  brand_id        String?           @db.Uuid
+  campaign_id     String?           @db.Uuid
+  channel         String            @default("instagram_feed")
+  title           String
+  copy_text       String?
+  creative_id     String?           @db.Uuid
+  status          String            @default("idea")
+  scheduled_at    DateTime?         @db.Timestamptz(6)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  workspace       workspaces        @relation("social_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand           brands?           @relation("social_posts_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  campaign        campaigns?        @relation("social_posts_campaign_id", fields: [campaign_id], references: [id], onDelete: SetNull)
+  creative        creatives?        @relation("social_posts_creative_id", fields: [creative_id], references: [id], onDelete: SetNull)
+  publishing_jobs publishing_jobs[] @relation("publishing_jobs_post_id")
+
+  @@index([workspace_id])
+}
+
+model publishing_jobs {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String        @db.Uuid
+  campaign_id  String?       @db.Uuid
+  post_id      String?       @db.Uuid
+  target       String        @default("meta")
+  status       String        @default("queued")
+  mode         String        @default("mock")
+  log          String?
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  channel      String        @default("meta_ads")
+  ig_post_id   String?       @db.Uuid
+  run_at       DateTime?     @db.Timestamptz(6)
+  attempts     Int           @default(0)
+  locked_at    DateTime?     @db.Timestamptz(6)
+  workspace    workspaces    @relation("publishing_jobs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns?    @relation("publishing_jobs_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+  post         social_posts? @relation("publishing_jobs_post_id", fields: [post_id], references: [id], onDelete: Cascade)
+  ig_post      ig_posts?     @relation("publishing_jobs_ig_post_id", fields: [ig_post_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+  @@index([channel, status, run_at], map: "publishing_jobs_queue")
+}
+
+model instagram_accounts {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String     @db.Uuid
+  ig_user_id          String?
+  username            String?
+  facebook_page_id    String?
+  profile_picture_url String?
+  status              String     @default("disconnected")
+  last_error          String?
+  connected_at        DateTime?  @db.Timestamptz(6)
+  created_at          DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace           workspaces @relation("instagram_accounts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id])
+}
+
+model ig_content_plans {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String                @db.Uuid
+  brand_id            String?               @db.Uuid
+  name                String
+  objective           String?
+  tone_of_voice       String?
+  content_pillars     Json                  @default("[]") @db.JsonB
+  posting_frequency   Json                  @default("{\"feed\":3,\"reels\":2,\"stories\":7}") @db.JsonB
+  preferred_times     Json                  @default("[]") @db.JsonB
+  hashtag_strategy    Json                  @default("{}") @db.JsonB
+  cta_default         String?
+  status              String                @default("draft")
+  auto_publish        Boolean               @default(false)
+  requires_approval   Boolean               @default(true)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+  ai_notes            Json                  @default("[]") @db.JsonB
+  pillar_weights      Json                  @default("{}") @db.JsonB
+  last_autopilot_at   DateTime?             @db.Timestamptz(6)
+  posting_days        Int[]                 @default([0, 1, 2, 3, 4, 5, 6])
+  workspace           workspaces            @relation("ig_content_plans_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand               brands?               @relation("ig_content_plans_brand_id", fields: [brand_id], references: [id], onDelete: SetNull)
+  ig_posts            ig_posts[]            @relation("ig_posts_plan_id")
+  ig_autopilot_events ig_autopilot_events[] @relation("ig_autopilot_events_plan_id")
+  ig_autopilot_weeks  ig_autopilot_weeks[]  @relation("ig_autopilot_weeks_plan_id")
+  ig_auto_runs        ig_auto_runs[]        @relation("ig_auto_runs_plan_id")
+}
+
+model ig_posts {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String                @db.Uuid
+  plan_id             String?               @db.Uuid
+  format              String
+  status              String                @default("idea")
+  scheduled_at        DateTime?             @db.Timestamptz(6)
+  published_at        DateTime?             @db.Timestamptz(6)
+  theme               String?
+  hook                String?
+  caption             String?
+  hashtags            String[]              @default([])
+  cta                 String?
+  creative_brief      Json                  @default("{}") @db.JsonB
+  media               Json                  @default("[]") @db.JsonB
+  ig_media_id         String?
+  ig_permalink        String?
+  ai_provider         String?
+  ai_generation_log   Json                  @default("[]") @db.JsonB
+  last_error          String?
+  rejection_reason    String?
+  retry_count         Int                   @default(0)
+  metrics_collected   Json                  @default("[]") @db.JsonB
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+  approved_at         DateTime?             @db.Timestamptz(6)
+  ig_creation_id      String?
+  source              String                @default("app")
+  automation          String?
+  run_id              String?               @db.Uuid
+  workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
+  run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)
+  publishing_jobs     publishing_jobs[]     @relation("publishing_jobs_ig_post_id")
+  ig_post_metrics     ig_post_metrics[]     @relation("ig_post_metrics_post_id")
+  ig_autopilot_events ig_autopilot_events[] @relation("ig_autopilot_events_post_id")
+  media_assets        media_assets[]        @relation("media_assets_ig_post_id")
+
+  @@index([workspace_id, status], map: "ig_posts_ws_status")
+}
+
+model ig_post_metrics {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id   String     @db.Uuid
+  post_id        String     @db.Uuid
+  collected_at   DateTime   @default(now()) @db.Timestamptz(6)
+  reach          Int?
+  impressions    Int?
+  likes          Int?
+  comments       Int?
+  saves          Int?
+  shares         Int?
+  plays          Int?
+  profile_visits Int?
+  raw            Json       @default("{}") @db.JsonB
+  created_at     DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace      workspaces @relation("ig_post_metrics_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  post           ig_posts   @relation("ig_post_metrics_post_id", fields: [post_id], references: [id], onDelete: Cascade)
+}
+
+model ig_autopilot_events {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String            @db.Uuid
+  plan_id      String?           @db.Uuid
+  post_id      String?           @db.Uuid
+  kind         String
+  level        String            @default("info")
+  message      String
+  created_at   DateTime          @default(now()) @db.Timestamptz(6)
+  workspace    workspaces        @relation("ig_autopilot_events_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  plan         ig_content_plans? @relation("ig_autopilot_events_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
+  post         ig_posts?         @relation("ig_autopilot_events_post_id", fields: [post_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, created_at(sort: Desc)], map: "ig_autopilot_events_ws")
+}
+
+model ig_autopilot_weeks {
+  plan_id    String           @db.Uuid
+  week_start DateTime         @db.Date
+  created_at DateTime         @default(now()) @db.Timestamptz(6)
+  plan       ig_content_plans @relation("ig_autopilot_weeks_plan_id", fields: [plan_id], references: [id], onDelete: Cascade)
+
+  @@id([plan_id, week_start])
+}
+
+model ig_account_insights {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id     String     @db.Uuid
+  date             DateTime   @db.Date
+  followers_total  Int?
+  new_followers    Int?
+  reach            Int?
+  views            Int?
+  profile_views    Int?
+  website_clicks   Int?
+  accounts_engaged Int?
+  interactions     Int?
+  created_at       DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace        workspaces @relation("ig_account_insights_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, date])
+}
+
+model ig_auto_runs {
+  id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id           String           @db.Uuid
+  plan_id                String           @db.Uuid
+  parent_id              String?          @db.Uuid
+  created_by             String?          @db.Uuid
+  campaign_id            String?          @db.Uuid
+  start_date             DateTime         @db.Date
+  end_date               DateTime         @db.Date
+  weekdays               Int[]            @default([0, 1, 2, 3, 4, 5, 6])
+  times                  String[]         @default([])
+  story_times            String[]         @default([])
+  formats                String[]         @default(["feed_image", "feed_carousel", "reel"])
+  focus                  String?
+  mode                   String           @default("publish")
+  recurring              Boolean          @default(false)
+  status                 String           @default("planning")
+  slots                  Json             @default("[]") @db.JsonB
+  filled                 Int              @default(0)
+  last_error             String?
+  locked_until           DateTime?        @db.Timestamptz(6)
+  created_at             DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace              workspaces       @relation("ig_auto_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  plan                   ig_content_plans @relation("ig_auto_runs_plan_id", fields: [plan_id], references: [id], onDelete: Cascade)
+  parent                 ig_auto_runs?    @relation("ig_auto_runs_parent_id", fields: [parent_id], references: [id], onDelete: SetNull)
+  campaign               campaigns?       @relation("ig_auto_runs_campaign_id", fields: [campaign_id], references: [id], onDelete: SetNull)
+  ig_posts               ig_posts[]       @relation("ig_posts_run_id")
+  ig_auto_runs_parent_id ig_auto_runs[]   @relation("ig_auto_runs_parent_id")
+
+  @@index([workspace_id, created_at(sort: Desc)], map: "ig_auto_runs_ws_idx")
+}
+
+model meta_accounts {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id      String     @db.Uuid
+  ad_account_id     String?
+  facebook_page     String?
+  instagram_account String?
+  pixel_id          String?
+  status            String     @default("mock")
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  workspace         workspaces @relation("meta_accounts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model meta_campaigns {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String        @db.Uuid
+  campaign_id  String        @db.Uuid
+  external_id  String?
+  name         String
+  objective    String?
+  status       String        @default("paused")
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  workspace    workspaces    @relation("meta_campaigns_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns     @relation("meta_campaigns_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+  meta_adsets  meta_adsets[] @relation("meta_adsets_meta_campaign_id")
+
+  @@index([workspace_id])
+}
+
+model meta_adsets {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id     String         @db.Uuid
+  meta_campaign_id String         @db.Uuid
+  name             String
+  daily_budget     Decimal?       @db.Decimal
+  targeting        Json           @default("{}") @db.JsonB
+  placements       String[]       @default([])
+  status           String         @default("paused")
+  created_at       DateTime       @default(now()) @db.Timestamptz(6)
+  workspace        workspaces     @relation("meta_adsets_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  meta_campaign    meta_campaigns @relation("meta_adsets_meta_campaign_id", fields: [meta_campaign_id], references: [id], onDelete: Cascade)
+  meta_ads         meta_ads[]     @relation("meta_ads_meta_adset_id")
+
+  @@index([workspace_id])
+}
+
+model meta_ads {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String      @db.Uuid
+  meta_adset_id String      @db.Uuid
+  creative_id   String?     @db.Uuid
+  name          String
+  utm           String?
+  status        String      @default("paused")
+  created_at    DateTime    @default(now()) @db.Timestamptz(6)
+  workspace     workspaces  @relation("meta_ads_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  meta_adset    meta_adsets @relation("meta_ads_meta_adset_id", fields: [meta_adset_id], references: [id], onDelete: Cascade)
+  creative      creatives?  @relation("meta_ads_creative_id", fields: [creative_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id])
+}
+
+model performance_daily {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String     @db.Uuid
+  campaign_id   String     @db.Uuid
+  creative_id   String?    @db.Uuid
+  adset_name    String?
+  date          DateTime   @db.Date
+  spend         Decimal    @default(0) @db.Decimal
+  impressions   BigInt     @default(0)
+  reach         BigInt     @default(0)
+  clicks        BigInt     @default(0)
+  leads         BigInt     @default(0)
+  conversions   BigInt     @default(0)
+  revenue       Decimal    @default(0) @db.Decimal
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  source        String     @default("demo")
+  meta_ad_id    String?
+  meta_adset_id String?
+  ad_name       String?
+  synced_at     DateTime?  @db.Timestamptz(6)
+  external_id   String?
+  workspace     workspaces @relation("performance_daily_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign      campaigns  @relation("performance_daily_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+  creative      creatives? @relation("performance_daily_creative_id", fields: [creative_id], references: [id], onDelete: SetNull)
+
+  @@unique([campaign_id, meta_ad_id, date], map: "performance_daily_meta_key")
+  @@unique([campaign_id, source, external_id, date], map: "performance_daily_external_key")
+  @@index([workspace_id])
+  @@index([campaign_id, date])
+  @@index([workspace_id, source, date], map: "performance_daily_source")
+}
+
+model conversions {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  campaign_id  String     @db.Uuid
+  value        Decimal    @default(0) @db.Decimal
+  source       String?    @default("meta")
+  occurred_at  DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("conversions_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns  @relation("conversions_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model campaign_costs {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  campaign_id  String     @db.Uuid
+  kind         String     @default("ai")
+  description  String?
+  amount       Decimal    @default(0) @db.Decimal
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("campaign_costs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign     campaigns  @relation("campaign_costs_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model media_assets {
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id           String         @db.Uuid
+  brand_id               String?        @db.Uuid
+  campaign_id            String?        @db.Uuid
+  creative_id            String?        @db.Uuid
+  ig_post_id             String?        @db.Uuid
+  parent_id              String?        @db.Uuid
+  title                  String         @default("Mídia")
+  kind                   String         @default("image")
+  source                 String         @default("upload")
+  storage_path           String?
+  url                    String?
+  thumbnail_path         String?
+  thumbnail_url          String?
+  mime                   String?
+  width                  Int?
+  height                 Int?
+  duration_seconds       Decimal?       @db.Decimal
+  size_bytes             BigInt?
+  aspect_ratio           String?
+  target_format          String         @default("other")
+  ig_ready               Boolean        @default(false)
+  quality_report         Json           @default("{}") @db.JsonB
+  tags                   String[]       @default([])
+  folder                 String?
+  status                 String         @default("draft")
+  prompt                 String?
+  provider               String?
+  cost                   Decimal?       @db.Decimal
+  created_by             String?        @db.Uuid
+  created_at             DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  angle                  String?
+  workspace              workspaces     @relation("media_assets_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand                  brands?        @relation("media_assets_brand_id", fields: [brand_id], references: [id], onDelete: SetNull)
+  campaign               campaigns?     @relation("media_assets_campaign_id", fields: [campaign_id], references: [id], onDelete: SetNull)
+  creative               creatives?     @relation("media_assets_creative_id", fields: [creative_id], references: [id], onDelete: SetNull)
+  ig_post                ig_posts?      @relation("media_assets_ig_post_id", fields: [ig_post_id], references: [id], onDelete: SetNull)
+  parent                 media_assets?  @relation("media_assets_parent_id", fields: [parent_id], references: [id], onDelete: SetNull)
+  media_assets_parent_id media_assets[] @relation("media_assets_parent_id")
+
+  @@index([workspace_id, created_at(sort: Desc)])
+  @@index([creative_id])
+  @@index([ig_post_id])
+}
+
+model crm_pipelines {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String       @db.Uuid
+  name         String
+  is_default   Boolean      @default(false)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime     @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace    workspaces   @relation("crm_pipelines_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  crm_stages   crm_stages[] @relation("crm_stages_pipeline_id")
+  crm_leads    crm_leads[]  @relation("crm_leads_pipeline_id")
+}
+
+model crm_stages {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String        @db.Uuid
+  pipeline_id  String        @db.Uuid
+  name         String
+  color        String        @default("#6366f1")
+  position     Int           @default(0)
+  sla_hours    Int           @default(24)
+  is_won       Boolean       @default(false)
+  is_lost      Boolean       @default(false)
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace    workspaces    @relation("crm_stages_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  pipeline     crm_pipelines @relation("crm_stages_pipeline_id", fields: [pipeline_id], references: [id], onDelete: Cascade)
+  crm_leads    crm_leads[]   @relation("crm_leads_stage_id")
+}
+
+model crm_loss_reasons {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  name         String
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_loss_reasons_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+}
+
+model crm_tags {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  name         String
+  color        String     @default("#22d3ee")
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_tags_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, name])
+}
+
+model crm_settings {
+  workspace_id     String     @id @db.Uuid
+  distribution     String     @default("round_robin")
+  default_owner_id String?    @db.Uuid
+  created_at       DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  wa_hourly_limit  Int        @default(30)
+  workspace        workspaces @relation("crm_settings_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+}
+
+model crm_leads {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String               @db.Uuid
+  pipeline_id         String?              @db.Uuid
+  stage_id            String?              @db.Uuid
+  name                String
+  phone               String?
+  email               String?
+  city                String?
+  source              String               @default("manual")
+  campaign_name       String?
+  adset_name          String?
+  ad_name             String?
+  utm_source          String?
+  utm_medium          String?
+  utm_campaign        String?
+  owner_id            String?              @db.Uuid
+  score               Int                  @default(0)
+  temperature         String               @default("frio")
+  estimated_value     Decimal              @default(0) @db.Decimal
+  tags                String[]             @default([])
+  loss_reason         String?
+  lgpd_consent        Boolean              @default(false)
+  lgpd_consent_at     DateTime?            @db.Timestamptz(6)
+  unsubscribed        Boolean              @default(false)
+  ai_active           Boolean              @default(true)
+  stage_entered_at    DateTime             @default(now()) @db.Timestamptz(6)
+  last_interaction_at DateTime?            @db.Timestamptz(6)
+  first_response_at   DateTime?            @db.Timestamptz(6)
+  created_at          DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  form_id             String?
+  form_name           String?
+  external_id         String?
+  wa_id               String?
+  referral_ad_id      String?
+  raw_payload         Json?                @db.JsonB
+  instagram_id        String?
+  instagram_username  String?
+  workspace           workspaces           @relation("crm_leads_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  pipeline            crm_pipelines?       @relation("crm_leads_pipeline_id", fields: [pipeline_id], references: [id], onDelete: SetNull)
+  stage               crm_stages?          @relation("crm_leads_stage_id", fields: [stage_id], references: [id], onDelete: SetNull)
+  crm_interactions    crm_interactions[]   @relation("crm_interactions_lead_id")
+  crm_tasks           crm_tasks[]          @relation("crm_tasks_lead_id")
+  crm_stage_history   crm_stage_history[]  @relation("crm_stage_history_lead_id")
+  crm_cadence_runs    crm_cadence_runs[]   @relation("crm_cadence_runs_lead_id")
+  crm_cadence_events  crm_cadence_events[] @relation("crm_cadence_events_lead_id")
+  crm_conversations   crm_conversations[]  @relation("crm_conversations_lead_id")
+  crm_messages        crm_messages[]       @relation("crm_messages_lead_id")
+  crm_sdr_runs        crm_sdr_runs[]       @relation("crm_sdr_runs_lead_id")
+
+  @@index([workspace_id, stage_id], map: "crm_leads_ws_stage_idx")
+  @@index([workspace_id, phone])
+  @@index([workspace_id, email])
+}
+
+model crm_interactions {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  lead_id      String     @db.Uuid
+  kind         String     @default("note")
+  author_type  String     @default("user")
+  author_id    String?    @db.Uuid
+  content      String?
+  metadata     Json       @default("{}") @db.JsonB
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_interactions_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  lead         crm_leads  @relation("crm_interactions_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@index([lead_id, created_at(sort: Desc)])
+}
+
+model crm_tasks {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  lead_id      String?    @db.Uuid
+  title        String
+  assignee_id  String?    @db.Uuid
+  due_at       DateTime?  @db.Timestamptz(6)
+  status       String     @default("open")
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_tasks_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  lead         crm_leads? @relation("crm_tasks_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+}
+
+model crm_stage_history {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String     @db.Uuid
+  lead_id       String     @db.Uuid
+  from_stage_id String?    @db.Uuid
+  to_stage_id   String?    @db.Uuid
+  moved_by      String?    @db.Uuid
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  workspace     workspaces @relation("crm_stage_history_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  lead          crm_leads  @relation("crm_stage_history_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, created_at])
+}
+
+model crm_integrations {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String     @db.Uuid
+  kind          String
+  provider      String
+  status        String     @default("disconnected")
+  config        Json       @default("{}") @db.JsonB
+  field_mapping Json       @default("{}") @db.JsonB
+  webhook_token String     @default(dbgenerated("encode(gen_random_bytes(18), 'hex'::text)"))
+  verify_token  String     @default(dbgenerated("encode(gen_random_bytes(12), 'hex'::text)"))
+  last_event_at DateTime?  @db.Timestamptz(6)
+  last_error    String?
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace     workspaces @relation("crm_integrations_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, kind])
+  @@unique([webhook_token])
+}
+
+model crm_cadences {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id       String               @db.Uuid
+  name               String
+  source             String               @default("meta_lead_ads")
+  is_active          Boolean              @default(true)
+  steps              Json                 @default("[]") @db.JsonB
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  description        String               @default("")
+  trigger_type       String               @default("source")
+  trigger_value      String?
+  exit_rules         Json                 @default("{\"on_reply\":true,\"on_stage_change\":true,\"on_won_lost\":true,\"on_opt_out\":true,\"on_human_takeover\":true}") @db.JsonB
+  template_key       String?
+  workspace          workspaces           @relation("crm_cadences_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  crm_cadence_runs   crm_cadence_runs[]   @relation("crm_cadence_runs_cadence_id")
+  crm_cadence_events crm_cadence_events[] @relation("crm_cadence_events_cadence_id")
+}
+
+model crm_cadence_runs {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id       String               @db.Uuid
+  cadence_id         String               @db.Uuid
+  lead_id            String               @db.Uuid
+  step_index         Int                  @default(0)
+  status             String               @default("running")
+  next_run_at        DateTime             @default(now()) @db.Timestamptz(6)
+  last_error         String?
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  entered_at         DateTime             @default(now()) @db.Timestamptz(6)
+  entry_stage_id     String?              @db.Uuid
+  stop_reason        String?
+  last_step_at       DateTime?            @db.Timestamptz(6)
+  workspace          workspaces           @relation("crm_cadence_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  cadence            crm_cadences         @relation("crm_cadence_runs_cadence_id", fields: [cadence_id], references: [id], onDelete: Cascade)
+  lead               crm_leads            @relation("crm_cadence_runs_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+  crm_cadence_events crm_cadence_events[] @relation("crm_cadence_events_run_id")
+
+  @@index([status, next_run_at], map: "crm_cadence_runs_due_idx")
+}
+
+model crm_cadence_events {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String            @db.Uuid
+  cadence_id   String            @db.Uuid
+  run_id       String?           @db.Uuid
+  lead_id      String?           @db.Uuid
+  step_index   Int               @default(0)
+  channel      String            @default("wa_text")
+  event        String
+  message_id   String?           @db.Uuid
+  detail       String?
+  created_at   DateTime          @default(now()) @db.Timestamptz(6)
+  workspace    workspaces        @relation("crm_cadence_events_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  cadence      crm_cadences      @relation("crm_cadence_events_cadence_id", fields: [cadence_id], references: [id], onDelete: Cascade)
+  run          crm_cadence_runs? @relation("crm_cadence_events_run_id", fields: [run_id], references: [id], onDelete: SetNull)
+  lead         crm_leads?        @relation("crm_cadence_events_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+  message      crm_messages?     @relation("crm_cadence_events_message_id", fields: [message_id], references: [id], onDelete: SetNull)
+
+  @@index([cadence_id, step_index])
+  @@index([workspace_id, created_at(sort: Desc)])
+}
+
+model crm_conversations {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id         String         @db.Uuid
+  lead_id              String?        @db.Uuid
+  provider             String         @default("whatsapp_cloud")
+  phone                String
+  wa_id                String?
+  unread_count         Int            @default(0)
+  window_expires_at    DateTime?      @db.Timestamptz(6)
+  last_message_at      DateTime?      @db.Timestamptz(6)
+  last_message_preview String?
+  created_at           DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace            workspaces     @relation("crm_conversations_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  lead                 crm_leads?     @relation("crm_conversations_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+  crm_messages         crm_messages[] @relation("crm_messages_conversation_id")
+  crm_sdr_runs         crm_sdr_runs[] @relation("crm_sdr_runs_conversation_id")
+
+  @@unique([workspace_id, phone])
+}
+
+model crm_messages {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id       String               @db.Uuid
+  conversation_id    String               @db.Uuid
+  lead_id            String?              @db.Uuid
+  direction          String
+  message_type       String               @default("text")
+  body               String?
+  media_url          String?
+  template_name      String?
+  status             String               @default("sent")
+  external_id        String?
+  error_message      String?
+  sent_by            String?              @db.Uuid
+  author_type        String               @default("user")
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  workspace          workspaces           @relation("crm_messages_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  conversation       crm_conversations    @relation("crm_messages_conversation_id", fields: [conversation_id], references: [id], onDelete: Cascade)
+  lead               crm_leads?           @relation("crm_messages_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+  crm_cadence_events crm_cadence_events[] @relation("crm_cadence_events_message_id")
+
+  @@index([conversation_id, created_at])
+}
+
+model crm_quick_replies {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  title        String
+  body         String
+  created_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_quick_replies_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+}
+
+model crm_wa_templates {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String     @db.Uuid
+  name         String
+  language     String     @default("pt_BR")
+  category     String?
+  status       String     @default("APPROVED")
+  body_preview String?
+  variables    Int        @default(0)
+  synced_at    DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("crm_wa_templates_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, name, language])
+}
+
+model crm_campaign_costs {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String     @db.Uuid
+  date          DateTime   @db.Date
+  campaign_id   String
+  campaign_name String?
+  spend         Decimal    @default(0) @db.Decimal
+  impressions   Int        @default(0)
+  clicks        Int        @default(0)
+  leads         Int        @default(0)
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  workspace     workspaces @relation("crm_campaign_costs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, date, campaign_id])
+}
+
+model crm_webhook_events {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String?     @db.Uuid
+  source        String
+  external_id   String?
+  payload       Json?       @db.JsonB
+  status        String      @default("processed")
+  error_message String?
+  created_at    DateTime    @default(now()) @db.Timestamptz(6)
+  workspace     workspaces? @relation("crm_webhook_events_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+}
+
+model crm_sdr_agents {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id      String              @db.Uuid
+  is_active         Boolean             @default(false)
+  name              String              @default("Agente SDR")
+  persona           String              @default("")
+  tone              String              @default("consultivo e cordial")
+  goal              String              @default("Qualificar o lead e agendar uma reuniao com o time comercial.")
+  knowledge_text    String              @default("")
+  questions         Json                @default("[]") @db.JsonB
+  min_score         Int                 @default(60)
+  scheduling_link   String?
+  available_slots   Json                @default("[]") @db.JsonB
+  business_hours    Json                @default("{\"timezone\":\"America/Sao_Paulo\",\"days\":[1,2,3,4,5],\"start\":\"09:00\",\"end\":\"18:00\"}") @db.JsonB
+  offhours_message  String              @default("Recebemos sua mensagem! Nosso time responde no proximo horario comercial.")
+  max_messages      Int                 @default(20)
+  handoff_triggers  Json                @default("[\"negociacao de preco\",\"reclamacao\",\"assunto juridico\",\"falar com atendente\"]") @db.JsonB
+  model             String              @default("openai/gpt-6-astra")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace         workspaces          @relation("crm_sdr_agents_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  crm_sdr_documents crm_sdr_documents[] @relation("crm_sdr_documents_agent_id")
+  crm_sdr_runs      crm_sdr_runs[]      @relation("crm_sdr_runs_agent_id")
+
+  @@unique([workspace_id])
+}
+
+model crm_sdr_documents {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id   String         @db.Uuid
+  agent_id       String         @db.Uuid
+  file_name      String
+  mime_type      String         @default("application/pdf")
+  size_bytes     Int            @default(0)
+  extracted_text String         @default("")
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  workspace      workspaces     @relation("crm_sdr_documents_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  agent          crm_sdr_agents @relation("crm_sdr_documents_agent_id", fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id])
+}
+
+model crm_sdr_runs {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String             @db.Uuid
+  agent_id        String?            @db.Uuid
+  lead_id         String?            @db.Uuid
+  conversation_id String?            @db.Uuid
+  mode            String             @default("live")
+  inbound_text    String?
+  reply_text      String?
+  decision        Json               @default("{}") @db.JsonB
+  score           Int?
+  handoff         Boolean            @default(false)
+  status          String             @default("ok")
+  error_message   String?
+  model           String?
+  input_tokens    Int?
+  output_tokens   Int?
+  duration_ms     Int?
+  created_at      DateTime           @default(now()) @db.Timestamptz(6)
+  workspace       workspaces         @relation("crm_sdr_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  agent           crm_sdr_agents?    @relation("crm_sdr_runs_agent_id", fields: [agent_id], references: [id], onDelete: SetNull)
+  lead            crm_leads?         @relation("crm_sdr_runs_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
+  conversation    crm_conversations? @relation("crm_sdr_runs_conversation_id", fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, created_at(sort: Desc)])
+  @@index([lead_id, created_at(sort: Desc)])
+}
+
+model integration_connections {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String     @db.Uuid
+  provider      String
+  status        String     @default("disconnected")
+  mode          String     @default("mock")
+  account_label String?
+  connected_at  DateTime?  @db.Timestamptz(6)
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  workspace     workspaces @relation("integration_connections_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, provider])
+  @@index([workspace_id])
+}
+
+model mcp_connections {
+  id                           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id                 String     @db.Uuid
+  provider                     String
+  label                        String?
+  server_url                   String
+  access_token                 String?
+  status                       String     @default("disconnected")
+  tools                        Json       @default("[]") @db.JsonB
+  last_error                   String?
+  connected_at                 DateTime?  @db.Timestamptz(6)
+  created_at                   DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  refresh_token                String?
+  expires_at                   DateTime?  @db.Timestamptz(6)
+  oauth_client_id              String?
+  oauth_client_secret          String?
+  oauth_state                  String?
+  oauth_code_verifier          String?
+  oauth_authorization_endpoint String?
+  oauth_token_endpoint         String?
+  oauth_scope                  String?
+  oauth_resource               String?
+  oauth_redirect_uri           String?
+  workspace                    workspaces @relation("mcp_connections_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, provider])
+  @@index([oauth_state])
+}
+
+model app_credentials {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key          String
+  value        String
+  updated_at   DateTime    @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace_id String?     @db.Uuid
+  workspace    workspaces? @relation("app_credentials_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, key], map: "app_credentials_workspace_key")
+}
+
+model cron_tokens {
+  name       String   @id
+  token      String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model cron_heartbeats {
+  name        String   @id
+  last_run_at DateTime @default(now()) @db.Timestamptz(6)
+  last_status String   @default("ok")
+  last_detail String?
+}

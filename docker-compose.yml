@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: meu-funil-postgres
+    environment:
+      POSTGRES_USER: meufunil
+      POSTGRES_PASSWORD: meufunil
+      POSTGRES_DB: meufunil
+    ports:
+      - '5439:5432'
+    volumes:
+      - meufunil_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U meufunil -d meufunil']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    container_name: meu-funil-api
+    profiles: ['full']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://meufunil:meufunil@postgres:5432/meufunil?schema=public
+      # Sem segredo embutido: `validateEnv` exige 16+ chars, então o container
+      # falha na largada com mensagem clara em vez de subir com segredo público.
+      JWT_SECRET: ${JWT_SECRET:-}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      NODE_ENV: production
+      PORT: 3015
+      CORS_ORIGINS: http://localhost:3025
+      PUBLIC_URL: http://localhost:3015
+      APP_URL: http://localhost:3025
+      UPLOADS_DIR: /data/uploads
+      # Flags declaradas no compose mesmo quando o default do zod já resolve
+      # (regra de ops do workspace: flag nova precisa aparecer aqui).
+      # `TRUST_PROXY=false` porque o compose publica a porta direto; atrás de
+      # nginx, `true`.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-false}
+      AI_GATEWAY_URL: ${AI_GATEWAY_URL:-}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    volumes:
+      - meufunil_uploads:/data/uploads
+    ports:
+      - '3015:3015'
+
+# Sub-rede fixa: o pool padrão do Docker já está esgotado nesta máquina e a rede
+# caía em 192.168.0.0/20, colidindo com a Wi-Fi do dono.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.61.0.0/24
+
+volumes:
+  meufunil_pgdata:
+  meufunil_uploads:
