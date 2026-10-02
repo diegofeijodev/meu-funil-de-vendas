@@ -339,7 +339,7 @@ export function SiteFormCard({ integration, origin, workspaceId, canEdit, onDone
           "Para usar como página: copie o Link do formulário e coloque em botões, bio do Instagram ou anúncios.",
           "Para colocar dentro do site (WordPress, Wix, Webflow, Elementor): copie o Código para colar e cole num bloco de HTML personalizado.",
           "Ferramentas externas (RD Station, Typeform, Elementor Forms): configure um webhook POST para o Link do formulário com os campos name, email e phone.",
-          "Proteção contra spam já vem ligada: campo isca, tempo mínimo de preenchimento e limite de 5 envios a cada 10 minutos por IP.",
+          "Proteção contra spam já vem ligada: o formulário do site tem campo isca e tempo mínimo de preenchimento, e todo envio (inclusive de ferramentas externas) tem limite de 5 envios a cada 10 minutos por IP.",
           "Crie uma cadência com gatilho Origem = site em CRM → Cadências para responder na hora.",
         ]}
       />

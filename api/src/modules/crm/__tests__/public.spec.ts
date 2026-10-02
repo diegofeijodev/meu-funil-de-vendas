@@ -140,14 +140,31 @@ describe('formulário do site — POST', () => {
     expect(w.t.crm_leads.rows).toHaveLength(1);
   });
 
-  it('_t obrigatório: ausente, 0, não numérico ou no futuro = spam (mesma resposta ok do isca, nada gravado); válido grava', async () => {
+  it('integração externa (JSON sem `website` nem `_t`) é gravada, como no protótipo', async () => {
+    const { w, controller } = await formWorld();
+    const r = fakeReply();
+    await controller.submit(TOKEN, req({ name: 'RD Station', email: 'rd@x.co', phone: '11999990000' }, { type: 'application/json' }), r.reply);
+    expect(r.state.code).toBe(200);
+    expect(w.t.crm_leads.rows).toHaveLength(1);
+    expect(w.t.crm_leads.rows[0].name).toBe('RD Station');
+  });
+
+  it('nosso formulário (traz `website`) sem `_t` = spam; `_t` presente e inválido = spam (mesma resposta ok do isca, nada gravado); válido grava', async () => {
     const { w, controller } = await formWorld();
     const base = { name: 'Bot', email: 'bot@x.co' };
     const ok = fakeReply();
-    await controller.submit(TOKEN, req({ name: 'Humano', email: 'h@x.co', _t: OLD }), ok.reply);
+    await controller.submit(TOKEN, req({ name: 'Humano', email: 'h@x.co', website: '', _t: OLD }), ok.reply);
+    expect(w.t.crm_leads.rows).toHaveLength(1);
+    // com `website` (vazio) e `_t` ausente/inválido
     for (const t of [undefined, 0, '0', '', 'abc', null, Date.now() + 60_000, String(Date.now() + 60_000), -5, NaN]) {
       const r = fakeReply();
-      await controller.submit(TOKEN, req({ ...base, ...(t === undefined ? {} : { _t: t }) }), r.reply);
+      await controller.submit(TOKEN, req({ ...base, website: '', ...(t === undefined ? {} : { _t: t }) }), r.reply);
+      expect([r.state.code, r.state.body]).toEqual([ok.state.code, ok.state.body]);
+    }
+    // sem `website`, mas com `_t` inválido (0, texto, futuro, < 2,5 s)
+    for (const t of [0, '0', 'abc', -5, Date.now() + 60_000, Date.now() - 1000]) {
+      const r = fakeReply();
+      await controller.submit(TOKEN, req({ ...base, _t: t }), r.reply);
       expect([r.state.code, r.state.body]).toEqual([ok.state.code, ok.state.body]);
     }
     expect(w.t.crm_leads.rows).toHaveLength(1);

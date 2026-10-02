@@ -49,9 +49,15 @@ export class SiteFormService {
     const ws = integration.workspace_id;
     // Campo isca preenchido = robô. Responde "ok" sem gravar nada.
     if (pick(body, ['website', 'url_hp'])) return { spam: true };
-    // `_t` (instante em que o formulário abriu) é obrigatório: ausente, não numérico, zero, futuro ou com menos de 2,5 s = robô.
-    const started = Number(body['_t']);
-    if (!Number.isFinite(started) || started <= 0 || started > now || now - started < MIN_FILL_MS) return { spam: true };
+    // `_t` (instante em que o formulário abriu) só é exigido quando o corpo traz a chave isca `website`: ela indica que o envio
+    // veio do formulário servido por nós, que sempre manda os dois. Sem `website` nem `_t` é integração externa (RD Station,
+    // Typeform, Elementor Forms) e segue, limitada por IP e pelo teto da integração. Se `_t` veio, precisa ser válido:
+    // numérico, não futuro e com pelo menos 2,5 s.
+    const hasTimer = body['_t'] !== undefined && body['_t'] !== null && body['_t'] !== '';
+    if (hasTimer || 'website' in body) {
+      const started = Number(body['_t']);
+      if (!Number.isFinite(started) || started <= 0 || started > now || now - started < MIN_FILL_MS) return { spam: true };
+    }
 
     const ipHash = ip ? createHash('sha256').update(`${integration.id}:${ip}`).digest('hex').slice(0, 32) : null;
     if (ipHash) {
