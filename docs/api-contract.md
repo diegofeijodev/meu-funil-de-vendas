@@ -121,6 +121,9 @@ guardava as URLs de 1–5 anos) e/ou a `storage_path`.
 | `DELETE /v1/workspaces/:workspaceId/files?key=` | write | `204`; a chave precisa ser `<kind>/<workspaceId>/…` (senão `400`) |
 
 Tipos aceitos: `image/png|jpeg|webp|gif` (≤ 20 MB), `video/mp4|quicktime|webm` (≤ 100 MB), `application/pdf` (≤ 10 MB).
+**Só com `kind=brands`** (400 `Tipo de arquivo não suportado.` nos outros): `image/svg+xml` e fontes `.ttf`/`.otf` (≤ 20 MB). A fonte é reconhecida pela extensão
+(navegadores mandam `octet-stream`/`x-font-*`) e o conteúdo é conferido (assinatura sfnt/`OTTO`/`true`/`ttcf`; SVG precisa conter `<svg`) — senão `400 "O conteúdo do arquivo não corresponde ao tipo."`.
+O download de SVG sai com `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` (scripts do SVG não rodam).
 Assinatura: `HMAC-SHA256(key = HKDF(FILES_SIGNING_SECRET || JWT_SECRET), "<bucket>\n<key>\n<exp>")`, hex. Arquivos gerados no servidor
 usam `YYYY-MM-DD/<uuid>.<ext>` (`FilesService.newGeneratedKey`).
 
@@ -164,3 +167,58 @@ Ordem em texto/JSON (igual ao protótipo): chave OpenAI do workspace → chave G
 ## 9. Saúde
 
 `GET /health` **(pública)** → `{ status: "ok", time }` (faz `SELECT 1`).
+
+## 10. Marcas (Brand Kit) — `/v1/workspaces/:workspaceId/brands`
+
+Telas `/brands` e `/brands/$id`. GET = `read`; POST/PATCH/DELETE = `write` (viewer só lê). Todo `:brandId`/`:id` é conferido contra o workspace da URL
+(marca/filho de outro workspace → `404`). Estáticas antes das `:id`. Atividade gravada no servidor (`activity_logs`): `brand.created {name}`,
+`brand.updated {brand_id}` (não grava quando só `visual_style` muda, como o protótipo), `brand.deleted {name}`.
+
+| rota | corpo | resposta |
+|---|---|---|
+| `GET /brands` | — | `brands[]` por `created_at`, cada uma com `campaigns: [{count}]` e `products: [{count}]` (embeds do PostgREST) |
+| `POST /brands` | `{ name, segment? }` (`name` não vazio, ≤ 200) | `201` linha de `brands`; atividade `brand.created` |
+| `GET /brands/:brandId` | — | linha de `brands`; `404 "Marca não encontrada."` |
+| `PATCH /brands/:brandId` | qualquer de `name, website, segment, region, description, differentials, target_audience, competitors, tone_of_voice, past_campaigns, primary_color, secondary_color, typography, logo_url` (strings), `preferred_words[]`, `banned_words[]`, `visual_style` (objeto jsonb ≤ 50 000 caracteres) | linha de `brands`. `name` em branco → `400 "Informe o nome da marca."`; campo desconhecido → `400 VALIDATION_ERROR` |
+| `DELETE /brands/:brandId` | — | `204`; o cascade (campanhas, produtos, criativos…) vem das FKs |
+| `GET /brands/:brandId/products` | — | `products[]` por `created_at` |
+| `POST /brands/:brandId/products` | `{ name, description?, price?, margin_percent? }` (números; padrão 0) | `201` linha |
+| `PATCH /brands/:brandId/products/:id` | `{ name?, description?, price?, margin_percent? }` | linha |
+| `DELETE /brands/:brandId/products/:id` | — | `204` |
+| `GET\|POST /brands/:brandId/personas`, `PATCH\|DELETE …/personas/:id` | `{ name, age_range?, location?, interests?, pains?, desires?, segment_type? }` (`segment_type` padrão do banco `B2C`) | linha / `204` |
+| `GET /brands/:brandId/learnings` | — | `brand_learnings[]` por `score` desc (somente leitura) |
+| `GET /brands/:brandId/assets` | — | `brand_assets[]` por `created_at` |
+| `POST /brands/:brandId/assets` | `{ kind: logo\|identity\|reference\|font\|photo, name, storage_path, tag?: produto\|ambiente\|equipe }` | `201` linha de `brand_assets`. **Fluxo de envio**: o navegador manda o arquivo para `POST /v1/workspaces/:ws/files?kind=brands` (§4) e registra aqui a `key` devolvida como `storage_path`. A API exige chave `brands/<workspaceId>/…` existente (senão `400 "Chave de arquivo inválida."`) e **gera a `url`** (assinada de 5 anos, mesma forma do protótipo); a `url` NÃO é aceita do cliente (`400 VALIDATION_ERROR`). `tag` só vale para `reference`. `kind=logo` também grava `brands.logo_url` (o protótipo fazia um 2º `update`) |
+| `DELETE /brands/:brandId/assets/:id` | — | `204` (só a linha; o arquivo em disco fica) |
+
+### 10.1 `POST /v1/creative/generate-brand-guide` (server fn `generateBrandGuide`)
+Corpo `{ brandId }` → `200 { guide, referencias: string[] }`. A IA (`AiService.vision`, schema estrito `brand_guide`) olha até 6 fotos de referência da marca
+(`kind` `reference`|`photo`, sem PDF/SVG, produto primeiro, lidas do disco pela `storage_path`) e sugere `estilo_fotografico, iluminacao, paleta_hex[], ambientes[],
+elementos_obrigatorios[], elementos_proibidos[], fonte_titulo, fonte_corpo`. Acesso: precisa de `write` no workspace da marca (gasta crédito de IA; a tela esconde o botão do viewer);
+marca inexistente **ou de workspace do qual o usuário não é membro** → `404 "Marca não encontrada."`; sem foto → `400 "Envie ao menos uma foto de referência (produto, ambiente ou equipe)."`;
+IA não configurada/falha → `502 AI_NOT_CONFIGURED`/`AI_ERROR`. Diferença: as fotos vão como estão (≤ 8 MB cada; o protótipo reduzia para 1024 px com Jimp).
+
+## 11. Visão geral — `GET /v1/workspaces/:workspaceId/overview` (read)
+
+As cinco leituras diretas da tela `/overview`, devolvidas juntas (rotas por tabela ficam para as tarefas de campanhas/insights):
+`{ performance_daily: [...] (todas as linhas com source ≠ 'demo'), campaigns: [...], campaign_costs: [{ amount }], ai_recommendations: [...] (status 'pending', ordem por severity asc), creatives: [{ id, title }] }`.
+KPIs/agrupamentos continuam no navegador (`lib/metrics.ts`).
+
+## 12. Setup — `POST /v1/setup/status` (server fn `setupStatus`)
+Corpo `{ workspaceId }` (uuid; senão `400`), qualquer membro (`read`) → `{ items: SetupItem[] }`, `SetupItem = { key, group: "Começo"|"Conexões"|"CRM"|"Agendadores", label, status: "ok"|"pending"|"error"|"optional", detail, link, required }`.
+Mesmos itens, textos e regras do protótipo. Chama `CrmDefaultsService.ensure` antes (as etapas do funil nascem na 1ª leitura). Diferenças: "IA do app" testa `AI_GATEWAY_URL` + `AI_GATEWAY_API_KEY`
+(era `LOVABLE_API_KEY`); os agendadores usam `cron_heartbeats` (`SCHEDULER_ENABLED=true`). As sondas de Meta/Google/TikTok/Canva/Higgsfield leem o cofre/tabelas com as mesmas chaves do protótipo
+(`META_*`, `GOOGLE_ADS_*`, `TIKTOK_*`, `CANVA_TOKENS`, `mcp_connections`), sem chamar os provedores.
+
+## 13. Agência — `POST /v1/agency/*` (sem workspace na URL)
+| rota | corpo | resposta / erros |
+|---|---|---|
+| `POST /v1/agency/overview` | `{}` | `{ workspaces: [{ id, name, role, inheritFrom, spend, adLeads, cpl, roas, activeCampaigns, crmLeads7d, postsWeek, pending }] }` das empresas em que o usuário é membro (qualquer papel), mais antiga primeiro. Gasto/leads/receita dos últimos 30 dias (`source ≠ 'demo'`, data de Brasília); leads CRM e posts em 7 dias; `pending` = `approval_requests` pendentes + `ig_posts` `pending_approval`; `cpl`/`roas` = `null` sem leads/gasto |
+| `POST /v1/agency/set-ai-inheritance` | `{ workspaceId, sourceId: uuid\|null }` | `{ ok: true }`. **Segurança (Task 0): o chamador precisa ser owner\|admin da empresa E da origem** — senão qualquer um herdaria as chaves BYO de IA de outro cliente. `403 "Só o dono ou um administrador altera esta empresa."` (empresa) · `403 "Você precisa ser dono ou administrador da empresa de origem."` (origem) · `400 "Escolha outra empresa como origem."` (origem = empresa). Anti-corrente: a origem passa a não herdar de ninguém (mesma transação). `sourceId` é obrigatório (`null` explícito limpa) |
+| `POST /v1/agency/apply-ai-inheritance-to-all` | `{ sourceId }` | `{ updated: n }`: aplica a origem às OUTRAS empresas em que o usuário é owner\|admin (a origem fica sem herança). Origem que ele não administra → `403 "Você precisa ser dono ou administrador da empresa de origem."` |
+
+## 14. Configurações e auditoria
+A tela `/settings` usa rotas do §3: `GET /v1/workspaces/:id/members` (membros + perfis), `GET /v1/profiles/me`, `GET /v1/workspaces/:id`, `PATCH /v1/workspaces/:id` (manage) e `PATCH /v1/profiles/me`.
+`PATCH /v1/workspaces/:id` agora grava `activity_logs` `workspace.updated {name}` (o protótipo gravava no navegador). `ActivityService.log(workspaceId, actorId, action, entityType, metadata)`
+(módulo global `modules/activity`) é o ponto único de auditoria para as próximas tarefas: mesmas strings de `action`, falha de auditoria nunca derruba a operação.
+

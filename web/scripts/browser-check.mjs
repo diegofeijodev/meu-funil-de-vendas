@@ -10,6 +10,9 @@
 //
 //   node scripts/browser-check.mjs
 import { chromium } from '/home/doutor/coding/freela/freela-web-v2/node_modules/playwright/index.mjs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const BASE = 'http://localhost:3025';
 const API = 'http://localhost:3015';
@@ -29,7 +32,13 @@ const ignorada = (url) => IGNORADAS.some((re) => re.test(url));
  * do Next cancelando um pré-carregamento de `<Link>` quando a navegação acontece
  * antes dele terminar. Erro de verdade no mesmo pedido viria como HTTP >= 400.
  */
-const REDE_IGNORADA = [{ url: /[?&]_rsc=/, erro: 'net::ERR_ABORTED' }];
+const REDE_IGNORADA = [
+  { url: /[?&]_rsc=/, erro: 'net::ERR_ABORTED' },
+  // `next dev` recompilando a página pedida: o navegador aborta o `hot-update.js` anterior.
+  { url: /\/_next\/static\/webpack\/.*\.hot-update\.js$/, erro: 'net::ERR_ABORTED' },
+  // Navegar para outra tela enquanto o checklist (`setup/status`, ~1 s) ainda carrega cancela o XHR.
+  { url: /\/v1\/setup\/status$/, erro: 'net::ERR_ABORTED' },
+];
 const redeIgnorada = (url, erro) =>
   ignorada(url) || REDE_IGNORADA.some((r) => r.url.test(url) && erro === r.erro);
 
@@ -65,6 +74,8 @@ page.on('requestfailed', (r) => {
 });
 
 const corpo = async () => await page.locator('body').innerText();
+/** `innerText` aplica o `uppercase` do CSS nos rótulos: compara sem diferenciar caixa. */
+const tem = (txt, t) => txt.toLowerCase().includes(t.toLowerCase());
 const sessaoGuardada = () => page.evaluate(() => !!window.localStorage.getItem('authUser'));
 
 try {
@@ -136,6 +147,205 @@ try {
   check('fonte do corpo é a Inter do next/font', /inter/i.test(fontes.corpo.split(',')[0]), fontes.corpo);
   check('fonte display (Manrope) aplicada em .font-display', /manrope/i.test(fontes.h.split(',')[0]), fontes.h);
   check('tab title do root', (await page.title()).includes('Meu Funil'), await page.title());
+
+  // ── 2b. Task 2: Overview, Marcas, Configurações, Agência ───────
+  const tmp = mkdtempSync(path.join(tmpdir(), 'mf-bc-'));
+  const esperaShell = () => page.waitForFunction(() => !!document.querySelector('aside select')?.value, null, { timeout: 30000 });
+  /** Tira dos erros coletados o que o próprio passo provoca de propósito (HTTP + eco no console). */
+  const esperado = (re) => {
+    for (let k = erros.length - 1; k >= 0; k--) if (re.test(erros[k])) erros.splice(k, 1);
+  };
+
+  console.log('-- Overview --');
+  await page.goto(`${BASE}/overview`);
+  await esperaShell();
+  await page.getByText('Investimento (período)').waitFor({ timeout: 30000 });
+  const txtOv = await corpo();
+  for (const t of ['Overview', 'Nova campanha', 'Atualizar da Meta', 'Receita atribuída', 'ROAS', 'ROI', 'CAC médio', 'Campanhas ativas', 'Melhor campanha', 'Evolução diária', 'AI Insights', 'Melhor criativo', 'Status atual do portfólio']) {
+    check(`overview mostra "${t}"`, tem(txtOv, t));
+  }
+  check('overview: título da aba', (await page.title()) === 'Overview · Meu Funil', await page.title());
+  const aguardaChecklist = await page.getByText(/passos essenciais concluídos/).first().waitFor({ timeout: 15000 }).then(() => true, () => false);
+  check('overview: checklist de configuração (compacto) aparece enquanto faltam passos', aguardaChecklist);
+  check('overview: 8 cartões de KPI', (await page.locator('.grid.sm\\:grid-cols-2.xl\\:grid-cols-4 > *').count()) >= 8);
+
+  console.log('-- Marcas --');
+  const marca = `Marca Check ${Date.now()}`;
+  await page.goto(`${BASE}/brands`);
+  await page.getByRole('heading', { name: 'Brands' }).waitFor({ timeout: 30000 });
+  check('brands: título da aba', (await page.title()) === 'Brands · Meu Funil', await page.title());
+  check('brands: explicação do Brand Brain', tem(await corpo(), 'Como o Brand Brain é usado'));
+  await page.getByRole('button', { name: 'Nova marca' }).click();
+  await page.fill('#bname', marca);
+  await page.fill('#bseg', 'Segmento check');
+  await page.getByRole('button', { name: 'Criar marca' }).click();
+  await page.getByText('Marca criada. Complete o Brand Brain.').waitFor({ timeout: 15000 });
+  await page.waitForURL(/\/brands\/[0-9a-f-]{36}$/, { timeout: 15000 });
+  const brandUrl = page.url();
+  check('criar marca leva a /brands/:id', /\/brands\/[0-9a-f-]{36}$/.test(rel()), rel());
+  await page.getByRole('heading', { name: marca }).waitFor({ timeout: 15000 });
+  check('detalhe: título da aba', (await page.title()) === 'Brand Kit · Meu Funil', await page.title());
+  for (const t of ['Voltar', 'Salvar Brand Brain', 'DNA', 'Identidade visual', 'Guia visual', 'Produtos', 'Personas', 'Aprendizados', 'Negócio', 'Linguagem']) {
+    check(`detalhe mostra "${t}"`, tem(await corpo(), t));
+  }
+
+  // DNA: salvar e recarregar
+  await page.fill('#description', 'Descrição do check');
+  await page.fill('#pw', 'chopp, gelado');
+  await page.getByRole('button', { name: 'Salvar Brand Brain' }).click();
+  await page.getByText('Brand Brain atualizado. Os agentes já usam o novo contexto.').waitFor({ timeout: 15000 });
+  await page.reload();
+  await page.locator('#description').waitFor({ timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('#description')?.value === 'Descrição do check', null, { timeout: 15000 });
+  check('DNA persistido (descrição e palavras)', (await page.inputValue('#pw')) === 'chopp, gelado');
+
+  // Identidade visual: cores, logo, fonte (envio pela API) e remoção
+  await page.getByRole('tab', { name: 'Identidade visual' }).click();
+  await page.fill('#ty', 'Archivo Black');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  writeFileSync(path.join(tmp, 'logo.png'), png);
+  writeFileSync(path.join(tmp, 'ref.png'), png);
+  writeFileSync(path.join(tmp, 'Marca.ttf'), Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from('fontbytes')]));
+  const logoInput = page.locator('label', { hasText: /^\s*Logo\s*$/ }).locator('input[type=file]');
+  await logoInput.setInputFiles(path.join(tmp, 'logo.png'));
+  await page.getByText('Arquivo enviado.').first().waitFor({ timeout: 20000 });
+  const imgLogo = page.locator('img[alt="logo.png"]');
+  await imgLogo.waitFor({ timeout: 15000 });
+  check('logo enviado aparece e a imagem carrega (URL assinada da API)', await imgLogo.evaluate((i) => i.complete && i.naturalWidth > 0));
+  const fontInput = page.locator('label', { hasText: 'Fonte (.ttf/.otf)' }).locator('input[type=file]');
+  await fontInput.setInputFiles(path.join(tmp, 'Marca.ttf'));
+  await page.getByText('Aa · Marca.ttf').waitFor({ timeout: 20000 });
+  ok('fonte .ttf enviada (cartão "Aa · Marca.ttf")');
+  check('rótulos dos arquivos (Logo / Fonte)', (await corpo()).includes('Logo') && (await corpo()).includes('Fonte (.ttf/.otf)'));
+  // arquivo inválido: o próprio navegador avisa antes de enviar
+  writeFileSync(path.join(tmp, 'x.txt'), 'texto');
+  await page.locator('label', { hasText: 'Identidade visual' }).last().locator('input[type=file]').setInputFiles(path.join(tmp, 'x.txt'));
+  await page.getByText('x.txt: envie uma imagem (JPG, PNG, SVG, WEBP) ou PDF.').waitFor({ timeout: 10000 });
+  ok('arquivo .txt é recusado com a mensagem do protótipo');
+  // remover os dois
+  const removers = page.getByRole('button', { name: 'Remover' });
+  check('2 arquivos listados', (await removers.count()) === 2, String(await removers.count()));
+  await removers.first().click();
+  await page.waitForFunction(() => document.querySelectorAll('button[aria-label="Remover"]').length === 1, null, { timeout: 10000 });
+  await page.getByRole('button', { name: 'Remover' }).first().click();
+  await page.getByText('Nenhum arquivo enviado ainda.').waitFor({ timeout: 10000 });
+  ok('arquivos removidos');
+
+  // Guia visual: sem foto de referência a IA devolve a mensagem do protótipo (HTTP 400 esperado)
+  await page.getByRole('tab', { name: 'Guia visual' }).click();
+  await page.getByPlaceholder('fotografia gastronômica realista, close, fundo de bar de madeira').fill('estilo do check');
+  await page.getByRole('button', { name: 'Gerar guia com IA' }).click();
+  await page.getByText('Envie ao menos uma foto de referência (produto, ambiente ou equipe).').waitFor({ timeout: 15000 });
+  ok('"Gerar guia com IA" sem referência mostra a mensagem do protótipo');
+  esperado(/generate-brand-guide|400 \(Bad Request\)/);
+  await page.getByRole('button', { name: 'Salvar guia visual' }).click();
+  await page.getByText('Guia visual salvo. Os próximos criativos já seguem este guia.').waitFor({ timeout: 15000 });
+  await page.reload();
+  await page.getByRole('tab', { name: 'Guia visual' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('input')].some((i) => i.value === 'estilo do check'), null, { timeout: 15000 });
+  ok('guia visual persistido');
+
+  // Produtos
+  await page.getByRole('tab', { name: 'Produtos' }).click();
+  await page.getByText('Nenhum produto cadastrado.').waitFor({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Adicionar' }).click();
+  const linhaProd = page.locator('div.rounded-lg', { has: page.getByRole('button', { name: 'Remover' }) }).first();
+  await linhaProd.waitFor({ timeout: 10000 });
+  await linhaProd.locator('input').nth(0).fill('Chopp do check');
+  await linhaProd.locator('input').nth(2).fill('12.5');
+  await linhaProd.getByRole('button', { name: 'Salvar' }).click();
+  await page.getByText('Produto salvo').waitFor({ timeout: 10000 });
+  await page.reload();
+  await page.getByRole('tab', { name: 'Produtos' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('input')].some((i) => i.value === 'Chopp do check'), null, { timeout: 15000 });
+  check('produto salvo e persistido (preço no rodapé)', (await corpo()).includes('Preço atual: R$') && (await corpo()).includes('12,50'));
+  await page.getByRole('button', { name: 'Remover' }).first().click();
+  await page.getByText('Nenhum produto cadastrado.').waitFor({ timeout: 10000 });
+  ok('produto removido');
+
+  // Personas
+  await page.getByRole('tab', { name: 'Personas' }).click();
+  await page.getByText('Nenhuma persona cadastrada.').waitFor({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Adicionar' }).click();
+  const linhaPer = page.locator('div.rounded-lg', { has: page.getByRole('button', { name: 'Remover' }) }).first();
+  await linhaPer.waitFor({ timeout: 10000 });
+  await linhaPer.locator('input').nth(0).fill('Ana do check');
+  await linhaPer.getByRole('button', { name: 'Salvar' }).click();
+  await page.getByText('Persona salva').waitFor({ timeout: 10000 });
+  await page.reload();
+  await page.getByRole('tab', { name: 'Personas' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('input')].some((i) => i.value === 'Ana do check'), null, { timeout: 15000 });
+  ok('persona salva e persistida');
+  await page.getByRole('button', { name: 'Remover' }).first().click();
+  await page.getByText('Nenhuma persona cadastrada.').waitFor({ timeout: 10000 });
+  ok('persona removida');
+
+  await page.getByRole('tab', { name: 'Aprendizados' }).click();
+  await page.getByText('Nenhum aprendizado registrado ainda.').waitFor({ timeout: 10000 });
+  ok('aprendizados: estado vazio');
+
+  // lista: cartão com segmento, contagens e exclusão pelo diálogo
+  await page.goto(`${BASE}/brands`);
+  const cartao = page.locator('a[href^="/brands/"]', { hasText: marca });
+  await cartao.waitFor({ timeout: 30000 });
+  const txtCartao = await cartao.innerText();
+  check('cartão mostra segmento e contagens', txtCartao.includes('Segmento check') && txtCartao.includes('0 campanhas') && txtCartao.includes('0 produtos'), txtCartao);
+  check('cartão mostra a descrição salva', txtCartao.includes('Descrição do check'));
+  await cartao.getByRole('button', { name: 'Excluir' }).click();
+  await page.getByRole('heading', { name: 'Excluir marca' }).waitFor({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Excluir marca' }).click();
+  await page.getByText(`Marca "${marca}" excluída.`).waitFor({ timeout: 15000 });
+  await page.waitForFunction((m) => !document.body.innerText.includes(m) || document.body.innerText.includes(`Marca "${m}" excluída.`), marca, { timeout: 10000 });
+  check('marca excluída some da lista', (await page.locator('a[href^="/brands/"]', { hasText: marca }).count()) === 0);
+  await page.goto(brandUrl);
+  await page.waitForTimeout(1500);
+  check('marca excluída: detalhe não carrega (skeleton)', (await page.locator('h1').count()) === 0 || !(await page.locator('h1').first().innerText()).includes(marca));
+  // o GET 404 da marca excluída é provocado de propósito
+  esperado(/\[http 404\]|404 \(Not Found\)/);
+
+  console.log('-- Configurações --');
+  await page.goto(`${BASE}/settings`);
+  await page.getByRole('heading', { name: 'Configurações' }).waitFor({ timeout: 30000 });
+  await page.getByText('Time e permissões').waitFor({ timeout: 30000 });
+  await page.getByText(/^desde /).first().waitFor({ timeout: 15000 });
+  await page.getByText(/passos essenciais concluídos/).first().waitFor({ timeout: 15000 });
+  const txtSet = await corpo();
+  for (const t of ['Workspace', 'Seu perfil', 'Time e permissões', 'Segurança dos dados', 'Plano:', 'desde', 'Owner', EMAIL]) check(`settings mostra "${t}"`, tem(txtSet, t));
+  check('settings: título da aba', (await page.title()) === 'Configurações · Meu Funil', await page.title());
+  check('settings: checklist completo ("Ver tudo"/"Recolher")', txtSet.includes('Recolher') || txtSet.includes('Ver tudo'));
+  const nomeOriginal = await page.inputValue('#fn');
+  await page.fill('#fn', 'Nome Check');
+  await page.getByRole('button', { name: 'Salvar' }).nth(1).click();
+  await page.getByText('Perfil atualizado.').waitFor({ timeout: 10000 });
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#fn')?.value === 'Nome Check', null, { timeout: 15000 });
+  ok('perfil: nome salvo e persistido');
+  await page.fill('#fn', nomeOriginal);
+  await page.getByRole('button', { name: 'Salvar' }).nth(1).click();
+  await page.getByText('Perfil atualizado.').waitFor({ timeout: 10000 });
+  const wsOriginal = await page.inputValue('#wn');
+  await page.fill('#wn', `${wsOriginal} Check`);
+  await page.getByRole('button', { name: 'Salvar' }).first().click();
+  await page.getByText('Workspace atualizado.').waitFor({ timeout: 10000 });
+  await page.waitForFunction((n) => [...document.querySelectorAll('aside select option')].some((o) => o.textContent === n), `${wsOriginal} Check`, { timeout: 15000 });
+  ok('workspace renomeado (aparece no seletor do menu)');
+  await page.fill('#wn', wsOriginal);
+  await page.getByRole('button', { name: 'Salvar' }).first().click();
+  await page.getByText('Workspace atualizado.').waitFor({ timeout: 10000 });
+  await page.waitForFunction((n) => [...document.querySelectorAll('aside select option')].some((o) => o.textContent === n), wsOriginal, { timeout: 15000 });
+  ok('nome do workspace restaurado');
+
+  console.log('-- Agência --');
+  await page.goto(`${BASE}/agency`);
+  await page.getByRole('heading', { name: 'Agência' }).waitFor({ timeout: 30000 });
+  await page.getByText('Gasto 30d').waitFor({ timeout: 30000 });
+  const txtAg = await corpo();
+  for (const t of ['empresa(s)', 'Leads anúncio', 'CPL', 'ROAS', 'Campanhas ativas', 'Leads CRM 7d', 'Posts da semana', 'Pendências', 'Abrir', 'Meu Funil Demo', 'Total:']) check(`agência mostra "${t}"`, tem(txtAg, t));
+  check('agência: título da aba', (await page.title()) === 'Agência · Meu Funil', await page.title());
+  await page.getByRole('button', { name: 'Abrir' }).first().click();
+  await page.waitForURL('**/overview', { timeout: 15000 });
+  check('"Abrir" troca a empresa e vai para /overview', rel() === '/overview', rel());
+  rmSync(tmp, { recursive: true, force: true });
 
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');
