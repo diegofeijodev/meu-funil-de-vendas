@@ -1061,11 +1061,15 @@ model crm_cadence_runs {
   entry_stage_id     String?              @db.Uuid
   stop_reason        String?
   last_step_at       DateTime?            @db.Timestamptz(6)
+  /// Lease do motor de cadências (Task 8): quem pega o run grava token + validade; outro worker só o pega depois de vencida.
+  lease_until        DateTime?            @db.Timestamptz(6)
+  lease_token        String?              @db.Uuid
   workspace          workspaces           @relation("crm_cadence_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   cadence            crm_cadences         @relation("crm_cadence_runs_cadence_id", fields: [cadence_id], references: [id], onDelete: Cascade)
   lead               crm_leads            @relation("crm_cadence_runs_lead_id", fields: [lead_id], references: [id], onDelete: Cascade)
   crm_cadence_events crm_cadence_events[] @relation("crm_cadence_events_run_id")
 
+  @@unique([cadence_id, lead_id], map: "crm_cadence_runs_cadence_lead_uidx")
   @@index([status, next_run_at], map: "crm_cadence_runs_due_idx")
 }
 

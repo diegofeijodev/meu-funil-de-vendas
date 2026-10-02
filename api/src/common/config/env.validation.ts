@@ -83,6 +83,9 @@ const envSchema = z
     EVOLUTION_API_KEY: opt(),
     RESEND_API_KEY: opt(),
     CALCOM_API_KEY: opt(),
+    /** Só testes (smoke/browser-check): Resend e Cal.com falsos. Ignoradas em NODE_ENV=production. */
+    RESEND_API_URL: opt(),
+    CALCOM_API_URL: opt(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test' && !env.CREDENTIALS_ENCRYPTION_KEY) {

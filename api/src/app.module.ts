@@ -21,6 +21,7 @@ import { CopyAiModule } from './modules/copy-ai/copy-ai.module';
 import { CreativeModule } from './modules/creative/creative.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
 import { CrmModule } from './modules/crm/crm.module';
+import { CrmChannelsCoreModule, CrmChannelsModule } from './modules/crm-channels/crm-channels.module';
 import { InstagramModule } from './modules/instagram/instagram.module';
 import { FilesModule } from './modules/files/files.module';
 import { McpModule } from './modules/mcp/mcp.module';
@@ -64,6 +65,8 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     InstagramModule,
     AdsModule,
     CrmModule,
+    CrmChannelsCoreModule,
+    CrmChannelsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
