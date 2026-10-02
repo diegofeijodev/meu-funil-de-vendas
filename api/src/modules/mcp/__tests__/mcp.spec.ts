@@ -239,6 +239,22 @@ describe('McpService — conexões com token cifrado', () => {
     expect(conns.rows).toHaveLength(1);
   });
 
+  it('trocar o endereço do servidor NÃO reaproveita o token guardado (nem o envia ao servidor novo) e limpa o OAuth antigo', async () => {
+    const seen: (string | undefined)[] = [];
+    const base = mcpServer({ token: 'chave-manual' });
+    const s = setup((u, i) => { seen.push(((i.headers ?? {}) as any)['Authorization']); return base.fetch(u, i); });
+    await s.svc.connect(OWNER, { workspaceId: WS_A, provider: 'higgsfield', serverUrl: SERVER, accessToken: 'chave-manual' });
+    s.conns.rows[0]!.refresh_token = vault.encryptValue('RT');
+    s.conns.rows[0]!.oauth_client_id = 'cid';
+    seen.length = 0;
+    const r = await s.svc.connect(OWNER, { workspaceId: WS_A, provider: 'higgsfield', serverUrl: 'https://outro.example.com/mcp' });
+    expect(seen.every((a) => a === undefined)).toBe(true);
+    expect(s.conns.rows[0]).toMatchObject({ access_token: null, refresh_token: null, oauth_client_id: null, server_url: 'https://outro.example.com/mcp' });
+    expect(r.status).toBe('error');
+    // com token novo digitado vale normalmente
+    expect((await s.svc.connect(OWNER, { workspaceId: WS_A, provider: 'higgsfield', serverUrl: SERVER, accessToken: 'chave-manual' })).status).toBe('connected');
+  });
+
   it('servidor que pede login → status error + needsAuth; erro de rede vira mensagem', async () => {
     const { svc, conns } = setup(mcpServer({ needAuth: true }).fetch);
     const r = await svc.connect(OWNER, { workspaceId: WS_A, provider: 'meta', serverUrl: SERVER });

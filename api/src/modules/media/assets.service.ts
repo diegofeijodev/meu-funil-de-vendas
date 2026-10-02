@@ -15,6 +15,8 @@ import { readVideoMeta, validateImageForInstagram, validateVideoForInstagram } f
 export const MEDIA_BUCKET = 'creative-assets';
 /** Teto do que se baixa de um provedor/Canva para a biblioteca. */
 export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const SOURCES = new Set(['higgsfield', 'chatgpt', 'gemini', 'upload', 'mock', 'canva', 'instagram']);
 
 export interface IngestInput {
@@ -91,14 +93,50 @@ export class AssetsService {
       const bytes = await this.files.read(own.bucket, own.key);
       return { bytes: new Uint8Array(bytes), mime: null };
     }
-    const safe = assertExternalUrl(url, this.env.NODE_ENV !== 'production', 'endereço da mídia');
-    const res = await this.http(safe, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
-    if (!res.ok) throw new UserError(`Não foi possível baixar a mídia do provedor (HTTP ${res.status}).`);
-    const len = Number(res.headers.get('content-length') ?? 0);
-    if (len > MAX_DOWNLOAD_BYTES) throw new UserError('A mídia do provedor é grande demais.');
-    const buf = new Uint8Array(await res.arrayBuffer());
-    if (buf.length > MAX_DOWNLOAD_BYTES) throw new UserError('A mídia do provedor é grande demais.');
-    return { bytes: buf, mime: res.headers.get('content-type') };
+    return this.downloadExternal(url);
+  }
+
+  /** https público; redirecionamentos seguidos à mão (≤ 5) revalidando CADA salto; corpo lido em streaming e abortado ao passar do teto. */
+  private async downloadExternal(first: string): Promise<{ bytes: Uint8Array; mime: string | null }> {
+    const allowLocal = this.env.NODE_ENV !== 'production';
+    let url = assertExternalUrl(first, allowLocal, 'endereço da mídia');
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const res = await this.http(url, { redirect: 'manual', signal: AbortSignal.timeout(120_000) });
+      if (REDIRECT_STATUSES.has(res.status)) {
+        const loc = res.headers.get('location');
+        await res.body?.cancel().catch(() => undefined);
+        if (!loc) throw new UserError('Não foi possível baixar a mídia do provedor (redirecionamento sem destino).');
+        url = assertExternalUrl(new URL(loc, url).toString(), allowLocal, 'endereço da mídia'); // sem cabeçalhos de credencial: nada a remover
+        continue;
+      }
+      if (!res.ok) throw new UserError(`Não foi possível baixar a mídia do provedor (HTTP ${res.status}).`);
+      return { bytes: await this.readCapped(res), mime: res.headers.get('content-type') };
+    }
+    throw new UserError('Não foi possível baixar a mídia do provedor (redirecionamentos demais).');
+  }
+
+  /** Lê o corpo aos pedaços e interrompe assim que passa de MAX_DOWNLOAD_BYTES (não confia em content-length). */
+  private async readCapped(res: Response): Promise<Uint8Array> {
+    const tooBig = () => new UserError('A mídia do provedor é grande demais.');
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_DOWNLOAD_BYTES) {
+      await res.body?.cancel().catch(() => undefined);
+      throw tooBig();
+    }
+    if (!res.body) return new Uint8Array(await res.arrayBuffer());
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > MAX_DOWNLOAD_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw tooBig();
+      }
+      chunks.push(value);
+    }
+    return new Uint8Array(Buffer.concat(chunks));
   }
 
   /** Bytes do arquivo de um asset (`storage_path` no disco; senão a `url`). */
@@ -168,6 +206,7 @@ export class AssetsService {
       };
     } else {
       const meta = readVideoMeta(bytes);
+      if (!meta.container) throw new UserError('Arquivo de vídeo inválido: não é um MP4/MOV (falta o cabeçalho ftyp).');
       const report = validateVideoForInstagram(meta, target);
       const ext = meta.container === 'qt' ? 'mov' : 'mp4';
       const ct = ext === 'mov' ? 'video/quicktime' : 'video/mp4';

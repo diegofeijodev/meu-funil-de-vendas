@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsArray, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsObject, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import type { FastifyReply } from 'fastify';
 import { Inject } from '@nestjs/common';
 import { AuthUser } from '../../common/auth/auth-user';
@@ -15,16 +15,16 @@ import { MCP_PROVIDERS, McpProvider, McpService } from './mcp.service';
 export class McpConnectDto {
   @IsUUID() workspaceId!: string;
   @IsIn(MCP_PROVIDERS) provider!: McpProvider;
-  @IsString() @MinLength(4) serverUrl!: string;
+  @IsString() @MinLength(4) @MaxLength(2048) serverUrl!: string;
   @IsOptional() @IsString() accessToken?: string | null;
-  @IsOptional() @IsString() label?: string | null;
+  @IsOptional() @IsString() @MaxLength(120) label?: string | null;
 }
 
 export class McpOAuthStartDto {
   @IsUUID() workspaceId!: string;
   @IsIn(MCP_PROVIDERS) provider!: McpProvider;
-  @IsString() @MinLength(4) serverUrl!: string;
-  @IsOptional() @IsString() label?: string | null;
+  @IsString() @MinLength(4) @MaxLength(2048) serverUrl!: string;
+  @IsOptional() @IsString() @MaxLength(120) label?: string | null;
 }
 
 export class McpDisconnectDto {

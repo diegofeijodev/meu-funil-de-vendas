@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AssetsService } from './assets.service';
-import { EXTERNAL_FETCH, ExternalFetch } from './external-fetch';
+import { ENV } from '../../common/config/env.module';
+import { Env } from '../../common/config/env.validation';
+import { createGuardedFetch, EXTERNAL_FETCH } from './external-fetch';
 import { ImageService } from './image.service';
 import { LibraryService } from './library.service';
 import { MediaActionsController, MediaResourceController } from './media.controller';
@@ -10,7 +12,8 @@ import { MediaQueryService } from './media-query.service';
   controllers: [MediaResourceController, MediaActionsController],
   providers: [
     // Única porta de rede do domínio de criativos/mídia/Canva/MCP — nos testes entra um fake.
-    { provide: EXTERNAL_FETCH, useValue: ((url, init) => fetch(url, init)) as ExternalFetch },
+    // Com guarda de conexão: o DNS é resolvido uma vez, endereços internos são recusados e a conexão é fixada no endereço verificado.
+    { provide: EXTERNAL_FETCH, inject: [ENV], useFactory: (env: Env) => createGuardedFetch(env.NODE_ENV !== 'production') },
     ImageService,
     AssetsService,
     LibraryService,

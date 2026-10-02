@@ -3,6 +3,7 @@
  * e validação contra as regras do Instagram.
  */
 import type { TargetFormat } from "./formats";
+import { UserError } from "./user-error";
 
 export type VideoMeta = {
   width: number | null;
@@ -39,7 +40,16 @@ function boxes(buf: Uint8Array, start: number, end: number): Box[] {
 const find = (buf: Uint8Array, parent: Box, type: string) =>
   boxes(buf, parent.body, parent.end).find((b) => b.type === type);
 
+/** Lê o cabeçalho; MP4 truncado/corrompido vira 400 em vez de RangeError (500). */
 export function readVideoMeta(buf: Uint8Array): VideoMeta {
+  try {
+    return parseVideoMeta(buf);
+  } catch {
+    throw new UserError('Arquivo de vídeo inválido ou corrompido.');
+  }
+}
+
+function parseVideoMeta(buf: Uint8Array): VideoMeta {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const meta: VideoMeta = {
     width: null,

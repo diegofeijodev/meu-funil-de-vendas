@@ -3,6 +3,29 @@ import { Jimp } from 'jimp';
 import { TARGET_FORMATS, TargetFormat } from './formats';
 import { bad } from './user-error';
 
+/** Teto de pixels decodificados (bomba de descompressão): 50 megapixels e no máximo 20 000 px por lado. */
+export const MAX_IMAGE_PIXELS = 50_000_000;
+export const MAX_IMAGE_SIDE = 20_000;
+
+/** Largura/altura lidas do CABEÇALHO (PNG IHDR / JPEG SOF), sem decodificar. null = não é PNG/JPEG reconhecível. */
+export function imageHeaderSize(b: Uint8Array): { width: number; height: number } | null {
+  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    return { width: dv.getUint32(16), height: dv.getUint32(20) };
+  }
+  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let p = 2;
+    while (p + 9 < b.length) {
+      if (b[p] !== 0xff) { p++; continue; }
+      const m = b[p + 1]!;
+      if (m === 0xff) { p++; continue; }
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { height: (b[p + 5]! << 8) | b[p + 6]!, width: (b[p + 7]! << 8) | b[p + 8]! };
+      p += 2 + ((b[p + 2]! << 8) | b[p + 3]!);
+    }
+  }
+  return null;
+}
+
 export interface NormalizedImage {
   bytes: Uint8Array;
   mime: 'image/jpeg' | 'image/png';
@@ -25,6 +48,11 @@ export type Img = any;
 export class ImageService {
   /** Lê JPEG/PNG (e o que o jimp detectar); arquivo ilegível = 400 com mensagem simples. */
   async read(bytes: Uint8Array): Promise<Img> {
+    // Antes de decodificar: um PNG/JPEG minúsculo pode declarar bilhões de pixels e esgotar a memória.
+    const dim = imageHeaderSize(bytes);
+    if (dim && (dim.width < 1 || dim.height < 1 || dim.width > MAX_IMAGE_SIDE || dim.height > MAX_IMAGE_SIDE || dim.width * dim.height > MAX_IMAGE_PIXELS)) {
+      throw bad(`Imagem grande demais (${dim.width}x${dim.height}). O limite é de 50 megapixels e 20.000 px por lado.`);
+    }
     try {
       return await Jimp.read(Buffer.from(bytes));
     } catch (e) {

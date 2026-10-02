@@ -296,7 +296,9 @@ echo "── Task 4: biblioteca de mídia ──"
 MED=$API/v1/workspaces/$WID
 MEDA=$API/v1/media
 printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' | base64 -d > /tmp/mf-smoke-1x1.png
-printf 'isto nao e um mp4 de verdade' > /tmp/mf-smoke-fake.mp4
+printf 'isto nao e um mp4 de verdade' > /tmp/mf-smoke-notmp4.mp4
+# só o cabeçalho ftyp (sem moov): entra, mas com os problemas apontados
+printf '\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isomavc1' > /tmp/mf-smoke-fake.mp4
 printf 'texto' > /tmp/mf-smoke.txt
 UPM=$(curl -s -X POST $MEDA/upload-media -H "$HM" -F "workspaceId=$WID" -F target=other -F "brandId=$CB" -F "file=@/tmp/mf-smoke-1x1.png;type=image/png;filename=Foto do bar.png")
 M1=$(echo "$UPM" | jq -r .id)
@@ -306,6 +308,7 @@ check "mídia: arquivo gravado em media/<ws>/…" "1" "$(PSQL "SELECT count(*) F
 UPV=$(curl -s -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=ig_reel -F "file=@/tmp/mf-smoke-fake.mp4;type=video/mp4")
 M2=$(echo "$UPV" | jq -r .id)
 check "mídia: vídeo ilegível entra com os problemas (sem transcodificar)" "false" "$(echo "$UPV" | jq -r .igReady)"
+check "mídia: \"vídeo\" sem cabeçalho ftyp é recusado" "Arquivo de vídeo inválido: não é um MP4/MOV (falta o cabeçalho ftyp)." "$(curl -s -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=ig_reel -F "file=@/tmp/mf-smoke-notmp4.mp4;type=video/mp4" | jq -r .error.message)"
 check "mídia: viewer não envia" "Seu papel não permite esta ação." "$(curl -s -X POST $MEDA/upload-media -H "$HV" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke-1x1.png;type=image/png" | jq -r .error.message)"
 check "mídia: estranho não envia" "Você não tem acesso a esta área de trabalho." "$(curl -s -X POST $MEDA/upload-media -H "$HD" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke-1x1.png;type=image/png" | jq -r .error.message)"
 check "mídia: só imagem/vídeo" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke.txt;type=text/plain")"
@@ -447,7 +450,7 @@ MPATH=$(PSQL "SELECT storage_path FROM media_assets WHERE id='$M1'")
 check "mídia: dono exclui tudo (arquivo + registro)" "true" "$(curl -s -X POST $MEDA/delete-media-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":$ALLM}" | jq '.deleted >= 3')"
 check "mídia: …o arquivo sumiu do disco (link antigo → 404)" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$DLU")"
 check "mídia: …e não sobrou linha" "0" "$(PSQL "SELECT count(*) FROM media_assets WHERE workspace_id='$WID'")"
-rm -rf "$(dirname "$0")/../uploads/creative-assets/exports/$WID" "$(dirname "$0")/../uploads/creative-assets/media/$WID" /tmp/mf-smoke-1x1.png /tmp/mf-smoke-fake.mp4 /tmp/mf-smoke.txt /tmp/mf-smoke-capcut.zip
+rm -rf "$(dirname "$0")/../uploads/creative-assets/exports/$WID" "$(dirname "$0")/../uploads/creative-assets/media/$WID" /tmp/mf-smoke-1x1.png /tmp/mf-smoke-fake.mp4 /tmp/mf-smoke-notmp4.mp4 /tmp/mf-smoke.txt /tmp/mf-smoke-capcut.zip
 
 echo "── Task 5: Instagram (recursos, ações, autorização) ──"
 # Pré-requisito da parte do webhook: a API foi iniciada com META_APP_SECRET=smoke-meta-secret (o do ambiente assina o corpo).

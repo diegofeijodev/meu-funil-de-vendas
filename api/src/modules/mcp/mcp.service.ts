@@ -82,9 +82,11 @@ export class McpService {
     const typed = d.accessToken?.trim() ? d.accessToken.trim() : null;
     const existing = await this.prisma.mcp_connections.findUnique({
       where: { workspace_id_provider: { workspace_id: d.workspaceId, provider: d.provider } },
-      select: { access_token: true },
+      select: { access_token: true, server_url: true },
     });
-    const token = typed ?? this.dec(existing?.access_token);
+    // Trocou o endereço do servidor: o token guardado era de OUTRO servidor — não reaproveita (nem o envia ao novo).
+    const sameServer = !existing || existing.server_url === d.serverUrl;
+    const token = typed ?? (sameServer ? this.dec(existing?.access_token) : null);
     const probe = await this.probe(d.serverUrl, token);
     const row = {
       label: d.label ?? null,
@@ -95,10 +97,12 @@ export class McpService {
       last_error: probe.error,
       connected_at: probe.status === 'connected' ? new Date() : null,
     };
+    // Servidor novo: apaga também refresh token e dados OAuth do servidor antigo.
+    const reset = sameServer ? {} : { refresh_token: null, expires_at: null, oauth_client_id: null, oauth_client_secret: null, oauth_state: null, oauth_code_verifier: null, oauth_token_endpoint: null, oauth_authorization_endpoint: null, oauth_resource: null, oauth_scope: null, oauth_redirect_uri: null };
     await this.prisma.mcp_connections.upsert({
       where: { workspace_id_provider: { workspace_id: d.workspaceId, provider: d.provider } },
       create: { workspace_id: d.workspaceId, provider: d.provider, ...row },
-      update: row,
+      update: { ...row, ...reset },
     });
     return { status: probe.status, tools: probe.tools, error: probe.error, needsAuth: probe.needsAuth };
   }
