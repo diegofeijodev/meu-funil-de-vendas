@@ -3,6 +3,7 @@
  * Token da Meta vem do cofre (metaConfig) — nunca é salvo em instagram_accounts.
  */
 import { normalizeHashtags, asText, asList } from "./normalize";
+import { DATE_RULES, dateIssues, brandContext } from "./content-strategy.server";
 import { graph, metaConfig, MetaError, runWithMetaWorkspace } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
@@ -284,6 +285,8 @@ export async function generateContentCalendar(
   const prompt = [
     "Você é estrategista de conteúdo de Instagram no Brasil. Escreva em português do Brasil.",
     `Crie o calendário de ${weeks} semana(s) começando em ${start} (fuso America/Sao_Paulo, use ISO 8601 com -03:00).`,
+    `OBJETIVO (fonte principal): ${plan.objective ?? "-"}. MARCA: ${JSON.stringify(brandContext(brand))}. Nunca fale de outro negócio nem invente preço ou promoção.`,
+    DATE_RULES,
     `Frequência semanal por formato: ${JSON.stringify(plan.posting_frequency)} (feed = feed_image ou feed_carousel; reels = reel; stories = story_image ou story_video).`,
     `Horários preferidos: ${JSON.stringify(plan.preferred_times)}.`,
     Array.isArray(plan.posting_days) && plan.posting_days.length && plan.posting_days.length < 7
@@ -317,7 +320,9 @@ export async function generateContentCalendar(
   const rows = posts.map((p: any) => {
     const format = (Object.keys(ASPECT).includes(p.format) ? p.format : "feed_image") as IgFormat;
     const d = new Date(p.scheduled_at);
+    const dateBad = isNaN(d.getTime()) ? [] : dateIssues([p.theme, p.hook, p.caption, p.cta].filter(Boolean).join(" "), d.toISOString());
     return {
+      ...(dateBad.length ? { status: "needs_review", review_reason: `Incoerência de data: ${dateBad.join("; ")}.` } : {}),
       workspace_id: workspaceId,
       plan_id: planId,
       format,
