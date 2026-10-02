@@ -909,6 +909,28 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
   const s = await db();
   if ((await approvalRequired(post)) && !post.approved_at && post.status !== "approved")
     throw new Error("Este post exige aprovação antes de agendar.");
+  // Checagem final de alinhamento com a estratégia (posts da programação com IA).
+  if (post.run_id) {
+    const problems: string[] = [];
+    if (!post.objective_link || !post.pillar || !post.persona) problems.push("faltam ligação com o objetivo, pilar ou persona");
+    problems.push(...dateIssues([post.theme, post.hook, post.caption, post.cta].filter(Boolean).join(" "), scheduledAt));
+    const { data: run } = await s.from("ig_auto_runs").select("strategy").eq("id", post.run_id).maybeSingle();
+    const ctas: string[] = (run?.strategy?.ctas ?? []).map((c: string) => c.toLowerCase().trim());
+    const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").trim();
+    if (ctas.length && post.cta && !ctas.some((c) => norm(c) === norm(post.cta) || norm(post.cta).includes(norm(c)) || norm(c).includes(norm(post.cta))))
+      problems.push("CTA fora dos CTAs da estratégia");
+    const brand = post.plan_id ? (await s.from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle()).data : null;
+    if (brand?.brand_id) {
+      const { data: prods } = await s.from("products").select("price").eq("brand_id", brand.brand_id);
+      const valid = new Set(((prods ?? []) as any[]).map((p) => Number(p.price)).filter((n) => n > 0).map((n) => n.toFixed(2)));
+      const prices = [...`${post.caption ?? ""} ${post.creative_brief?.headline ?? ""}`.matchAll(/R\$\s?(\d{1,5}(?:[.,]\d{2})?)/g)].map((m) => Number(m[1]!.replace(",", ".")).toFixed(2));
+      if (prices.some((p) => !valid.has(p))) problems.push("preço fora do cadastro de produtos");
+    }
+    if (problems.length) {
+      await patchPost(postId, { status: "needs_review", review_reason: `Checagem final: ${problems.join("; ")}.` });
+      throw new Error(`Post enviado para revisão: ${problems.join("; ")}.`);
+    }
+  }
   await s
     .from("publishing_jobs")
     .update({ status: "cancelled" } as never)
