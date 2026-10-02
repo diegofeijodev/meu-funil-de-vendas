@@ -13,7 +13,7 @@ describe('validateEnv — chave do cofre', () => {
   it('development/test sem chave passam; production com chave passa', () => {
     expect(() => validateEnv({ ...base, NODE_ENV: 'development' })).not.toThrow();
     expect(() => validateEnv({ ...base, NODE_ENV: 'test' })).not.toThrow();
-    expect(() => validateEnv({ ...base, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'k' })).not.toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'k', UNSUBSCRIBE_SECRET: 'u' })).not.toThrow();
   });
 });
 

@@ -29,6 +29,7 @@ services:
       # falha na largada com mensagem clara em vez de subir com segredo público.
       JWT_SECRET: ${JWT_SECRET:-}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:-}
       NODE_ENV: production
       PORT: 3015
       CORS_ORIGINS: http://localhost:3025

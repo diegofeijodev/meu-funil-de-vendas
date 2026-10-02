@@ -36,6 +36,9 @@ const envSchema = z
     /** Cofre (AES-256-GCM). Obrigatória em produção; em dev vale uma chave fixa de desenvolvimento. */
     CREDENTIALS_ENCRYPTION_KEY: opt(),
 
+    /** Segredo do HMAC dos links de descadastro dos e-mails do CRM. Obrigatório fora de development/test (dev usa uma chave fixa). */
+    UNSUBSCRIBE_SECRET: opt(),
+
     /** Gateway de IA compatível com OpenAI (era o Lovable AI gateway). */
     AI_GATEWAY_URL: opt(),
     AI_GATEWAY_API_KEY: opt(),
@@ -87,6 +90,13 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['CREDENTIALS_ENCRYPTION_KEY'],
         message: 'obrigatória fora de NODE_ENV=development/test (cofre de credenciais); defina NODE_ENV explicitamente',
+      });
+    }
+    if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test' && !env.UNSUBSCRIBE_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['UNSUBSCRIBE_SECRET'],
+        message: 'obrigatória fora de NODE_ENV=development/test (HMAC dos links de descadastro)',
       });
     }
   });

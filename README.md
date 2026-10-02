@@ -32,6 +32,7 @@ Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typ
 - `DATABASE_URL`, `JWT_SECRET`, `PORT=3015`, `CORS_ORIGINS`, `PUBLIC_URL`, `APP_URL`, `TRUST_PROXY`.
 - `UPLOADS_DIR` — arquivos em disco (`<bucket>/<chave>`), servidos por URL assinada.
 - `CREDENTIALS_ENCRYPTION_KEY` — cofre AES-256-GCM; **obrigatória em produção**.
+- `UNSUBSCRIBE_SECRET` — HMAC dos links de descadastro; **obrigatória em produção**.
 - `AI_GATEWAY_URL` / `AI_GATEWAY_API_KEY` / `AI_MODEL_*` — gateway de IA compatível com OpenAI. Sem eles a IA do app responde "IA do app não configurada."
   (o cliente ainda pode usar a própria chave OpenAI/Gemini por workspace).
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — login com Google (opcional; sem eles o endpoint responde 503).
@@ -40,7 +41,7 @@ Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typ
 ### Docker completo
 
 ```bash
-JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... docker compose --profile full up --build
+JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... UNSUBSCRIBE_SECRET=... docker compose --profile full up --build
 ```
 
 ## Rodar o web

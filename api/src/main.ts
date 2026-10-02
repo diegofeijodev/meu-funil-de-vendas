@@ -66,12 +66,19 @@ async function bootstrap() {
   );
 
   const allowedOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
-  app.enableCors({
+  const baseCors = {
     origin: allowedOrigins.length > 0 ? allowedOrigins : false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-  });
+  };
+  // O formulário público do site (`/api/public/forms/*`) recebe POST de ferramentas e páginas de qualquer origem
+  // (o protótipo respondia `Access-Control-Allow-Origin: *`): preflight liberado só nessas rotas, sem credenciais.
+  app.enableCors(((req: { url?: string }, cb: (err: Error | null, options: unknown) => void) => {
+    const isPublicForm = (req.url ?? '').startsWith('/api/public/forms/');
+    cb(null, isPublicForm ? { origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type'], credentials: false } : baseCors);
+  }) as never);
+
 
   if (env.NODE_ENV === 'development' || env.SWAGGER_ENABLED === 'true') {
     const swaggerConfig = new DocumentBuilder()
