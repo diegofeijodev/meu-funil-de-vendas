@@ -449,6 +449,187 @@ check "mídia: …o arquivo sumiu do disco (link antigo → 404)" "404" "$(curl 
 check "mídia: …e não sobrou linha" "0" "$(PSQL "SELECT count(*) FROM media_assets WHERE workspace_id='$WID'")"
 rm -rf "$(dirname "$0")/../uploads/creative-assets/exports/$WID" "$(dirname "$0")/../uploads/creative-assets/media/$WID" /tmp/mf-smoke-1x1.png /tmp/mf-smoke-fake.mp4 /tmp/mf-smoke.txt /tmp/mf-smoke-capcut.zip
 
+echo "── Task 5: Instagram (recursos, ações, autorização) ──"
+# Pré-requisito da parte do webhook: a API foi iniciada com META_APP_SECRET=smoke-meta-secret (o do ambiente assina o corpo).
+IGW=$API/v1/workspaces/$WID
+IGA=$API/v1/instagram
+META_SECRET=${META_APP_SECRET:-smoke-meta-secret}
+T0=$(PSQL "SELECT now()")
+check "ig: conta inexistente devolve {} (sem id)" "false" "$(curl -s $IGW/instagram-account -H "$H" | jq 'has("id")')"
+check "ig: estranho não lê a conta" "403" "$(curl -s -o /dev/null -w '%{http_code}' $IGW/instagram-account -H "$HD")"
+N0=$(curl -s $IGW/ig-posts -H "$HV" | jq length)
+check "ig: lista de posts (viewer lê)" "true" "$(curl -s $IGW/ig-posts -H "$HV" | jq 'type=="array"')"
+
+NBRAND=$(curl -s -X POST $API/v1/workspaces/$NID/brands -H "$H" -H "$J" -d '{"name":"Marca Alheia IG","segment":"Bar"}' | jq -r .id)
+IBR=$(curl -s -X POST $IGW/brands -H "$H" -H "$J" -d '{"name":"Marca IG Smoke","segment":"Bar"}' | jq -r .id)
+PN0=$(curl -s $IGW/ig-content-plans -H "$HV" | jq length)
+PLAN_BODY='{"name":"Plano IG Smoke","brand_id":"'$IBR'","objective":"Vender","tone_of_voice":"leve","content_pillars":["Bastidores","Promoções"],"posting_frequency":{"feed_image":2,"feed_carousel":1,"feed":3,"reels":2,"stories":5,"lixo":9},"preferred_times":["09:00","19:00"],"posting_days":[1,3,5],"hashtag_strategy":{"notes":"#a","audience":"b","x":"y"},"cta_default":"Peça já","requires_approval":true,"auto_publish":false,"status":"active"}'
+PL=$(curl -s -X POST $IGW/ig-content-plans -H "$H" -H "$J" -d "$PLAN_BODY")
+PLID=$(echo "$PL" | jq -r .id)
+[ "$PLID" != "null" ] && ok "ig: criar plano (dono)" || ko "ig: criar plano" "$PL"
+check "ig: plano limpa chaves desconhecidas da frequência" "feed,feed_carousel,feed_image,reels,stories" "$(echo "$PL" | jq -r '.posting_frequency | keys | join(",")')"
+check "ig: plano — hashtag_strategy só notes/audience" "audience,notes" "$(echo "$PL" | jq -r '.hashtag_strategy | keys | join(",")')"
+check "ig: viewer não cria plano" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGW/ig-content-plans -H "$HV" -H "$J" -d "$PLAN_BODY")"
+check "ig: plano com workspace_id no corpo → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGW/ig-content-plans -H "$H" -H "$J" -d '{"name":"x","workspace_id":"'$NID'"}' | jq -r .error.code)"
+check "ig: status fora do CHECK → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGW/ig-content-plans -H "$H" -H "$J" -d '{"name":"x","status":"archived"}' | jq -r .error.code)"
+check "ig: marca de outro workspace → 404" "Marca não encontrada." "$(curl -s -X POST $IGW/ig-content-plans -H "$H" -H "$J" -d '{"name":"x","brand_id":"'$NBRAND'"}' | jq -r .error.message)"
+check "ig: editar plano (marketing)" "paused" "$(curl -s -X PATCH $IGW/ig-content-plans/$PLID -H "$HM" -H "$J" -d '{"status":"paused"}' | jq -r .status)"
+check "ig: plano de outro workspace não é editado" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/v1/workspaces/$NID/ig-content-plans/$PLID -H "$H" -H "$J" -d '{"status":"active"}')"
+check "ig: id malformado → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $IGW/ig-content-plans/xxx -H "$H" -H "$J" -d '{}')"
+check "ig: listar planos (+ filtro de arquivados)" "$((PN0+1)),$((PN0+1)),$PLID" "$(curl -s $IGW/ig-content-plans -H "$HV" | jq length | tr '\n' ','; curl -s "$IGW/ig-content-plans?exclude_archived=true" -H "$HV" | jq length | tr '\n' ','; curl -s $IGW/ig-content-plans -H "$HV" | jq -r '[.[] | select(.name=="Plano IG Smoke")][0].id')"
+check "ig: o outro workspace não vê o plano" "0" "$(curl -s $API/v1/workspaces/$NID/ig-content-plans -H "$H" | jq length)"
+
+# Posts criados direto no banco (a geração com IA/provedor é coberta pelos testes jest e pelo browser-check).
+P1=$(PSQL "INSERT INTO ig_posts(workspace_id,plan_id,format,status,theme,caption,hashtags,creative_brief) VALUES ('$WID','$PLID','feed_image','idea','Tema 1','Legenda 1','{a,b}','{\"prompt\":\"copo\",\"pending_job\":{\"jobId\":\"veo:real\"}}') RETURNING id" | head -1)
+P2=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,theme,media,scheduled_at) VALUES ('$WID','reel','pending_approval','Tema 2','[{\"url\":\"http://exemplo.invalid/a.mp4\",\"type\":\"video\",\"order\":0}]', now() + interval '2 days') RETURNING id" | head -1)
+P3=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,theme,media) VALUES ('$WID','feed_image','pending_approval','Tema 3','[{\"url\":\"http://exemplo.invalid/b.jpg\",\"type\":\"image\",\"order\":0}]') RETURNING id" | head -1)
+check "ig: posts listados (os 3 novos; os sem data ficam por último)" "$((N0+3)),Tema 2" "$(curl -s $IGW/ig-posts -H "$HV" | jq -r '[length, ([.[] | select(.theme=="Tema 2" or .theme=="Tema 1" or .theme=="Tema 3")] | .[0].theme)] | join(",")')"
+check "ig: selo do menu = posts aguardando aprovação" "2" "$(curl -s $IGW/ig-posts/pending-count -H "$HV" | jq .count)"
+check "ig: selo é por workspace" "0" "$(curl -s $API/v1/workspaces/$NID/ig-posts/pending-count -H "$H" | jq .count)"
+check "ig: editar post (marketing)" "Nova legenda" "$(curl -s -X PATCH $IGW/ig-posts/$P1 -H "$HM" -H "$J" -d '{"caption":"Nova legenda","hashtags":["x","y"],"cta":"Fale","scheduled_at":"2030-05-05T12:00:00-03:00"}' | jq -r .caption)"
+check "ig: …horário gravado em UTC" "2030-05-05T15:00:00" "$(PSQL "SELECT to_char(scheduled_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS') FROM ig_posts WHERE id='$P1'")"
+check "ig: viewer não edita post" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $IGW/ig-posts/$P1 -H "$HV" -H "$J" -d '{"caption":"x"}')"
+check "ig: estranho não edita post" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $IGW/ig-posts/$P1 -H "$HD" -H "$J" -d '{"caption":"x"}')"
+check "ig: post de outro workspace → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/v1/workspaces/$NID/ig-posts/$P1 -H "$H" -H "$J" -d '{"caption":"x"}')"
+check "ig: status/media não são editáveis (whitelist)" "VALIDATION_ERROR" "$(curl -s -X PATCH $IGW/ig-posts/$P1 -H "$H" -H "$J" -d '{"status":"published"}' | jq -r .error.code)"
+curl -s -X PATCH $IGW/ig-posts/$P1 -H "$H" -H "$J" -d '{"creative_brief":{"prompt":"novo","layout":"titulo_topo","pending_job":{"jobId":"veo:forjado"}}}' >/dev/null
+check "ig: creative_brief — o pending_job do servidor não é sobrescrito" "novo,veo:real" "$(PSQL "SELECT creative_brief->>'prompt' || ',' || (creative_brief->'pending_job'->>'jobId') FROM ig_posts WHERE id='$P1'")"
+
+check "ig: aprovar sem mídia" "Gere a mídia antes de aprovar." "$(curl -s -X POST $IGA/approve-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P1\"}" | jq -r .error.message)"
+check "ig: viewer não aprova" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/approve-post -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\"}")"
+check "ig: post de outro workspace (id na empresa errada) → 404" "Post não encontrado." "$(curl -s -X POST $IGA/approve-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"postId\":\"$P2\"}" | jq -r .error.message)"
+check "ig: estranho não aprova" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/approve-post -H "$HD" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\"}")"
+check "ig: agendar post não aprovado" "O post precisa estar aprovado para ser agendado." "$(curl -s -X POST $IGA/schedule-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\",\"scheduledAt\":\"2030-01-01T10:00:00-03:00\"}" | jq -r .error.message)"
+check "ig: aprovar (marketing)" "true,approved" "$(curl -s -X POST $IGA/approve-post -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\"}" | jq -r .ok | tr '\n' ','; PSQL "SELECT status FROM ig_posts WHERE id='$P2'")"
+check "ig: scheduledAt sem fuso → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/schedule-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\",\"scheduledAt\":\"2030-01-01T10:00:00\"}" | jq -r .error.code)"
+check "ig: agendar (sem conta conectada = sandbox)" "true,true" "$(curl -s -X POST $IGA/schedule-post -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\",\"scheduledAt\":\"2030-01-01T10:00:00-03:00\"}" | jq -r '[.ok,.sandbox]|join(",")')"
+curl -s -X POST $IGA/schedule-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P2\",\"scheduledAt\":\"2030-01-02T10:00:00-03:00\"}" >/dev/null
+check "ig: reagendar cancela o job anterior (fila instagram_organic)" "cancelled:1,pending:1,scheduled" "$(PSQL "SELECT string_agg(status||':'||c, ',' ORDER BY status) FROM (SELECT status, count(*) c FROM publishing_jobs WHERE ig_post_id='$P2' AND channel='instagram_organic' GROUP BY status) t" | tr -d '\n'),$(PSQL "SELECT status FROM ig_posts WHERE id='$P2'")"
+check "ig: viewer não rejeita" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/reject-post -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P3\",\"reason\":\"x\"}")"
+check "ig: rejeitar exige motivo → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/reject-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P3\",\"reason\":\"\"}" | jq -r .error.code)"
+check "ig: rejeitar (dono) cancela e guarda o motivo" "cancelled,Texto errado" "$(curl -s -X POST $IGA/reject-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P3\",\"reason\":\"Texto errado\"}" >/dev/null; PSQL "SELECT status||','||rejection_reason FROM ig_posts WHERE id='$P3'")"
+P4=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,approved_at,media) VALUES ('$WID','feed_image','approved',now(),'[{\"url\":\"http://exemplo.invalid/c.jpg\",\"type\":\"image\",\"order\":0}]') RETURNING id" | head -1)
+PUB=$(curl -s -X POST $IGA/publish-instagram-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P4\"}")
+check "ig: publicar com mídia sem HTTPS → { ok:false } (200) e post failed" "false,Mídia sem URL pública válida (HTTPS).,failed" "$(echo "$PUB" | jq -r '[.ok,.error]|join(",")'),$(PSQL "SELECT status FROM ig_posts WHERE id='$P4'")"
+check "ig: viewer não publica" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/publish-instagram-post -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P4\"}")"
+check "ig: métricas de post não publicado" "Post ainda não publicado." "$(curl -s -X POST $IGA/collect-post-metrics -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P1\"}" | jq -r .error.message)"
+check "ig: insights da conta sem conta conectada" "sem conta conectada" "$(curl -s -X POST $IGA/collect-account-insights-now -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .skipped)"
+check "ig: conectar conta (marketing → 403)" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/connect-instagram-account -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
+check "ig: conectar sem credenciais da Meta → { ok:false } (200)" "false,Salve as credenciais da Meta em Integrações antes de conectar o Instagram." "$(curl -s -X POST $IGA/connect-instagram-account -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r '[.ok,.error]|join(",")')"
+check "ig: …a conta fica com status error" "error" "$(curl -s $IGW/instagram-account -H "$HV" | jq -r .status)"
+check "ig: listar Páginas sem credenciais" "false,0" "$(curl -s -X POST $IGA/list-instagram-options -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r '[.ok,(.options|length)]|join(",")')"
+check "ig: importar histórico sem conta conectada" "Conecte uma conta do Instagram antes de importar o histórico." "$(curl -s -X POST $IGA/sync-instagram-history -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .error.message)"
+check "ig: desconectar (dono)" "true,0" "$(curl -s -X POST $IGA/disconnect-instagram-account -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .ok | tr '\n' ','; PSQL "SELECT count(*) FROM instagram_accounts WHERE workspace_id='$WID'")"
+check "ig: gerar calendário — semanas fora do limite → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/generate-content-calendar -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"planId\":\"$PLID\",\"weeks\":9}" | jq -r .error.code)"
+check "ig: gerar calendário — plano de outra empresa → 404" "Plano de conteúdo não encontrado." "$(curl -s -X POST $IGA/generate-content-calendar -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"planId\":\"$PLID\"}" | jq -r .error.message)"
+check "ig: gerar calendário sem IA configurada → 502" "502" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/generate-content-calendar -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"planId\":\"$PLID\"}")"
+check "ig: viewer não gera calendário" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/generate-content-calendar -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"planId\":\"$PLID\"}")"
+check "ig: sugerir pilares com marca de outra empresa → 404" "Marca não encontrada." "$(curl -s -X POST $IGA/suggest-pillars -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"brandId\":\"$NBRAND\"}" | jq -r .error.message)"
+check "ig: legenda de post alheio → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/regenerate-caption -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"postId\":\"$P1\"}")"
+check "ig: mídia de post alheio → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/generate-post-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"postId\":\"$P1\"}")"
+check "ig: provedor de mídia inválido → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/generate-post-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$P1\",\"provider\":\"midjourney\"}" | jq -r .error.code)"
+printf 'x' > /tmp/mf-smoke-ig.txt
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' | base64 -d > /tmp/mf-smoke-ig.png
+check "ig: enviar mídia — tipo inválido → 400" "Envie uma imagem ou um vídeo MP4." "$(curl -s -X POST $IGA/upload-post-media -H "$H" -F "workspaceId=$WID" -F "postId=$P1" -F "file=@/tmp/mf-smoke-ig.txt;type=text/plain" | jq -r .error.message)"
+check "ig: enviar mídia — viewer 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/upload-post-media -H "$HV" -F "workspaceId=$WID" -F "postId=$P1" -F "file=@/tmp/mf-smoke-ig.png;type=image/png")"
+check "ig: enviar imagem → ok, entra na biblioteca e no post (aguardando aprovação)" "true,pending_approval,1,1" "$(curl -s -X POST $IGA/upload-post-media -H "$HM" -F "workspaceId=$WID" -F "postId=$P1" -F "file=@/tmp/mf-smoke-ig.png;type=image/png" | jq -r .ok | tr '\n' ','; PSQL "SELECT status||','||jsonb_array_length(media) FROM ig_posts WHERE id='$P1'" | tr '\n' ','; PSQL "SELECT count(*) FROM media_assets WHERE ig_post_id='$P1'")"
+rm -f /tmp/mf-smoke-ig.txt /tmp/mf-smoke-ig.png
+rm -rf "$(dirname "$0")/../uploads/creative-assets/media/$WID"
+
+echo "── Task 5: calendário automático ──"
+PREV=$(curl -s -X POST $IGA/preview-auto-calendar -H "$H" -H "$J" -d '{"startDate":"2099-01-01","endDate":"2099-01-03","weekdays":[0,1,2,3,4,5,6],"times":["09:00","18:00"],"storyTimes":["12:00"],"formats":["feed_image","reel"]}')
+check "auto: prévia dos horários" "true,9,0,2099-01-01T12:00:00.000Z" "$(echo "$PREV" | jq -r '[.ok,.total,.skipped,.first]|join(",")')"
+check "auto: prévia com período invertido → ok:false" "false,A data final precisa ser igual ou depois da inicial (e não pode estar no passado)." "$(curl -s -X POST $IGA/preview-auto-calendar -H "$H" -H "$J" -d '{"startDate":"2099-01-05","endDate":"2099-01-01","weekdays":[1],"times":["09:00"],"storyTimes":[],"formats":["feed_image"]}' | jq -r '[.ok,.error]|join(",")')"
+check "auto: prévia exige login" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/preview-auto-calendar -H "$J" -d '{}')"
+AUTO='{"workspaceId":"'$WID'","planId":"'$PLID'","startDate":"2099-01-01","endDate":"2099-01-03","weekdays":[0,1,2,3,4,5,6],"times":["09:00","18:00"],"storyTimes":[],"formats":["feed_image"],"mode":"approval"}'
+check "auto: viewer não cria" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/create-auto-calendar -H "$HV" -H "$J" -d "$AUTO")"
+check "auto: marketing não cria 'publica sozinho'" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/create-auto-calendar -H "$HM" -H "$J" -d "${AUTO/approval/publish}")"
+check "auto: sem horário → 400" "Informe ao menos um horário." "$(curl -s -X POST $IGA/create-auto-calendar -H "$H" -H "$J" -d '{"workspaceId":"'$WID'","planId":"'$PLID'","startDate":"2099-01-01","endDate":"2099-01-03","weekdays":[1],"times":[],"storyTimes":[],"formats":["feed_image"],"mode":"approval"}' | jq -r .error.message)"
+check "auto: dia da semana inválido → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/create-auto-calendar -H "$H" -H "$J" -d "$(echo "$AUTO" | jq -c '.weekdays=[9]')" | jq -r .error.code)"
+check "auto: plano de outra empresa → 404" "Plano de conteúdo não encontrado." "$(curl -s -X POST $IGA/create-auto-calendar -H "$H" -H "$J" -d "${AUTO/$WID/$NID}" | jq -r .error.message)"
+check "auto: campanha inexistente → 404" "Campanha não encontrada." "$(curl -s -X POST $IGA/create-auto-calendar -H "$H" -H "$J" -d "$(echo "$AUTO" | jq -c '.campaignId="00000000-0000-4000-8000-000000000000"')" | jq -r .error.message)"
+CR=$(curl -s -X POST $IGA/create-auto-calendar -H "$HM" -H "$J" -d "$AUTO")
+RUN=$(echo "$CR" | jq -r .runId)
+check "auto: marketing cria com aprovação (6 horários)" "6,0" "$(echo "$CR" | jq -r '[.total,.skipped]|join(",")')"
+check "auto: …run gravada (planning, 6 slots, created_by)" "planning,6,0" "$(PSQL "SELECT status||','||jsonb_array_length(slots)||','||filled FROM ig_auto_runs WHERE id='$RUN'")"
+check "auto: resumo das programações" "1,1,0" "$(curl -s $IGW/ig-auto-runs -H "$HV" | jq -r '[length, .[0].weeks, .[0].counts.total]|join(",")')"
+check "auto: resumo é por workspace" "0" "$(curl -s $API/v1/workspaces/$NID/ig-auto-runs -H "$H" | jq length)"
+check "auto: preencher — estranho → 404 (sem vazar)" "Programação não encontrada." "$(curl -s -X POST $IGA/fill-auto-calendar -H "$HD" -H "$J" -d "{\"runId\":\"$RUN\"}" | jq -r .error.message)"
+check "auto: preencher — viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/fill-auto-calendar -H "$HV" -H "$J" -d "{\"runId\":\"$RUN\"}")"
+check "auto: preencher sem IA → 502; lock solto e erro guardado" "502,,IA" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/fill-auto-calendar -H "$H" -H "$J" -d "{\"runId\":\"$RUN\"}"),$(PSQL "SELECT coalesce(locked_until::text,'') FROM ig_auto_runs WHERE id='$RUN'"),$(PSQL "SELECT left(last_error,2) FROM ig_auto_runs WHERE id='$RUN'")"
+check "auto: próximo criativo sem posts na janela" "true,true,0" "$(curl -s -X POST $IGA/generate-next-auto-media -H "$H" -H "$J" -d "{\"runId\":\"$RUN\",\"withinHours\":6}" | jq -r '[.done,.ok,.remaining]|join(",")')"
+check "auto: janela fora do limite → 400" "VALIDATION_ERROR" "$(curl -s -X POST $IGA/generate-next-auto-media -H "$H" -H "$J" -d "{\"runId\":\"$RUN\",\"withinHours\":100}" | jq -r .error.code)"
+AP=$(PSQL "INSERT INTO ig_posts(workspace_id,plan_id,run_id,automation,format,status,scheduled_at) VALUES ('$WID','$PLID','$RUN','approval','feed_image','idea', now() + interval '3 days') RETURNING id" | head -1)
+check "auto: cancelar — estranho → 404" "Programação não encontrada." "$(curl -s -X POST $IGA/cancel-auto-calendar -H "$HD" -H "$J" -d "{\"runId\":\"$RUN\"}" | jq -r .error.message)"
+check "auto: cancelar (marketing) retira os posts da fila" "1,cancelled,cancelled" "$(curl -s -X POST $IGA/cancel-auto-calendar -H "$HM" -H "$J" -d "{\"runId\":\"$RUN\"}" | jq -r .cancelled),$(PSQL "SELECT status FROM ig_posts WHERE id='$AP'"),$(PSQL "SELECT status FROM ig_auto_runs WHERE id='$RUN'")"
+
+echo "── Task 5: cron do Instagram, fila de publicação e piloto ──"
+CRON=$API/api/public/cron/instagram
+CTOK="smoke-cron-$SUF"
+check "cron: sem segredo → 401" "401,Unauthorized" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "$J" -d '{}'),$(curl -s -X POST $CRON -H "$J" -d '{}' | jq -r .error.message)"
+check "cron: segredo errado → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "x-cron-secret: errado" -H "$J" -d '{}')"
+PSQL "INSERT INTO cron_tokens(name,token) VALUES ('instagram','$CTOK') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token" >/dev/null
+check "cron: token do banco com tarefa inválida → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"rm"}')"
+# Fila: post agendado cuja mídia não é HTTPS → Guardrail (não repete) ; job com trava vencida é retomado
+Q1=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,approved_at,media,scheduled_at) VALUES ('$WID','feed_image','scheduled',now(),'[{\"url\":\"http://exemplo.invalid/q1.jpg\",\"type\":\"image\",\"order\":0}]', now()) RETURNING id" | head -1)
+Q2=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,approved_at,media,scheduled_at) VALUES ('$WID','feed_image','scheduled',now(),'[{\"url\":\"http://exemplo.invalid/q2.jpg\",\"type\":\"image\",\"order\":0}]', now()) RETURNING id" | head -1)
+Q3=$(PSQL "INSERT INTO ig_posts(workspace_id,format,status,approved_at,media,scheduled_at) VALUES ('$WID','feed_image','scheduled',now(),'[{\"url\":\"http://exemplo.invalid/q3.jpg\",\"type\":\"image\",\"order\":0}]', now() + interval '1 day') RETURNING id" | head -1)
+J1=$(PSQL "INSERT INTO publishing_jobs(workspace_id,channel,ig_post_id,target,status,mode,run_at) VALUES ('$WID','instagram_organic','$Q1','instagram','pending','live', now() - interval '1 minute') RETURNING id" | head -1)
+J2=$(PSQL "INSERT INTO publishing_jobs(workspace_id,channel,ig_post_id,target,status,mode,run_at,attempts,locked_at) VALUES ('$WID','instagram_organic','$Q2','instagram','running','live', now() - interval '1 hour', 1, now() - interval '20 minutes') RETURNING id" | head -1)
+J3=$(PSQL "INSERT INTO publishing_jobs(workspace_id,channel,ig_post_id,target,status,mode,run_at) VALUES ('$WID','instagram_organic','$Q3','instagram','pending','live', now() + interval '1 day') RETURNING id" | head -1)
+J4=$(PSQL "INSERT INTO publishing_jobs(workspace_id,channel,ig_post_id,target,status,mode,run_at) VALUES ('$WID','meta_ads','$Q3','meta','pending','mock', now() - interval '1 hour') RETURNING id" | head -1)
+QR=$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"queue"}')
+check "cron queue: devolve pendingMedia e queue" "pendingMedia,queue" "$(echo "$QR" | jq -r 'keys | join(",")')"
+check "cron queue: job vencido → failed (Guardrail não repete), tentativas e log" "failed,1,1" "$(PSQL "SELECT status||','||attempts||','||(log LIKE '%Mídia sem URL pública válida (HTTPS).%')::int FROM publishing_jobs WHERE id='$J1'")"
+check "cron queue: trava vencida (>15 min) foi liberada e o job processado" "failed,2" "$(PSQL "SELECT status||','||attempts FROM publishing_jobs WHERE id='$J2'")"
+check "cron queue: job futuro e job de meta_ads não são tocados" "pending,pending" "$(PSQL "SELECT string_agg(status, ',' ORDER BY id) FROM publishing_jobs WHERE id IN ('$J3','$J4')")"
+check "cron queue: os posts espelham o job (failed + last_error)" "failed,failed,scheduled" "$(PSQL "SELECT status FROM ig_posts WHERE id='$Q1'"),$(PSQL "SELECT status FROM ig_posts WHERE id='$Q2'"),$(PSQL "SELECT status FROM ig_posts WHERE id='$Q3'")"
+check "cron queue: evento 'guardrail' no piloto, visível na API" "guardrail" "$(curl -s "$IGW/ig-autopilot-events?limit=5" -H "$HV" | jq -r '[.[] | select(.post_id=="'$Q1'")][0].kind')"
+check "cron: heartbeat da fila gravado" "instagram-queue,ok" "$(PSQL "SELECT name||','||last_status FROM cron_heartbeats WHERE name='instagram-queue'")"
+check "cron publish = alias do queue" "pendingMedia,queue" "$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"publish"}' | jq -r 'keys | join(",")')"
+check "cron media (calendário automático + piloto) sem erro" "autoCalendar,autopilot,false" "$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"media"}' | jq -r '[(keys|join(",")), ([.. | objects | select(has("error"))] | length > 0)] | join(",")')"
+check "cron metrics sem erro" "learning,metrics,false" "$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"metrics"}' | jq -r '[(keys|join(",")), ([.. | objects | select(has("error"))] | length > 0)] | join(",")')"
+check "cron account / optimize devolvem lista" "array,array" "$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"account"}' | jq -r '.account|type'),$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"optimize"}' | jq -r '.optimize|type')"
+PSQL "UPDATE ig_content_plans SET status='active', auto_publish=true WHERE id='$PLID'" >/dev/null
+WK=$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"weekly"}')
+check "cron weekly: sem IA o plano falha, a semana é liberada e o evento 'failure' fica" "true,0,failure" "$(echo "$WK" | jq -r '[.weekly[] | select(.plan=="'$PLID'" and has("error"))] | length > 0' | tr '\n' ','; PSQL "SELECT count(*) FROM ig_autopilot_weeks WHERE plan_id='$PLID'" | tr '\n' ','; PSQL "SELECT kind FROM ig_autopilot_events WHERE plan_id='$PLID' AND message LIKE 'Falha ao gerar o calendário%' LIMIT 1")"
+PSQL "UPDATE ig_content_plans SET auto_publish=false WHERE id='$PLID'" >/dev/null
+
+echo "── Task 5: webhook do Instagram ──"
+WHI=$(PSQL "INSERT INTO crm_integrations(workspace_id,kind,provider,status) VALUES ('$WID','instagram','meta','disconnected') RETURNING webhook_token||' '||verify_token" | head -1)
+WTOK=${WHI% *}; WVER=${WHI#* }
+WHU=$API/api/public/webhooks/instagram
+check "webhook GET: verificação devolve o challenge" "123456" "$(curl -s "$WHU/$WTOK?hub.mode=subscribe&hub.verify_token=$WVER&hub.challenge=123456")"
+check "webhook GET: verify_token errado → 403" "403,Forbidden" "$(curl -s -o /dev/null -w '%{http_code}' "$WHU/$WTOK?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1"),$(curl -s "$WHU/$WTOK?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1")"
+check "webhook GET: token desconhecido → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' "$WHU/naoexiste?hub.mode=subscribe&hub.verify_token=$WVER&hub.challenge=1")"
+WBODY='{"object":"instagram","entry":[{"id":"ig-own-1","messaging":[{"sender":{"id":"smoke-user-1"},"timestamp":1,"message":{"mid":"smoke-mid-'$SUF'","text":"Quero chopp"}},{"sender":{"id":"ig-own-1"},"message":{"mid":"eco","text":"eu"}}]}]}'
+SIG="sha256=$(printf '%s' "$WBODY" | openssl dgst -sha256 -hmac "$META_SECRET" | sed 's/^.* //')"
+check "webhook POST: sem assinatura → 401" "401,Invalid signature" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/$WTOK -H "$J" -d "$WBODY"),$(curl -s -X POST $WHU/$WTOK -H "$J" -d "$WBODY")"
+check "webhook POST: assinatura errada → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/$WTOK -H "$J" -H 'x-hub-signature-256: sha256=00' -d "$WBODY")"
+check "webhook POST: token desconhecido → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/naoexiste -H "$J" -H "x-hub-signature-256: $SIG" -d "$WBODY")"
+check "webhook POST: assinado → 200 ok" "200,ok" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/$WTOK -H "$J" -H "x-hub-signature-256: $SIG" -d "$WBODY"),$(curl -s -X POST $WHU/$WTOK -H "$J" -H "x-hub-signature-256: $SIG" -d "$WBODY")"
+check "webhook: virou lead + conversa + mensagem (eco ignorado)" "1,1,1" "$(PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$WID' AND instagram_id='smoke-user-1' AND source='instagram_dm'" | tr '\n' ','; PSQL "SELECT count(*) FROM crm_conversations WHERE workspace_id='$WID' AND phone='ig:smoke-user-1'" | tr '\n' ','; PSQL "SELECT count(*) FROM crm_messages WHERE workspace_id='$WID' AND direction='in' AND body='Quero chopp'")"
+check "webhook: reentrega do mesmo mid não duplica (idempotente)" "1,1,processed" "$(PSQL "SELECT count(*) FROM crm_messages WHERE workspace_id='$WID' AND direction='in'" | tr '\n' ','; PSQL "SELECT count(*) FROM crm_webhook_events WHERE workspace_id='$WID' AND source='instagram'" | tr '\n' ','; PSQL "SELECT status FROM crm_webhook_events WHERE workspace_id='$WID' AND source='instagram' LIMIT 1")"
+check "webhook: integração marcada connected" "connected" "$(PSQL "SELECT status FROM crm_integrations WHERE webhook_token='$WTOK'")"
+BAD='{nao-json'
+BSIG="sha256=$(printf '%s' "$BAD" | openssl dgst -sha256 -hmac "$META_SECRET" | sed 's/^.* //')"
+check "webhook POST: JSON inválido (assinado) → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/$WTOK -H "$J" -H "x-hub-signature-256: $BSIG" -d "$BAD")"
+PSQL "UPDATE crm_integrations SET kind='whatsapp' WHERE webhook_token='$WTOK'" >/dev/null
+check "webhook: token de integração de outro tipo → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $WHU/$WTOK -H "$J" -H "x-hub-signature-256: $SIG" -d "$WBODY")"
+PSQL "UPDATE crm_integrations SET kind='instagram' WHERE webhook_token='$WTOK'" >/dev/null
+
+echo "── Task 5: leituras (métricas, insights, eventos) ──"
+PSQL "INSERT INTO ig_post_metrics(workspace_id,post_id,reach,saves,collected_at) VALUES ('$WID','$P1',10,1,now() - interval '1 day'),('$WID','$P1',20,2,now())" >/dev/null
+check "ig: métricas — mais novas primeiro" "20,10" "$(curl -s $IGW/ig-post-metrics -H "$HV" | jq -r '[.[].reach]|join(",")')"
+PSQL "INSERT INTO ig_account_insights(workspace_id,date,followers_total,reach) VALUES ('$WID',current_date - 60,100,5),('$WID',current_date - 3,120,7),('$WID',current_date,130,9)" >/dev/null
+check "ig: insights da conta (since filtra e ordena por data)" "2,120" "$(curl -s "$IGW/ig-account-insights?since=$(date -d '-30 days' +%F)" -H "$HV" | jq -r '[length, .[0].followers_total]|join(",")')"
+check "ig: insights — since inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' "$IGW/ig-account-insights?since=ontem" -H "$HV")"
+check "ig: eventos do piloto (mais novos primeiro, limite)" "true" "$(curl -s "$IGW/ig-autopilot-events?limit=3" -H "$HV" | jq -r 'length <= 3 and length >= 1')"
+check "ig: estranho não lê eventos/métricas" "403,403" "$(curl -s -o /dev/null -w '%{http_code}' $IGW/ig-autopilot-events -H "$HD"),$(curl -s -o /dev/null -w '%{http_code}' $IGW/ig-post-metrics -H "$HD")"
+# limpeza (os dados do workspace somem junto com ele no fim; aqui só o que é global)
+PSQL "DELETE FROM cron_tokens WHERE name='instagram' AND token='$CTOK'" >/dev/null
+PSQL "DELETE FROM cron_heartbeats WHERE name LIKE 'instagram-%' AND last_run_at >= '$T0'" >/dev/null
+
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
 check "refresh ok" "$EMAIL" "$(echo "$R" | jq -r .user.email)"

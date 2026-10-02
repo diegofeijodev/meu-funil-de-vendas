@@ -101,6 +101,24 @@ const gateway = createServer((req, res) => {
     if (name === 'campaign_strategy') out = estrategia(++fakeAi.strategy);
     else if (name === 'copy') out = copia(++fakeAi.copy);
     else if (name === 'art_direction') out = direcaoDeArte;
+    // Task 5 (Instagram): pilares, calendário, legenda e conteúdo da programação automática.
+    else if (name === 'ig_pillars') out = { pillars: ['Bastidores', 'Promoções', 'Prova social', 'Dicas', 'Novidades'] };
+    else if (name === 'ig_caption') out = { caption: 'Legenda reescrita pela IA do check', hashtags: ['chopp', 'valinhos', 'happyhour'], cta: 'Peça já' };
+    else if (name === 'ig_calendar') {
+      const inicio = /começando em (\d{4}-\d{2}-\d{2})/.exec(prompt)?.[1] ?? '2099-01-01';
+      out = {
+        posts: ['feed_image', 'feed_image', 'feed_image'].map((format, i) => ({
+          format, scheduled_at: `${inicio}T1${i}:00:00-03:00`, theme: `Tema IA ${i + 1}`, hook: 'Gancho', caption: `Legenda ${i + 1}`, hashtags: ['a', 'b'], cta: 'Fale', image_prompt: 'copo de chopp', slides: [],
+        })),
+      };
+    } else if (name === 'ig_auto_calendar') {
+      const indices = [...prompt.matchAll(/- index (\d+):/g)].map((m) => Number(m[1]));
+      out = {
+        posts: indices.map((index) => ({
+          index, theme: `Auto ${index}`, pillar: 'Bastidores', funnel_stage: 'atracao', hook: 'Gancho', headline: 'Manchete', caption: 'Legenda automática', hashtags: ['chopp'], cta: 'Venha', image_prompt: 'copo de chopp', slides: [],
+        })),
+      };
+    }
     else if (name === 'creative_score') {
       const t = [9, 7][notaN++ % 2];
       out = { produto: t, fidelidade: t, composicao: t, defeitos: t, paleta: t, motivo: 'Boa composição' };
@@ -839,6 +857,215 @@ try {
   try {
     execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM creative_generation_jobs WHERE prompt LIKE 'Prompt check %'; DELETE FROM creatives WHERE title IN ('Criativo Check','upload-check'); DELETE FROM ig_posts WHERE creative_brief->>'from_library' IS NOT NULL AND theme='upload-check'"`, { stdio: 'ignore' });
   } catch { /* sem docker: sobram jobs/posts de teste */ }
+
+
+  // ── 2e. Task 5: Instagram (página, estratégia, calendário, aprovações, programação automática) ──
+  console.log('-- Instagram --');
+  const igSobras = { plano: `Plano IG Check ${Date.now()}`, marca: `Marca IG Check ${Date.now()}` };
+  const marcaIg = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: igSobras.marca, segment: 'Bar' })).body;
+  await apiCall('PATCH', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`, { tone_of_voice: 'descontraído' });
+  const igAi = (await apiCall('POST', '/v1/instagram/suggest-pillars', { workspaceId: wsId })).status === 200;
+  esperado(/suggest-pillars|502|AI_NOT_CONFIGURED/);
+  const igPsql = (sql) => {
+    try { return execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtA -c "${sql.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); } catch { return ''; }
+  };
+
+  const igT0 = igPsql('SELECT now()');
+  await page.goto(`${BASE}/instagram`);
+  await page.getByRole('heading', { name: 'Instagram', exact: true }).waitFor({ timeout: 30000 });
+  await page.getByText('Conta conectada').first().waitFor({ timeout: 30000 });
+  check('instagram: título da aba', (await page.title()) === 'Instagram · Meu Funil', await page.title());
+  const txtIg = await corpo();
+  for (const t of ['Feed, carrossel, Reels e Stories com criativo, legenda e hashtags gerados por IA', 'Instagram não conectado', 'Visão geral', 'Estratégia', 'Calendário', 'Aprovações', 'Resultados',
+    'Conta conectada', 'Nenhuma conta conectada', 'Conectar Instagram', 'Publicados (30d)', 'Alcance total', 'Salvamentos', 'Plays de Reels', 'Taxa de falha', 'Piloto automático', 'Fila dos próximos 7 dias']) {
+    check(`instagram mostra "${t}"`, tem(txtIg, t));
+  }
+  // conectar sem credenciais da Meta: a mensagem do protótipo (resposta { ok:false }, HTTP 200)
+  await page.getByRole('button', { name: 'Conectar Instagram' }).click();
+  await page.getByText('Salve as credenciais da Meta em Integrações primeiro.').waitFor({ timeout: 15000 });
+  ok('instagram: conectar sem credenciais mostra "Salve as credenciais da Meta em Integrações primeiro."');
+  await page.getByRole('button', { name: 'Cancelar' }).click();
+
+  // /calendar redireciona para a aba Calendário
+  await page.goto(`${BASE}/calendar`);
+  await page.waitForURL('**/instagram?tab=calendar', { timeout: 30000 });
+  await page.getByText('Programar com IA').first().waitFor({ timeout: 30000 });
+  check('/calendar → /instagram?tab=calendar (aba Calendário ativa)', (await page.getByRole('tab', { name: 'Calendário' }).getAttribute('aria-selected')) === 'true');
+  check('calendário: seção "Programar com IA" e semana Seg–Dom', tem(await corpo(), 'Nenhuma programação ainda') || tem(await corpo(), 'Nova programação'));
+  // aba inválida cai em "Visão geral"
+  await page.goto(`${BASE}/instagram?tab=xyz`);
+  await page.getByText('Conta conectada').first().waitFor({ timeout: 30000 });
+  check('?tab inválido volta para Visão geral', (await page.getByRole('tab', { name: 'Visão geral' }).getAttribute('aria-selected')) === 'true');
+
+  // ── Estratégia: wizard do plano (4 passos) ──
+  await page.getByRole('tab', { name: 'Estratégia' }).click();
+  await page.waitForURL('**/instagram?tab=strategy', { timeout: 15000 });
+  await page.getByText('Plano de conteúdo', { exact: true }).first().waitFor({ timeout: 15000 });
+  for (const t of ['Marca e objetivo', 'Pilares', 'Frequência', 'Hashtags e regras', 'Planos salvos', 'Gerar calendário de 2 semanas']) check(`estratégia mostra "${t}"`, tem(await corpo(), t));
+  await page.locator('div:has(> label:has-text("Nome do plano")) input').fill(igSobras.plano);
+  await page.locator('button[role="combobox"]').first().click();
+  await page.getByRole('option', { name: igSobras.marca }).click();
+  await page.getByPlaceholder('Ex.: gerar leads para consultoria').fill('Vender mais chopp');
+  await page.getByPlaceholder('Ex.: próximo, direto, bem-humorado').fill('leve');
+  await page.getByRole('button', { name: 'Próximo' }).click();
+  await page.getByText('Nenhum pilar ainda.').waitFor({ timeout: 10000 });
+  if (igAi) {
+    await page.getByRole('button', { name: /IA sugere 5/ }).click();
+    await page.getByText('A IA sugeriu 5 pilares.').waitFor({ timeout: 30000 });
+    check('estratégia: IA sugere 5 pilares (chips)', (await page.getByLabel(/^Remover /).count()) >= 5);
+  } else {
+    await page.getByPlaceholder('Adicionar pilar e Enter').fill('Bastidores');
+    await page.keyboard.press('Enter');
+  }
+  await page.getByRole('button', { name: 'Próximo' }).click();
+  await page.getByText('Dias da semana em que o piloto publica').waitFor({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Próximo' }).click();
+  await page.getByText('Exigir aprovação antes de publicar').waitFor({ timeout: 10000 });
+  await page.getByPlaceholder('Ex.: Chame no direct').fill('Peça já');
+  await page.getByRole('button', { name: 'Salvar plano' }).click();
+  await page.getByText('Plano salvo.').waitFor({ timeout: 15000 });
+  const planoIg = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-content-plans`)).body.find((x) => x.name === igSobras.plano);
+  check('API: plano salvo com marca, tom, frequência e CTA', !!planoIg && planoIg.brand_id === marcaIg.id && planoIg.tone_of_voice === 'leve' && planoIg.posting_frequency.feed_image === 2 && planoIg.cta_default === 'Peça já' && planoIg.requires_approval === true && planoIg.status === 'active', JSON.stringify(planoIg));
+  check('estratégia: "Planos salvos" lista o plano', tem(await corpo(), igSobras.plano));
+  if (igAi) {
+    await page.getByRole('button', { name: 'Gerar calendário de 2 semanas' }).click();
+    await page.getByText('3 posts criados no calendário.').waitFor({ timeout: 60000 });
+    const postsIg = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.filter((x) => x.plan_id === planoIg.id);
+    check('API: calendário gerado (3 ideias do plano, com brief e IA)', postsIg.length === 3 && postsIg.every((x) => x.status === 'idea' && x.creative_brief.aspect_ratio === '1:1' && x.ai_provider === 'lovable_ai'), JSON.stringify(postsIg.map((x) => x.status)));
+  }
+
+  // ── Calendário: criativos pendentes + abrir o post ──
+  await page.getByRole('tab', { name: 'Calendário' }).click();
+  await page.waitForURL('**/instagram?tab=calendar', { timeout: 15000 });
+  await page.getByText('Programar com IA').first().waitFor({ timeout: 15000 });
+  if (igAi) {
+    await page.getByRole('button', { name: /Gerar criativos pendentes \(\d+\)/ }).waitFor({ timeout: 15000 });
+    const botao = await page.getByRole('button', { name: /Gerar criativos pendentes/ }).innerText();
+    check('calendário: "Gerar criativos pendentes (3)" conta as ideias sem mídia', /\(3\)/.test(botao) || /\(\d+\)/.test(botao), botao);
+    await page.getByRole('button', { name: /Gerar criativos pendentes/ }).click();
+    await page.getByText(/Criativos gerados: \d+ de \d+\./).waitFor({ timeout: 180000 });
+    const comMidia = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.filter((x) => x.plan_id === planoIg.id);
+    check('API: os 3 posts do plano ganharam mídia e aguardam aprovação (plano exige)', comMidia.length === 3 && comMidia.every((x) => x.status === 'pending_approval' && x.media.length === 1 && x.media[0].type === 'image'), JSON.stringify(comMidia.map((x) => [x.status, x.media.length, x.last_error])));
+    check('API: mídia do post na biblioteca (ligada ao post, formato 1:1 1080)', (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?limit=200`)).body.rows.some((a) => a.ig_post_id === comMidia[0].id && a.width === 1080 && a.height === 1080));
+    const nota = comMidia[0].creative_brief.variations?.[0]?.score?.total;
+    check('API: pipeline registrou variações com nota do crítico no post', Array.isArray(comMidia[0].creative_brief.variations) && comMidia[0].creative_brief.variations.length >= 1 && typeof nota === 'number', JSON.stringify(comMidia[0].creative_brief.variations?.[0]));
+  }
+
+  // ── Aprovações ──
+  await page.goto(`${BASE}/instagram?tab=approvals`);
+  await page.getByText('Posts aguardando aprovação').first().waitFor({ timeout: 30000 });
+  if (igAi) {
+    await page.getByText('Selecionar todos').waitFor({ timeout: 15000 });
+    check('menu: selo do Instagram mostra posts aguardando (>= 3)', Number((await page.locator('aside span[title="Posts aguardando aprovação"]').first().innerText()) || 0) >= 3);
+    // rejeitar um (window.prompt)
+    page.once('dialog', (d) => d.accept('Texto fora do tom'));
+    await page.getByRole('button', { name: 'Rejeitar', exact: true }).first().click();
+    await page.getByText('1 post(s) rejeitado(s).').waitFor({ timeout: 30000 });
+    check('API: rejeitar cancela e guarda o motivo', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.some((x) => x.plan_id === planoIg.id && x.status === 'cancelled' && x.rejection_reason === 'Texto fora do tom'));
+    // abrir o editor pelo cartão
+    await page.locator('button', { hasText: 'Tema IA' }).first().click();
+    await page.getByRole('heading', { name: /^Feed/ }).waitFor({ timeout: 15000 });
+    const txtEd = await corpo();
+    for (const t of ['Regenerar mídia', 'Enviar minha própria', 'Escolher da biblioteca', 'Direção de arte', 'Legenda', 'Reescrever legenda', 'Hashtags', 'Regenerar hashtags', 'CTA', 'Data e hora', 'Salvar', 'Aprovar', 'Agendar', 'Publicar agora', 'Cancelar post', 'Último erro da Meta', 'Log de geração']) {
+      check(`editor do post mostra "${t}"`, tem(txtEd, t));
+    }
+    // editar legenda/CTA/hashtag e salvar (PATCH direto)
+    const caixaLegenda = page.locator('label:has-text("Legenda")').locator('xpath=ancestor::div[contains(@class,"space-y-1.5")][1]').locator('textarea');
+    await caixaLegenda.fill('Legenda editada no check');
+    await page.getByPlaceholder('nova hashtag').fill('#checkig');
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: 'Salvar', exact: true }).click();
+    await page.getByText('Post salvo.').waitFor({ timeout: 15000 });
+    const editado = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.caption === 'Legenda editada no check');
+    check('API: legenda, hashtag e CTA salvos pelo editor', !!editado && editado.hashtags.includes('checkig'), JSON.stringify(editado?.hashtags));
+    // reescrever legenda com a IA
+    await page.getByRole('button', { name: 'Reescrever legenda' }).click();
+    await page.getByText('Legenda reescrita.').waitFor({ timeout: 30000 });
+    check('API: "Reescrever legenda" trouxe a legenda da IA', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.some((x) => x.id === editado.id && x.caption === 'Legenda reescrita pela IA do check'));
+    // aprovar → (plano sem piloto: só aprova) e agendar sem conta = sandbox
+    await page.getByRole('button', { name: 'Aprovar', exact: true }).click();
+    await page.getByText('Post aprovado.').waitFor({ timeout: 15000 });
+    await page.locator('input[type="datetime-local"]').fill('2099-01-01T10:00');
+    await page.getByRole('button', { name: 'Agendar', exact: true }).click();
+    await page.getByText('Post agendado.').waitFor({ timeout: 15000 });
+    const agendado = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.id === editado.id);
+    check('API: post aprovado e agendado (fila instagram_organic pendente)', agendado.status === 'scheduled' && agendado.approved_at && igPsql(`SELECT count(*) FROM publishing_jobs WHERE ig_post_id='${editado.id}' AND channel='instagram_organic' AND status='pending'`) === '1', JSON.stringify([agendado.status, agendado.approved_at]));
+    // publicar agora sem conta conectada → erro da Meta/guardrail no toast, post failed
+    await page.getByRole('button', { name: 'Publicar agora' }).click();
+    await page.getByText(/Mídia sem URL pública válida|Nenhuma conta do Instagram conectada|não está acessível publicamente/).first().waitFor({ timeout: 30000 });
+    ok('editor: "Publicar agora" sem conta mostra o motivo (guardrail) em vez de publicar de mentira');
+    check('API: post falhou com last_error e nada foi publicado', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.some((x) => x.id === editado.id && x.status === 'failed' && !!x.last_error && !x.ig_media_id));
+    await page.keyboard.press('Escape');
+    // aprovar em lote o restante
+    await page.getByText('Selecionar todos').waitFor({ timeout: 15000 });
+    await page.getByRole('button', { name: /Aprovar selecionados/ }).waitFor({ timeout: 10000 });
+    await page.locator('label', { hasText: 'Selecionar todos' }).locator('button[role="checkbox"]').click();
+    await page.getByRole('button', { name: /Aprovar selecionados \(\d+\)/ }).click();
+    await page.getByText(/\d+ post\(s\) aprovado\(s\)\./).waitFor({ timeout: 30000 });
+    check('API: aprovação em lote', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.filter((x) => x.plan_id === planoIg.id && x.status === 'approved').length >= 1);
+  }
+
+  // ── Programar com IA (calendário automático): laço do navegador fill → generateNext, cancelar ──
+  await page.goto(`${BASE}/instagram?tab=calendar`);
+  await page.getByText('Programar com IA').first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Nova programação' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByText('Nova programação com IA').waitFor({ timeout: 15000 });
+  for (const t of ['Estratégia', 'Período', 'Dias da semana', 'Horários dos posts', 'Horários dos stories', 'Foco do período', 'Modo', 'Totalmente automático', 'Com minha aprovação', 'Só hoje', 'Próximos 7 dias']) check(`programação: diálogo mostra "${t}"`, tem(await dlg.innerText(), t));
+  await dlg.locator('select').first().selectOption({ label: `Plano: ${igSobras.plano}` });
+  await dlg.getByRole('button', { name: 'Só hoje' }).click();
+  for (const h of ['09:00', '12:00', '19:00']) await dlg.getByLabel(`Remover ${h}`).click();
+  await dlg.getByText('Publicar um post hoje o quanto antes').waitFor({ timeout: 10000 });
+  await dlg.locator('label', { hasText: 'Publicar um post hoje o quanto antes' }).locator('button[role="switch"]').click();
+  await dlg.getByText(/1 post\(s\)/).waitFor({ timeout: 20000 });
+  ok('programação: prévia ao vivo ("o quanto antes" = 1 post)');
+  check('programação: botão "Criar e publicar automaticamente" (dono)', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isEnabled()));
+  if (igAi) {
+    await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).click();
+    await page.getByText(/Programação criada: 1 posts\./).waitFor({ timeout: 30000 });
+    await page.getByText('Programação pronta. Os demais criativos são gerados sozinhos antes de cada horário.').waitFor({ timeout: 180000 });
+    const rodada = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-auto-runs`)).body[0];
+    check('API: programação ativa, 1 conteúdo, 1 criativo (laço do navegador terminou)', rodada.status === 'active' && rodada.counts.total === 1 && rodada.counts.media === 1 && rodada.filled === 1, JSON.stringify(rodada.counts));
+    const autoPost = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.run_id === rodada.id);
+    check('API: post automático "publish" com mídia e agendado na fila (sandbox: sem conta)', autoPost.automation === 'publish' && autoPost.status === 'scheduled' && autoPost.media.length === 1 && autoPost.theme === 'Auto 0', JSON.stringify([autoPost.automation, autoPost.status]));
+    check('programação: cartão da execução (Em andamento, contagem, "publica sozinho")', tem(await corpo(), 'Em andamento') && tem(await corpo(), '1 conteúdos · 1 criativos') && tem(await corpo(), 'publica sozinho'));
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('button', { name: 'Cancelar', exact: true }).first().click();
+    await page.getByText(/Programação cancelada \(1 posts retirados\)\./).waitFor({ timeout: 30000 });
+    const cancelada = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-auto-runs`)).body[0];
+    check('API: programação cancelada e post retirado da fila', cancelada.status === 'cancelled' && igPsql(`SELECT status FROM ig_posts WHERE run_id='${cancelada.id}'`) === 'cancelled' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE ig_post_id='${autoPost.id}' AND status='pending'`) === '0');
+  } else {
+    await dlg.getByRole('button', { name: 'Fechar' }).click();
+  }
+
+  // ── Resultados: insights da conta + ranking dos publicados ──
+  const publicado = igPsql(`INSERT INTO ig_posts(workspace_id,plan_id,format,status,theme,caption,published_at,ig_media_id,media) VALUES ('${wsId}','${planoIg.id}','feed_image','published','Bastidores check','Legenda pub', now() - interval '2 days','ig-media-check','[]') RETURNING id`).split('\n')[0];
+  igPsql(`INSERT INTO ig_post_metrics(workspace_id,post_id,reach,likes,comments,saves,shares,plays) VALUES ('${wsId}','${publicado}',1200,80,9,40,7,300)`);
+  igPsql(`INSERT INTO ig_account_insights(workspace_id,date,followers_total,new_followers,reach,profile_views,website_clicks) VALUES ('${wsId}',current_date,5400,12,900,70,15) ON CONFLICT (workspace_id,date) DO NOTHING`);
+  await page.goto(`${BASE}/instagram?tab=results`);
+  await page.getByText('Conta do Instagram (30 dias)').waitFor({ timeout: 30000 });
+  await page.getByText('Seguidores', { exact: true }).waitFor({ timeout: 15000 });
+  const txtRes = await corpo();
+  for (const t of ['Atualizar agora', 'Seguidores', 'Novos seguidores', 'Visitas ao perfil', 'Cliques no link', 'Bastidores check']) check(`resultados mostram "${t}"`, tem(txtRes, t));
+  check('resultados: seguidores e alcance vêm da API', tem(txtRes, '5.400') && tem(txtRes, '1.200'));
+  await page.getByRole('button', { name: 'Atualizar agora' }).click();
+  await page.getByText('sem conta conectada').waitFor({ timeout: 15000 });
+  ok('resultados: "Atualizar agora" sem conta avisa "sem conta conectada"');
+  // Visão geral: números do mês a partir das métricas
+  await page.goto(`${BASE}/instagram`);
+  await page.getByText('Publicados (30d)').waitFor({ timeout: 30000 });
+  check('visão geral: alcance total soma as métricas dos publicados (1.200)', await page.getByText('1.200').first().waitFor({ timeout: 15000 }).then(() => true, () => false));
+
+  // ── limpeza: posts, planos, programações, jobs, mídia (arquivos) e a marca de teste ──
+  // posts.plan_id/run_id são ON DELETE SET NULL: apaga os posts ANTES do plano (jobs e métricas saem em cascata)
+  const idsMidia = igPsql(`SELECT string_agg(id::text, ',') FROM media_assets WHERE workspace_id='${wsId}' AND ig_post_id IS NOT NULL AND created_at >= '${igT0}'`);
+  if (idsMidia) await apiCall('POST', '/v1/media/delete-media-assets', { workspaceId: wsId, assetIds: idsMidia.split(',') });
+  igPsql(`DELETE FROM ig_posts WHERE workspace_id='${wsId}' AND (plan_id='${planoIg.id}' OR run_id IN (SELECT id FROM ig_auto_runs WHERE plan_id='${planoIg.id}') OR ig_media_id='ig-media-check')`);
+  igPsql(`DELETE FROM ig_content_plans WHERE id='${planoIg.id}'`);
+  igPsql(`DELETE FROM ig_account_insights WHERE workspace_id='${wsId}' AND followers_total=5400`);
+  igPsql(`DELETE FROM ig_autopilot_events WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`);
+  await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`);
+  check('limpeza do Instagram: nada sobrou do teste', igPsql(`SELECT count(*) FROM ig_posts WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM ig_auto_runs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0');
 
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');

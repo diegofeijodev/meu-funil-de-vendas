@@ -265,8 +265,8 @@ Server fns portadas (corpo = o `data` do protótipo). IA só via `AiService` (ch
 | `POST /v1/approvals/decide-approval` `{ approvalId, decision: 'approved'\|'rejected' }` | manage (do workspace do pedido) | `200 { ok: true }`. `404 "Pedido de aprovação não encontrado."` (inclui empresa alheia, sem vazar); `409 "Este pedido já foi decidido."` (também em corrida: o UPDATE é guardado por `status = pending`); `403 "Só o dono ou um administrador da empresa pode aprovar ou rejeitar."` (marketing/viewer). Numa transação: pedido → `decided_*`; `entity_type 'campaign'` → campanha `approved` (rejeitar = `draft`); `'creative'` → criativo recebe o status da decisão (sempre filtrado pelo workspace do pedido). Atividade `approval.<decisão> {request_id, entity_id}` com `entity_type` do pedido |
 
 **Rotas que as telas chamam e ainda não existem** (shims criados; a API nasce nas tarefas indicadas, até lá a tela mostra o erro da API): `POST /v1/meta/meta-ads-status|meta-ads-publish|meta-ads-set-status`,
-`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (**feita na Task 4**, §20). Componentes `campaign-channels`, `campaign-ads-settings` e `instagram/approvals` (`IgApprovalList`) são
-**placeholders** com a assinatura final; as tarefas de Meta (6) e do Instagram (5) os substituem.
+`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (**feita na Task 4**, §20). Componentes `campaign-channels` e `campaign-ads-settings` são
+**placeholders** com a assinatura final (a tarefa de Meta, 6, os substitui); `instagram/approvals` (`IgApprovalList`) é real desde a Task 5 (§22).
 
 ## 18. Biblioteca de mídia — `/v1/workspaces/:workspaceId/{media-assets,copies}` e `POST /v1/media/*`
 
@@ -380,3 +380,88 @@ Cliente MCP Streamable-HTTP (JSON-RPC 2.0, `protocolVersion 2025-06-18`, aceita 
 | `GET /v1/mcp/status/:provider` | autenticado | `[{ workspace_id, provider, status }]` das empresas do usuário (cartão "Higgsfield" de Integrações) |
 | `GET /api/public/mcp/callback?code&state&error` | **pública** | troca o code, testa as ferramentas e grava os tokens cifrados; devolve **HTML** (mensagem escapada; `postMessage({type:"mcp-oauth",ok})` só para a origem de `APP_URL`). O `state` é de uso único e vale 30 min |
 
+## 22. Instagram — `/v1/workspaces/:workspaceId/{instagram-account,ig-*}`, `POST /v1/instagram/*`, cron e webhook
+
+Orgânico (feed, carrossel, Reels, Stories): plano de conteúdo → calendário (IA) → mídia (pipeline de imagem/vídeo da §19) → aprovação → fila de publicação → métricas. Tudo que fala com a Meta passa por **um** cliente injetável
+(`MetaGraphClient`, `https://graph.facebook.com/v24.0`, `access_token` + `appsecret_proof`); credenciais = cofre da empresa → cofre global → env (`META_APP_ID/SECRET`, `META_SYSTEM_USER_TOKEN`, `META_PAGE_ID`).
+Os laços do navegador (`drive()` do calendário: ≤ 40 × `fill-auto-calendar`, depois ≤ 12 × `generate-next-auto-media`; "gerar criativos pendentes" um a um) **continuam no navegador**, com os mesmos limites.
+
+### 22.1 Leituras/escritas diretas (`WorkspaceAccessGuard`: GET = read, POST/PATCH = write — viewer só lê)
+
+| rota | resposta |
+|---|---|
+| `GET /instagram-account` | linha de `instagram_accounts` (sem token — ele nunca é gravado aqui) ou `{}` quando não há conta |
+| `GET /ig-posts` | `ig_posts[]` por `scheduled_at` asc (sem data por último) |
+| `GET /ig-posts/pending-count` | `{ count }` de `pending_approval` — selo do menu (`["ig-pending-badge", ws]`, 120 s) |
+| `PATCH /ig-posts/:id` `{ caption?(≤5000), hashtags?[≤30], cta?(≤500), scheduled_at?(ISO com fuso\|null), creative_brief?{} }` | linha atualizada. **Só esses campos** (`status`/`media` não são editáveis → `400 VALIDATION_ERROR`). O `pending_job` de `creative_brief` é do servidor (id do job do provedor): o cliente não o define nem apaga. Post de outra empresa/malformado `404 "Post não encontrado."` |
+| `GET /ig-post-metrics` | `ig_post_metrics[]` `collected_at` desc |
+| `GET /ig-content-plans[?exclude_archived=true]` | planos `created_at` desc |
+| `POST /ig-content-plans` · `PATCH /ig-content-plans/:id` | `{ name, brand_id?, objective?, tone_of_voice?, content_pillars?[string], posting_frequency?{feed_image,feed_carousel,feed,reels,stories: int}, preferred_times?[string], posting_days?[0–6], hashtag_strategy?{notes,audience}, cta_default?, requires_approval?, auto_publish?, status?: draft\|active\|paused }` → linha (`{ id }` basta à tela). `workspace_id` no corpo = `400`. `brand_id` de outra empresa `404 "Marca não encontrada."`; plano alheio `404 "Plano de conteúdo não encontrado."` |
+| `GET /ig-autopilot-events[?limit=20]` | eventos `created_at` desc (máx. 100) |
+| `GET /ig-auto-runs` | até 8 programações **raiz** `created_at` desc, cada uma com `weeks` (raiz + semanas recorrentes) e `counts { total, media, waiting, scheduled, published, failed }` dos posts — o que o protótipo montava com 3 consultas |
+| `GET /ig-account-insights[?since=YYYY-MM-DD]` | `ig_account_insights[]` por data asc |
+
+Leituras de marcas/campanhas/mídia da tela usam as rotas das §10, §15 e §18 (`GET /brands`, `GET /campaigns`, `GET /media-assets`).
+
+### 22.2 Ações — `POST /v1/instagram/<nome-em-kebab>` (corpo = o `data` do protótipo; HTTP 200)
+
+Autorização no servidor (o protótipo deixava "qualquer membro", inclusive viewer, gerar/agendar): conectar/trocar/desconectar conta, listar Páginas e programação "publica sozinho" = **manage** (dono/admin);
+todo o resto que escreve ou gasta crédito = **write** (dono/admin/marketing); `preview-auto-calendar` só exige estar logado. Quem não é da empresa `403 "Você não tem acesso a esta empresa."`; viewer `403 "Seu perfil não tem permissão para esta ação."`;
+post/plano/marca/programação de outra empresa `404` (mensagem do protótipo); programação → `404 "Programação não encontrada."` também para quem não é membro (não vaza).
+
+| rota | corpo | resposta / erros |
+|---|---|---|
+| `connect-instagram-account` | `{ workspaceId, pageId?(≤64) }` | `{ ok:true, username, igUserId }` ou `{ ok:false, error }` (conta fica `status 'error'` + `last_error`): `"Salve as credenciais da Meta em Integrações antes de conectar o Instagram."`, `"ID da Página do Facebook não configurado."`, `"Esta Página não tem uma conta profissional do Instagram vinculada."`. Em caso de sucesso importa o histórico (sem bloquear) |
+| `list-instagram-options` | `{ workspaceId }` | `{ ok, options:[{ pageId, pageName, igUserId, username, picture }] }` ou `{ ok:false, error, options:[] }` |
+| `sync-instagram-history` | `{ workspaceId }` | `{ ok:true, imported, total, metrics }` — últimos 30 itens; só importa os que faltam (`source 'instagram_import'`, mídia vai para a biblioteca sem normalizar, `approved`) e coleta métricas de todos. `400 "Conecte uma conta do Instagram antes de importar o histórico."` |
+| `disconnect-instagram-account` | `{ workspaceId }` | `{ ok:true }` |
+| `generate-content-calendar` | `{ workspaceId, planId, weeks?(1–8, 1), engine?: auto\|chatgpt\|gemini }` | `{ created, provider: openai_own\|gemini_own\|lovable_ai }` — cria `ig_posts` `idea` com `creative_brief { prompt, slides, aspect_ratio }`; só os dias do plano. `404 "Plano de conteúdo não encontrado."`, `502 "A IA não devolveu posts."` |
+| `generate-post-assets` · `regenerate-media` | `{ workspaceId, postId, provider?: auto\|higgsfield\|chatgpt\|gemini, adjust?(≤300) }` · `{ …, instructions?(≤1000) }` | `{ ok:true, items, provider, pending? }` ou `{ ok:false, error }` (post `failed` + `last_error`). Imagem única = pipeline da §19 (variações → crítico → composição); carrossel = 1 imagem por slide (gancho no 1º, CTA no último, logo em todos); Reels/Story vídeo = vídeo + capa + legendas. Provedor assíncrono grava `creative_brief.pending_job` (post fica `generating`; o job `instagram-queue` conclui, timeout 1 h) |
+| `regenerate-caption` | `{ workspaceId, postId, instructions?(≤1000), engine? }` | `{ ok:true }` — atualiza `caption`, `hashtags`, `cta`, `ai_generation_log` |
+| `suggest-pillars` | `{ workspaceId, brandId?, objective?, tone?, audience? (≤500) }` | `{ pillars:[≤5] }`; marca alheia `404` |
+| `approve-post` | `{ workspaceId, postId }` | `{ ok:true }`. `400 "Gere a mídia antes de aprovar."`. Plano/programação no piloto agenda sozinho (`afterApproval`) |
+| `reject-post` | `{ workspaceId, postId, reason(1–1000) }` | `{ ok:true }` (`cancelled` + `rejection_reason`) |
+| `schedule-post` | `{ workspaceId, postId, scheduledAt (ISO com fuso) }` | `{ ok:true, sandbox }` (`sandbox` = sem conta conectada, job `mode 'mock'`). Cancela o job pendente anterior, cria `publishing_jobs { channel 'instagram_organic', status 'pending', run_at }`, post → `scheduled`. `400 "Gere a mídia antes de agendar."` / `"O post precisa estar aprovado para ser agendado."` / `"Este post exige aprovação antes de agendar."` |
+| `publish-instagram-post` | `{ workspaceId, postId }` | `{ ok:true, sandbox:false, permalink }` ou `{ ok:false, sandbox:false, error }` (post `failed`). Guardrails: aprovação, 25/24 h, mídia `ig_ready` e não simulada, URL HTTPS pública, conta conectada |
+| `collect-post-metrics` | `{ workspaceId, postId }` | `{ ok:true, values }` (conjunto por formato; se a Meta recusar uma métrica, cai para o essencial). `400 "Post ainda não publicado."` / `"Post antigo do modo simulado: não existe no Instagram."` |
+| `collect-account-insights-now` | `{ workspaceId }` | `{ days, followers }` ou `{ skipped:"sem conta conectada" }` |
+| `upload-post-media` | **multipart** `workspaceId`, `postId`, `file` | `{ ok:true }`. Imagem/vídeo ≤ 100 MB (`400 "Envie uma imagem ou um vídeo MP4."` / `"Arquivo acima de 100 MB."`); entra na biblioteca; carrossel acrescenta, os demais substituem; `idea`/`failed` → `pending_approval` |
+| `create-auto-calendar` | `{ workspaceId, planId?, brandId?, campaignId?, startDate, endDate (YYYY-MM-DD), weekdays[0–6]≥1, times[≤8 "H:MM"], storyTimes[≤10], formats[≥1], focus?(≤1000), mode: publish\|approval, recurring?, asap? }` | `{ runId, planId, total, skipped }`. Horários exatos em UTC-3 (nunca pela IA); ≤ 120 posts e ≤ 92 dias; sem plano cria um a partir da marca (pilares sugeridos). `400 "Informe ao menos um horário."` / `"Escolha um plano de conteúdo ou uma marca."` / horários já passados; `404` plano/marca/campanha de outra empresa |
+| `fill-auto-calendar` | `{ runId }` | `{ filled, total, done, busy }` — próximo lote de 8 da estrategista, com lock otimista de 150 s (`busy:true` = outra chamada tem o lock; falha de IA solta o lock, guarda `last_error` e responde `502`) |
+| `generate-next-auto-media` | `{ runId, withinHours?(1–72, 6) }` | `{ done, ok, error?, remaining }` — gera o criativo do próximo post `idea` da programação dentro da janela e agenda (`scheduleAutomated`) |
+| `cancel-auto-calendar` | `{ runId }` | `{ cancelled: n }` — programação + semanas recorrentes `cancelled`; posts não publicados `cancelled`; jobs pendentes cancelados |
+| `preview-auto-calendar` | `{ startDate, endDate, weekdays, times, storyTimes, formats, asap? }` | `{ ok:true, total, skipped, first, last, slots[≤200] }` ou `{ ok:false, error }` (puro, sem IA) |
+
+### 22.3 Fila de publicação (`publishing_jobs`, `channel = 'instagram_organic'`)
+
+`runPublishingQueue` (a cada 5 min): destrava `running` com `locked_at` > **15 min**; pega até **4** jobs `pending` com `run_at ≤ agora` por `run_at`; **lock otimista** (`UPDATE … WHERE id AND status='pending'`, `attempts+1`); resultado: sucesso → `done` + permalink no `log`;
+container ainda processando na Meta (`ContainerPending`) → volta `pending` em 2 min **sem** gastar tentativa (o container criado fica em `ig_posts.ig_creation_id` e a próxima execução só consulta e publica); `Guardrail` ou token 190 → `failed` sem repetir
+(190 também marca a conta em erro, pausa os planos ativos e cancela os jobs pendentes); limite diário → repete em 1 h sem contar; demais erros → até **3** tentativas com backoff 5 min · 2^(n-1); o post espelha (`scheduled`/`failed`, `retry_count`, `last_error`).
+O poller de **criativos do Studio** (`pollPendingCreatives`) que o protótipo chamava dentro desta fila **não** é chamado aqui: o job `creative-poll-5min` (§19) já o faz.
+
+### 22.4 Cron — `POST /api/public/cron/instagram` (pública, protegida por token) e jobs do agendador
+
+Cabeçalho `x-cron-secret` = `CRM_CRON_SECRET` (env) **ou** `cron_tokens.token` com `name = 'instagram'` (comparação em tempo constante); senão `401 "Unauthorized"`. Corpo `{ task?: queue\|publish\|media\|metrics\|weekly\|optimize\|account }` (outro valor `400`):
+
+| task | faz | resposta |
+|---|---|---|
+| `queue` (= `publish`) | mídias assíncronas pendentes + fila de publicação | `{ pendingMedia, queue:[{ job, status, error? }] }` |
+| `media` | calendário automático (lotes da estrategista, agendar prontos, nova tentativa de falhas, "publish" vencido < 12 h, aprovação 10 min antes, recorrentes, concluir) + piloto (até 2 mídias, regra das 2 h) | `{ autoCalendar, autopilot }` |
+| `metrics` | janelas 1h/24h/7d (stories 1h/20h) + aprendizado (top 20 % → `brands.visual_style.exemplos_prompt`) | `{ metrics, learning }` |
+| `weekly` | recorrentes + semana seguinte dos planos `auto_publish` (reserva `ig_autopilot_weeks`, liberada se falhar) | `{ weekly:[…] }` |
+| `optimize` | melhores horários (BRT) e pesos dos pilares dos últimos 14 dias | `{ optimize:[…] }` |
+| `account` | seguidores/alcance/visitas/cliques de cada conta conectada | `{ account:[…] }` |
+| (sem `task`) | queue + media + metrics | tudo junto |
+
+O heartbeat (`instagram-<task>`, `instagram-all`) é gravado **depois** (o protótipo gravava antes e não provava sucesso). Os mesmos 6 jobs rodam no agendador (`SCHEDULER_ENABLED=true`, UTC, `JOB_SCHEDULES`): `instagram-queue-5min` (heartbeat `instagram-queue`),
+`instagram-media-5min` (`instagram-media`), `instagram-metrics-5min` (`instagram-metrics`), `instagram-autopilot-weekly` `0 21 * * 0` (`instagram-weekly`), `instagram-optimizer-monday` `0 12 * * 1` (`instagram-optimize`), `instagram-account-daily` `25 10 * * *` (`instagram-account`).
+`revalidateBackfill` (re-validar mídias marcadas `quality_report.backfill`) **não** roda aqui: era só para os dados migrados do Lovable, e não há migração de dados.
+
+### 22.5 Webhook — `GET|POST /api/public/webhooks/instagram/:token` (pública)
+
+`token` = `crm_integrations.webhook_token` com `kind = 'instagram'` (outro tipo = não existe). **GET** (verificação da Meta): `hub.mode=subscribe` + `hub.verify_token` = `verify_token` da integração → devolve o `hub.challenge` (`text/plain`); senão `403 "Forbidden"`.
+**POST** (corpo bruto — `rawBody` habilitado no Nest): `404 "Not found"` sem integração · `401 "Invalid signature"` se `x-hub-signature-256` (HMAC-SHA256 do corpo com o App Secret do **env** ou do cofre da empresa/global) não confere · `400 "Bad request"` JSON inválido ·
+`200 "ok"` · `500 "retry later"` se algum evento falhou (a Meta reenvia). Eventos: Direct (`entry[].messaging[]`, ignora eco e a própria conta) e comentários (`changes[].field = comments`). Idempotência por `crm_webhook_events (source 'instagram', external_id = mid | comment:<id>)`:
+processado/em processamento (< 10 min) não repete; `failed` ou preso > 10 min é reprocessado. Cada evento vira lead (`source instagram_dm|instagram_comment`, `instagram_id`), conversa (`phone = ig:<igsid>`, janela de 24 h), mensagem e interação;
+descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; palavra-chave de comentário envia DM privada + resposta pública (`crm_integrations.config.keywords`). **Cadências, agente SDR e compreensão de áudio/imagem são da Task 8** — entram pelo ponto de extensão
+`CRM_CHANNEL_HOOKS` (`startCadence`, `stopCadences`, `runSdr`, `describeMedia`); sem ele o canal grava tudo e não responde sozinho. `WebhookLedgerService` (`webhooks/`) é o mesmo ledger/assinatura que os webhooks de WhatsApp e Lead Ads usarão.

@@ -34,6 +34,9 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
 - Leituras de CRM chamam `CrmDefaultsService.ensure(workspaceId)` primeiro (funil/etapas/motivos/tags/settings são criados na 1ª leitura).
 - A API roda em **uma** instância: `SCHEDULER_ENABLED=true` em mais de uma duplicaria cada job. Throttle por IP exige `TRUST_PROXY=true` atrás de nginx.
 - Flag/variável nova entra em `common/config/env.validation.ts`, no `.env.example` e no `docker-compose.yml`.
+- **Instagram (`api/src/modules/instagram`)**: o cliente da Graph API é UM só (`MetaGraphClient`, porta `META_FETCH` injetável; credenciais = cofre da empresa → global → env). Fila `publishing_jobs` (`instagram_organic`) com lock otimista, trava vencida em 15 min e 3 tentativas;
+  cron `POST /api/public/cron/instagram` (+ 6 jobs do agendador em `InstagramCronService`) e webhook `/api/public/webhooks/instagram/:token` (corpo bruto: `rawBody: true` no `main.ts`; ledger em `modules/webhooks`). O `pollPendingCreatives` NÃO roda no cron do Instagram (já é o job `creative-poll-5min`).
+  Cadências/SDR do canal Instagram entram pelo ponto de extensão `CRM_CHANNEL_HOOKS` (Task 8). Smoke do webhook: subir a API com `META_APP_SECRET=smoke-meta-secret`.
 - Prisma: o schema é gerado de `api/prisma/tools/{spec,gen}.js` só na criação; a partir daqui edite `schema.prisma` à mão. O que o Prisma não expressa
   (CHECKs, índices parciais, `NULLS NOT DISTINCT`, gatilhos `touch_updated_at`) fica em SQL dentro da migração. Índices parciais exigem o predicado em `ON CONFLICT`.
   Nada de `$queryRawUnsafe` com entrada do usuário.
@@ -76,7 +79,7 @@ Seed de dev: `demo@meufunil.local` / `meufunil123` (owner de "Meu Funil Demo").
   Google: `GET /v1/auth/google` (503 sem credenciais -> toast "Não foi possível entrar com o Google."); a sessão volta no fragmento `#access_token=…` para `/auth`.
 - Guarda de sessão em `app/(app)/layout.tsx` (valida com `GET /v1/auth/me`; nenhuma página monta sem sessão). `(app)/[...rest]` é o placeholder das telas ainda não portadas (shell + área vazia); `lib/app-routes.ts` lista as 29 rotas
   conhecidas (fora delas: 404 do root, sem shell). Cada tarefa de página cria o `page.tsx` real em `(app)/<rota>/`.
-- `lib/workspace.tsx` (`WorkspaceProvider`/`useWorkspace`): `GET /v1/workspaces`; `logActivity` virou no-op (a API registra a atividade). `lib/ig-pending.ts` é o selo do Instagram no menu (0 até a tarefa do Instagram).
+- `lib/workspace.tsx` (`WorkspaceProvider`/`useWorkspace`): `GET /v1/workspaces`; `logActivity` virou no-op (a API registra a atividade). `lib/ig-pending.ts` é o selo do Instagram no menu (`GET /v1/workspaces/:id/ig-posts/pending-count`).
 - `scripts/browser-check.mjs` (Playwright do freela-web-v2): login pelo formulário, shell, menu, 404, refresh de token, Sair; falha em console/pageerror/rede/HTTP>=400. Cresce a cada tarefa.
 
 - `NODE_ENV` não tem default: chave de dev do cofre e Swagger só com `NODE_ENV=development` (test p/ a chave). Sem NODE_ENV explícito e sem `CREDENTIALS_ENCRYPTION_KEY` a API não sobe.
