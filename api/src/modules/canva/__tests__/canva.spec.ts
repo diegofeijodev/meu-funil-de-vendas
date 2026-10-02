@@ -1,4 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+
+jest.mock('node:crypto', () => {
+  const actual = jest.requireActual('node:crypto');
+  return { ...actual, timingSafeEqual: jest.fn(actual.timingSafeEqual) };
+});
 jest.setTimeout(60_000);
 
 import { WorkspaceAccessService } from '../../access/access.service';
@@ -121,6 +126,23 @@ describe('CanvaService — login OAuth (PKCE)', () => {
     expect(await s.vault.get(WS_A, 'CANVA_OAUTH')).toBeNull();
     // o state é de uso único
     expect(await status(s.svc.finishOAuth(state, 'CODE'))).toBe('400:Sessão de login expirada. Tente entrar de novo.');
+  });
+
+  it('callback: o state é comparado em tempo constante (timingSafeEqual) — de mesmo tamanho e errado é recusado; tamanho diferente nem chega a comparar; expirado continua recusado', async () => {
+    const s = await setup();
+    await s.svc.saveApp(OWNER, WS_A, 'abcd1234', 'sec');
+    const state = new URL((await s.svc.oauthStart(OWNER, WS_A)).authUrl).searchParams.get('state')!;
+    const spy = timingSafeEqual as unknown as jest.Mock;
+    spy.mockClear();
+    const wrongSameLen = state.slice(0, -1) + (state.endsWith('a') ? 'b' : 'a');
+    expect(await status(s.svc.finishOAuth(wrongSameLen, 'c'))).toBe('400:Sessão de login expirada. Tente entrar de novo.');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await status(s.svc.finishOAuth(state + 'x', 'c'))).toBe('400:Sessão de login expirada. Tente entrar de novo.');
+    expect(spy).toHaveBeenCalledTimes(1); // comprimento diferente: recusa antes de comparar
+    // state certo, mas vencido
+    const saved = JSON.parse((await s.vault.get(WS_A, 'CANVA_OAUTH'))!);
+    await s.vault.set(WS_A, { CANVA_OAUTH: JSON.stringify({ ...saved, at: Date.now() - 3 * 60 * 60 * 1000 }) });
+    expect(await status(s.svc.finishOAuth(state, 'c'))).toBe('400:Sessão de login expirada. Tente entrar de novo.');
   });
 
   it('callback: state mal formado, outro workspace, expirado, recusado pelo Canva', async () => {

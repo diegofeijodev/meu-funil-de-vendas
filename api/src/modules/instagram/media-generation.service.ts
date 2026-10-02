@@ -341,6 +341,11 @@ export class MediaGenerationService {
         lease,
       );
     } catch (e) {
+      // Lease perdido: outro processo é dono do post agora — não marcar `failed` nem sobrescrever `last_error` por cima do trabalho dele.
+      if (e instanceof PublishClaimLost) {
+        this.logger.warn(`[instagram] geração de mídia interrompida (post assumido por outro processo): ${e.message}`);
+        return { ok: false, error: errText(e) };
+      }
       this.logger.error(`[instagram] mídia falhou: ${e instanceof Error ? e.stack ?? e.message : e}`);
       await this.store.patchPost(postId, {
         status: 'failed',

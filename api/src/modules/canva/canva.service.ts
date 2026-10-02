@@ -3,7 +3,7 @@
  * CANVA_TOKENS (JSON) e CANVA_OAUTH (state + verifier PKCE). Empresas que herdam da "empresa da agência" usam a conexão dela.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
@@ -24,6 +24,14 @@ type Tokens = { access_token: string; refresh_token: string; expires_at: number;
 export class CanvaAuthError extends UserError {}
 
 const b64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+/** Comparação em tempo constante (o `state` é um segredo de uso único). */
+function safeEqual(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
 
 @Injectable()
 export class CanvaService {
@@ -136,7 +144,7 @@ export class CanvaService {
     const ws = state.split('.')[0] ?? '';
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ws)) throw new UserError('Retorno do Canva inválido.');
     const saved = await this.readJSON<{ state: string; verifier: string; at: number }>(ws, 'CANVA_OAUTH');
-    if (!saved || saved.state !== state || Date.now() - saved.at > OAUTH_TTL_MS) throw new UserError('Sessão de login expirada. Tente entrar de novo.');
+    if (!saved || !safeEqual(saved.state, state) || Date.now() - saved.at > OAUTH_TTL_MS) throw new UserError('Sessão de login expirada. Tente entrar de novo.');
     const app = await this.appCreds(ws);
     if (!app) throw new UserError('App Canva não configurado.');
     const t = await this.tokenRequest(app, { grant_type: 'authorization_code', code, code_verifier: saved.verifier, redirect_uri: this.redirectUri });

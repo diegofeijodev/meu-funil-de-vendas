@@ -1,5 +1,6 @@
 import { WS_A, WS_B, OWNER, STRANGER, status } from '../../media/__tests__/mem';
 import { ProviderResolverService } from '../../creative/provider-resolver.service';
+import { PublishClaimLost } from '../ig-store.service';
 import { igServices, igWorld, IgWorld, seedPost, uuid, ART } from './harness';
 
 function setup() {
@@ -239,6 +240,22 @@ describe('lease do poller e varredor de geração', () => {
     await gen.generatePostAssets(WS_A, vid.id);
     expect(vid.status).toBe('generating');
     expect(vid.lease_until).toBeNull();
+  });
+
+  it('lease perdido no meio da geração (PublishClaimLost): NÃO marca failed nem mexe em last_error — o post é do outro processo; erro comum continua falhando', async () => {
+    const { w, s, gen } = setup();
+    const lost = idea(w, { last_error: null });
+    s.pipeline.run.mockRejectedValueOnce(new PublishClaimLost('O trabalho neste post foi assumido por outro processo (lease vencido).'));
+    const r = await gen.generatePostAssets(WS_A, lost.id);
+    expect(r).toMatchObject({ ok: false });
+    expect(lost.status).not.toBe('failed');
+    expect(lost.last_error).toBeNull();
+    expect(lost.ai_generation_log ?? []).toEqual([]);
+    const normal = idea(w, {});
+    s.pipeline.run.mockRejectedValueOnce(new Error('provedor caiu'));
+    expect(await gen.generatePostAssets(WS_A, normal.id)).toMatchObject({ ok: false });
+    expect(normal.status).toBe('failed');
+    expect(normal.last_error).toMatch(/provedor caiu/);
   });
 
   it('varredor: "generating" sem pending_job e sem lease vivo volta a failed com aviso; vivo e com pending_job não são tocados', async () => {
