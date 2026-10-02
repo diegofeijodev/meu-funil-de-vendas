@@ -565,6 +565,7 @@ model ig_posts {
   source              String                @default("app")
   automation          String?
   run_id              String?               @db.Uuid
+  lease_until         DateTime?             @db.Timestamptz(6)
   workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
   run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)

@@ -130,7 +130,7 @@ describe('generatePostAssets — carrossel e vídeo', () => {
     const mk = (started: number) => idea(w, { format: 'reel', status: 'generating', creative_brief: { pending_job: { provider: 'gemini', jobId: 'veo:z', index: 0, prompts: ['p'], media: [], cost: 0, started_at: new Date(Date.now() - started).toISOString() } } });
     const failing = mk(1000);
     const timeout = mk(61 * 60e3);
-    const noJob = idea(w, { status: 'generating', creative_brief: {} });
+    const noJob = idea(w, { status: 'generating', creative_brief: {}, lease_until: new Date(Date.now() + 60e3) }); // geração síncrona viva (lease)
     s.provider.getGenerationStatus.mockImplementation(async (id: string) => ({ status: id === 'veo:z' && failing.status === 'generating' ? 'failed' : 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: id, cost: 0 }));
     const out = await gen.pollPendingMedia();
     expect(out).toEqual(expect.arrayContaining([{ post: failing.id, status: 'failed', error: 'O provedor informou falha na geração da mídia.' }]));
@@ -169,6 +169,76 @@ describe('claim atômico da geração', () => {
     await Promise.all([gen.pollPendingMedia(), gen.pollPendingMedia()]);
     expect(s.assets.ingest.mock.calls.filter((c: any) => c[0].kind === 'video').length).toBe(1);
     expect(post.media).toHaveLength(1);
+  });
+});
+
+describe('lease do poller e varredor de geração', () => {
+  const pending = (id: string) => ({ pending_job: { provider: 'gemini', jobId: id, index: 0, prompts: ['p'], media: [], cost: 0, started_at: new Date().toISOString() } });
+  const READY = (id: string) => ({ status: 'ready', assetUrl: 'https://provider.test/v.mp4', thumbnailUrl: null, externalJobId: id, cost: 6 });
+
+  it('ciclo que começa enquanto outro ainda ingere (vídeo longo) não conclui o job de novo', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, { format: 'reel', status: 'generating', creative_brief: pending('veo:l') });
+    s.provider.getGenerationStatus.mockResolvedValue(READY('veo:l'));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const orig = s.assets.ingest.getMockImplementation()!;
+    s.assets.ingest.mockImplementationOnce(async (i: any) => { await gate; return orig(i); });
+    const first = gen.pollPendingMedia(); // pega o lease e fica preso na ingestão
+    await new Promise((r) => setTimeout(r, 20));
+    expect(post.lease_until).toBeInstanceOf(Date);
+    expect(await gen.pollPendingMedia()).toEqual([]); // 2º ciclo: lease vivo, nada a fazer
+    release();
+    await first;
+    expect(s.assets.ingest.mock.calls.filter((c: any) => c[0].kind === 'video')).toHaveLength(1);
+    expect(post.media).toHaveLength(1);
+    expect(post.lease_until).toBeNull(); // solto no finally
+  });
+
+  it('lease vencido (ciclo anterior morreu) é reassumido; lease vivo não', async () => {
+    const { w, s, gen } = setup();
+    const dead = idea(w, { format: 'reel', status: 'generating', creative_brief: pending('veo:d'), lease_until: new Date(Date.now() - 1000) });
+    const live = idea(w, { format: 'reel', status: 'generating', creative_brief: pending('veo:v'), lease_until: new Date(Date.now() + 5 * 60e3) });
+    s.provider.getGenerationStatus.mockImplementation(async (id: string) => READY(id));
+    const out = await gen.pollPendingMedia();
+    expect(out).toEqual([{ post: dead.id, status: 'ready' }]);
+    expect(live.status).toBe('generating');
+    expect(s.provider.getGenerationStatus).not.toHaveBeenCalledWith('veo:v');
+  });
+
+  it('geração síncrona solta o lease no fim (sucesso, falha e pendente)', async () => {
+    const { w, s, gen } = setup();
+    const ok = idea(w, {});
+    await gen.generatePostAssets(WS_A, ok.id);
+    expect(ok.lease_until).toBeNull();
+    s.provider.generateVideo.mockResolvedValueOnce({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: 'veo:q', cost: 0 });
+    const vid = idea(w, { format: 'reel' });
+    await gen.generatePostAssets(WS_A, vid.id);
+    expect(vid.status).toBe('generating');
+    expect(vid.lease_until).toBeNull();
+  });
+
+  it('varredor: "generating" sem pending_job e sem lease vivo volta a failed com aviso; vivo e com pending_job não são tocados', async () => {
+    const { w, gen } = setup();
+    const dead = idea(w, { status: 'generating', creative_brief: {}, lease_until: new Date(Date.now() - 31 * 60e3) });
+    const legacy = idea(w, { status: 'generating', creative_brief: {} }); // sem lease algum
+    const live = idea(w, { status: 'generating', creative_brief: {}, lease_until: new Date(Date.now() + 20 * 60e3) });
+    const withJob = idea(w, { format: 'reel', status: 'generating', creative_brief: pending('veo:j'), lease_until: null });
+    expect((await gen.sweepStaleGenerating()).sort()).toEqual([dead.id, legacy.id].sort());
+    expect(dead).toMatchObject({ status: 'failed', last_error: 'Geração da mídia interrompida — tente gerar de novo.', lease_until: null });
+    expect(legacy.status).toBe('failed');
+    expect(live.status).toBe('generating');
+    expect(withJob.status).toBe('generating');
+    expect(w.t['ig_autopilot_events']!.rows.filter((e) => e.post_id === dead.id)).toHaveLength(1);
+    // e o post recuperado pode ser gerado de novo
+    expect((await gen.generatePostAssets(WS_A, dead.id)).ok).toBe(true);
+  });
+
+  it('o ciclo do poller também varre (cron queue)', async () => {
+    const { w, gen } = setup();
+    const dead = idea(w, { status: 'generating', creative_brief: {}, lease_until: new Date(Date.now() - 1000) });
+    await gen.pollPendingMedia();
+    expect(dead.status).toBe('failed');
   });
 });
 

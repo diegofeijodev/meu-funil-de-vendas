@@ -30,6 +30,33 @@ export function errText(e: unknown): string {
   return 'erro desconhecido';
 }
 
+/** Condição Prisma "lease livre": nunca pego ou vencido. */
+export const leaseFree = (now = new Date()) => ({ OR: [{ lease_until: null }, { lease_until: { lt: now } }] });
+
+/**
+ * Lease de trabalho sobre um post (`ig_posts.lease_until`). Pego por UPDATE condicional (livre = NULL ou vencido), renovado
+ * enquanto o trabalho anda (`renew`, só se o lease ainda é o nosso — senão `PublishClaimLost`) e solto no fim (`release`).
+ */
+export class PostLease {
+  constructor(
+    private readonly prisma: PrismaService,
+    readonly postId: string,
+    private until: Date,
+    private readonly ttlMs: number,
+  ) {}
+
+  async renew() {
+    const next = new Date(Date.now() + this.ttlMs);
+    const got = await this.prisma.ig_posts.updateMany({ where: { id: this.postId, lease_until: this.until }, data: { lease_until: next } });
+    if (!got.count) throw new PublishClaimLost('O trabalho neste post foi assumido por outro processo (lease vencido).');
+    this.until = next;
+  }
+
+  async release() {
+    await this.prisma.ig_posts.updateMany({ where: { id: this.postId, lease_until: this.until }, data: { lease_until: null } }).catch(() => undefined);
+  }
+}
+
 /** Acesso às linhas de `ig_posts` e ao registro do piloto automático (sempre com id + workspace). */
 @Injectable()
 export class IgStore {
@@ -47,6 +74,17 @@ export class IgStore {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   patchPost(id: string, patch: Record<string, any>) {
     return this.prisma.ig_posts.update({ where: { id }, data: patch });
+  }
+
+  /** Pega o lease do post junto com `data` se `where` (status etc.) e "lease livre" valem; null = perdeu. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async claimLease(postId: string, workspaceId: string | null, where: Record<string, any>, data: Record<string, any>, ttlMs: number): Promise<PostLease | null> {
+    const until = new Date(Date.now() + ttlMs);
+    const got = await this.prisma.ig_posts.updateMany({
+      where: { id: postId, ...(workspaceId ? { workspace_id: workspaceId } : {}), AND: [where, leaseFree()] },
+      data: { ...data, lease_until: until },
+    });
+    return got.count ? new PostLease(this.prisma, postId, until, ttlMs) : null;
   }
 
   appendLog(post: PostRow, entry: Record<string, unknown>) {

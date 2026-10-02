@@ -14,11 +14,17 @@ import { ImageService } from '../media/image.service';
 import { UserError } from '../media/user-error';
 import { ContentService } from './content.service';
 import { ASPECT, IgFormat, isVideoFormat, PostRow } from './ig-types';
-import { IgStore, errText } from './ig-store.service';
+import { IgStore, PostLease, PublishClaimLost, errText, leaseFree } from './ig-store.service';
 import { PublishingService } from './publishing.service';
 
 const MAX_UPLOAD = 100 * 1024 * 1024;
 const PENDING_TIMEOUT_MS = 60 * 60e3;
+/**
+ * Lease do post durante a geração síncrona e a conclusão de um job assíncrono. Renovado a cada slide/etapa longa; o TTL cobre a maior
+ * etapa única (chamada de IA 180 s, vídeo até 6 min de espera, ingestão 120 s) com folga > 2x. Vencido = o processo morreu.
+ */
+const MEDIA_LEASE_MS = 30 * 60e3;
+export const GENERATION_INTERRUPTED = 'Geração da mídia interrompida — tente gerar de novo.';
 
 type PendingJob = {
   provider: string;
@@ -174,9 +180,11 @@ export class MediaGenerationService {
     cost: number,
     instructions?: string | null,
     extra: RefImages = {},
+    lease?: PostLease,
   ): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
     const format = post.format as IgFormat;
     for (let i = start; i < prompts.length; i++) {
+      await lease?.renew();
       const req = {
         finalPrompt: `${prompts[i]} ${format === 'feed_carousel' ? `(slide ${i + 1} de ${prompts.length})` : ''}`.trim(),
         aspectRatio: ASPECT[format],
@@ -225,11 +233,15 @@ export class MediaGenerationService {
     const brand = await this.content.brandFor(workspaceId, brandId);
     post._brandId = brand?.id ?? null;
     // Claim atômico: dois processos (editor, tick do cron, laço do navegador) nunca geram o mesmo post.
-    const claimed = await this.prisma.ig_posts.updateMany({
-      where: { id: postId, workspace_id: workspaceId, status: { in: ['idea', 'failed', 'pending_approval', 'ready', 'approved', 'scheduled', 'cancelled'] } },
-      data: { status: 'generating', last_error: null },
-    });
-    if (!claimed.count) return { ok: false, error: 'Este post já está com a mídia sendo gerada (ou já foi publicado).' };
+    const lease = await this.store.claimLease(
+      postId,
+      workspaceId,
+      { status: { in: ['idea', 'failed', 'pending_approval', 'ready', 'approved', 'scheduled', 'cancelled'] } },
+      { status: 'generating', last_error: null },
+      MEDIA_LEASE_MS,
+    );
+    if (!lease) return { ok: false, error: 'Este post já está com a mídia sendo gerada (ou já foi publicado).' };
+    try {
     let used: ChainedProvider | null = null;
     try {
       const provider = await this.providers.resolve(workspaceId, providerChoice);
@@ -267,6 +279,7 @@ export class MediaGenerationService {
         visual_prompt: ads[0]!.prompt_final,
       };
       await this.store.patchPost(postId, { creative_brief: post.creative_brief });
+      await lease.renew();
 
       // Imagem única: variações + crítico + composição.
       if (!isVideoFormat(format) && format !== 'feed_carousel' && !provider.sandbox) {
@@ -309,12 +322,22 @@ export class MediaGenerationService {
           return { ok: true, items: 1, provider: provider.id };
         }
         // Provedor assíncrono: segue o fluxo de pendência de sempre.
-        return await this.continueAssets(post, provider, prompts, 0, [], 0, instructions);
+        return await this.continueAssets(post, provider, prompts, 0, [], 0, instructions, {}, lease);
       }
-      return await this.continueAssets(post, provider, prompts, 0, [], 0, instructions, {
-        referenceImages: refs.map((r) => ({ bytes: r.bytes, mime: r.mime })),
-        referenceUrls: refs.map((r) => r.url),
-      });
+      return await this.continueAssets(
+        post,
+        provider,
+        prompts,
+        0,
+        [],
+        0,
+        instructions,
+        {
+          referenceImages: refs.map((r) => ({ bytes: r.bytes, mime: r.mime })),
+          referenceUrls: refs.map((r) => r.url),
+        },
+        lease,
+      );
     } catch (e) {
       this.logger.error(`[instagram] mídia falhou: ${e instanceof Error ? e.stack ?? e.message : e}`);
       await this.store.patchPost(postId, {
@@ -330,18 +353,42 @@ export class MediaGenerationService {
       });
       return { ok: false, error: errText(e) };
     }
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * Varredor: post `generating` SEM `pending_job` (a geração síncrona morreu no meio) e sem lease vivo vai para `failed` com aviso.
+   * Posts com `pending_job` são do poller (que tem o próprio timeout de 1 h) e não são tocados.
+   */
+  async sweepStaleGenerating() {
+    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating', ...leaseFree() }, take: 50 });
+    const swept: string[] = [];
+    for (const post of posts as PostRow[]) {
+      if ((post.creative_brief as { pending_job?: unknown } | null)?.pending_job) continue;
+      const got = await this.prisma.ig_posts.updateMany({
+        where: { id: post.id, status: 'generating', AND: [leaseFree()] },
+        data: { status: 'failed', last_error: GENERATION_INTERRUPTED, lease_until: null },
+      });
+      if (!got.count) continue;
+      swept.push(post.id);
+      await this.store.logEvent({ workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'failure', level: 'error', message: GENERATION_INTERRUPTED });
+    }
+    return swept;
   }
 
   /** Consulta os provedores para posts com geração assíncrona pendente e conclui os prontos. */
   async pollPendingMedia() {
-    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating' }, take: 20 });
+    await this.sweepStaleGenerating().catch((e) => this.logger.error(`[instagram] varredor de geração falhou: ${errText(e)}`));
+    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating', ...leaseFree() }, take: 20 });
     const out: { post: string; status: string; error?: string }[] = [];
     for (const post of posts as PostRow[]) {
       const pj = post.creative_brief?.pending_job as PendingJob | undefined;
       if (!pj?.jobId) continue;
-      // Claim do ciclo: só um poller conclui o job (o UPDATE condicional troca `updated_at`).
-      const got = await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: 'generating', updated_at: post.updated_at }, data: { updated_at: new Date() } });
-      if (!got.count) continue;
+      // Lease do ciclo: só um poller conclui o job; um ciclo que começa enquanto outro ainda ingere (vídeo longo) não pega o post.
+      const lease = await this.store.claimLease(post.id, null, { status: 'generating' }, {}, MEDIA_LEASE_MS);
+      if (!lease) continue;
       try {
         // O id do job só chega ao provedor se estiver gravado neste post/workspace (vínculo no ProviderResolver).
         const provider = await this.providers.resolve(post.workspace_id, choiceForProvider(pj.provider));
@@ -357,7 +404,8 @@ export class MediaGenerationService {
           ...pj.media,
           await this.libraryItem(post, this.srcOf({ ...r, assetUrl }), pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
         ];
-        const res = await this.continueAssets(post, provider, pj.prompts, pj.index + 1, media, pj.cost + (r.cost ?? 0), pj.instructions);
+        await lease.renew();
+        const res = await this.continueAssets(post, provider, pj.prompts, pj.index + 1, media, pj.cost + (r.cost ?? 0), pj.instructions, {}, lease);
         if (res.pending) {
           out.push({ post: post.id, status: 'generating' });
           continue;
@@ -365,9 +413,12 @@ export class MediaGenerationService {
         await this.afterMediaReady(post);
         out.push({ post: post.id, status: 'ready' });
       } catch (e) {
+        if (e instanceof PublishClaimLost) continue; // o lease foi assumido por outro ciclo: ele conclui o job
         const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
         await this.store.patchPost(post.id, { status: 'failed', last_error: errText(e), creative_brief: brief });
         out.push({ post: post.id, status: 'failed', error: errText(e) });
+      } finally {
+        await lease.release();
       }
     }
     return out;

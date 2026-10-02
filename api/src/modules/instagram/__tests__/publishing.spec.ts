@@ -331,12 +331,100 @@ describe('publicar agora × fila (claim atômico)', () => {
     w.t['publishing_jobs']!.rows.push(j);
     await svc.publishInstagramPost(p.id);
     expect(j.status).toBe('cancelled');
-    const q = seedPost(w, { status: 'publishing', ig_creation_id: 'cX' }); // outro processo no meio
+    const q = seedPost(w, { status: 'publishing', ig_creation_id: 'cX', lease_until: new Date(Date.now() + 60e3) }); // outro processo no meio (lease vivo)
     const j2: any = { ...j, id: uuid(), ig_post_id: q.id, status: 'pending', run_at: new Date(Date.now() - 1000) };
     w.t['publishing_jobs']!.rows.push(j2);
     const res = await svc.runPublishingQueue();
     expect(res.find((r) => r.job === j2.id)!.status).toBe('processing');
     expect(j2).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+});
+
+describe('lease do post, varredor e guardrail de status', () => {
+  const jobFor = (w: IgWorld, postId: string, over: Record<string, unknown> = {}) => {
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: postId, status: 'pending', mode: 'live', run_at: new Date(Date.now() + 3600e3), attempts: 0, locked_at: null, log: null, ...over };
+    w.t['publishing_jobs']!.rows.push(j);
+    return j;
+  };
+
+  it('publicar agora num post "publishing" com lease VIVO = "já está sendo publicado" (nada é tocado); com lease vencido retoma o container', async () => {
+    const { w, svc, created } = setup();
+    const live = seedPost(w, { status: 'publishing', ig_creation_id: 'cL', lease_until: new Date(Date.now() + 60e3) });
+    const e = await err(svc.publishInstagramPost(live.id));
+    expect(e).toBeInstanceOf(PublishClaimLost);
+    expect(msgOf(e)).toBe('Este post já está sendo publicado.');
+    expect(live.status).toBe('publishing');
+    const dead = seedPost(w, { status: 'publishing', ig_creation_id: 'c98', lease_until: new Date(Date.now() - 1000) });
+    expect((await svc.publishInstagramPost(dead.id)).ok).toBe(true);
+    expect(created()).toHaveLength(0); // retomou o container existente
+    expect(dead.status).toBe('published');
+  });
+
+  it('lease é renovado/solto: após publicar, falhar ou ContainerPending o post fica com lease_until nulo', async () => {
+    const { w, svc } = setup();
+    const ok = seedPost(w);
+    await svc.publishInstagramPost(ok.id);
+    expect(ok.lease_until).toBeNull();
+    const bad = seedPost(w, { media: [] });
+    await err(svc.publishInstagramPost(bad.id));
+    expect(bad.lease_until).toBeNull();
+    w.respond((path) => (/^\/c\d+$/.test(path) ? { status_code: 'IN_PROGRESS' } : undefined));
+    const slow = seedPost(w);
+    expect(await err(svc.publishInstagramPost(slow.id))).toBeInstanceOf(ContainerPending);
+    expect(slow.lease_until).toBeNull();
+  });
+
+  it('lease perdido no meio (outro assumiu) interrompe a publicação com PublishClaimLost', async () => {
+    const { w, svc } = setup();
+    const p = seedPost(w);
+    w.respond((path) => {
+      if (/^\/c\d+$/.test(path)) p.lease_until = new Date(Date.now() + 99e3); // outro processo assume o lease
+      return undefined;
+    });
+    expect(await err(svc.publishInstagramPost(p.id))).toBeInstanceOf(PublishClaimLost);
+    expect(p.status).not.toBe('published');
+  });
+
+  it('varredor: "publishing" sem lease vivo e sem job pending/running → failed com aviso (usuário pode tentar de novo); vivo ou com job não é tocado', async () => {
+    const { w, svc } = setup();
+    const dead = seedPost(w, { status: 'publishing', lease_until: new Date(Date.now() - 16 * 60e3) });
+    const legacy = seedPost(w, { status: 'publishing' }); // sem lease
+    const live = seedPost(w, { status: 'publishing', lease_until: new Date(Date.now() + 10 * 60e3) });
+    const waiting = seedPost(w, { status: 'publishing', ig_creation_id: 'cW' }); // container pendente: a fila volta em 2 min
+    jobFor(w, waiting.id);
+    const running = seedPost(w, { status: 'publishing' });
+    jobFor(w, running.id, { status: 'running', run_at: new Date(Date.now() - 1000) });
+    const closed = seedPost(w, { status: 'publishing' });
+    jobFor(w, closed.id, { status: 'cancelled' }); // job encerrado não retoma nada
+    expect((await svc.sweepStalePublishing()).sort()).toEqual([dead.id, legacy.id, closed.id].sort());
+    expect(dead).toMatchObject({ status: 'failed', last_error: 'Publicação interrompida — tente publicar de novo.', lease_until: null });
+    expect([live.status, waiting.status, running.status]).toEqual(['publishing', 'publishing', 'publishing']);
+    // recuperado: publicar de novo funciona
+    expect((await svc.publishInstagramPost(dead.id)).ok).toBe(true);
+    expect(dead.status).toBe('published');
+  });
+
+  it('o ciclo da fila varre antes de pegar jobs (publicar agora que morreu no meio não fica preso)', async () => {
+    const { w, svc } = setup();
+    const dead = seedPost(w, { status: 'publishing', lease_until: new Date(Date.now() - 1000) });
+    await svc.runPublishingQueue();
+    expect(dead.status).toBe('failed');
+    expect(dead.last_error).toBe('Publicação interrompida — tente publicar de novo.');
+  });
+
+  it('status não publicável devolve o guardrail de aprovação do protótipo (não "já está sendo publicado")', async () => {
+    const { w, svc } = setup();
+    const plan = { id: uuid(), workspace_id: WS, requires_approval: true };
+    w.t['ig_content_plans']!.rows.push(plan);
+    for (const status of ['pending_approval', 'idea']) {
+      const p = seedPost(w, { status, plan_id: plan.id, approved_at: null });
+      const e = await err(svc.publishInstagramPost(p.id));
+      expect(e).toBeInstanceOf(Guardrail);
+      expect(msgOf(e)).toBe('Post não aprovado — publicação bloqueada.');
+      expect(p.status).toBe(status);
+    }
+    const done = seedPost(w, { status: 'published' });
+    expect(msgOf(await err(svc.publishInstagramPost(done.id)))).toBe('Este post já foi publicado.');
   });
 });
 

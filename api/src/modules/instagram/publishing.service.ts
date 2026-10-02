@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, PostRow } from './ig-types';
-import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited, errText } from './ig-store.service';
+import { ContainerPending, Guardrail, IgStore, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
 import { normalizeHashtags } from './normalize';
@@ -10,6 +10,13 @@ const MAX_ATTEMPTS = 3;
 const DAILY_LIMIT = 25;
 const POLL_BUDGET_MS = 40_000;
 const STALE_LOCK_MS = 15 * 60e3;
+/**
+ * Lease do post durante a publicação. O trabalho é renovado a cada etapa (cada sondagem de URL, criação de container e rodada de
+ * polling), então o TTL só precisa cobrir a MAIOR ETAPA ÚNICA: sondagem da URL (até 4 saltos × 15 s), chamada Graph (60 s) ou rodada
+ * de polling (≤ 5 s + 60 s). Quinze minutos dão folga de > 10x e batem com o STALE_LOCK_MS da fila (job travado há 15 min volta a pending).
+ */
+const PUBLISH_LEASE_MS = 15 * 60e3;
+export const PUBLISH_INTERRUPTED = 'Publicação interrompida — tente publicar de novo.';
 
 export type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string | null; error?: string };
 
@@ -27,6 +34,8 @@ export function fullCaption(post: PostRow) {
 /**
  * Agenda, fila de publicação (`publishing_jobs`, `channel=instagram_organic`) e publicação pela Graph API.
  * A fila usa lock otimista (UPDATE … WHERE status='pending'), reset de lock vencido (15 min) e no máximo 3 tentativas.
+ * O post em si é protegido por um lease (`ig_posts.lease_until`): quem publica o pega e o renova; lease vencido = processo morto.
+ * `sweepStalePublishing` (no início de cada ciclo da fila) leva a `failed` o post `publishing` sem lease vivo e sem job pending/running.
  */
 @Injectable()
 export class PublishingService {
@@ -93,8 +102,9 @@ export class PublishingService {
 
   // ------------------------------------------------------------------ publicação
 
-  private async waitContainer(workspaceId: string, containerId: string, deadline: number) {
+  private async waitContainer(workspaceId: string, containerId: string, deadline: number, lease?: PostLease) {
     while (Date.now() < deadline) {
+      await lease?.renew();
       const r = await this.graph.graph<{ status_code?: string; status?: string }>(workspaceId, `/${containerId}`, { params: { fields: 'status_code,status' } });
       if (r.status_code === 'FINISHED') return;
       if (r.status_code === 'ERROR' || r.status_code === 'EXPIRED') throw new Error(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ''}`);
@@ -107,7 +117,8 @@ export class PublishingService {
    * Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). Passa pelo fetch guardado
    * (DNS verificado; nunca rede interna) e os redirecionamentos são seguidos à mão, cada um revalidado.
    */
-  private async assertPublicUrl(url: string) {
+  private async assertPublicUrl(url: string, lease?: PostLease) {
+    await lease?.renew();
     if (!/^https:\/\//i.test(url ?? '')) throw new Guardrail('Mídia sem URL pública válida (HTTPS).');
     const probe = async (init: RequestInit): Promise<Response | null> => {
       let cur = url;
@@ -133,26 +144,65 @@ export class PublishingService {
   }
 
   /**
-   * Pega o post de forma atômica (UPDATE condicional) para que a fila e o "publicar agora" nunca publiquem o mesmo post ao mesmo tempo.
-   * Retomada (`resume`, só a fila): post `publishing` com container criado e sem atividade há > 90 s (a fila voltou depois do ContainerPending).
+   * Pega o post de forma atômica (UPDATE condicional + lease) para que a fila e o "publicar agora" nunca publiquem o mesmo post ao
+   * mesmo tempo. Pega: status publicável, OU `publishing` com lease livre (nunca pego/vencido = o processo anterior morreu ou a fila
+   * voltou depois do ContainerPending; o container já criado é retomado). `publishing` com lease vivo = outro processo está publicando.
    */
-  private async claim(postId: string, workspaceId: string, resume: boolean): Promise<void> {
-    const where = resume
-      ? { id: postId, workspace_id: workspaceId, OR: [{ status: { in: ['approved', 'ready', 'scheduled', 'failed'] } }, { status: 'publishing', updated_at: { lt: new Date(Date.now() - 90e3) } }] }
-      : { id: postId, workspace_id: workspaceId, status: { in: ['approved', 'ready', 'scheduled', 'failed'] } };
-    const got = await this.prisma.ig_posts.updateMany({ where, data: { status: 'publishing' } });
-    if (!got.count) throw new PublishClaimLost('Este post já está sendo publicado ou já foi publicado.');
+  private async claim(postId: string, workspaceId: string, resume: boolean): Promise<PostLease> {
+    const lease = await this.store.claimLease(
+      postId,
+      workspaceId,
+      { OR: [{ status: { in: ['approved', 'ready', 'scheduled', 'failed'] } }, { status: 'publishing' }] },
+      { status: 'publishing' },
+      PUBLISH_LEASE_MS,
+    );
+    if (!lease) {
+      const cur = await this.prisma.ig_posts.findFirst({ where: { id: postId, workspace_id: workspaceId }, select: { status: true } });
+      if (cur?.status === 'publishing') throw new PublishClaimLost('Este post já está sendo publicado.');
+      if (cur?.status === 'published') throw new PublishClaimLost('Este post já foi publicado.');
+      if (cur?.status === 'generating') throw new PublishClaimLost('A mídia deste post ainda está sendo gerada.');
+      if (!cur || cur.status === 'cancelled') throw new PublishClaimLost('Este post foi cancelado.');
+      // idea / pending_approval / rejected…: mesma mensagem do guardrail de aprovação do protótipo.
+      throw new Guardrail('Post não aprovado — publicação bloqueada.');
+    }
     // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha).
     if (!resume) await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+    return lease;
   }
 
   async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean } = {}): Promise<PublishResult> {
     const post = await this.store.getPost(postId, workspaceId);
-    await this.claim(postId, post.workspace_id, !!opts.fromQueue);
-    return this.publishInner(postId, { ...post, status: post.status });
+    const lease = await this.claim(postId, post.workspace_id, !!opts.fromQueue);
+    try {
+      return await this.publishInner(postId, { ...post, status: post.status }, lease);
+    } finally {
+      await lease.release();
+    }
   }
 
-  private async publishInner(postId: string, post: PostRow): Promise<PublishResult> {
+  /**
+   * Varredor: post `publishing` sem lease vivo (processo morto ou lease vencido) e sem job pending/running (nada vai retomá-lo)
+   * vai para `failed` com mensagem clara; o usuário pode publicar de novo. Post com container pendente na Meta tem job pending
+   * (a fila volta em 2 min) e não é tocado; post com lease vivo (publicação em andamento, mesmo vídeo longo) também não.
+   */
+  async sweepStalePublishing() {
+    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'publishing', ...leaseFree() }, select: { id: true, workspace_id: true, plan_id: true }, take: 50 });
+    const swept: string[] = [];
+    for (const p of posts) {
+      const active = await this.prisma.publishing_jobs.count({ where: { ig_post_id: p.id, status: { in: ['pending', 'running'] } } });
+      if (active) continue;
+      const got = await this.prisma.ig_posts.updateMany({
+        where: { id: p.id, status: 'publishing', AND: [leaseFree()] },
+        data: { status: 'failed', last_error: PUBLISH_INTERRUPTED, lease_until: null },
+      });
+      if (!got.count) continue;
+      swept.push(p.id);
+      await this.store.logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: 'failure', level: 'error', message: PUBLISH_INTERRUPTED });
+    }
+    return swept;
+  }
+
+  private async publishInner(postId: string, post: PostRow, lease: PostLease): Promise<PublishResult> {
     const ws: string = post.workspace_id;
     const format = post.format as IgFormat;
     const media: any[] = [...(post.media ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -181,13 +231,13 @@ export class PublishingService {
     // Guardrail: nunca publicar imagem simulada (foto aleatória de banco de imagens).
     if (media.some(isMockMedia)) throw new Guardrail(MOCK_MSG);
     // Guardrail: toda mídia precisa de URL pública válida.
-    for (const m of media) await this.assertPublicUrl(m.url);
+    for (const m of media) await this.assertPublicUrl(m.url, lease);
 
     const acc = await this.store.liveAccount(ws);
     const deadline = Date.now() + POLL_BUDGET_MS;
 
     // Retomada: container já criado numa execução anterior → só polling + media_publish.
-    if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline);
+    if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline, lease);
 
     // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
     if (!acc) throw new Guardrail('Nenhuma conta do Instagram conectada nesta empresa. Conecte em Instagram → Visão geral e agende de novo.');
@@ -201,7 +251,10 @@ export class PublishingService {
 
     await this.store.patchPost(postId, { status: 'publishing', last_error: null });
     const caption = fullCaption(post);
-    const create = async (params: Record<string, unknown>) => (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+    const create = async (params: Record<string, unknown>) => {
+      await lease.renew();
+      return (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+    };
     let creationId: string;
 
     if (format === 'feed_image') {
@@ -213,7 +266,7 @@ export class PublishingService {
         if (m.type === 'video') Object.assign(params, { media_type: 'VIDEO', video_url: m.url });
         else params['image_url'] = m.url;
         const id = await create(params);
-        if (m.type === 'video') await this.waitContainer(ws, id, deadline);
+        if (m.type === 'video') await this.waitContainer(ws, id, deadline, lease);
         children.push(id);
       }
       creationId = await create({ media_type: 'CAROUSEL', children: children.join(','), caption });
@@ -226,12 +279,13 @@ export class PublishingService {
 
     // Salva o container antes do polling para poder retomar na próxima execução.
     await this.store.patchPost(postId, { ig_creation_id: creationId });
-    return this.finishPublish(ws, postId, ig, creationId, deadline);
+    return this.finishPublish(ws, postId, ig, creationId, deadline, lease);
   }
 
-  private async finishPublish(ws: string, postId: string, ig: string, creationId: string, deadline: number): Promise<PublishResult> {
+  private async finishPublish(ws: string, postId: string, ig: string, creationId: string, deadline: number, lease: PostLease): Promise<PublishResult> {
     // Imagens também passam por processamento na Meta: espera o container ficar FINISHED.
-    await this.waitContainer(ws, creationId, deadline);
+    await this.waitContainer(ws, creationId, deadline, lease);
+    await lease.renew();
     const published = await this.graph.graph<{ id: string }>(ws, `/${ig}/media_publish`, { method: 'POST', params: { creation_id: creationId } });
     const info = await this.graph.graph<{ permalink?: string }>(ws, `/${published.id}`, { params: { fields: 'permalink' } }).catch(() => ({ permalink: undefined }));
     await this.store.patchPost(postId, {
@@ -254,6 +308,8 @@ export class PublishingService {
       where: { channel: 'instagram_organic', status: 'running', locked_at: { lt: new Date(Date.now() - STALE_LOCK_MS) } },
       data: { status: 'pending', locked_at: null },
     });
+    // Posts presos em `publishing` (processo morto, sem job para retomar) → failed com aviso.
+    await this.sweepStalePublishing().catch((e) => this.logger.error(`[instagram] varredor de publicação falhou: ${errText(e)}`));
     const jobs = await this.prisma.publishing_jobs.findMany({
       where: { channel: 'instagram_organic', status: 'pending', run_at: { lte: now } },
       orderBy: { run_at: 'asc' },
