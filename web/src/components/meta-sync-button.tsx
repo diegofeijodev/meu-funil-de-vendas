@@ -25,7 +25,8 @@ export function MetaSyncButton({ invalidate }: { invalidate: unknown[] }) {
         try {
           const r = await run({ data: { workspaceId: workspaceId! } });
           qc.invalidateQueries({ queryKey: invalidate });
-          toast.success(r.campaigns ? `Resultados da Meta atualizados (${r.campaigns} campanha(s)).` : "Nenhuma campanha publicada na Meta ainda.");
+          if (r.message) toast.info(r.message);
+          else toast.success(r.campaigns ? `Resultados da Meta atualizados (${r.campaigns} campanha(s)).` : "Nenhuma campanha publicada na Meta ainda.");
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar com a Meta.");
         } finally {

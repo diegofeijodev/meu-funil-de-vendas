@@ -15,6 +15,7 @@ export class AdsCronService implements OnModuleInit {
   ) {}
 
   async run(task?: 'sync' | 'rules'): Promise<{ sync: Awaited<ReturnType<AdsOpsService['syncAllInsights']>>; rules?: Awaited<ReturnType<AdsOpsService['runAllRules']>> }> {
+    await this.ops.recoverStaleApplying().catch(() => 0);
     const out: { sync: Awaited<ReturnType<AdsOpsService['syncAllInsights']>>; rules?: Awaited<ReturnType<AdsOpsService['runAllRules']>> } = { sync: await this.ops.syncAllInsights() };
     if (task === 'rules') out.rules = await this.ops.runAllRules();
     return out;

@@ -113,7 +113,10 @@ export class AdsChannelsController {
 @UseGuards(WorkspaceAccessGuard)
 @Controller('v1/workspaces/:workspaceId')
 export class AdsResourcesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ops: AdsOpsService,
+  ) {}
 
   /** `performance_daily select *` eq workspace_id neq source 'demo' order date. */
   @Get('performance-daily')
@@ -130,6 +133,7 @@ export class AdsResourcesController {
   /** `ai_recommendations select *, campaigns(name)` eq workspace_id order created_at desc limit 200. */
   @Get('ai-recommendations')
   async recommendations(@Param('workspaceId', ParseUuidPipe) ws: string) {
+    await this.ops.recoverStaleApplying(ws).catch(() => 0);
     const rows = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws }, orderBy: { created_at: 'desc' }, take: 200, include: { campaign: { select: { name: true } } } });
     return rows.map(({ campaign, ...r }) => ({ ...r, campaigns: campaign }));
   }

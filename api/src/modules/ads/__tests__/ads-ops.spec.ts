@@ -177,6 +177,59 @@ describe('recomendações da IA (1.4)', () => {
   });
 });
 
+describe('idempotência e frescor (fix round 1)', () => {
+  it('generate duas vezes não duplica pendentes (mesma campanha + ação + alvo)', async () => {
+    const w = adsWorld();
+    const c = publishedCamp(w);
+    perfRow(w, c, { meta_ad_id: '9301', meta_adset_id: '9101', ad_name: 'A', adset_name: 'S', spend: 50, leads: 5 });
+    w.respond((path) => (path === '/9101' ? { daily_budget: '3000', name: 'S', effective_status: 'ACTIVE' } : undefined));
+    w.ai.json.mockResolvedValue({ recomendacoes: [
+      { action: 'pause_ad', title: 'Pausar A', reason: 'caro', estimated_impact: '', severity: 'high', target_ad_id: '9301', target_adset_id: '', new_daily_budget: 0 },
+      { action: 'pause_ad', title: 'Pausar A (de novo)', reason: 'caro', estimated_impact: '', severity: 'high', target_ad_id: '9301', target_adset_id: '', new_daily_budget: 0 },
+    ] });
+    expect((await w.adsOps.generate(OWNER, WS_A, c.id)).created).toBe(1);
+    expect((await w.adsOps.generate(OWNER, WS_A, c.id)).created).toBe(0);
+    expect(w.t['ai_recommendations']!.rows).toHaveLength(1);
+  });
+
+  it('applying preso: vencida volta a pending e pode ser aplicada; viva nunca é tocada nem aplicada de novo', async () => {
+    const w = adsWorld();
+    const c = publishedCamp(w);
+    const mk = (over: Record<string, any>) => { const r: any = { id: uid(), workspace_id: WS_A, campaign_id: c.id, action: 'pause_ad', title: 't', reason: 'r', status: 'applying', source: 'ai', payload: { executable: true, adId: '9301' }, created_at: new Date(), ...over }; w.t['ai_recommendations']!.rows.push(r); return r; };
+    const live = mk({ applying_at: new Date() });
+    expect(await status(w.adsOps.decide(OWNER, live.id, 'apply'))).toBe('400:Esta recomendação já foi decidida.');
+    expect(live.status).toBe('applying');
+    expect(w.calls.filter((x) => x.opts.method === 'POST')).toHaveLength(0);
+    const stale = mk({ applying_at: new Date(Date.now() - 11 * 60 * 1000) });
+    const legacy = mk({ applying_at: null });
+    expect(await w.adsOps.recoverStaleApplying(WS_A)).toBe(2);
+    expect([live.status, stale.status, legacy.status]).toEqual(['applying', 'pending', 'pending']);
+    const r = await w.adsOps.decide(OWNER, stale.id, 'apply');
+    expect(r.result).toBe('Anúncio pausado na Meta.');
+    expect(stale).toMatchObject({ status: 'applied', applying_at: null });
+  });
+
+  it('applyRecommendation recupera a presa da própria empresa antes de reservar', async () => {
+    const w = adsWorld();
+    const c = publishedCamp(w);
+    const r: any = { id: uid(), workspace_id: WS_A, campaign_id: c.id, action: 'pause_ad', title: 't', reason: 'r', status: 'applying', source: 'ai', payload: { executable: true, adId: '9301' }, created_at: new Date(), applying_at: new Date(Date.now() - 20 * 60 * 1000) };
+    w.t['ai_recommendations']!.rows.push(r);
+    expect((await w.adsOps.decide(ADMIN, r.id, 'apply')).result).toBe('Anúncio pausado na Meta.');
+  });
+
+  it('syncNow: segunda chamada em 60 s da mesma empresa devolve aviso sem chamar a Meta; outra empresa e falha não são freadas', async () => {
+    const w = adsWorld();
+    publishedCamp(w);
+    const first = await w.adsOps.syncNow(VIEWER, WS_A);
+    expect(first).not.toHaveProperty('message');
+    const calls = w.calls.length;
+    expect(await w.adsOps.syncNow(OWNER, WS_A)).toEqual({ campaigns: 0, rows: 0, message: 'Sincronização feita há pouco — aguarde um minuto.' });
+    expect(w.calls).toHaveLength(calls);
+    jest.useFakeTimers({ now: Date.now() + 61_000, doNotFake: ['setTimeout', 'setImmediate', 'nextTick', 'queueMicrotask'] });
+    try { expect(await w.adsOps.syncNow(OWNER, WS_A)).not.toHaveProperty('message'); } finally { jest.useRealTimers(); }
+  });
+});
+
 describe('decidir recomendação (2.2)', () => {
   const rec = (w: ReturnType<typeof adsWorld>, c: any, over: Record<string, any> = {}) => {
     const r: any = { id: uid(), workspace_id: WS_A, campaign_id: c.id, action: 'pause_ad', title: 't', reason: 'r', status: 'pending', source: 'ai', payload: { executable: true, adId: '9301' }, created_at: new Date(), ...over };

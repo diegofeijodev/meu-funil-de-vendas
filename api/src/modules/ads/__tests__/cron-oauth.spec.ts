@@ -159,7 +159,7 @@ describe('cron do gestor de tráfego', () => {
 
   it('serviço: sync sempre; rules só com task=rules; registra os 2 jobs do agendador com os horários do db.md', async () => {
     const w = adsWorld();
-    const ops: any = { syncAllInsights: jest.fn(async () => [{ workspace: WS_A, rows: 3 }]), runAllRules: jest.fn(async () => [{ campaign: uid(), actions: [] }]) };
+    const ops: any = { recoverStaleApplying: jest.fn(async () => 0), syncAllInsights: jest.fn(async () => [{ workspace: WS_A, rows: 3 }]), runAllRules: jest.fn(async () => [{ campaign: uid(), actions: [] }]) };
     const sched = new SchedulerService({} as any, w.prisma, { SCHEDULER_ENABLED: false } as any);
     const svc = new AdsCronService(sched, ops);
     expect(await svc.run()).toEqual({ sync: [{ workspace: WS_A, rows: 3 }] });
@@ -186,7 +186,7 @@ describe('leituras de Performance e Insights', () => {
       ai_recommendations: { findMany: async (a: any) => { calls.push(a); return [{ id: '1', campaign: { name: 'Camp' }, title: 't' }, { id: '2', campaign: null }]; } },
       performance_daily: { findMany: async (a: any) => { calls.push(a); return []; } },
     };
-    const ctl = new AdsResourcesController(prisma);
+    const ctl = new AdsResourcesController(prisma, { recoverStaleApplying: async () => 0 } as any);
     const rows = await ctl.recommendations(WS_A);
     expect(rows).toEqual([{ id: '1', title: 't', campaigns: { name: 'Camp' } }, { id: '2', campaigns: null }]);
     expect(calls[0]).toMatchObject({ where: { workspace_id: WS_A }, take: 200, orderBy: { created_at: 'desc' } });

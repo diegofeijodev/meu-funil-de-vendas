@@ -203,7 +203,8 @@ export function CampaignDetail() {
     try {
       const r = await runSync({ data: { workspaceId } });
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success(`Resultados da Meta sincronizados (${r.rows} linhas de anúncio por dia).`);
+      if (r.message) toast.info(r.message);
+      else toast.success(`Resultados da Meta sincronizados (${r.rows} linhas de anúncio por dia).`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar.");
     } finally {

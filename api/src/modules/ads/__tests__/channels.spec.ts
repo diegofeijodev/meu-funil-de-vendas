@@ -174,6 +174,37 @@ describe('canais — campanha externa (create/link/setStatus)', () => {
     expect(await status(w.channels.create(MARKETING, c.id, 'google'))).toBe('400:Esta campanha já tem campanha ligada no Google Ads.');
   });
 
+  it('duplo clique em "Criar no Google/TikTok": uma chamada externa e um 409; falha libera a reserva; reserva vencida é reassumida', async () => {
+    const w = adsWorld();
+    const c = w.seedCampaign();
+    w.ai.json.mockResolvedValue({ titulos: ['T1'], descricoes: ['D1'], palavras_chave: ['k'] });
+    w.google.createSearchCampaign = jest.fn(async () => { await new Promise((x) => setTimeout(x, 10)); return { campaignId: '4242', steps: [] }; });
+    const out = await Promise.allSettled([w.channels.create(OWNER, c.id, 'google'), w.channels.create(ADMIN, c.id, 'google')]);
+    expect(out.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+    const rej = out.find((o) => o.status === 'rejected') as PromiseRejectedResult;
+    expect(rej.reason.getStatus()).toBe(409);
+    expect(rej.reason.getResponse().message).toBe('Esta campanha já está sendo enviada para o Google. Aguarde.');
+    expect(w.google.createSearchCampaign).toHaveBeenCalledTimes(1);
+    expect(w.ai.json).toHaveBeenCalledTimes(1);
+    expect(c).toMatchObject({ google_campaign_id: '4242', google_status: 'PAUSED', google_creating_at: null });
+
+    const t = w.seedCampaign();
+    w.seedCreative(t.id, { title: 'V', preview_url: 'https://cdn.test/v.mp4' });
+    w.tiktok.createCampaign = jest.fn().mockRejectedValueOnce(new AdsProviderError('TikTok recusou')).mockResolvedValue({ campaignId: '700', adgroupId: '1', steps: [] });
+    await expect(w.channels.create(OWNER, t.id, 'tiktok')).rejects.toThrow('TikTok recusou');
+    expect(t.tiktok_creating_at).toBeNull(); // reserva liberada: dá para tentar de novo
+    await w.channels.create(OWNER, t.id, 'tiktok');
+    expect(t).toMatchObject({ tiktok_campaign_id: '700', tiktok_creating_at: null });
+
+    // reserva viva bloqueia (409); vencida (>10 min, processo morreu) é reassumida
+    const s = w.seedCampaign({ google_creating_at: new Date() });
+    expect(await status(w.channels.create(OWNER, s.id, 'google'))).toBe('409:Esta campanha já está sendo enviada para o Google. Aguarde.');
+    s.google_creating_at = new Date(Date.now() - 11 * 60 * 1000);
+    w.google.createSearchCampaign = jest.fn(async () => ({ campaignId: '55', steps: [] }));
+    await w.channels.create(OWNER, s.id, 'google');
+    expect(s.google_campaign_id).toBe('55');
+  });
+
   it('create (tiktok): só vídeo aprovado; grava tiktok_campaign_id/DISABLE', async () => {
     const w = adsWorld();
     const c = w.seedCampaign();

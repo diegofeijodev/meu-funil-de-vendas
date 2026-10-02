@@ -502,9 +502,9 @@ Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem
 
 | rota | acesso | corpo → resposta |
 |---|---|---|
-| `sync-ads-insights-now` | membro | `{ workspaceId }` → `{ campaigns, rows }`: 30 dias da Meta + Google/TikTok → `performance_daily` (upsert em lote por `(campaign_id, meta_ad_id, date)` / `(campaign_id, source, external_id, date)`); `creative_id` só se for criativo deste workspace; carimba `last_insights_sync_at` |
-| `generate-ads-recommendations` | editores | `{ workspaceId, campaignId? }` → `{ created, errors[] }` (IA com 14 dias reais; ids da IA validados contra os dados) |
-| `decide-ads-recommendation` | owner\|admin | `{ id, decision: apply\|dismiss }` → `{ result }`. De outro workspace/inexistente `404 "Recomendação não encontrada."`; já decidida `400 "Esta recomendação já foi decidida."` (reserva atômica `pending→applying`: dois cliques executam uma vez; falha na Meta volta a `pending`). `apply` executa pause/activate/verba (teto +30%); alvo que não é da campanha `400 "Recomendação sem alvo válido."` |
+| `sync-ads-insights-now` | membro | `{ workspaceId }` → `{ campaigns, rows, message? }`: 30 dias da Meta + Google/TikTok → `performance_daily` (upsert em lote por `(campaign_id, meta_ad_id, date)` / `(campaign_id, source, external_id, date)`); `creative_id` só se for criativo deste workspace; carimba `last_insights_sync_at`. **Cooldown de 60 s por empresa** (memória do processo): dentro dele devolve `{ campaigns: 0, rows: 0, message: "Sincronização feita há pouco — aguarde um minuto." }` sem chamar os provedores (falha não consome o cooldown) |
+| `generate-ads-recommendations` | editores | `{ workspaceId, campaignId? }` → `{ created, errors[] }` (IA com 14 dias reais; ids da IA validados contra os dados). **Idempotente**: não cria recomendação se já há `pending`/`applying` da mesma campanha + ação + alvo |
+| `decide-ads-recommendation` | owner\|admin | `{ id, decision: apply\|dismiss }` → `{ result }`. De outro workspace/inexistente `404 "Recomendação não encontrada."`; já decidida `400 "Esta recomendação já foi decidida."` (reserva atômica `pending→applying`: dois cliques executam uma vez; falha na Meta volta a `pending`; reserva em `applying` com mais de 10 min — `applying_at` — volta a `pending` ao listar/aplicar e no cron). `apply` executa pause/activate/verba (teto +30%); alvo que não é da campanha `400 "Recomendação sem alvo válido."` |
 | `save-campaign-ads-settings` | editores | `{ campaignId, adsConfig{}, rules{}, privacyUrl? }` → `{ ok }`. Saneado: só chaves conhecidas, `structure`/`cta`/`placements` válidos, ids de público só dígitos, mínimo 5 / passo 5–30 %; URL só http(s) |
 | `list-meta-audiences` | membro | → `[{ id, name, subtype, size }]` |
 | `sync-crm-customer-audience` | owner\|admin | `{ workspaceId, onlyWon? }` → `{ id, uploaded }` (até 50 000 leads sem descadastro; e-mail/telefone com SHA-256; id guardado cifrado em `META_AUDIENCE_CRM_WON\|ALL`). `400` "Nenhuma etapa marcada como ganho no funil do CRM." / "Nenhum lead com e-mail ou telefone no CRM." |
@@ -518,7 +518,7 @@ Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem
 | `ads-channel-login-url` | owner\|admin | `{ workspaceId, channel, origin }` → `{ url }` (retorno = `PUBLIC_URL/api/public/ads/oauth/<canal>`; `origin` ignorado) |
 | `list-ads-channel-accounts` | owner\|admin | → `[{ id, name }]` |
 | `link-external-campaign` | editores | `{ campaignId, channel, externalId }` → `{ ok }` (só dígitos) |
-| `create-external-campaign` | editores | `{ campaignId, channel }` → `{ campaignId, steps[] }`: Google Pesquisa PAUSADA (IA escreve títulos ≤30, descrições ≤90, palavras-chave) / TikTok em vídeo DESATIVADO; mensagens do protótipo |
+| `create-external-campaign` | editores | `{ campaignId, channel }` → `{ campaignId, steps[] }`: Google Pesquisa PAUSADA (IA escreve títulos ≤30, descrições ≤90, palavras-chave) / TikTok em vídeo DESATIVADO; mensagens do protótipo. **Reserva atômica** por campanha/canal (`campaigns.google_creating_at`/`tiktok_creating_at`, vale entre instâncias): duplo clique/retry → `409 "Esta campanha já está sendo enviada para o Google|TikTok. Aguarde."` (nenhuma 2ª IA/campanha externa); falha libera a reserva; reserva com mais de 10 min é reassumida |
 | `set-external-campaign-status` | **ativar = owner\|admin**, pausar = editores | `{ campaignId, channel, active }` → `{ ok }` |
 
 ### 23.5 OAuth (públicas) e `state`
@@ -530,3 +530,57 @@ Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem
 ### 23.6 Cron — `POST /api/public/cron/ads`
 
 `x-cron-secret` = `CRM_CRON_SECRET` ou `cron_tokens.name='ads'` (tempo constante), senão `401 "Unauthorized"`. Corpo `{ task?: sync\|rules }` (outro valor `400`). `sync` (sempre): 3 dias de cada empresa com campanha em algum canal → `{ sync:[{workspace, rows?, error?}] }`; `rules` acrescenta `{ rules:[{campaign, actions?\|error?}] }` (pausa anúncio caro/sem lead com irmão ativo; escala conjunto barato +passo% até o teto, no máx. 1×/24 h; cada ação vira `ai_recommendations` `source='rule'`). Heartbeat depois: `ads-sync` / `ads-rules`. Jobs do agendador: `ads-insights-3h` `17 */3 * * *` (`ads-sync`) e `ads-rules-daily` `40 12 * * *` (`ads-rules`), UTC.
+
+## 24. CRM núcleo — `/v1/workspaces/:workspaceId/crm/*`, formulário público e descadastro
+
+Módulo `api/src/modules/crm`. Todas as rotas de workspace: membro obrigatório; **GET = leitura (viewer pode), o resto = escrita (owner\|admin\|marketing)**; toda id (lead, etapa, funil, tarefa, responsável) é conferida contra o workspace da URL → outra empresa = `404` ("Lead não encontrado." / "Etapa não encontrada." / "Funil não encontrado." / "Tarefa não encontrada."); responsável precisa ser membro (`400` "Responsável inválido para este workspace."). Cada leitura garante os padrões do CRM (funil de 8 etapas, motivos, tags, `crm_settings`). Linhas em snake_case, datas ISO, `estimated_value` number.
+
+### 24.1 Funis, etapas, usuários
+
+| rota | corpo → resposta |
+|---|---|
+| `GET /crm/pipelines` | `[{ id, name, is_default }]` (por `created_at`) |
+| `GET /crm/stages?pipeline_id=` | `[{ id, name, color, position, sla_hours, is_won, is_lost, pipeline_id }]` por `position` (`pipeline_id` opcional; malformado `400`) |
+| `POST /crm/stages` | `{ pipeline_id, name, position?, color?, sla_hours? }` → etapa |
+| `PATCH /crm/stages/:id` | `{ name?, color?, position?, sla_hours? }` → etapa |
+| `DELETE /crm/stages/:id` | `204`; leads da etapa ficam sem etapa (FK `SET NULL`) |
+| `GET /crm/members` | `[{ user_id, role, profiles: { id, full_name, email } \| null }]` |
+
+### 24.2 Leads
+
+| rota | corpo → resposta |
+|---|---|
+| `GET /crm/leads?pipeline_id=` | todas as colunas de `crm_leads`, `created_at` desc, sem paginação |
+| `GET /crm/leads/:id` | lead (`404` se não for do workspace) |
+| `POST /crm/leads` | `{ name, pipeline_id?, stage_id?, phone?, email?, city?, source? }` → lead (`400` "Informe o nome do lead.") |
+| `POST /crm/leads/import` | `{ pipeline_id?, stage_id?, rows:[{ name, phone?, email?, city? }] }` → `{ imported }`, `source='import'`, um insert só. **Teto 5000 linhas**: `400` "Arquivo grande demais: importe no máximo 5000 leads por vez (o arquivo tem N)." |
+| `POST /crm/leads/bulk` | `{ ids[] (≤5000), stage_id? \| owner_id? (null desatribui) \| add_tag? }` → `{ updated }`. Atômico; qualquer id de outro workspace → `404` e nada muda; sem ação `400` "Nada para aplicar.". Mover em massa grava só `stage_id`+`stage_entered_at` (sem histórico, como o protótipo); a tag é união com as do lead |
+| `PATCH /crm/leads/:id` | `{ stage_id?, stage_entered_at?, owner_id?, ai_active?, last_interaction_at?, tags? }` (só estes campos; trocar a etapa por aqui **não** grava histórico — comportamento do protótipo) |
+| `POST /crm/leads/:id/move` | `{ stage_id }` → `{ moved, lead, stage_name }`. **Uma transação**: lead (`stage_id`, `stage_entered_at`) + `crm_stage_history` (de → para, `moved_by`) + interação `stage_change` "Movido para {etapa}." (`author_id` = usuário). Mesma etapa → `moved:false`, nada gravado |
+| `GET /crm/leads/:id/interactions` · `POST` `{ content }` | timeline (desc) · nota (`note`/`user`) + `last_interaction_at`, na mesma transação |
+| `POST /crm/leads/:id/ai` | `{ active }` → lead; alterna `ai_active` e grava a nota "Atendimento assumido por humano (IA pausada)." / "Conversa devolvida para a IA." |
+| `GET /crm/leads/:id/tasks` · `POST` `{ title, due_at? }` | tarefas por `due_at` · cria (vence em +24 h por padrão) |
+
+### 24.3 Tarefas, Indicadores, configurações
+
+| rota | corpo → resposta |
+|---|---|
+| `GET /crm/tasks` | `[{ id, title, due_at, status, lead_id, crm_leads: { name } \| null }]` por `due_at` (todas do workspace) |
+| `PATCH /crm/tasks/:id` | `{ status: open\|done\|canceled }` |
+| `GET /crm/stage-history` | `[{ lead_id, from_stage_id, to_stage_id, created_at }]` (todas, por `created_at`) |
+| `GET /crm/interactions` | `[{ lead_id, kind, author_type, created_at }]` (todas) |
+| `GET /crm/cadence-options` | `[{ id, name }]` por nome (seletor "Incluir em cadência…") |
+| `GET /crm/cadence-metrics` | `{ cadences[{id,name,steps}], events, runs, stages[{id,name}], history, messages[{id,status}] }` (mensagens só dos 1000 primeiros ids dos eventos) |
+| `GET /crm/settings` · `PUT` | `crm_settings` · `{ distribution: round_robin\|fixed, default_owner_id? }` (upsert) |
+| `GET/POST /crm/loss-reasons` · `DELETE /:id` | `[{ id, name }]` por nome · `{ name }` · `204` |
+| `GET/POST /crm/tags` · `DELETE /:id` | `[{ id, name, color }]` · `{ name, color? }` (`409` "Essa tag já existe.") · `204` |
+
+### 24.4 Ação da Meta usada pelo Kanban — `POST /v1/crm-integrations/notify-meta-conversion`
+
+`{ workspaceId, leadId, event: "Qualificado"\|"Ganho" }` → `{ sent: true }` \| `{ sent: false }` (falha da Meta) \| `{ skipped: true }` (sem integração `meta_lead_ads` conectada ou lead que não é do workspace). Acesso: **escrita** (viewer `403`). API de Conversões: `POST /{pixel_id}/events` com e-mail/telefone em SHA-256, `action_source system_generated`, valor em BRL. Vive em `modules/ads` (as demais ações `/v1/crm-integrations/*` e `/v1/crm-cadences/*` são da Task 8).
+
+### 24.5 Rotas públicas (sem JWT; mesmo caminho via rewrite do web)
+
+- `OPTIONS|GET|POST /api/public/forms/:token` — `token` = `crm_integrations.webhook_token` (`kind=site_form`, status ≠ `disconnected`). CORS `*` (preflight liberado só nesse prefixo). `GET`: HTML (`no-store`, embutível em iframe de outros sites). `POST` (JSON, urlencoded ou multipart): `name/nome`, `email`, `phone/telefone/whatsapp/celular`, `message`, `utm_*`, `page`, `_t`, `website`. `200 {ok:true, redirect}`; `303 Location` se não for JSON e houver `redirect_url`; `400 {error:"Dados inválidos."}` / "Informe um e-mail válido ou um telefone."; `404 {error:"Formulário não encontrado."}`; `429 "Muitos envios seguidos. Tente de novo em alguns minutos."`; `500 "Não foi possível enviar agora."`. Anti-spam: honeypot `website` ou `_t` < 2,5 s → `200` sem gravar; **5 envios / 10 min por IP** (hash `sha256(integrationId:ip)`; IP = `request.ip` do Fastify — só confia em `X-Forwarded-For` com `TRUST_PROXY=true`). Lead novo: origem `site`, LGPD, etapa inicial + histórico + interação, cadência por origem; repetido (telefone/e-mail) só registra a interação. `redirect_url`/`privacy_url` só http(s).
+- `GET /api/public/forms/embed/:token` — JavaScript (`public, max-age=300`, CORS `*`) que injeta o iframe apontando para `APP_URL`; token fora de `[A-Za-z0-9_-]{1,200}` → `404`.
+- `GET /api/public/unsubscribe/:leadId?t=` — HTML pt-BR "Pronto. Você não receberá mais nossos e-mails." ou "Link inválido ou expirado.". `t` = **HMAC-SHA256 completo (64 hex)** de `unsubscribe:v1:{workspaceId}:{leadId}` com `UNSUBSCRIBE_SECRET` (obrigatória fora de dev/test), comparação em tempo constante, workspace lido do próprio lead (assinatura de outro lead/empresa não vale; lead inexistente = "inválido"). Efeito: `unsubscribed=true`, `ai_active=false`, cadências paradas (`opt_out`) e interação `ai_action` (idempotente). Link = `UnsubscribeLinkService.link(workspaceId, leadId)` (`APP_URL`); a Task 8 usa na e-mail.

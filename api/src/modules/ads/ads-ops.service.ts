@@ -24,6 +24,10 @@ import { PerfRow, PerfStore } from './perf-store';
 import { TikTokAdsClient } from './tiktok-ads.client';
 
 const money = (n: number) => `R$ ${n.toFixed(2).replace('.', ',')}`;
+/** Reserva vencida: quem aplicava a recomendação morreu; ela volta a "pending". */
+const APPLY_LEASE_MS = 10 * 60 * 1000;
+/** Intervalo mínimo entre duas sincronizações manuais de 30 dias da mesma empresa. */
+const SYNC_COOLDOWN_MS = 60 * 1000;
 const EXECUTABLE = new Set(['pause_ad', 'activate_ad', 'increase_budget', 'decrease_budget']);
 const daysAgo = (n: number) => addDays(todaySp(), -n);
 const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
@@ -65,6 +69,8 @@ const cplOf = (a: { spend: number; leads: number }) => (a.leads ? a.spend / a.le
 @Injectable()
 export class AdsOpsService {
   private readonly logger = new Logger(AdsOpsService.name);
+  /** Última sincronização manual por empresa (memória do processo; basta para frear cliques repetidos). */
+  private readonly lastManualSync = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -328,11 +334,19 @@ export class AdsOpsService {
       if (!adOk || !setOk) continue;
       if ((r.action === 'pause_ad' || r.action === 'activate_ad') && !r.target_ad_id) continue;
       if ((r.action === 'increase_budget' || r.action === 'decrease_budget') && (!r.target_adset_id || !(r.new_daily_budget > 0))) continue;
+      // Idempotência (duplo clique em "Gerar"): já existe pendente igual (campanha + ação + alvo)? Não duplica.
+      const action = String(r.action).slice(0, 40);
+      const open = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws, campaign_id: c.id, action, status: { in: ['pending', 'applying'] } }, select: { payload: true } });
+      const dup = open.some((o) => {
+        const op = (o.payload ?? {}) as { adId?: string | null; adsetId?: string | null };
+        return (op.adId ?? null) === (r.target_ad_id || null) && (op.adsetId ?? null) === (r.target_adset_id || null);
+      });
+      if (dup) continue;
       await this.prisma.ai_recommendations.create({
         data: {
           workspace_id: ws,
           campaign_id: c.id,
-          action: String(r.action).slice(0, 40),
+          action,
           title: String(r.title).slice(0, 200),
           reason: String(r.reason),
           estimated_impact: String(r.estimated_impact ?? ''),
@@ -365,12 +379,26 @@ export class AdsOpsService {
     return true;
   }
 
+  /**
+   * Recupera recomendações presas em "applying" (o processo caiu entre a reserva e o resultado): reserva com mais de 10 min
+   * (ou sem carimbo, de antes da coluna) volta a "pending" e pode ser aplicada ou descartada de novo. Uma reserva viva
+   * (carimbo recente) nunca é tocada. Roda ao listar/aplicar e no cron.
+   */
+  async recoverStaleApplying(ws?: string): Promise<number> {
+    const stale = new Date(Date.now() - APPLY_LEASE_MS);
+    const r = await this.prisma.ai_recommendations.updateMany({
+      where: { status: 'applying', ...(ws ? { workspace_id: ws } : {}), OR: [{ applying_at: null }, { applying_at: { lt: stale } }] },
+      data: { status: 'pending', applying_at: null },
+    });
+    return r.count;
+  }
+
   /** 2.2 Executa na Meta a recomendação aprovada (reservada atomicamente: dois cliques não executam duas vezes). */
   async applyRecommendation(id: string, userId: string): Promise<{ result: string }> {
     const rec = await this.prisma.ai_recommendations.findUnique({ where: { id } });
     if (!rec) throw notFound('Recomendação não encontrada.');
-    if (rec.status !== 'pending') throw new UserError('Esta recomendação já foi decidida.');
-    const claim = await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'pending' }, data: { status: 'applying' } });
+    await this.recoverStaleApplying(rec.workspace_id);
+    const claim = await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'pending' }, data: { status: 'applying', applying_at: new Date() } });
     if (claim.count !== 1) throw new UserError('Esta recomendação já foi decidida.');
     const ws = rec.workspace_id;
     const p = (rec.payload ?? {}) as { adId?: string | null; adsetId?: string | null; newDailyBudget?: number | null };
@@ -399,10 +427,10 @@ export class AdsOpsService {
         });
       }
     } catch (e) {
-      await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'applying' }, data: { status: 'pending' } });
+      await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'applying' }, data: { status: 'pending', applying_at: null } });
       throw e;
     }
-    await this.prisma.ai_recommendations.update({ where: { id }, data: { status: 'applied', applied_at: new Date(), applied_by: userId, result } });
+    await this.prisma.ai_recommendations.update({ where: { id }, data: { status: 'applied', applied_at: new Date(), applied_by: userId, result, applying_at: null } });
     return { result };
   }
 
@@ -411,11 +439,19 @@ export class AdsOpsService {
   /** `syncAdsInsightsNow` — qualquer membro. */
   async syncNow(userId: string, ws: string) {
     await this.access.require(userId, ws, 'read');
-    return guarded(async () => {
-      const meta = await this.syncWorkspaceInsights(ws, 30);
-      const ext = await this.syncExternalChannels(ws, 30).catch(() => ({ rows: 0 }));
-      return { campaigns: meta.campaigns, rows: meta.rows + ext.rows };
-    });
+    const last = this.lastManualSync.get(ws);
+    if (last && Date.now() - last < SYNC_COOLDOWN_MS) return { campaigns: 0, rows: 0, message: 'Sincronização feita há pouco — aguarde um minuto.' };
+    this.lastManualSync.set(ws, Date.now());
+    try {
+      return await guarded(async () => {
+        const meta = await this.syncWorkspaceInsights(ws, 30);
+        const ext = await this.syncExternalChannels(ws, 30).catch(() => ({ rows: 0 }));
+        return { campaigns: meta.campaigns, rows: meta.rows + ext.rows } as { campaigns: number; rows: number; message?: string };
+      });
+    } catch (e) {
+      this.lastManualSync.delete(ws); // falhou: não pune o usuário com a espera
+      throw e;
+    }
   }
 
   /** `generateAdsRecommendations` — editores. */

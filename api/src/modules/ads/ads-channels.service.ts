@@ -1,5 +1,5 @@
 /** As 7 server fns de `ads/channels.functions.ts` (Google Ads / TikTok Ads): `POST /v1/ads/<nome-em-kebab>`. */
-import { Inject, Injectable } from '@nestjs/common';
+import { ConflictException, Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
@@ -16,6 +16,9 @@ import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
+
+/** Reserva de criação vencida (processo morreu no meio): outra tentativa pode assumir. */
+const CREATE_LEASE_MS = 10 * 60 * 1000;
 
 const GOOGLE_KEYS = ['GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'];
 const TIKTOK_KEYS = ['TIKTOK_APP_ID', 'TIKTOK_APP_SECRET', 'TIKTOK_ADVERTISER_ID'];
@@ -126,6 +129,25 @@ export class AdsChannelsService {
     return { ok: true };
   }
 
+  /**
+   * Reserva atômica (vale entre instâncias): só uma requisição por campanha/canal cria a campanha externa. Duplo clique ou
+   * retry → 409, sem segunda chamada de IA nem campanha órfã. Reserva vencida (>10 min) pode ser reassumida.
+   */
+  private async claim(id: string, ws: string, channel: AdsChannel): Promise<void> {
+    const p = channel === 'google' ? 'google' : 'tiktok';
+    const stale = new Date(Date.now() - CREATE_LEASE_MS);
+    const r = await this.prisma.campaigns.updateMany({
+      where: { id, workspace_id: ws, [`${p}_campaign_id`]: null, OR: [{ [`${p}_creating_at`]: null }, { [`${p}_creating_at`]: { lt: stale } }] },
+      data: { [`${p}_creating_at`]: new Date() },
+    });
+    if (r.count !== 1) throw new ConflictException({ code: 'CONFLICT', message: `Esta campanha já está sendo enviada para o ${channel === 'google' ? 'Google' : 'TikTok'}. Aguarde.` });
+  }
+
+  private async release(id: string, ws: string, channel: AdsChannel): Promise<void> {
+    const col = channel === 'google' ? 'google_creating_at' : 'tiktok_creating_at';
+    await this.prisma.campaigns.updateMany({ where: { id, workspace_id: ws }, data: { [col]: null } }).catch(() => undefined);
+  }
+
   /** Cria a campanha pausada no Google (Pesquisa) ou no TikTok (vídeo) a partir da copy, da estratégia e dos criativos aprovados. */
   async create(userId: string, campaignId: string, channel: AdsChannel) {
     const base = await this.guards.resolveCampaign(userId, campaignId, 'write');
@@ -141,33 +163,39 @@ export class AdsChannelsService {
 
     if (channel === 'google') {
       if (c.google_campaign_id) throw new UserError('Esta campanha já tem campanha ligada no Google Ads.');
-      // Títulos (≤30), descrições (≤90) e palavras-chave no formato do Google, escritos pela IA a partir da copy e da estratégia.
-      const ai = (await this.ai.json(ws, {
-        prompt: [
-          'Você é especialista em Google Ads de Pesquisa no Brasil. Gere em português:',
-          '- titulos: 12 a 15 títulos com NO MÁXIMO 30 caracteres cada (contando espaços), sem pontuação de exclamação repetida;',
-          '- descricoes: 4 descrições com NO MÁXIMO 90 caracteres;',
-          '- palavras_chave: 12 a 20 termos que o cliente digitaria no Google (sem marcas de concorrentes).',
-          `OFERTA: ${JSON.stringify({ produto: c.offer_product, promessa: c.offer_promise, preco: c.offer_price, publico: c.audience })}`,
-          `COPY: ${JSON.stringify({ headline: copy.headline, variacoes: copy.headline_variacoes, texto: copy.texto_curto, cta: copy.cta })}`,
-          `ESTRATÉGIA: ${JSON.stringify({ big_idea: strategy?.big_idea, angulos: strategy?.angulos_detalhados?.map((a) => a.gancho) })}`,
-        ].join('\n'),
-        schema: SEARCH_SCHEMA,
-        name: 'google_search_assets',
-      })) as { titulos?: string[]; descricoes?: string[]; palavras_chave?: string[] };
-      const r = await guarded(() =>
-        this.google.createSearchCampaign(ws, {
-          name: c.name,
-          objective: c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0) || 20,
-          landingUrl: `${c.landing_url}${sep}utm_source=google&utm_medium=cpc&utm_campaign=${encodeURIComponent(c.name)}`,
-          headlines: ai.titulos ?? [],
-          descriptions: ai.descricoes ?? [],
-          keywords: ai.palavras_chave ?? [],
-        }),
-      );
-      await this.prisma.campaigns.update({ where: { id: c.id }, data: { google_campaign_id: r.campaignId, google_status: 'PAUSED' } });
-      return r;
+      await this.claim(c.id, ws, 'google');
+      try {
+        // Títulos (≤30), descrições (≤90) e palavras-chave no formato do Google, escritos pela IA a partir da copy e da estratégia.
+        const ai = (await this.ai.json(ws, {
+          prompt: [
+            'Você é especialista em Google Ads de Pesquisa no Brasil. Gere em português:',
+            '- titulos: 12 a 15 títulos com NO MÁXIMO 30 caracteres cada (contando espaços), sem pontuação de exclamação repetida;',
+            '- descricoes: 4 descrições com NO MÁXIMO 90 caracteres;',
+            '- palavras_chave: 12 a 20 termos que o cliente digitaria no Google (sem marcas de concorrentes).',
+            `OFERTA: ${JSON.stringify({ produto: c.offer_product, promessa: c.offer_promise, preco: c.offer_price, publico: c.audience })}`,
+            `COPY: ${JSON.stringify({ headline: copy.headline, variacoes: copy.headline_variacoes, texto: copy.texto_curto, cta: copy.cta })}`,
+            `ESTRATÉGIA: ${JSON.stringify({ big_idea: strategy?.big_idea, angulos: strategy?.angulos_detalhados?.map((a) => a.gancho) })}`,
+          ].join('\n'),
+          schema: SEARCH_SCHEMA,
+          name: 'google_search_assets',
+        })) as { titulos?: string[]; descricoes?: string[]; palavras_chave?: string[] };
+        const r = await guarded(() =>
+          this.google.createSearchCampaign(ws, {
+            name: c.name,
+            objective: c.objective,
+            dailyBudget: Number(c.budget_daily ?? 0) || 20,
+            landingUrl: `${c.landing_url}${sep}utm_source=google&utm_medium=cpc&utm_campaign=${encodeURIComponent(c.name)}`,
+            headlines: ai.titulos ?? [],
+            descriptions: ai.descricoes ?? [],
+            keywords: ai.palavras_chave ?? [],
+          }),
+        );
+        await this.prisma.campaigns.update({ where: { id: c.id }, data: { google_campaign_id: r.campaignId, google_status: 'PAUSED', google_creating_at: null } });
+        return r;
+      } catch (e) {
+        await this.release(c.id, ws, 'google');
+        throw e;
+      }
     }
 
     if (c.tiktok_campaign_id) throw new UserError('Esta campanha já tem campanha ligada no TikTok Ads.');
@@ -176,20 +204,26 @@ export class AdsChannelsService {
       .filter((x) => x.preview_url && /\.mp4(\?|$)/i.test(x.preview_url))
       .map((x) => ({ title: x.title, url: x.preview_url!, cover: ((x.extras ?? {}) as { cover_url?: string | null }).cover_url ?? null }));
     if (!videos.length) throw new UserError('O TikTok só aceita vídeo: aprove pelo menos um criativo em vídeo desta campanha.');
-    const r = await guarded(() =>
-      this.tiktok.createCampaign(ws, {
-        name: c.name,
-        objective: c.objective,
-        dailyBudget: Number(c.budget_daily ?? 0) || 50,
-        landingUrl: `${c.landing_url}${sep}utm_source=tiktok&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`,
-        adText: String(copy.headline ?? c.offer_promise ?? c.name),
-        brandName: c.brand?.name ?? c.name,
-        logoUrl: c.brand?.logo_url ?? null,
-        videos,
-      }),
-    );
-    await this.prisma.campaigns.update({ where: { id: c.id }, data: { tiktok_campaign_id: r.campaignId, tiktok_status: 'DISABLE' } satisfies Prisma.campaignsUpdateInput });
-    return r;
+    await this.claim(c.id, ws, 'tiktok');
+    try {
+      const r = await guarded(() =>
+        this.tiktok.createCampaign(ws, {
+          name: c.name,
+          objective: c.objective,
+          dailyBudget: Number(c.budget_daily ?? 0) || 50,
+          landingUrl: `${c.landing_url}${sep}utm_source=tiktok&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`,
+          adText: String(copy.headline ?? c.offer_promise ?? c.name),
+          brandName: c.brand?.name ?? c.name,
+          logoUrl: c.brand?.logo_url ?? null,
+          videos,
+        }),
+      );
+      await this.prisma.campaigns.update({ where: { id: c.id }, data: { tiktok_campaign_id: r.campaignId, tiktok_status: 'DISABLE', tiktok_creating_at: null } satisfies Prisma.campaignsUpdateInput });
+      return r;
+    } catch (e) {
+      await this.release(c.id, ws, 'tiktok');
+      throw e;
+    }
   }
 
   /** Ativar (só dono/admin, gasta verba) ou pausar no canal. */

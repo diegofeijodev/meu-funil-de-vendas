@@ -253,8 +253,10 @@ model campaigns {
   last_insights_sync_at    DateTime?                  @db.Timestamptz(6)
   google_campaign_id       String?
   google_status            String?
+  google_creating_at       DateTime?  @db.Timestamptz(6)
   tiktok_campaign_id       String?
   tiktok_status            String?
+  tiktok_creating_at       DateTime?  @db.Timestamptz(6)
   workspace                workspaces                 @relation("campaigns_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   brand                    brands                     @relation("campaigns_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
   campaign_strategies      campaign_strategies[]      @relation("campaign_strategies_campaign_id")
@@ -438,6 +440,7 @@ model ai_recommendations {
   applied_at        DateTime?  @db.Timestamptz(6)
   applied_by        String?    @db.Uuid
   result            String?
+  applying_at       DateTime?  @db.Timestamptz(6)
   workspace         workspaces @relation("ai_recommendations_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   campaign          campaigns? @relation("ai_recommendations_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
 

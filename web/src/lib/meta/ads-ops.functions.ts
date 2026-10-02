@@ -1,7 +1,7 @@
 import { serverFnPost } from "@/lib/server-fn";
 
 /** `POST /v1/meta/sync-ads-insights-now` — puxa os resultados da Meta (e do Google/TikTok) na hora. Qualquer membro. */
-export const syncAdsInsightsNow = serverFnPost<{ workspaceId: string }, { rows: number; campaigns: number }>("/v1/meta/sync-ads-insights-now");
+export const syncAdsInsightsNow = serverFnPost<{ workspaceId: string }, { rows: number; campaigns: number; message?: string }>("/v1/meta/sync-ads-insights-now");
 
 /** `POST /v1/meta/generate-ads-recommendations` — a IA analisa os resultados e cria recomendações. Editores. */
 export const generateAdsRecommendations = serverFnPost<{ workspaceId: string; campaignId?: string | null }, { created: number; errors: string[] }>(
