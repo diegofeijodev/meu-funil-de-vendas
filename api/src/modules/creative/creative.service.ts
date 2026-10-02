@@ -5,6 +5,7 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { createWithNextVersion, isUniqueViolation } from '../../common/database/next-version';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -385,7 +386,18 @@ export class CreativeService {
         }
       }
 
-      await this.prisma.creative_versions.create({ data: { workspace_id: ws, creative_id: creativeId, version, prompt: input.finalPrompt, preview_url: assetUrl } });
+      // Regenerações concorrentes do mesmo criativo podem chegar à mesma versão: o índice único barra e se recalcula.
+      const cid = creativeId;
+      try {
+        await this.prisma.creative_versions.create({ data: { workspace_id: ws, creative_id: cid, version, prompt: input.finalPrompt, preview_url: assetUrl } });
+      } catch (e) {
+        if (!isUniqueViolation(e)) throw e;
+        const { version: v } = await createWithNextVersion(
+          async () => (await this.prisma.creative_versions.findFirst({ where: { creative_id: cid }, orderBy: { version: 'desc' }, select: { version: true } }))?.version,
+          (n) => this.prisma.creative_versions.create({ data: { workspace_id: ws, creative_id: cid, version: n, prompt: input.finalPrompt, preview_url: assetUrl } }),
+        );
+        await this.prisma.creatives.update({ where: { id: cid }, data: { version: v } });
+      }
       await this.prisma.creative_generation_jobs.update({
         where: { id: input.jobId },
         data: {

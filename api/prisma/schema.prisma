@@ -289,6 +289,7 @@ model campaign_strategies {
   workspace    workspaces @relation("campaign_strategies_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   campaign     campaigns  @relation("campaign_strategies_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
 
+  @@unique([campaign_id, version], map: "campaign_strategies_campaign_version_key")
   @@index([workspace_id])
 }
 
@@ -304,6 +305,7 @@ model copies {
   workspace    workspaces @relation("copies_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   campaign     campaigns  @relation("copies_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
 
+  @@unique([campaign_id, version], map: "copies_campaign_version_key")
   @@index([workspace_id])
 }
 
@@ -356,6 +358,7 @@ model creative_versions {
   workspace    workspaces @relation("creative_versions_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   creative     creatives  @relation("creative_versions_creative_id", fields: [creative_id], references: [id], onDelete: Cascade)
 
+  @@unique([creative_id, version], map: "creative_versions_creative_version_key")
   @@index([workspace_id])
 }
 

@@ -74,6 +74,39 @@ describe('CampaignsService — wizard e leituras', () => {
   });
 });
 
+describe('CampaignsService.createCopy — versão concorrente', () => {
+  it('P2002 no índice (campaign_id, version): recalcula max+1 e tenta de novo', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    const real = w.t.copies.create.bind(w.t.copies);
+    let calls = 0;
+    w.t.copies.create = (async (args: any) => {
+      calls++;
+      if (calls === 1) {
+        await real({ data: { workspace_id: WS_A, campaign_id: campaign.id, content: {}, status: 'draft', version: 1 } }); // geração concorrente venceu
+        throw Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+      }
+      return real(args);
+    }) as any;
+    const copy = await svc.createCopy(MARKETING, WS_A, campaign.id, { content: { headline: 'A' } });
+    expect(copy.version).toBe(2);
+    expect(calls).toBe(2);
+  });
+
+  it('conflito persistente: desiste após 3 tentativas e sobe o erro; erro que não é de unicidade não repete', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    let calls = 0;
+    w.t.copies.create = (async () => { calls++; throw Object.assign(new Error('x'), { code: 'P2002' }); }) as any;
+    await expect(svc.createCopy(MARKETING, WS_A, campaign.id, { content: {} })).rejects.toMatchObject({ code: 'P2002' });
+    expect(calls).toBe(3);
+    calls = 0;
+    w.t.copies.create = (async () => { calls++; throw new Error('boom'); }) as any;
+    await expect(svc.createCopy(MARKETING, WS_A, campaign.id, { content: {} })).rejects.toThrow('boom');
+    expect(calls).toBe(1);
+  });
+});
+
 describe('CampaignsService.requestApproval', () => {
   it('cria o pedido (título/resumo do protótipo), leva a campanha a pending_approval e registra a atividade', async () => {
     const { w, svc } = setup();

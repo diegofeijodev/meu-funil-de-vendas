@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createWithNextVersion } from '../../common/database/next-version';
 import { PrismaService } from '../../common/database/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { brl, OBJECTIVES } from './campaign-labels';
@@ -99,10 +100,10 @@ export class CampaignsService {
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: workspaceId }, select: { id: true } });
     if (!c) throw notFound();
     if (jsonLen(dto.content) > MAX_JSON_CHARS) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Copy grande demais.' });
-    const last = await this.prisma.copies.findFirst({ where: { campaign_id: campaignId, workspace_id: workspaceId }, orderBy: { version: 'desc' }, select: { version: true } });
-    const copy = await this.prisma.copies.create({
-      data: { workspace_id: workspaceId, campaign_id: campaignId, content: dto.content as Prisma.InputJsonObject, status: 'draft', version: (last?.version ?? 0) + 1 },
-    });
+    const { row: copy } = await createWithNextVersion(
+      async () => (await this.prisma.copies.findFirst({ where: { campaign_id: campaignId, workspace_id: workspaceId }, orderBy: { version: 'desc' }, select: { version: true } }))?.version,
+      (version) => this.prisma.copies.create({ data: { workspace_id: workspaceId, campaign_id: campaignId, content: dto.content as Prisma.InputJsonObject, status: 'draft', version } }),
+    );
     await this.activity.log(workspaceId, userId, 'campaign.copy_generated', 'campaign', { campaign_id: campaignId });
     return copy;
   }

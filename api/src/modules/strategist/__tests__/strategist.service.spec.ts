@@ -66,6 +66,25 @@ describe('StrategistService.generate', () => {
     expect(w.t.campaign_strategies.rows.map((s) => s.version)).toEqual([1, 2]);
   });
 
+  it('versão concorrente: P2002 recalcula max+1 e tenta de novo (sem duplicar a versão)', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    const real = w.t.campaign_strategies.create.bind(w.t.campaign_strategies);
+    let calls = 0;
+    w.t.campaign_strategies.create = (async (args: any) => {
+      calls++;
+      if (calls === 1) {
+        await real({ data: { workspace_id: WS_A, campaign_id: campaign.id, content: {}, status: 'draft', version: 1 } }); // outra geração gravou a v1 primeiro
+        throw Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+      }
+      return real(args);
+    }) as any;
+    const r = await svc.generate(OWNER, campaign.id);
+    expect(r.version).toBe(2);
+    expect(w.t.campaign_strategies.rows.map((s) => s.version)).toEqual([1, 2]);
+    expect(w.logs.at(-1)![4]).toEqual({ campaign_id: campaign.id, version: 2 });
+  });
+
   it('autorização: viewer 403, de outro workspace 404, id malformado 404 — e a IA nem é chamada', async () => {
     const { w, svc, calls } = setup();
     const { campaign } = await seedCampaign(w);

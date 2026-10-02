@@ -286,6 +286,23 @@ describe('retry, nova versão e pacote CapCut', () => {
     w.cleanup();
   });
 
+  it('nova versão concorrente: P2002 em creative_versions (creative_id, version) recalcula max+1 e atualiza o criativo', async () => {
+    const w = await creativeWorld();
+    await seed(w);
+    const cr = await w.t['creatives']!.create({ data: { workspace_id: WS_A, title: 'Chopp', type: 'static_image', prompt: 'p', final_prompt: 'prompt base', aspect_ratio: '1:1', provider: 'gemini', version: 1, status: 'approved' } });
+    const versions = w.t['creative_versions']!;
+    await versions.create({ data: { workspace_id: WS_A, creative_id: cr.id, version: 2, prompt: 'outra geração' } }); // a concorrente já gravou a v2
+    const real = versions.create.bind(versions);
+    versions.create = (async (args: any) => {
+      if (versions.rows.some((r) => r.creative_id === args.data.creative_id && r.version === args.data.version)) throw Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+      return real(args);
+    }) as any;
+    await w.svc.newVersion(OWNER, cr.id);
+    expect(versions.rows.map((r) => r.version)).toEqual([2, 3]);
+    expect(w.t['creatives']!.rows.find((c) => c.id === cr.id)!.version).toBe(3);
+    w.cleanup();
+  });
+
   it('pacote CapCut: vídeo + legendas + capa + LEIA-ME com o roteiro; baixa só do que é do próprio sistema', async () => {
     const w = await creativeWorld();
     const { campaign } = await seed(w);

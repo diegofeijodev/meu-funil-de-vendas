@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createWithNextVersion } from '../../common/database/next-version';
 import { PrismaService } from '../../common/database/prisma.service';
 import { toWire } from '../../common/http/wire';
 import { isUuid } from '../../common/ids/uuid';
@@ -123,13 +124,14 @@ export class StrategistService {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
     const content = await this.generateStrategyAI(c.workspace_id, c.id);
     // A versão é calculada DEPOIS da geração (até ~1 min), como no protótipo.
-    const last = await this.prisma.campaign_strategies.findFirst({
-      where: { campaign_id: c.id, workspace_id: c.workspace_id }, orderBy: { version: 'desc' }, select: { version: true },
-    });
-    const version = (last?.version ?? 0) + 1;
-    await this.prisma.campaign_strategies.create({
-      data: { workspace_id: c.workspace_id, campaign_id: c.id, content: content as unknown as Prisma.InputJsonObject, status: 'draft', version },
-    });
+    const { version } = await createWithNextVersion(
+      async () => (await this.prisma.campaign_strategies.findFirst({
+        where: { campaign_id: c.id, workspace_id: c.workspace_id }, orderBy: { version: 'desc' }, select: { version: true },
+      }))?.version,
+      (v) => this.prisma.campaign_strategies.create({
+        data: { workspace_id: c.workspace_id, campaign_id: c.id, content: content as unknown as Prisma.InputJsonObject, status: 'draft', version: v },
+      }),
+    );
     await this.activity.log(c.workspace_id, userId, 'campaign.strategy_generated', 'campaign', { campaign_id: c.id, version });
     return { version, content };
   }
