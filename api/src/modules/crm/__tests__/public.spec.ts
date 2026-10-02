@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { CrmPublicController } from '../crm-public.controller';
 import { DEV_UNSUBSCRIBE_SECRET, UnsubscribeLinkService } from '../unsubscribe-link.service';
 import { embedScript, formConfig, renderFormHtml, safeRedirect } from '../site-form.render';
-import { FormError } from '../site-form.service';
+import { FormError, INTEGRATION_CAP } from '../site-form.service';
 import { crmWorld, WS_A, WS_B } from './harness';
 
 const TOKEN = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8';
@@ -121,6 +121,58 @@ describe('formulário do site — POST', () => {
     expect(blocked.state.code).toBe(429);
   });
 
+  it('teto por integração: com IPs diferentes, o 61º envio em 10 min é 429 (pt-BR); outra integração não é afetada', async () => {
+    const { w, integration, controller } = await formWorld();
+    const now = Date.now();
+    for (let i = 0; i < INTEGRATION_CAP; i++) {
+      w.t.crm_webhook_events.rows.push({ id: randomUUID(), workspace_id: WS_A, source: 'site_form', payload: { ip: `ip${i}`, integration: integration.id }, status: 'processed', created_at: new Date(now - 60_000) });
+    }
+    const r = fakeReply();
+    await controller.submit(TOKEN, req({ name: 'Mais um', email: 'm@x.co', _t: OLD }, { ip: '198.51.100.77' }), r.reply);
+    expect(r.state.code).toBe(429);
+    expect(r.state.body.error).toBe('Este formulário está recebendo envios demais agora. Tente de novo em alguns minutos.');
+    expect(w.t.crm_leads.rows).toHaveLength(0);
+    // envios velhos (> 10 min) saem da janela
+    w.t.crm_webhook_events.rows.forEach((e) => { e.created_at = new Date(now - 11 * 60e3); });
+    const ok = fakeReply();
+    await controller.submit(TOKEN, req({ name: 'Agora', email: 'a@x.co', _t: OLD }, { ip: '198.51.100.78' }), ok.reply);
+    expect(ok.state.code).toBe(200);
+    expect(w.t.crm_leads.rows).toHaveLength(1);
+  });
+
+  it('_t obrigatório: ausente, 0, não numérico ou no futuro = spam (mesma resposta ok do isca, nada gravado); válido grava', async () => {
+    const { w, controller } = await formWorld();
+    const base = { name: 'Bot', email: 'bot@x.co' };
+    const ok = fakeReply();
+    await controller.submit(TOKEN, req({ name: 'Humano', email: 'h@x.co', _t: OLD }), ok.reply);
+    for (const t of [undefined, 0, '0', '', 'abc', null, Date.now() + 60_000, String(Date.now() + 60_000), -5, NaN]) {
+      const r = fakeReply();
+      await controller.submit(TOKEN, req({ ...base, ...(t === undefined ? {} : { _t: t }) }), r.reply);
+      expect([r.state.code, r.state.body]).toEqual([ok.state.code, ok.state.body]);
+    }
+    expect(w.t.crm_leads.rows).toHaveLength(1);
+    expect(w.t.crm_leads.rows[0].name).toBe('Humano');
+    // a resposta do isca é a mesma
+    const hp = fakeReply();
+    await controller.submit(TOKEN, req({ ...base, website: 'x', _t: OLD }), hp.reply);
+    expect([hp.state.code, hp.state.body]).toEqual([ok.state.code, ok.state.body]);
+  });
+
+  it('campos longos são truncados (nome 300, e-mail 320, telefone 40, mensagem 2000, página 2000, utm 200)', async () => {
+    const { w, controller } = await formWorld();
+    await controller.submit(TOKEN, req({ name: 'N'.repeat(5000), email: 'a@b.co', phone: '1'.repeat(200), message: 'M'.repeat(9000), page: 'P'.repeat(9000), utm_source: 'S'.repeat(999), utm_medium: 'D'.repeat(999), utm_campaign: 'C'.repeat(999), _t: OLD }), fakeReply().reply);
+    const lead = w.t.crm_leads.rows[0];
+    expect(lead.name).toHaveLength(300);
+    expect(lead.utm_source).toHaveLength(200);
+    expect(lead.utm_medium).toHaveLength(200);
+    expect(lead.utm_campaign).toHaveLength(200);
+    const inter = w.t.crm_interactions.rows[0];
+    expect(inter.content.length).toBeLessThanOrEqual(2000 + 2000 + 100);
+    expect(inter.content).not.toContain('M'.repeat(2001));
+    expect(inter.content).not.toContain('P'.repeat(2001));
+    expect(String(lead.phone).length).toBeLessThanOrEqual(41); // 40 dígitos + o "+" da normalização
+  });
+
   it('erros: sem e-mail/telefone válidos → 400; token inexistente, de outro tipo ou desconectado → 404; corpo ilegível → 400', async () => {
     const { w, controller, integration } = await formWorld();
     let r = fakeReply();
@@ -216,6 +268,33 @@ describe('formulário do site — GET, embed e OPTIONS', () => {
     const bad = fakeReply();
     controller.embed('x"</script>', bad.reply);
     expect(bad.state.code).toBe(404);
+  });
+
+  it('o HTML sempre leva o _t do servidor num campo oculto (envio sem JS) e o JS o reaproveita', async () => {
+    const { controller } = await formWorld();
+    const r = fakeReply();
+    const before = Date.now();
+    await controller.form(TOKEN, r.reply);
+    const m = /<input type="hidden" name="_t" value="(\d+)">/.exec(r.state.body);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(before);
+    expect(r.state.body).toContain('d._t=Number(d._t)||t');
+  });
+
+  it('XSS: título, subtítulo, botão e agradecimento vindos da config são escapados (HTML e script)', () => {
+    const evil = `</script><img src=x onerror=alert(1)>"'&`;
+    const cfg = formConfig({ config: { title: evil, subtitle: evil, button: evil, thanks: evil } });
+    const html = renderFormHtml(TOKEN, cfg);
+    expect(html).not.toContain('<img src=x');
+    expect(html).not.toMatch(/<\/script><img/);
+    const esc = '&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;&quot;\'&amp;';
+    expect(html).toContain(`<h1>${esc}</h1>`);
+    expect(html).toContain(`<p class="sub">${esc}</p>`);
+    expect(html).toContain(`<button type="submit">${esc}</button>`);
+    // "obrigado" vai dentro do <script>: escapado como HTML e como literal JS (JSON.stringify), sem fechar a tag
+    const script = html.slice(html.indexOf('<script>'));
+    expect(script).toContain(JSON.stringify(esc));
+    expect(script.match(/<\/script>/g)).toHaveLength(1);
   });
 
   it('OPTIONS → 204 com CORS', () => {

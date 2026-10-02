@@ -49,6 +49,8 @@ describe('CRM — autorização (viewer só lê; id de outro workspace = 404)', 
     expect(await status(w.leads.createTask(WS_A, theirs.id, { title: 'x' }))).toBe('404:Lead não encontrado.');
     expect(await status(w.leads.updateTask(WS_A, task.id, { status: 'done' }))).toBe('404:Tarefa não encontrada.');
     expect(await status(w.leads.update(WS_A, mine.id, { stage_id: w.B.stages[0]!.id }))).toBe('404:Etapa não encontrada.');
+    // stage_id: null passava pela validação (IsOptional) e estourava 500 no banco: agora 400 em pt-BR
+    expect(await status(w.leads.update(WS_A, mine.id, { stage_id: null as any }))).toBe('400:Informe a etapa do lead.');
     expect(await status(w.config.updateStage(WS_A, w.B.stages[0]!.id, { name: 'x' }))).toBe('404:Etapa não encontrada.');
     expect(await status(w.config.deleteStage(WS_A, w.B.stages[0]!.id))).toBe('404:Etapa não encontrada.');
     expect(await status(w.config.createStage(WS_A, { pipeline_id: w.B.pipeline.id, name: 'x' }))).toBe('404:Funil não encontrado.');

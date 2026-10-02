@@ -174,6 +174,15 @@ page.on('requestfailed', (r) => {
 });
 
 const corpo = async () => await page.locator('body').innerText();
+
+// Limpezas registradas pelas seções com dados persistentes. Idempotentes: rodam de novo no fim (inclusive se o script abortar)
+// para não deixar resíduo que quebraria a próxima rodada.
+const limpezas = [];
+const rodaLimpezas = () => {
+  for (const f of limpezas) {
+    try { f(); } catch (e) { console.log(`  (limpeza falhou: ${String(e).slice(0, 120)})`); }
+  }
+};
 /** `innerText` aplica o `uppercase` do CSS nos rótulos: compara sem diferenciar caixa. */
 const tem = (txt, t) => txt.toLowerCase().includes(t.toLowerCase());
 const sessaoGuardada = () => page.evaluate(() => !!window.localStorage.getItem('authUser'));
@@ -1095,8 +1104,30 @@ try {
   }
   const graphLog = () => fetch(`${GBASE}/__log`).then((r) => r.json());
   await fetch(`${GBASE}/__reset`, { method: 'POST' });
+  // Limpeza idempotente da seção (também roda no fim e em caso de abort). `preservar` = chaves META_ que já existiam antes.
+  // `desde` (opcional) limita os heartbeats do cron que esta rodada gerou.
+  const limpezaMeta = (preservar, desde = null) => {
+    const camps = igPsql(`SELECT id FROM campaigns WHERE workspace_id='${wsId}' AND name='Campanha Meta Check'`).split('\n').filter(Boolean);
+    for (const id of camps) {
+      igPsql(`DELETE FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND metadata->>'campaign_id'='${id}'`);
+      igPsql(`DELETE FROM campaigns WHERE id='${id}'`);   // creatives, performance_daily, publishing_jobs, ai_recommendations, campaign_costs em cascata
+    }
+    // a marca (e a campanha, em cascata) pode já ter sido apagada: sobram os logs de "publicada" órfãos
+    igPsql(`DELETE FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND NOT EXISTS (SELECT 1 FROM campaigns c WHERE c.id::text = activity_logs.metadata->>'campaign_id')`);
+    igPsql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND email='meta-check@teste.com'`);
+    igPsql(`DELETE FROM cron_tokens WHERE name='ads' AND token LIKE 'browser-ads-%'`);
+    if (desde) igPsql(`DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '${desde}'`);
+    for (const k of ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID', 'META_TOKEN_SOURCE', 'META_TOKEN_EXPIRES_AT', 'META_AUDIENCE_CRM_ALL', 'META_AUDIENCE_CRM_WON']) {
+      if (!preservar.has(k)) igPsql(`DELETE FROM app_credentials WHERE workspace_id='${wsId}' AND key='${k}'`);
+    }
+    igPsql(`DELETE FROM brands WHERE workspace_id='${wsId}' AND name LIKE 'Marca Meta %'`);
+  };
+  // Resíduo de uma rodada abortada (campanha de teste ainda lá): as credenciais META_ também são do teste, apague todas.
+  const residuoMeta = igPsql(`SELECT count(*) FROM campaigns WHERE workspace_id='${wsId}' AND name='Campanha Meta Check'`) !== '0';
+  const metaExistentes = new Set(residuoMeta ? [] : igPsql(`SELECT string_agg(key, ',') FROM app_credentials WHERE workspace_id='${wsId}' AND key LIKE 'META_%'`).split(',').filter(Boolean));
+  limpezaMeta(metaExistentes);
   const mT0 = igPsql('SELECT now()');
-  const metaAntes = igPsql(`SELECT string_agg(key, ',') FROM app_credentials WHERE workspace_id='${wsId}' AND key LIKE 'META_%'`);
+  limpezas.push(() => limpezaMeta(metaExistentes, mT0));
   const norm = (t) => t.replace(/ /g, ' ');
   const cronTok = `browser-ads-${Date.now()}`;
   igPsql(`INSERT INTO cron_tokens(name,token) VALUES ('ads','${cronTok}') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token`);
@@ -1204,8 +1235,9 @@ try {
   await page.waitForTimeout(300);
   check('performance: período de 7 dias só pega os 4 dias do cron (R$ 560,00)', norm(await corpo()).includes('R$ 560,00'));
   await page.getByRole('button', { name: 'Atualizar da Meta' }).click();
-  await page.getByText('Resultados da Meta atualizados (1 campanha(s)).').waitFor({ timeout: 60000 });
-  ok('performance: "Atualizar da Meta" sincroniza e avisa');
+  // o cron `rules` acima já sincronizou há < 60 s: o cooldown do sync manual (23efdb1) responde "Sincronização feita há pouco"
+  await page.getByText(/Resultados da Meta atualizados \(1 campanha\(s\)\)\.|Sincronização feita há pouco/).first().waitFor({ timeout: 60000 });
+  ok('performance: "Atualizar da Meta" sincroniza e avisa (ou respeita o intervalo mínimo entre sincronizações)');
 
   // ── AI Insights ──
   await page.goto(`${BASE}/insights`);
@@ -1233,17 +1265,9 @@ try {
   ok('insights: "Rodar AI Optimizer" gera novas recomendações com os resultados reais');
 
   // ── limpeza do que este trecho criou (workspace demo é permanente) ──
-  igPsql(`DELETE FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND metadata->>'campaign_id'='${campMetaId}'`);
-  igPsql(`DELETE FROM campaigns WHERE id='${campMetaId}'`);   // creatives, performance_daily, publishing_jobs, ai_recommendations, campaign_costs em cascata
-  igPsql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND email='meta-check@teste.com'`);
-  igPsql(`DELETE FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`);
-  igPsql(`DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '${mT0}'`);
-  const metaPrev = new Set((metaAntes ? metaAntes.split(',') : []));
-  for (const k of ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID', 'META_TOKEN_SOURCE', 'META_TOKEN_EXPIRES_AT', 'META_AUDIENCE_CRM_ALL', 'META_AUDIENCE_CRM_WON']) {
-    if (!metaPrev.has(k)) igPsql(`DELETE FROM app_credentials WHERE workspace_id='${wsId}' AND key='${k}'`);
-  }
   await page.goto(`${BASE}/overview`);   // sai da tela antes de apagar a marca (senão o react-query refaz o GET e dá 404)
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaMeta.id}`);
+  limpezaMeta(metaExistentes, mT0);
   check('limpeza da Meta: nada sobrou (campanha, cron, credenciais, atividade)', igPsql(`SELECT count(*) FROM campaigns WHERE id='${campMetaId}'`) === '0' && igPsql(`SELECT count(*) FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`) === '0' && igPsql(`SELECT count(*) FROM performance_daily WHERE workspace_id='${wsId}' AND ad_name IN ('Anúncio caro','Anúncio bom')`) === '0' && igPsql(`SELECT count(*) FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND created_at >= '${mT0}'`) === '0');
 
   // ── CRM núcleo (Task 7) ─────────────────────────────────────────
@@ -1253,15 +1277,19 @@ try {
   const crmTag = `Browser${Date.now() % 100000}`;
   const crmLead = `Lead ${crmTag}`;
   const crmSql = (q) => igPsql(q);
+  // Idempotente e por padrão (`Browser<dígitos>`): apaga também o resíduo de rodadas abortadas, não só a tag desta rodada.
   const limpaCrm = () => {
-    crmSql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND (name LIKE '%${crmTag}%' OR email LIKE '%${crmTag}%')`);
-    crmSql(`DELETE FROM crm_stages WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
-    crmSql(`DELETE FROM crm_tags WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
-    crmSql(`DELETE FROM crm_loss_reasons WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+    const pad = `~ 'Browser[0-9]+'`;
+    crmSql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND (name ${pad} OR email ${pad})`);
+    crmSql(`DELETE FROM crm_stages WHERE workspace_id='${wsId}' AND name ${pad}`);
+    crmSql(`DELETE FROM crm_tags WHERE workspace_id='${wsId}' AND name ${pad}`);
+    crmSql(`DELETE FROM crm_loss_reasons WHERE workspace_id='${wsId}' AND name ${pad}`);
     crmSql(`DELETE FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='site_form'`);
     crmSql(`DELETE FROM crm_webhook_events WHERE workspace_id='${wsId}' AND source='site_form'`);
-    crmSql(`DELETE FROM crm_cadences WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+    crmSql(`DELETE FROM crm_cadences WHERE workspace_id='${wsId}' AND name ${pad}`);
   };
+  limpaCrm();
+  limpezas.push(limpaCrm);
   const saiuToast = async (texto) => page.getByText(texto, { exact: false }).first().waitFor({ timeout: 15000 });
   const crmDefaultsAntes = crmSql(`SELECT count(*) FROM crm_pipelines WHERE workspace_id='${wsId}'`);
   void crmDefaultsAntes;
@@ -1464,7 +1492,7 @@ try {
   check('formulário público: script de embed pelo rewrite', /javascript/.test(crmEmbed.type ?? '') && crmEmbed.body.includes(`/api/public/forms/${tokForm}`), crmEmbed.type ?? '');
   const leadSite = crmSql(`SELECT id FROM crm_leads WHERE workspace_id='${wsId}' AND source='site' AND name='Visitante ${crmTag}'`);
   const crmSig = createHmac('sha256', process.env.UNSUBSCRIBE_SECRET ?? 'meu-funil-dev-unsubscribe-secret-not-for-production').update(`unsubscribe:v1:${wsId}:${leadSite}`).digest('hex');
-  await pForm.goto(`${BASE}/api/public/unsubscribe/${leadSite}?t=${crmSig.slice(0, 63)}0`);
+  await pForm.goto(`${BASE}/api/public/unsubscribe/${leadSite}?t=${crmSig.slice(0, 63)}${crmSig.endsWith('0') ? '1' : '0'}`);
   await pForm.getByText('Link inválido ou expirado.').waitFor({ timeout: 15000 });
   await pForm.goto(`${BASE}/api/public/unsubscribe/${leadSite}?t=${crmSig}`);
   await pForm.getByText('Pronto. Você não receberá mais nossos e-mails.').waitFor({ timeout: 15000 });
@@ -1533,6 +1561,8 @@ try {
   check('Sair volta para /auth e limpa a sessão', rel() === '/auth' && !(await sessaoGuardada()));
 } catch (e) {
   erros.push(`[script] ${String(e).slice(0, 400)}`);
+} finally {
+  rodaLimpezas();
 }
 
 await browser.close();
