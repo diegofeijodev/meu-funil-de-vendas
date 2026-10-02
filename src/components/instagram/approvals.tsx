@@ -25,7 +25,7 @@ export function IgApprovalList({
   const [busy, setBusy] = useState(false);
   const approve = useServerFn(approvePost);
   const reject = useServerFn(rejectPost);
-  const pending = posts.filter((p) => p.status === "pending_approval");
+  const pending = posts.filter((p) => p.status === "pending_approval" || p.status === "needs_review");
 
   const act = async (ids: string[], kind: "approve" | "reject") => {
     let reason = "";
@@ -114,11 +114,12 @@ export function IgApprovalList({
             disabled={!onOpen}
           >
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status="pending" label={`Instagram · ${FORMATS[p.format]?.label}`} />
+              <StatusPill status={p.status === "needs_review" ? "error" : "pending"} label={`${p.status === "needs_review" ? "Precisa de revisão" : "Instagram"} · ${FORMATS[p.format]?.label}`} />
               <span className="text-xs text-muted-foreground">{fmtDateTime(p.scheduled_at)}</span>
             </div>
             <p className="mt-1 truncate text-sm font-medium">{p.theme ?? "Post"}</p>
             <p className="line-clamp-1 text-xs text-muted-foreground">{p.caption}</p>
+            {(p as any).review_reason && <p className="mt-1 text-xs text-destructive">Motivo: {(p as any).review_reason}</p>}
           </button>
           {canEdit && (
             <div className="flex gap-2">
