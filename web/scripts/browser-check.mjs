@@ -15,6 +15,7 @@
 // (sem isso a seção de campanhas detecta "IA do app não configurada" e testa o caminho sem IA).
 import { chromium } from '/home/doutor/coding/freela/freela-web-v2/node_modules/playwright/index.mjs';
 import { execSync, spawn } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -399,7 +400,8 @@ try {
   await page.goto(brandUrl);
   await page.waitForTimeout(1500);
   check('marca excluída: detalhe não carrega (skeleton)', (await page.locator('h1').count()) === 0 || !(await page.locator('h1').first().innerText()).includes(marca));
-  // o GET 404 da marca excluída é provocado de propósito
+  // o GET 404 da marca excluída é provocado de propósito (com a máquina lenta as 5 leituras chegam depois dos 1,5 s)
+  await page.waitForLoadState('networkidle').catch(() => {});
   esperado(/\[http 404\]|404 \(Not Found\)/);
 
   console.log('-- Configurações --');
@@ -1244,6 +1246,235 @@ try {
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaMeta.id}`);
   check('limpeza da Meta: nada sobrou (campanha, cron, credenciais, atividade)', igPsql(`SELECT count(*) FROM campaigns WHERE id='${campMetaId}'`) === '0' && igPsql(`SELECT count(*) FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`) === '0' && igPsql(`SELECT count(*) FROM performance_daily WHERE workspace_id='${wsId}' AND ad_name IN ('Anúncio caro','Anúncio bom')`) === '0' && igPsql(`SELECT count(*) FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND created_at >= '${mT0}'`) === '0');
 
+  // ── CRM núcleo (Task 7) ─────────────────────────────────────────
+  console.log('-- CRM núcleo --');
+  // os GETs 404 da marca excluída (seção Marcas) têm retentativas do react-query que chegam bem depois do `esperado` de lá
+  esperado(/\[http 404\] GET api\/v1\/workspaces\/[^/]+\/brands\//);
+  const crmTag = `Browser${Date.now() % 100000}`;
+  const crmLead = `Lead ${crmTag}`;
+  const crmSql = (q) => igPsql(q);
+  const limpaCrm = () => {
+    crmSql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND (name LIKE '%${crmTag}%' OR email LIKE '%${crmTag}%')`);
+    crmSql(`DELETE FROM crm_stages WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+    crmSql(`DELETE FROM crm_tags WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+    crmSql(`DELETE FROM crm_loss_reasons WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+    crmSql(`DELETE FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='site_form'`);
+    crmSql(`DELETE FROM crm_webhook_events WHERE workspace_id='${wsId}' AND source='site_form'`);
+    crmSql(`DELETE FROM crm_cadences WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%'`);
+  };
+  const saiuToast = async (texto) => page.getByText(texto, { exact: false }).first().waitFor({ timeout: 15000 });
+  const crmDefaultsAntes = crmSql(`SELECT count(*) FROM crm_pipelines WHERE workspace_id='${wsId}'`);
+  void crmDefaultsAntes;
+
+  // layout + Funil (kanban)
+  await page.goto(`${BASE}/crm`);
+  await page.getByText('Funil de vendas').first().waitFor({ timeout: 30000 });
+  await page.getByText('Novo Lead').first().waitFor({ timeout: 30000 });
+  check('crm: título da aba', (await page.title()) === 'CRM · Funil de vendas · Meu Funil', await page.title());
+  const txtCrm = await corpo();
+  for (const t of ['Funil', 'Leads', 'Inbox', 'Cadências', 'Minhas tarefas', 'Indicadores', 'Integrações', 'Configurações']) check(`crm: aba "${t}"`, tem(txtCrm, t));
+  for (const t of ['Novo Lead', 'Qualificado', 'Reunião Agendada', 'Ganho', 'Perdido', 'Arraste os cards entre as etapas']) check(`crm: kanban mostra "${t}"`, tem(txtCrm, t));
+  check('crm: aba "Funil" ativa só em /crm', (await page.locator('a', { hasText: /^Funil$/ }).first().getAttribute('class')).includes('bg-primary'));
+
+  // Leads: criar
+  await page.goto(`${BASE}/crm/leads`);
+  await page.getByRole('button', { name: 'Novo lead' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Novo lead' }).click();
+  const dlgLead = page.getByRole('dialog');
+  await dlgLead.getByText('Nome', { exact: true }).waitFor();
+  await dlgLead.locator('input').nth(0).fill(crmLead);
+  await dlgLead.locator('input').nth(1).fill('+5511900000077');
+  await dlgLead.locator('input').nth(2).fill(`${crmTag.toLowerCase()}@teste.co`);
+  await dlgLead.locator('input').nth(3).fill('Campinas');
+  await dlgLead.getByRole('button', { name: 'Criar lead' }).click();
+  await saiuToast('Lead criado.');
+  await page.getByRole('link', { name: crmLead }).waitFor({ timeout: 15000 });
+  ok('leads: "Novo lead" cria, toast "Lead criado." e aparece na tabela');
+  // nome em branco: toast de erro
+  await page.getByRole('button', { name: 'Novo lead' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Criar lead' }).click();
+  await saiuToast('Informe o nome do lead.');
+  ok('leads: nome vazio mostra "Informe o nome do lead."');
+  await page.keyboard.press('Escape');
+
+  // importar CSV (2 linhas) e exportar
+  const crmTmp = mkdtempSync(path.join(tmpdir(), 'mf-crm-'));
+  const csvPath = path.join(crmTmp, 'leads.csv');
+  writeFileSync(csvPath, `nome,telefone,email,cidade\n"Imp A ${crmTag}",+5511911110001,a-${crmTag.toLowerCase()}@imp.co,Rio\nImp B ${crmTag},,,\n`);
+  await page.locator('input[type=file]').setInputFiles(csvPath);
+  await saiuToast('2 leads importados.');
+  await page.getByRole('link', { name: `Imp A ${crmTag}` }).waitFor({ timeout: 15000 });
+  check('leads: importar CSV (2 linhas) com origem "Importação"', crmSql(`SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND source='import' AND name LIKE '%${crmTag}%'`) === '2');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Exportar CSV' }).click()]);
+  check('leads: exportar CSV baixa "leads.csv"', dl.suggestedFilename() === 'leads.csv', dl.suggestedFilename());
+
+  // filtro client-side + ações em massa
+  await page.getByPlaceholder('Buscar lead').fill(crmTag);
+  await page.waitForFunction((t) => document.querySelectorAll('tbody tr').length === 3 && document.body.innerText.includes(t), crmTag);
+  await page.locator('thead input[type=checkbox]').check();
+  await page.getByText('3 selecionados').waitFor();
+  const selBulk = (rotulo) => page.locator('select', { has: page.locator('option', { hasText: rotulo }) });
+  await selBulk('Mover para etapa…').selectOption({ label: 'Qualificado' });
+  await saiuToast('Leads movidos.');
+  check('leads: mover em massa para "Qualificado" (3 leads)', crmSql(`SELECT count(*) FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.workspace_id='${wsId}' AND l.name LIKE '%${crmTag}%' AND s.name='Qualificado'`) === '3');
+  await page.locator('thead input[type=checkbox]').check();
+  await selBulk('Aplicar tag…').selectOption({ label: 'VIP' });
+  await saiuToast('Tag aplicada aos leads selecionados.');
+  check('leads: aplicar tag VIP em massa', crmSql(`SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%' AND 'VIP' = ANY(tags)`) === '3');
+  await page.locator('thead input[type=checkbox]').check();
+  const meuId = crmSql(`SELECT user_id FROM workspace_members m JOIN users u ON u.id=m.user_id WHERE m.workspace_id='${wsId}' AND u.email='${EMAIL}'`);
+  await selBulk('Atribuir responsável…').selectOption(meuId);
+  await saiuToast('Responsável atribuído.');
+  check('leads: atribuir responsável em massa', crmSql(`SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND name LIKE '%${crmTag}%' AND owner_id='${meuId}'`) === '3');
+  await page.getByPlaceholder('Buscar lead').fill('');
+  // "Incluir em cadência…" existe (Task 8 liga o envio): só confere o seletor
+  await page.locator('thead input[type=checkbox]').check();
+  check('leads: barra de ação em massa mostra "Incluir em cadência…"', (await selBulk('Incluir em cadência…').count()) === 1);
+
+  // Kanban: arrastar o card para "Ganho" (movimento transacional)
+  await page.goto(`${BASE}/crm`);
+  await page.getByText(crmLead).first().waitFor({ timeout: 30000 });
+  await page.evaluate(({ nome }) => {
+    const card = [...document.querySelectorAll('a[draggable=true]')].find((a) => a.innerText.includes(nome));
+    const col = [...document.querySelectorAll('div')].find((d) => d.className.includes('w-[280px]') && d.querySelector('p.text-sm.font-medium')?.textContent === 'Ganho');
+    const dt = new DataTransfer();
+    card.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+    col.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    col.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, { nome: crmLead });
+  await saiuToast('Lead movido.');
+  check('kanban: arrastar para "Ganho" grava etapa, histórico e interação "Movido para Ganho."', crmSql(`SELECT count(*) FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.name='${crmLead}' AND s.name='Ganho'`) === '1'
+    && crmSql(`SELECT count(*) FROM crm_stage_history h JOIN crm_leads l ON l.id=h.lead_id WHERE l.name='${crmLead}'`) === '1'
+    && crmSql(`SELECT count(*) FROM crm_interactions i JOIN crm_leads l ON l.id=i.lead_id WHERE l.name='${crmLead}' AND i.content='Movido para Ganho.'`) === '1');
+
+  // Ficha do lead
+  await page.getByText(crmLead).first().click();
+  await page.waitForURL('**/crm/leads/*', { timeout: 30000 });
+  await page.getByText('Timeline de interações').waitFor({ timeout: 30000 });
+  check('lead: título da aba', (await page.title()) === 'CRM · Ficha do lead · Meu Funil', await page.title());
+  const txtCrmLead = await corpo();
+  for (const t of [crmLead, 'Dados do lead', 'Tarefas e cadência', 'Conversa', 'Disponível em breve', 'Assumir conversa', 'Movido para Ganho.', 'Descadastrado', 'Consentimento LGPD']) check(`lead: mostra "${t}"`, tem(txtCrmLead, t));
+  await page.getByPlaceholder('Registrar nota…').fill('Nota do browser-check');
+  await page.getByRole('button', { name: 'Adicionar' }).click();
+  await page.getByText('Nota do browser-check').waitFor({ timeout: 15000 });
+  ok('lead: nota entra na timeline');
+  await page.getByRole('button', { name: 'Assumir conversa' }).click();
+  await saiuToast('Você assumiu a conversa.');
+  await page.getByRole('button', { name: 'Devolver para IA' }).waitFor({ timeout: 15000 });
+  await page.getByText('Atendimento assumido por humano (IA pausada).').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Devolver para IA' }).click();
+  await saiuToast('IA reativada.');
+  await page.getByRole('button', { name: 'Assumir conversa' }).waitFor({ timeout: 15000 });
+  ok('lead: assumir conversa / devolver para IA alterna o botão e registra as notas');
+  await page.getByPlaceholder('Nova tarefa').fill(`Ligar ${crmTag}`);
+  await page.getByRole('button', { name: 'Criar', exact: true }).click();
+  await saiuToast('Tarefa criada.');
+  await page.getByText(`Ligar ${crmTag}`).first().waitFor({ timeout: 15000 });
+  ok('lead: criar tarefa (vence em 24 h)');
+  // etapa pela ficha (não grava histórico — comportamento do protótipo)
+  const antesHist = crmSql(`SELECT count(*) FROM crm_stage_history h JOIN crm_leads l ON l.id=h.lead_id WHERE l.name='${crmLead}'`);
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'Perdido' }) }).last().selectOption({ label: 'Perdido' });
+  await page.waitForFunction(() => true);
+  for (let i = 0; i < 20 && crmSql(`SELECT s.name FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.name='${crmLead}'`) !== 'Perdido'; i++) await page.waitForTimeout(250);
+  check('lead: trocar a etapa pela ficha salva e NÃO grava histórico (quirk mantido)', crmSql(`SELECT s.name FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.name='${crmLead}'`) === 'Perdido'
+    && crmSql(`SELECT count(*) FROM crm_stage_history h JOIN crm_leads l ON l.id=h.lead_id WHERE l.name='${crmLead}'`) === antesHist);
+
+  // Tarefas
+  await page.goto(`${BASE}/crm/tasks`);
+  await page.getByText('Minhas tarefas').first().waitFor({ timeout: 30000 });
+  await page.getByText(`Ligar ${crmTag}`).waitFor({ timeout: 30000 });
+  for (const t of ['Atrasadas (', 'Hoje (', 'Próximas (', 'Concluídas (']) check(`tarefas: grupo "${t}…"`, tem(await corpo(), t));
+  await page.locator('div.rounded-lg', { hasText: `Ligar ${crmTag}` }).last().getByRole('button', { name: 'Concluir' }).click();
+  await page.locator('div.rounded-lg', { hasText: `Ligar ${crmTag}` }).last().getByRole('button', { name: 'Reabrir' }).waitFor({ timeout: 15000 });
+  check('tarefas: Concluir move para "Concluídas" (status done)', crmSql(`SELECT status FROM crm_tasks WHERE title='Ligar ${crmTag}' AND workspace_id='${wsId}'`) === 'done');
+  await page.locator('div.rounded-lg', { hasText: `Ligar ${crmTag}` }).last().getByRole('button', { name: 'Reabrir' }).click();
+  await page.locator('div.rounded-lg', { hasText: `Ligar ${crmTag}` }).last().getByRole('button', { name: 'Concluir' }).waitFor({ timeout: 15000 });
+  ok('tarefas: Reabrir volta para aberta');
+
+  // Indicadores (+ CadenceMetrics)
+  crmSql(`INSERT INTO crm_cadences(workspace_id,name,steps) VALUES ('${wsId}','Cadência ${crmTag}','[{"channel":"wa_text","delay_minutes":0}]')`);
+  await page.goto(`${BASE}/crm/dashboard`);
+  await page.getByText('Indicadores do CRM').first().waitFor({ timeout: 30000 });
+  await page.getByText(`Cadência ${crmTag}`).waitFor({ timeout: 30000 });
+  const txtCrmDash = await corpo();
+  for (const t of ['Leads no período', 'Tempo médio 1ª resposta', 'Ganhos', 'Ticket médio', 'Taxa de resposta ao SDR IA', 'Qualificados pela IA', 'Reuniões agendadas', 'SLA estourado', 'Funil visual', 'Leads com SLA estourado',
+    'Origem, campanha e anúncio', 'Ganhos e perdas', 'Ranking por vendedor', 'Evolução diária', 'Enviados', 'Entregues', 'Taxa de resposta', '1 lead(s)'.replace('1', '0')]) check(`dashboard: mostra "${t}"`, tem(txtCrmDash, t));
+  await page.waitForFunction(() => { const p = [...document.querySelectorAll('p')].find((x) => x.textContent.trim().toLowerCase() === 'leads no período'); return !!p && Number((p.parentElement.innerText.match(/\d+/g) ?? ['0']).pop()) >= 3; }, null, { timeout: 20000 }).catch(() => {});
+  const crmStat = await page.locator('p', { hasText: 'Leads no período' }).first().locator('xpath=..').innerText();
+  check('dashboard: "Leads no período" conta os leads criados (≥ 3)', Number((crmStat.match(/\d+/g) ?? ['0']).pop()) >= 3, crmStat);
+  await page.locator('select', { has: page.locator('option', { hasText: 'Últimos 7 dias' }) }).selectOption('7');
+  ok('dashboard: filtro de período é client-side');
+
+  // Configurações (sem o painel SDR)
+  await page.goto(`${BASE}/crm/settings`);
+  await page.getByText('Configurações do CRM').first().waitFor({ timeout: 30000 });
+  await page.getByText('Funil e etapas').waitFor({ timeout: 30000 });
+  const txtCrmSet = await corpo();
+  for (const t of ['Funil e etapas', 'Usuários do workspace', 'Distribuição de leads', 'Motivos de perda e tags', 'Colunas: nome · cor · ordem · SLA (horas)', 'Owner']) check(`settings: mostra "${t}"`, tem(txtCrmSet, t));
+  await page.getByPlaceholder('Nova etapa').fill(`Etapa ${crmTag}`);
+  await page.getByRole('button', { name: 'Adicionar' }).first().click();
+  await saiuToast('Etapa criada.');
+  await page.locator(`input[value="Etapa ${crmTag}"]`).waitFor({ timeout: 15000 });
+  const linhaEtapa = page.locator('div.rounded-lg', { has: page.locator(`input[value="Etapa ${crmTag}"]`) }).last();
+  await linhaEtapa.locator('input[type=number]').nth(1).fill('12');
+  await linhaEtapa.locator('input[type=number]').nth(1).blur();
+  for (let i = 0; i < 20 && crmSql(`SELECT sla_hours FROM crm_stages WHERE name='Etapa ${crmTag}' AND workspace_id='${wsId}'`) !== '12'; i++) await page.waitForTimeout(250);
+  check('settings: criar etapa e editar o SLA (onBlur)', crmSql(`SELECT sla_hours FROM crm_stages WHERE name='Etapa ${crmTag}' AND workspace_id='${wsId}'`) === '12');
+  await linhaEtapa.getByRole('button').last().click();
+  await page.locator(`input[value="Etapa ${crmTag}"]`).waitFor({ state: 'detached', timeout: 15000 });
+  check('settings: apagar etapa', crmSql(`SELECT count(*) FROM crm_stages WHERE name='Etapa ${crmTag}'`) === '0');
+  await page.getByPlaceholder('Novo motivo de perda').fill(`Motivo ${crmTag}`);
+  await page.getByRole('button', { name: 'Adicionar' }).nth(1).click();
+  await page.getByText(`Motivo ${crmTag}`).waitFor({ timeout: 15000 });
+  await page.locator('div', { hasText: new RegExp(`^Motivo ${crmTag}$`) }).last().getByRole('button').click();
+  await page.getByText(`Motivo ${crmTag}`).waitFor({ state: 'detached', timeout: 15000 });
+  ok('settings: motivo de perda criar/apagar');
+  await page.getByPlaceholder('Nova tag').fill(`Tag ${crmTag}`);
+  await page.getByRole('button', { name: 'Adicionar' }).nth(2).click();
+  await page.getByText(`Tag ${crmTag}`).waitFor({ timeout: 15000 });
+  await page.locator('span', { hasText: `Tag ${crmTag}` }).getByRole('button', { name: '×' }).click();
+  await page.getByText(`Tag ${crmTag}`).waitFor({ state: 'detached', timeout: 15000 });
+  ok('settings: tag criar/apagar');
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'Responsável fixo' }) }).selectOption('fixed');
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'Escolha o responsável' }) }).selectOption(meuId);
+  await page.getByRole('button', { name: 'Salvar regra' }).click();
+  await saiuToast('Regra de distribuição salva.');
+  check('settings: regra "Responsável fixo" salva', crmSql(`SELECT distribution FROM crm_settings WHERE workspace_id='${wsId}'`) === 'fixed');
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'Rodízio (round-robin)' }) }).selectOption('round_robin');
+  await page.getByRole('button', { name: 'Salvar regra' }).click();
+  await saiuToast('Regra de distribuição salva.');
+  check('settings: volta para rodízio', crmSql(`SELECT distribution FROM crm_settings WHERE workspace_id='${wsId}'`) === 'round_robin');
+  check('settings: sem o painel do SDR (Task 8)', !tem(await corpo(), 'Agente SDR'));
+
+  // Formulário público + descadastro (pelo rewrite do Next, na origem do web)
+  const tokForm = crmSql(`INSERT INTO crm_integrations(workspace_id,kind,provider,status,config) VALUES ('${wsId}','site_form','site','connected','{"title":"Form ${crmTag}","thanks":"Obrigado ${crmTag}!"}') RETURNING webhook_token`).split('\n')[0];
+  const pForm = await ctx.newPage();
+  pForm.on('console', (m) => { if (m.type() === 'error') erros.push(`[console form] ${m.text().slice(0, 200)}`); });
+  pForm.on('pageerror', (e) => erros.push(`[pageerror form] ${String(e).slice(0, 200)}`));
+  await pForm.goto(`${BASE}/api/public/forms/${tokForm}`);
+  await pForm.getByText(`Form ${crmTag}`).first().waitFor({ timeout: 30000 });
+  await pForm.fill('#n', `Visitante ${crmTag}`);
+  await pForm.fill('#e', `visitante-${crmTag.toLowerCase()}@site.co`);
+  await pForm.fill('#p', '(11) 97777-6666');
+  await pForm.waitForTimeout(2800); // tempo mínimo de preenchimento (2,5 s)
+  await pForm.getByRole('button', { name: 'Quero ser atendido' }).click();
+  await pForm.getByText(`Obrigado ${crmTag}!`).waitFor({ timeout: 15000 });
+  check('formulário público: envia e mostra o agradecimento', crmSql(`SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND source='site' AND name='Visitante ${crmTag}'`) === '1');
+  const crmEmbed = await pForm.evaluate(async (t) => { const r = await fetch(`/api/public/forms/embed/${t}`); return { type: r.headers.get('content-type'), body: await r.text() }; }, tokForm);
+  check('formulário público: script de embed pelo rewrite', /javascript/.test(crmEmbed.type ?? '') && crmEmbed.body.includes(`/api/public/forms/${tokForm}`), crmEmbed.type ?? '');
+  const leadSite = crmSql(`SELECT id FROM crm_leads WHERE workspace_id='${wsId}' AND source='site' AND name='Visitante ${crmTag}'`);
+  const crmSig = createHmac('sha256', process.env.UNSUBSCRIBE_SECRET ?? 'meu-funil-dev-unsubscribe-secret-not-for-production').update(`unsubscribe:v1:${wsId}:${leadSite}`).digest('hex');
+  await pForm.goto(`${BASE}/api/public/unsubscribe/${leadSite}?t=${crmSig.slice(0, 63)}0`);
+  await pForm.getByText('Link inválido ou expirado.').waitFor({ timeout: 15000 });
+  await pForm.goto(`${BASE}/api/public/unsubscribe/${leadSite}?t=${crmSig}`);
+  await pForm.getByText('Pronto. Você não receberá mais nossos e-mails.').waitFor({ timeout: 15000 });
+  check('descadastro: link inválido recusado e link válido descadastra o lead', crmSql(`SELECT unsubscribed FROM crm_leads WHERE id='${leadSite}'`) === 't');
+  await pForm.close();
+
+  rmSync(crmTmp, { recursive: true, force: true });
+  limpaCrm();
+  check('limpeza do CRM: nada sobrou (leads, etapas, tags, motivos, integração, cadência)', crmSql(`SELECT (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND (name LIKE '%${crmTag}%' OR email LIKE '%${crmTag}%')) + (SELECT count(*) FROM crm_stages WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_tags WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_loss_reasons WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='site_form') + (SELECT count(*) FROM crm_cadences WHERE name LIKE '%${crmTag}%')`) === '0');
+
   page.setDefaultTimeout(30000);
 
   // ── 3. navegação por placeholders ──────────────────────────────
@@ -1256,6 +1487,9 @@ try {
   await page.goto(`${BASE}/crm/leads/00000000-0000-4000-8000-000000000001`);
   await page.waitForFunction(() => !!document.querySelector('aside select')?.value, null, { timeout: 30000 });
   ok('rota dinâmica /crm/leads/:id abre o shell');
+  // lead inexistente: a API responde 404 de propósito (a ficha fica em "Carregando lead…", como o protótipo)
+  await page.waitForLoadState('networkidle').catch(() => {});
+  esperado(/crm\/leads\/00000000|404 \(Not Found\)/);
 
   // workspace persistido como no protótipo
   const ws = await page.evaluate(() => window.localStorage.getItem('aimos.workspace'));

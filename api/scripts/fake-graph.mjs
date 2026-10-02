@@ -95,6 +95,7 @@ const server = createServer((req, res) => {
     if (b === 'advideos') return send(res, 200, { id: '7500001' });
     if (b === 'leadgen_forms') return send(res, 200, { id: String(7600000 + ++n.form) });
     if (b === 'customaudiences') return send(res, 200, { id: String(5100000 + ++n.audience) });
+    if (b === 'events') return send(res, 200, { events_received: (params.data ?? []).length });   // API de Conversões (CRM, Task 7)
     if (b === 'users') return send(res, 200, { audience_id: a, num_received: (params.payload?.data ?? []).length });
     if (a && !b) return send(res, 200, { success: true });   // status / orçamento
     return send(res, 404, { error: { message: `POST ${path} não existe na Graph falsa`, code: 100 } });

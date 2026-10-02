@@ -835,6 +835,152 @@ check "callback: sem code → retorno_incompleto; erro do Facebook repassado" "1
 curl -s -X DELETE "$API/v1/workspaces/$WID/files?key=$IMGK" -H "$H" >/dev/null
 fi
 
+echo "── Task 7: CRM núcleo (funil, leads, tarefas, indicadores, configurações) ──"
+CRM=$API/v1/workspaces/$WID/crm
+CRMB=$API/v1/workspaces/$NID/crm
+cg(){ curl -s "$1" -H "$2"; }
+cs(){ curl -s -X "$1" "$2" -H "$3" -H "$J" -d "$4"; }
+cc(){ curl -s -o /dev/null -w '%{http_code}' -X "$1" "$2" -H "$3" -H "$J" -d "$4"; }
+OWNERID=$(echo "$S" | jq -r .user.id)
+DEMOID=$(echo "$DEMO" | jq -r .user.id)
+
+echo "  funil e etapas"
+PLS=$(cg $CRM/pipelines "$H")
+check "pipelines: funil padrão criado na 1ª leitura" "1,Funil Padrão" "$(echo "$PLS" | jq -r 'length,.[0].name' | paste -sd,)"
+PIPE=$(echo "$PLS" | jq -r '.[0].id')
+STG=$(cg "$CRM/stages?pipeline_id=$PIPE" "$H")
+check "stages: 8 etapas por posição, a 1ª é Novo Lead" "8,Novo Lead,Perdido" "$(echo "$STG" | jq -r 'length,.[0].name,.[7].name' | paste -sd,)"
+ST_NEW=$(echo "$STG" | jq -r '.[0].id'); ST_Q=$(echo "$STG" | jq -r '.[2].id'); ST_WON=$(echo "$STG" | jq -r '.[6].id')
+check "stages: pipeline_id malformado → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' "$CRM/stages?pipeline_id=xxx" -H "$H")"
+check "viewer lê o funil" "200" "$(curl -s -o /dev/null -w '%{http_code}' $CRM/pipelines -H "$HV")"
+check "estranho não lê o CRM" "403" "$(curl -s -o /dev/null -w '%{http_code}' $CRM/pipelines -H "$HD")"
+check "viewer não cria lead" "Seu perfil não tem permissão para esta ação." "$(cs POST $CRM/leads "$HV" '{"name":"X"}' | jq -r .error.message)"
+check "viewer não move nem altera etapas" "403,403" "$(cc POST $CRM/leads/00000000-0000-4000-8000-000000000001/move "$HV" "{\"stage_id\":\"$ST_Q\"}"),$(cc DELETE $CRM/stages/$ST_Q "$HV" '{}')"
+
+echo "  leads: criar, ler, mover (transação), editar"
+LD=$(cs POST $CRM/leads "$H" "{\"name\":\"Lead Smoke\",\"phone\":\"+5511900000001\",\"email\":\"smoke7@x.co\",\"city\":\"SP\",\"source\":\"manual\",\"pipeline_id\":\"$PIPE\",\"stage_id\":\"$ST_NEW\"}")
+LID=$(echo "$LD" | jq -r .id)
+check "cria lead (estimated_value number, ai_active true)" "Lead Smoke,number,true" "$(echo "$LD" | jq -r '[.name,(.estimated_value|type),.ai_active]|join(",")')"
+check "nome obrigatório" "400" "$(cc POST $CRM/leads "$H" '{"name":"  "}')"
+check "campo desconhecido barrado (whitelist)" "VALIDATION_ERROR" "$(cs POST $CRM/leads "$H" '{"name":"x","workspace_id":"y"}' | jq -r .error.code)"
+check "etapa de outro workspace → 404" "404" "$(cc POST $CRM/leads "$H" "{\"name\":\"x\",\"stage_id\":\"$(cg $CRMB/stages "$H" | jq -r '.[0].id')\"}")"
+check "lista de leads traz o criado" "1" "$(cg "$CRM/leads?pipeline_id=$PIPE" "$H" | jq '[.[]|select(.name=="Lead Smoke")]|length')"
+check "lead por id" "Lead Smoke" "$(cg $CRM/leads/$LID "$H" | jq -r .name)"
+check "lead de OUTRO workspace → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' $CRMB/leads/$LID -H "$H")"
+check "move: moved=true e etapa nova" "true,$ST_Q" "$(cs POST $CRM/leads/$LID/move "$H" "{\"stage_id\":\"$ST_Q\"}" | jq -r '[.moved,.lead.stage_id]|join(",")')"
+check "move: histórico (de→para) + interação 'Movido para Qualificado.'" "1,$ST_NEW,$ST_Q,Movido para Qualificado." "$(PSQL "SELECT count(*)||','||from_stage_id||','||to_stage_id FROM crm_stage_history WHERE lead_id='$LID' GROUP BY from_stage_id,to_stage_id"),$(PSQL "SELECT content FROM crm_interactions WHERE lead_id='$LID' AND kind='stage_change'")"
+check "move para a mesma etapa: nada gravado" "false,1" "$(cs POST $CRM/leads/$LID/move "$H" "{\"stage_id\":\"$ST_Q\"}" | jq -r .moved),$(PSQL "SELECT count(*) FROM crm_stage_history WHERE lead_id='$LID'")"
+check "move: etapa de outro workspace → 404 e nada muda" "404,$ST_Q" "$(cc POST $CRM/leads/$LID/move "$H" "{\"stage_id\":\"$(cg $CRMB/stages "$H" | jq -r '.[2].id')\"}"),$(cg $CRM/leads/$LID "$H" | jq -r .stage_id)"
+check "patch: responsável + etapa pela ficha (sem histórico — quirk do protótipo)" "$OWNERID,1" "$(cs PATCH $CRM/leads/$LID "$H" "{\"owner_id\":\"$OWNERID\"}" | jq -r .owner_id),$(PSQL "SELECT count(*) FROM crm_stage_history WHERE lead_id='$LID'")"
+check "patch: responsável que não é do workspace → 400" "400" "$(cc PATCH $CRM/leads/$LID "$H" "{\"owner_id\":\"$DEMOID\"}")"
+check "patch: coluna fora da lista → 400 (whitelist)" "VALIDATION_ERROR" "$(cs PATCH $CRM/leads/$LID "$H" '{"workspace_id":"x"}' | jq -r .error.code)"
+check "viewer não edita lead" "403" "$(cc PATCH $CRM/leads/$LID "$HV" '{"ai_active":false}')"
+check "nota: grava e atualiza last_interaction_at" "note,nota smoke,t" "$(cs POST $CRM/leads/$LID/interactions "$H" '{"content":"  nota smoke "}' | jq -r '[.kind,.content]|join(",")'),$(PSQL "SELECT (last_interaction_at IS NOT NULL) FROM crm_leads WHERE id='$LID'")"
+check "timeline: mais recente primeiro" "nota smoke" "$(cg $CRM/leads/$LID/interactions "$H" | jq -r '.[0].content')"
+check "Assumir conversa: ai_active=false + nota do protótipo" "false,Atendimento assumido por humano (IA pausada)." "$(cs POST $CRM/leads/$LID/ai "$H" '{"active":false}' | jq -r .ai_active),$(PSQL "SELECT content FROM crm_interactions WHERE lead_id='$LID' AND kind='note' ORDER BY created_at DESC LIMIT 1")"
+check "Devolver para IA" "true,Conversa devolvida para a IA." "$(cs POST $CRM/leads/$LID/ai "$H" '{"active":true}' | jq -r .ai_active),$(PSQL "SELECT content FROM crm_interactions WHERE lead_id='$LID' AND kind='note' ORDER BY created_at DESC LIMIT 1")"
+
+echo "  tarefas"
+TK=$(cs POST $CRM/leads/$LID/tasks "$H" '{"title":"Ligar amanhã"}')
+TID=$(echo "$TK" | jq -r .id)
+check "tarefa criada (aberta, vence em ~24 h)" "open,1" "$(echo "$TK" | jq -r '[.status, ((.due_at|sub("\\.[0-9]+Z";"Z")|fromdateiso8601) > (now + 23*3600))]|map(tostring)|.[0]+","+(if .[1]=="true" then "1" else "0" end)')"
+check "lista de tarefas traz o nome do lead (crm_leads)" "Lead Smoke" "$(cg $CRM/tasks "$H" | jq -r --arg t "$TID" '.[]|select(.id==$t)|.crm_leads.name')"
+check "tarefas do lead" "1" "$(cg $CRM/leads/$LID/tasks "$H" | jq length)"
+check "concluir / reabrir" "done,open" "$(cs PATCH $CRM/tasks/$TID "$H" '{"status":"done"}' | jq -r .status),$(cs PATCH $CRM/tasks/$TID "$H" '{"status":"open"}' | jq -r .status)"
+check "status inválido → 400" "400" "$(cc PATCH $CRM/tasks/$TID "$H" '{"status":"qualquer"}')"
+check "viewer não conclui tarefa" "403" "$(cc PATCH $CRM/tasks/$TID "$HV" '{"status":"done"}')"
+check "tarefa de outro workspace → 404" "404" "$(cc PATCH $CRMB/tasks/$TID "$H" '{"status":"done"}')"
+
+echo "  ações em massa e importação de CSV"
+L2=$(cs POST $CRM/leads "$H" "{\"name\":\"Lead Smoke 2\",\"pipeline_id\":\"$PIPE\",\"stage_id\":\"$ST_NEW\"}" | jq -r .id)
+LX=$(PSQL "INSERT INTO crm_leads(workspace_id,name) VALUES ('$NID','Alheio Smoke') RETURNING id" | head -1)
+check "bulk: mover 2 leads (sem histórico, quirk) " "2,$ST_WON,$ST_WON" "$(cs POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\",\"$L2\"],\"stage_id\":\"$ST_WON\"}" | jq -r .updated),$(cg $CRM/leads/$LID "$H" | jq -r .stage_id),$(cg $CRM/leads/$L2 "$H" | jq -r .stage_id)"
+check "bulk: atribuir responsável" "$OWNERID,$OWNERID" "$(cs POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\",\"$L2\"],\"owner_id\":\"$OWNERID\"}" >/dev/null; cg $CRM/leads/$LID "$H" | jq -r .owner_id),$(cg $CRM/leads/$L2 "$H" | jq -r .owner_id)"
+check "bulk: aplicar tag (união, sem duplicar)" "VIP,VIP" "$(cs POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\",\"$L2\"],\"add_tag\":\"VIP\"}" >/dev/null; cs POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\"],\"add_tag\":\"VIP\"}" >/dev/null; cg $CRM/leads/$LID "$H" | jq -r '.tags|join("+")'),$(cg $CRM/leads/$L2 "$H" | jq -r '.tags|join("+")')"
+check "bulk: id de outro workspace derruba tudo (404) e nada muda" "404,$ST_WON" "$(cc POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\",\"$LX\"],\"stage_id\":\"$ST_NEW\"}"),$(cg $CRM/leads/$LID "$H" | jq -r .stage_id)"
+check "bulk: sem ação → 400" "400" "$(cc POST $CRM/leads/bulk "$H" "{\"ids\":[\"$LID\"]}")"
+check "viewer não faz ação em massa" "403" "$(cc POST $CRM/leads/bulk "$HV" "{\"ids\":[\"$LID\"],\"add_tag\":\"x\"}")"
+check "import CSV: 3 linhas → source import" "3,3" "$(cs POST $CRM/leads/import "$H" "{\"pipeline_id\":\"$PIPE\",\"stage_id\":\"$ST_NEW\",\"rows\":[{\"name\":\"Imp A\",\"phone\":\"+5511911110001\"},{\"name\":\"Imp B\",\"email\":\"b@imp.co\"},{\"name\":\"Imp C\",\"city\":\"Rio\"}]}" | jq -r .imported),$(PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$WID' AND source='import' AND name LIKE 'Imp %'")"
+BEFORE=$(PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$WID'")
+BIG=$(jq -n '{rows:[range(0;5001)|{name:"x\(.)"}]}' | curl -s -X POST $CRM/leads/import -H "$H" -H "$J" --data-binary @-)
+check "import CSV: teto de 5000 linhas (mensagem pt-BR) e nada gravado" "Arquivo grande demais: importe no máximo 5000 leads por vez (o arquivo tem 5001).,$BEFORE" "$(echo "$BIG" | jq -r .error.message),$(PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$WID'")"
+check "import CSV: etapa de outro workspace → 404" "404" "$(cc POST $CRM/leads/import "$H" "{\"stage_id\":\"$(cg $CRMB/stages "$H" | jq -r '.[0].id')\",\"rows\":[{\"name\":\"z\"}]}")"
+
+echo "  Indicadores e configurações"
+check "stage-history: traz a movimentação do lead" "1" "$(cg $CRM/stage-history "$H" | jq --arg l "$LID" '[.[]|select(.lead_id==$l)]|length')"
+check "interactions (todas): kind/author_type" "1" "$(cg $CRM/interactions "$H" | jq '[.[]|select(.kind=="stage_change" and .author_type=="user")]|length|if .>=1 then 1 else 0 end')"
+check "cadence-options e cadence-metrics (6 listas)" "0,cadences;events;history;messages;runs;stages" "$(cg $CRM/cadence-options "$H" | jq length),$(cg $CRM/cadence-metrics "$H" | jq -r 'keys|join(";")')"
+CAD=$(PSQL "INSERT INTO crm_cadences(workspace_id,name,steps) VALUES ('$WID','Cadência Smoke','[{\"channel\":\"wa_text\",\"delay_minutes\":0}]') RETURNING id" | head -1)
+PSQL "INSERT INTO crm_cadence_events(workspace_id,cadence_id,step_index,channel,event,lead_id) VALUES ('$WID','$CAD',0,'wa_text','sent','$LID')" >/dev/null
+check "cadence-metrics: lê cadência, eventos e etapas do workspace" "Cadência Smoke,1,8" "$(cg $CRM/cadence-metrics "$H" | jq -r '[.cadences[0].name,(.events|length),(.stages|length)]|join(",")')"
+check "cadence-options lista a cadência" "Cadência Smoke" "$(cg $CRM/cadence-options "$H" | jq -r '.[0].name')"
+check "membros: owner + viewer + marketing, com perfil" "3,Smoke 2" "$(cg $CRM/members "$H" | jq -r '[length, (.[]|select(.role=="owner")|.profiles.full_name)]|join(",")')"
+ET=$(cs POST $CRM/stages "$H" "{\"pipeline_id\":\"$PIPE\",\"name\":\"Etapa Smoke\",\"position\":9}")
+ETID=$(echo "$ET" | jq -r .id)
+check "etapa: criar" "Etapa Smoke,9" "$(echo "$ET" | jq -r '[.name,.position]|join(",")')"
+check "etapa: editar nome/cor/SLA/posição" "Etapa Smoke 2,#ff0000,5,10" "$(cs PATCH $CRM/stages/$ETID "$H" '{"name":"Etapa Smoke 2","color":"#ff0000","sla_hours":5,"position":10}' | jq -r '[.name,.color,.sla_hours,.position]|join(",")')"
+check "etapa: funil de outro workspace → 404" "404" "$(cc POST $CRM/stages "$H" "{\"pipeline_id\":\"$(cg $CRMB/pipelines "$H" | jq -r '.[0].id')\",\"name\":\"x\"}")"
+check "etapa: de outro workspace não edita nem apaga" "404,404" "$(cc PATCH $CRMB/stages/$ETID "$H" '{"name":"x"}'),$(cc DELETE $CRMB/stages/$ETID "$H" '{}')"
+cs PATCH $CRM/leads/$L2 "$H" "{\"stage_id\":\"$ETID\"}" >/dev/null
+check "etapa: apagar (204) e o lead que estava nela fica sem etapa" "204,null" "$(cc DELETE $CRM/stages/$ETID "$H" '{}'),$(cg $CRM/leads/$L2 "$H" | jq -r .stage_id)"
+SET0=$(cg $CRM/settings "$H")
+check "distribuição padrão: round_robin" "round_robin" "$(echo "$SET0" | jq -r .distribution)"
+check "distribuição: responsável fixo" "fixed,$OWNERID" "$(cs PUT $CRM/settings "$H" "{\"distribution\":\"fixed\",\"default_owner_id\":\"$OWNERID\"}" | jq -r '[.distribution,.default_owner_id]|join(",")')"
+check "distribuição: responsável de fora → 400; modo inválido → 400; viewer → 403" "400,400,403" "$(cc PUT $CRM/settings "$H" "{\"distribution\":\"fixed\",\"default_owner_id\":\"$DEMOID\"}"),$(cc PUT $CRM/settings "$H" '{"distribution":"x"}'),$(cc PUT $CRM/settings "$HV" '{"distribution":"fixed"}')"
+cs PUT $CRM/settings "$H" '{"distribution":"round_robin"}' >/dev/null
+check "tags padrão (4) e criar/duplicar/apagar" "4,Tag Smoke,409,204" "$(cg $CRM/tags "$H" | jq length),$(cs POST $CRM/tags "$H" '{"name":"Tag Smoke"}' | jq -r .name),$(cc POST $CRM/tags "$H" '{"name":"Tag Smoke"}'),$(cc DELETE $CRM/tags/$(cg $CRM/tags "$H" | jq -r '.[]|select(.name=="Tag Smoke")|.id') "$H" '{}')"
+RS=$(cs POST $CRM/loss-reasons "$H" '{"name":"Motivo Smoke"}' | jq -r .id)
+check "motivos de perda: 5 padrão + criar/apagar (outro workspace não apaga)" "6,404,204,5" "$(cg $CRM/loss-reasons "$H" | jq length),$(cc DELETE $CRMB/loss-reasons/$RS "$H" '{}'),$(cc DELETE $CRM/loss-reasons/$RS "$H" '{}'),$(cg $CRM/loss-reasons "$H" | jq length)"
+
+echo "  ação da Meta usada pelo Kanban (notifyMetaConversion)"
+NMC=$API/v1/crm-integrations/notify-meta-conversion
+check "sem integração conectada → { skipped: true }" "true" "$(cs POST $NMC "$H" "{\"workspaceId\":\"$WID\",\"leadId\":\"$LID\",\"event\":\"Ganho\"}" | jq -r '.skipped // .sent')"
+check "viewer → 403; evento inválido → 400; lead de outro workspace → skipped" "403,400,true" "$(cc POST $NMC "$HV" "{\"workspaceId\":\"$WID\",\"leadId\":\"$LID\",\"event\":\"Ganho\"}"),$(cc POST $NMC "$H" "{\"workspaceId\":\"$WID\",\"leadId\":\"$LID\",\"event\":\"Outro\"}"),$(cs POST $NMC "$H" "{\"workspaceId\":\"$WID\",\"leadId\":\"$LX\",\"event\":\"Ganho\"}" | jq -r '.skipped // .sent')"
+if [ -n "$GBASE" ]; then
+  PSQL "INSERT INTO crm_integrations(workspace_id,kind,provider,status,config) VALUES ('$WID','meta_lead_ads','meta','connected','{\"pixel_id\":\"123456789\"}') ON CONFLICT (workspace_id,kind) DO UPDATE SET status='connected', config='{\"pixel_id\":\"123456789\"}'" >/dev/null
+  curl -s -X POST "$GBASE/__reset" >/dev/null
+  check "Ganho: POST /{pixel}/events com e-mail em SHA-256 e valor em BRL" "true,$(printf 'smoke7@x.co' | openssl dgst -sha256 | sed 's/^.* //'),system_generated" "$(cs POST $NMC "$H" "{\"workspaceId\":\"$WID\",\"leadId\":\"$LID\",\"event\":\"Ganho\"}" | jq -r .sent),$(curl -s $GBASE/__log | jq -r '[.[]|select(.method=="POST" and .path=="/123456789/events")|.params.data[0].user_data.em[0]][0]'),$(curl -s $GBASE/__log | jq -r '[.[]|select(.path=="/123456789/events")|.params.data[0].action_source][0]')"
+fi
+
+echo "  formulário público do site (/api/public/forms)"
+FORM=$API/api/public/forms
+TOK=$(PSQL "INSERT INTO crm_integrations(workspace_id,kind,provider,status,config) VALUES ('$NID','site_form','site','connected','{\"title\":\"Form Smoke\",\"redirect_url\":\"https://obrigado.example/ok\",\"ask_message\":true}') RETURNING webhook_token" | head -1)
+check "GET: HTML do formulário (no-store, embutível em iframe, sem X-Frame-Options)" "200,text/html; charset=utf-8,no-store,1,0" "$(curl -s -o /tmp/mf-form.html -w '%{http_code}' $FORM/$TOK),$(curl -sI $FORM/$TOK | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2}'),$(curl -sI $FORM/$TOK | tr -d '\r' | awk -F': ' 'tolower($1)=="cache-control"{print $2}'),$(curl -sI $FORM/$TOK | tr -d '\r' | grep -ic 'frame-ancestors \*'),$(curl -sI $FORM/$TOK | tr -d '\r' | grep -ic '^x-frame-options')"
+check "GET: título, isca e mensagem no HTML" "2,1,1" "$(grep -c 'Form Smoke' /tmp/mf-form.html),$(grep -c 'name=\"website\"' /tmp/mf-form.html),$(grep -c 'name=\"message\"' /tmp/mf-form.html)"
+check "GET: token desconhecido → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' $FORM/naoexiste)"
+check "embed: JavaScript com cache 300 s e CORS *, iframe apontando para APP_URL" "200,1,1,1" "$(curl -s -o /tmp/mf-embed.js -w '%{http_code}' $FORM/embed/$TOK),$(grep -c "api/public/forms/$TOK" /tmp/mf-embed.js),$(curl -sI $FORM/embed/$TOK | tr -d '\r' | grep -ic 'cache-control: public, max-age=300'),$(curl -sI $FORM/embed/$TOK | tr -d '\r' | grep -ic 'access-control-allow-origin: \*')"
+check "OPTIONS (preflight de outra origem) → 204 com CORS *" "204,1" "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS $FORM/$TOK -H 'Origin: https://outro.test' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'),$(curl -sI -X OPTIONS $FORM/$TOK -H 'Origin: https://outro.test' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | grep -ic 'access-control-allow-origin: \*')"
+fcount(){ PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$NID' AND source='site'"; }
+OLDT=$(( $(date +%s) * 1000 - 60000 ))
+check "POST isca preenchida: 200 e nada gravado" "200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"Robô","email":"r@x.co","website":"http://spam","_t":'$OLDT'}'),$(fcount)"
+check "POST em menos de 2,5 s: 200 e nada gravado" "200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"Rápido","email":"r@x.co","_t":'$(( $(date +%s) * 1000 ))'}'),$(fcount)"
+check "POST sem e-mail/telefone válidos → 400" "Informe um e-mail válido ou um telefone." "$(cs POST $FORM/$TOK "$J" '{"name":"Sem","email":"x","_t":'$OLDT'}' | jq -r .error)"
+FR=$(cs POST $FORM/$TOK "$J" '{"name":"Ana Site","email":"ANA@site.co","phone":"(11) 98888-7777","message":"quero","page":"https://s.test/","utm_source":"google","_t":'$OLDT'}')
+check "POST válido: { ok, redirect }, lead de origem site com LGPD e etapa inicial" "true,https://obrigado.example/ok,site,true,Novo Lead,+5511988887777" "$(echo "$FR" | jq -r '[.ok,.redirect]|join(",")'),$(PSQL "SELECT l.source||','||l.lgpd_consent||','||s.name||','||l.phone FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.workspace_id='$NID' AND l.email='ana@site.co'")"
+check "POST válido: histórico, interação e integração 'connected'" "1,1,connected" "$(PSQL "SELECT count(*) FROM crm_stage_history h JOIN crm_leads l ON l.id=h.lead_id WHERE l.email='ana@site.co'"),$(PSQL "SELECT count(*) FROM crm_interactions i JOIN crm_leads l ON l.id=i.lead_id WHERE l.email='ana@site.co' AND i.content LIKE 'Lead do formulário do site: \"quero\"%'"),$(PSQL "SELECT status FROM crm_integrations WHERE webhook_token='$TOK'")"
+check "o mesmo contato de novo: não duplica o lead" "1" "$(cc POST $FORM/$TOK "$J" '{"name":"Ana Site","email":"ana@site.co","_t":'$OLDT'}' >/dev/null; PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$NID' AND email='ana@site.co'")"
+check "POST de formulário comum (urlencoded) com redirect_url → 303 + Location" "303,https://obrigado.example/ok" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -X POST $FORM/$TOK -d 'name=Bia&email=bia@site.co' | tr ' ' ',')"
+check "IP guardado só como hash de 32 hex (nunca o IP)" "0,1" "$(PSQL "SELECT count(*) FROM crm_webhook_events WHERE source='site_form' AND payload->>'ip' !~ '^[0-9a-f]{32}\$'"),$(PSQL "SELECT (count(*) > 0)::int FROM crm_webhook_events WHERE source='site_form'")"
+for i in 1 2; do cc POST $FORM/$TOK "$J" "{\"name\":\"Rate $i\",\"email\":\"rate$i@site.co\",\"_t\":$OLDT}" >/dev/null; done
+check "limite de 5 envios/10 min por IP: o 6º é 429 e não grava" "429,Muitos envios seguidos. Tente de novo em alguns minutos." "$(cc POST $FORM/$TOK "$J" "{\"name\":\"Rate 9\",\"email\":\"rate9@site.co\",\"_t\":$OLDT}"),$(cs POST $FORM/$TOK "$J" "{\"name\":\"Rate 9\",\"email\":\"rate9@site.co\",\"_t\":$OLDT}" | jq -r .error)"
+check "x-forwarded-for forjado NÃO escapa do limite" "429" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $FORM/$TOK -H "$J" -H 'X-Forwarded-For: 9.9.9.9' -H 'CF-Connecting-IP: 8.8.8.8' -d "{\"name\":\"Rate 9\",\"email\":\"rate9@site.co\",\"_t\":$OLDT}")"
+check "integração desconectada → 404 (GET e POST)" "404,404" "$(PSQL "UPDATE crm_integrations SET status='disconnected' WHERE webhook_token='$TOK'" >/dev/null; curl -s -o /dev/null -w '%{http_code}' $FORM/$TOK),$(cc POST $FORM/$TOK "$J" '{"name":"x","email":"x@y.co"}')"
+check "o formulário não vaza para outro workspace: 0 leads 'site' em $WID" "0" "$(PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$WID' AND source='site'")"
+rm -f /tmp/mf-form.html /tmp/mf-embed.js
+
+echo "  descadastro (/api/public/unsubscribe) — HMAC completo, preso ao lead + empresa"
+UNS=$API/api/public/unsubscribe
+USEC=${UNSUBSCRIBE_SECRET:-meu-funil-dev-unsubscribe-secret-not-for-production}
+usig(){ printf '%s' "unsubscribe:v1:$1:$2" | openssl dgst -sha256 -hmac "$USEC" | sed 's/^.* //'; }
+GOODSIG=$(usig $WID $LID)
+PSQL "INSERT INTO crm_cadence_runs(workspace_id,cadence_id,lead_id,status) VALUES ('$WID','$CAD','$LID','running')" >/dev/null
+check "assinatura adulterada / truncada (32 hex) / vazia → 'Link inválido ou expirado.'" "1,1,1,1" "$(curl -s "$UNS/$LID?t=${GOODSIG:0:63}0" | grep -c 'Link inválido ou expirado.'),$(curl -s "$UNS/$LID?t=${GOODSIG:0:32}" | grep -c 'Link inválido ou expirado.'),$(curl -s "$UNS/$LID?t=" | grep -c 'Link inválido ou expirado.'),$(curl -s "$UNS/$LID" | grep -c 'Link inválido ou expirado.')"
+check "assinatura de OUTRO lead / de outro workspace / id inexistente ou malformado → inválido" "1,1,1,1" "$(curl -s "$UNS/$LID?t=$(usig $WID $L2)" | grep -c 'Link inválido'),$(curl -s "$UNS/$LID?t=$(usig $NID $LID)" | grep -c 'Link inválido'),$(curl -s "$UNS/00000000-0000-4000-8000-0000000000aa?t=$(usig $WID 00000000-0000-4000-8000-0000000000aa)" | grep -c 'Link inválido'),$(curl -s "$UNS/xxx?t=$GOODSIG" | grep -c 'Link inválido')"
+check "nada mudou com os links inválidos" "f,t,running" "$(PSQL "SELECT unsubscribed||','||ai_active FROM crm_leads WHERE id='$LID'" | sed 's/true/t/g;s/false/f/g'),$(PSQL "SELECT status FROM crm_cadence_runs WHERE lead_id='$LID' LIMIT 1")"
+check "link válido: 'Pronto.', lead descadastrado, IA off, cadência parada (opt_out), 1 interação" "1,t,f,stopped,opt_out,1" "$(curl -s "$UNS/$LID?t=$GOODSIG" | grep -c 'Pronto. Você não receberá mais nossos e-mails.'),$(PSQL "SELECT unsubscribed FROM crm_leads WHERE id='$LID'"),$(PSQL "SELECT ai_active FROM crm_leads WHERE id='$LID'"),$(PSQL "SELECT status FROM crm_cadence_runs WHERE lead_id='$LID' LIMIT 1"),$(PSQL "SELECT stop_reason FROM crm_cadence_runs WHERE lead_id='$LID' LIMIT 1"),$(PSQL "SELECT count(*) FROM crm_interactions WHERE lead_id='$LID' AND kind='ai_action'")"
+check "clicar de novo é idempotente (continua 1 interação)" "1,1" "$(curl -s "$UNS/$LID?t=$GOODSIG" | grep -c 'Pronto.'),$(PSQL "SELECT count(*) FROM crm_interactions WHERE lead_id='$LID' AND kind='ai_action'")"
+check "o outro lead do mesmo workspace NÃO foi descadastrado" "f" "$(PSQL "SELECT unsubscribed FROM crm_leads WHERE id='$L2'" | sed 's/false/f/')"
+
 # limpeza do que é global (o resto some com o workspace)
 PSQL "DELETE FROM cron_tokens WHERE name='ads' AND token='$ATOK'" >/dev/null
 PSQL "DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'" >/dev/null
