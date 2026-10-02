@@ -9,7 +9,13 @@
 // `next build` (ver CLAUDE.md, "Regras de baixo consumo").
 //
 //   node scripts/browser-check.mjs
+//
+// Task 3 (campanhas): a API deve subir com o gateway de IA FALSO que este script levanta na 3099:
+//   AI_GATEWAY_URL=http://127.0.0.1:3099/v1 AI_GATEWAY_API_KEY=fake npm run start:smoke
+// (sem isso a seção de campanhas detecta "IA do app não configurada" e testa o caminho sem IA).
 import { chromium } from '/home/doutor/coding/freela/freela-web-v2/node_modules/playwright/index.mjs';
+import { execSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -41,6 +47,43 @@ const REDE_IGNORADA = [
 ];
 const redeIgnorada = (url, erro) =>
   ignorada(url) || REDE_IGNORADA.some((r) => r.url.test(url) && erro === r.erro);
+
+
+// ── Gateway de IA falso (OpenAI-compatível) — nenhuma chamada de rede externa ─────────────
+const fakeAi = { strategy: 0, copy: 0, prompts: [] };
+const estrategia = (n) => ({
+  resumo_executivo: `Resumo v${n}`, problema: 'Poucos clientes na semana', objetivo_smart: 'Dobrar leads em 30 dias', icp: 'Adultos 25-45',
+  oferta: 'Chopp em dobro', big_idea: `Big idea v${n}`, mensagem_principal: 'Venha beber junto', funil: 'Topo ao fundo', canais: 'Meta Ads',
+  plano_testes: 'Teste A/B de ganchos', cronograma: 'Semana 1: subir; semana 2: otimizar', hipoteses: ['Humor converte mais'], recomendacoes: ['Começar com 3 criativos'],
+  objecoes: [{ objecao: 'Está caro', resposta: 'Chopp em dobro compensa' }],
+  distribuicao_verba: [{ destino: 'Meta', percentual: 100 }], kpis: [{ nome: 'CPL', meta: 'R$ 10' }],
+  angulos_detalhados: [{ nome: 'Dobradinha', dor_ou_desejo: 'economia', mensagem: 'Chopp em dobro', gancho: 'Dobrou o chopp', formato_sugerido: 'reels', etapa_funil: 'topo' }],
+  publicos_meta: [{ nome: 'Público frio', tipo: 'frio', interesses: ['bar'], descricao: 'Quem curte bar' }],
+  briefing_criativo: { direcao_visual: 'Copos cheios na mesa', formatos: ['story'], quantidade_por_angulo: 2, cta: 'Venha hoje' },
+  briefing_video: { duracao_segundos: 15, roteiro: 'Brinde final', cenas: ['Abertura', 'Brinde'] },
+  plano_instagram: { pilares: [{ nome: 'Bastidores', peso: 0.75 }, { nome: 'Promoções', peso: 0.25 }], temas: ['Tema 1'], frequencia: { feed: 5, reels: 3, stories: 10 } },
+});
+const copia = (n) => ({
+  headline: `Headline v${n}`, headline_variacoes: ['v1', 'v2', 'v3', 'v4', 'v5'], texto_curto: 'Texto curto', texto_longo: 'Texto longo', cta: 'Venha hoje',
+  meta_ad: 'Anúncio Meta', instagram_feed: 'Feed', reels: '0-3s abertura', stories: 'Story 1', script_ugc: 'UGC', script_institucional: 'Institucional',
+  carrossel: ['s1', 's2', 's3', 's4', 's5', 's6', 's7'], quiz: [{ pergunta: 'Qual chopp?', opcoes: ['Claro', 'Escuro', 'Misto'] }],
+});
+const gateway = createServer((req, res) => {
+  let raw = '';
+  req.on('data', (c) => (raw += c));
+  req.on('end', () => {
+    const body = raw ? JSON.parse(raw) : {};
+    const name = body.response_format?.json_schema?.name;
+    const prompt = String(body.messages?.[0]?.content ?? '');
+    fakeAi.prompts.push({ name, prompt });
+    let out = {};
+    if (name === 'campaign_strategy') out = estrategia(++fakeAi.strategy);
+    else if (name === 'copy') out = copia(++fakeAi.copy);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(out) } }] }));
+  });
+});
+await new Promise((resolve) => gateway.listen(3099, '127.0.0.1', resolve)).catch(() => {});
 
 const erros = [];
 let passou = 0;
@@ -347,6 +390,226 @@ try {
   check('"Abrir" troca a empresa e vai para /overview', rel() === '/overview', rel());
   rmSync(tmp, { recursive: true, force: true });
 
+
+  // ── 2c. Task 3: Campanhas, estrategista, copy engine, aprovações ─
+  console.log('-- Campanhas, estrategista, aprovações --');
+  /** Chamada autenticada à API a partir da página (token da sessão). */
+  const apiCall = (method, p, body) =>
+    page.evaluate(
+      async ([base, m, path, b]) => {
+        const t = JSON.parse(window.localStorage.getItem('authUser')).access_token;
+        const headers = { Authorization: `Bearer ${t}`, ...(b ? { 'Content-Type': 'application/json' } : {}) };
+        const r = await fetch(base + path, { method: m, headers, body: b ? JSON.stringify(b) : undefined });
+        const txt = await r.text();
+        return { status: r.status, body: txt ? JSON.parse(txt) : null };
+      },
+      [API, method, p, body ?? null],
+    );
+  // `fullDate` do protótipo faz `new Date('YYYY-MM-DD').toLocaleDateString('pt-BR')`: no fuso do navegador (Brasília) sai um dia antes.
+  const fmtData = (iso) => page.evaluate((d) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }), iso);
+  const d1 = await fmtData('2026-10-05');
+  const d2 = await fmtData('2026-11-05');
+  const marcaNome = `Marca Camp ${Date.now()}`;
+  const campNome = `Campanha Check ${Date.now()}`;
+  const wsId = (await apiCall('GET', '/v1/workspaces')).body[0].workspace_id;
+  const mrc = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: marcaNome, segment: 'Bar' })).body;
+  await apiCall('PATCH', `/v1/workspaces/${wsId}/brands/${mrc.id}`, { tone_of_voice: 'descontraído', preferred_words: ['chopp'] });
+  const aiLive = (await apiCall('POST', '/v1/copy-ai/generate-copy-with-ai', { workspaceId: wsId, brand: {}, brief: {} })).status === 200;
+  esperado(/generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
+  check('API com o gateway de IA falso (AI_GATEWAY_URL=http://127.0.0.1:3099/v1)', aiLive, 'sem o gateway falso o teste de IA roda no modo "sem IA"');
+  fakeAi.strategy = 0; fakeAi.copy = 0; fakeAi.prompts.length = 0;
+
+  // lista
+  await page.goto(`${BASE}/campaigns`);
+  await page.getByRole('heading', { name: 'Campanhas' }).waitFor({ timeout: 30000 });
+  await page.getByRole('link', { name: 'Nova campanha' }).waitFor({ timeout: 15000 });
+  check('campanhas: título da aba', (await page.title()) === 'Campanhas · Meu Funil', await page.title());
+  check('campanhas: subtítulo do protótipo', tem(await corpo(), 'Briefing, estratégia, copies, criativos e publicação'));
+
+  // wizard
+  await page.getByRole('link', { name: 'Nova campanha' }).click();
+  await page.waitForURL('**/campaigns/new', { timeout: 15000 });
+  await page.getByRole('heading', { name: 'Nova campanha' }).waitFor({ timeout: 15000 });
+  check('wizard: título da aba', (await page.title()) === 'Nova campanha · Meu Funil', await page.title());
+  const txtWiz = await corpo();
+  for (const t of ['1. Objetivo', '2. Oferta', '3. Público', '4. Verba e metas', '5. Formatos', 'Marca', 'Nome da campanha', 'Reconhecimento', 'Vendas / Conversão', 'Cancelar']) check(`wizard mostra "${t}"`, tem(txtWiz, t));
+  const continuar = page.getByRole('button', { name: 'Continuar' });
+  await page.locator('.panel select').first().selectOption({ label: marcaNome });
+  check('wizard: "Continuar" desabilitado sem nome', await continuar.isDisabled());
+  await page.fill('#cname', campNome);
+  await page.getByRole('button', { name: 'Vendas / Conversão' }).click();
+  await page.fill('#sd', '2026-10-05');
+  await page.fill('#ed', '2026-11-05');
+  check('wizard: com nome, "Continuar" habilita', await continuar.isEnabled());
+  await continuar.click();
+  check('wizard: passo 2 — Oferta', await page.locator('#op').isVisible() && await continuar.isDisabled());
+  await page.fill('#op', 'Chopp artesanal');
+  await page.fill('#opr', '12.5');
+  await page.fill('#opm', 'O melhor chopp da cidade');
+  await page.fill('#ol', 'https://exemplo.com.br');
+  await continuar.click();
+  check('wizard: passo 3 — Público (faixa etária padrão 25-45)', (await page.inputValue('#ai')) === '25-45' && await continuar.isDisabled());
+  await page.fill('#ap', 'Casais que saem à noite');
+  await page.fill('#al', 'São Paulo');
+  await page.selectOption('#at', 'B2B');
+  await continuar.click();
+  check('wizard: passo 4 — Verba (exige total e diária)', await page.locator('#total').isVisible() && await continuar.isDisabled());
+  await page.fill('#total', '3000');
+  await page.fill('#daily', '100');
+  await page.fill('#leads', '300');
+  await page.fill('#ticket', '60');
+  await continuar.click();
+  const finalizar = page.getByRole('button', { name: /Gerar campanha com IA/ });
+  check('wizard: passo 5 — Formatos (imagem estática e vídeo marcados)', tem(await corpo(), 'Imagem estática') && await finalizar.isEnabled());
+  await page.getByRole('button', { name: 'Vídeo / Reels' }).click(); // desmarca
+  await page.getByRole('button', { name: 'Vídeo / Reels' }).click(); // mrc de novo
+  await page.getByRole('button', { name: 'Voltar' }).click();
+  check('wizard: "Voltar" mantém os dados (passo 4)', (await page.inputValue('#total')) === '3000');
+  await continuar.click();
+  await finalizar.click();
+  if (aiLive) {
+    await page.getByText('Campanha criada com estratégia gerada pela IA.').waitFor({ timeout: 60000 });
+    ok('wizard: toast "Campanha criada com estratégia gerada pela IA."');
+  } else {
+    await page.getByText(/Estratégia não gerada: IA do app não configurada/).waitFor({ timeout: 60000 });
+    ok('wizard sem IA: toast "Estratégia não gerada: …" e segue para a campanha');
+    esperado(/generate-campaign-strategy|generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
+  }
+  await page.waitForURL(/\/campaigns\/[0-9a-f-]{36}$/, { timeout: 30000 });
+  const campUrl = page.url();
+  const campId = campUrl.split('/').pop();
+  await page.getByRole('heading', { name: campNome }).waitFor({ timeout: 30000 });
+
+  // detalhe
+  check('detalhe: título da aba', (await page.title()) === 'Campanha · Meu Funil', await page.title());
+  const txtDet = await corpo();
+  check('detalhe: subtítulo marca · objetivo · período', tem(txtDet, `${marcaNome} · Vendas / Conversão · ${d1} → ${d2}`), txtDet.slice(-200));
+  for (const t of ['Rascunho', 'Voltar', 'Solicitar aprovação', 'Verba total', 'Investido', 'Leads', 'ROAS', 'Estratégia', 'Copies', 'Criativos', 'Anúncios e regras', 'Briefing']) check(`detalhe mostra "${t}"`, tem(txtDet, t));
+  check('detalhe: sem "Publicar na Meta" enquanto é rascunho', !tem(txtDet, 'Publicar na Meta'));
+  check('detalhe: verba total e diária', tem(txtDet, 'R$') && tem(txtDet, '3.000,00') && tem(txtDet, '/dia'));
+
+  if (aiLive) {
+    check('estratégia v1 criada pelo wizard (descrição "Rascunho: revise e aprove…")', tem(await corpo(), 'Plano estratégico v1') && tem(await corpo(), 'Rascunho: revise e aprove para que os outros agentes sigam esta estratégia.'));
+    const txtEst = await corpo();
+    for (const t of ['Resumo executivo', 'Resumo v1', 'Objetivo SMART', 'Big idea v1', 'Ângulos criativos', 'Dobradinha', 'Gancho: "Dobrou o chopp"', 'Públicos para a Meta', 'Briefing para o designer', 'Roteiro de vídeo (15s)', 'Plano para o Instagram', 'Bastidores · 75%', 'Objeções e respostas', 'Canais e distribuição de verba', 'Meta: 100%', 'KPIs', 'CPL R$ 10', 'Hipóteses e plano de testes', 'Cronograma', 'Recomendações']) check(`estratégia mostra "${t}"`, tem(txtEst, t));
+    // copy v1 (aba Copies)
+    await page.getByRole('tab', { name: 'Copies' }).click();
+    await page.getByText('Copies v1').waitFor({ timeout: 15000 });
+    const txtCop = await corpo();
+    for (const t of ['Headline principal', 'Headline v1', 'Variações de headline', 'Texto curto', 'Texto longo', 'Anúncio Meta', 'Instagram feed', 'Roteiro Reels', 'Stories', 'Script UGC', 'Script institucional', 'Carrossel', 'Quiz', 'Qual chopp?', 'Claro · Escuro · Misto', 'Criar design no Canva', 'Gerar variação']) check(`copy mostra "${t}"`, tem(txtCop, t));
+    // a copy do wizard NÃO levou estratégia aprovada (ainda não existe aprovada, mas a v1 em rascunho já orienta)
+    const pCopy1 = fakeAi.prompts.find((p) => p.name === 'copy')?.prompt ?? '';
+    check('copy do wizard recebeu a estratégia (big idea no prompt)', pCopy1.includes('ESTRATÉGIA:') && pCopy1.includes('Big idea v1'), pCopy1.slice(-200));
+    check('copy do wizard: marca e campanha no prompt', pCopy1.includes(`"name":"${marcaNome}"`) && pCopy1.includes('"offer_product":"Chopp artesanal"') && pCopy1.includes('"audience":{"persona":"Casais que saem à noite"'));
+
+    // regerar estratégia -> v2; aprovar; plano do Instagram
+    await page.getByRole('tab', { name: 'Estratégia' }).click();
+    await page.getByRole('button', { name: 'Regerar com IA' }).click();
+    await page.getByText('Estratégia v2 gerada pela IA. Revise e aprove para orientar copy e criativos.').waitFor({ timeout: 60000 });
+    await page.getByText('Plano estratégico v2').waitFor({ timeout: 15000 });
+    check('regerar: nova versão v2 em rascunho com a big idea nova', tem(await corpo(), 'Big idea v2') && !tem(await corpo(), 'Big idea v1'));
+    await page.getByRole('button', { name: 'Aprovar estratégia' }).click();
+    await page.getByText('Estratégia aprovada. Copy, criativos e vídeos passam a seguir esta versão.').waitFor({ timeout: 15000 });
+    await page.getByText('Aprovada: copy, criativos, vídeos e públicos seguem esta versão.').waitFor({ timeout: 15000 });
+    check('aprovada: some o botão "Aprovar estratégia"', (await page.getByRole('button', { name: 'Aprovar estratégia' }).count()) === 0);
+    await page.getByRole('button', { name: 'Criar plano no Instagram' }).click();
+    await page.getByText('Plano do Instagram criado em rascunho. Revise em Instagram → Estratégia.').waitFor({ timeout: 15000 });
+    ok('plano do Instagram criado a partir da estratégia');
+
+    // gerar variação de copy (v2) — agora a estratégia aprovada (v2) orienta
+    await page.getByRole('tab', { name: 'Copies' }).click();
+    await page.getByRole('button', { name: 'Gerar variação' }).click();
+    await page.getByText('Novas copies geradas com IA do app.').waitFor({ timeout: 60000 });
+    await page.getByText('Copies v2').waitFor({ timeout: 15000 });
+    check('variação de copy: v2 com headline nova', tem(await corpo(), 'Headline v2'));
+    const pCopy2 = [...fakeAi.prompts].reverse().find((p) => p.name === 'copy')?.prompt ?? '';
+    check('variação: prompt traz "Versão 3" (seed = versão anterior + 1) e a estratégia aprovada (v2)', pCopy2.includes('Versão 3:') && pCopy2.includes('Big idea v2'), pCopy2.slice(-200));
+  } else {
+    check('sem IA: estratégia vazia', tem(await corpo(), 'Nenhuma estratégia gerada ainda.'));
+    await page.getByRole('button', { name: 'Gerar com IA' }).click();
+    await page.getByText('IA do app não configurada.').first().waitFor({ timeout: 30000 });
+    ok('sem IA: "Gerar com IA" mostra a mensagem da API');
+    esperado(/generate-campaign-strategy|502|AI_NOT_CONFIGURED/);
+  }
+
+  // abas restantes
+  await page.getByRole('tab', { name: 'Criativos' }).click();
+  await page.getByText('Nenhum criativo gerado para esta campanha.').waitFor({ timeout: 10000 });
+  check('criativos: estado vazio + link do Creative Studio', await page.getByRole('link', { name: 'Abrir Creative Studio' }).count() === 1);
+  await page.getByRole('tab', { name: 'Anúncios e regras' }).click();
+  await page.getByText('Ainda sem resultados da Meta.').waitFor({ timeout: 10000 });
+  check('anúncios: descrição sem sincronização', tem(await corpo(), 'Aparece depois que a campanha veicular na Meta. Atualiza sozinho a cada 3 horas.'));
+  await page.getByRole('tab', { name: 'Briefing' }).click();
+  const txtBr = await corpo();
+  for (const t of ['Briefing original', 'Produto / oferta', 'Chopp artesanal · R$', '12,50', 'Promessa', 'O melhor chopp da cidade', 'https://exemplo.com.br', 'Meta de leads', 'Ticket médio', 'CAC máximo', 'Formatos', 'Imagem estática, Vídeo / Reels', 'persona: Casais que saem à noite', 'tipo: B2B']) check(`briefing mostra "${t}"`, tem(txtBr, t));
+
+  // solicitar aprovação
+  await page.getByRole('button', { name: 'Solicitar aprovação' }).click();
+  await page.getByText('Aprovação solicitada. Confira em Aprovações.').waitFor({ timeout: 15000 });
+  await page.getByText('Aguardando aprovação').first().waitFor({ timeout: 15000 });
+  check('solicitar aprovação: status "Aguardando aprovação" e botão some', (await page.getByRole('button', { name: 'Solicitar aprovação' }).count()) === 0);
+
+  // aprovações
+  await page.goto(`${BASE}/approvals`);
+  await page.getByRole('heading', { name: 'Aprovações' }).waitFor({ timeout: 30000 });
+  check('aprovações: título da aba', (await page.title()) === 'Aprovações · Meu Funil', await page.title());
+  const titulo = `Publicar campanha "${campNome}" na Meta`;
+  await page.getByText(titulo).waitFor({ timeout: 15000 });
+  const txtAp = await corpo();
+  for (const t of ['Pendentes (', 'Instagram', 'Posts orgânicos aguardando aprovação', 'Decisões recentes', 'Audit log', 'Campanha', campNome, 'Verba diária de', 'objetivo Vendas / Conversão', 'Rejeitar', 'Aprovar', 'campaign.approval_requested', 'campaign.strategy_generated', 'campaign.created']) check(`aprovações mostra "${t}"`, tem(txtAp, t));
+  check('aprovações: owner vê Aprovar/Rejeitar', (await page.getByRole('button', { name: 'Aprovar' }).count()) >= 1 && (await page.getByRole('button', { name: 'Rejeitar' }).count()) >= 1);
+  const cartaoAp = page.locator('div.rounded-lg', { hasText: titulo }).last();
+  await cartaoAp.getByRole('button', { name: 'Aprovar' }).click();
+  await page.getByText('Aprovado. A ação foi liberada.').waitFor({ timeout: 15000 });
+  await page.waitForFunction((t) => ![...document.querySelectorAll('div.rounded-lg')].some((d) => d.innerText.includes(t) && d.innerText.includes('Rejeitar')), titulo, { timeout: 15000 });
+  const txtDec = await corpo();
+  check('aprovação decidida: aparece em "Decisões recentes" como Aprovado', tem(txtDec, 'Decisões recentes') && tem(txtDec, titulo) && tem(txtDec, 'Aprovado'));
+  check('audit log: approval.approved', tem(txtDec, 'approval.approved'));
+  const apiCamp = (await apiCall('GET', `/v1/workspaces/${wsId}/campaigns/${campId}`)).body;
+  check('campanha aprovada pelo pedido (status approved)', apiCamp.status === 'approved', apiCamp.status);
+
+  // volta na campanha: aprovada -> "Publicar na Meta"
+  await page.goto(campUrl);
+  await page.getByRole('heading', { name: campNome }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Publicar na Meta' }).waitFor({ timeout: 15000 });
+  check('campanha aprovada: aparece "Publicar na Meta" e some "Solicitar aprovação"', (await page.getByRole('button', { name: 'Solicitar aprovação' }).count()) === 0 && tem(await corpo(), 'Aprovada'));
+
+  // lista de campanhas com a linha
+  await page.goto(`${BASE}/campaigns`);
+  const linha = page.locator('tr', { hasText: campNome });
+  await linha.waitFor({ timeout: 30000 });
+  const txtLinha = await linha.innerText();
+  check('lista: linha com marca, objetivo, período, verba, status', txtLinha.includes(marcaNome) && txtLinha.includes('Vendas / Conversão') && txtLinha.includes(d1) && txtLinha.includes('3.000,00') && txtLinha.includes('Aprovada') && txtLinha.includes('0,00x'), txtLinha);
+  for (const t of ['Campanha', 'Objetivo', 'Período', 'Verba', 'Investido', 'Leads', 'ROAS', 'Status']) check(`lista: coluna "${t}"`, tem(await page.locator('thead').innerText(), t));
+  await linha.getByRole('link', { name: campNome }).click();
+  await page.waitForURL(campUrl, { timeout: 15000 });
+  ok('lista: o nome leva ao detalhe');
+
+  // rejeitar: segunda campanha
+  const c2 = (await apiCall('POST', `/v1/workspaces/${wsId}/campaigns`, { brand_id: mrc.id, name: `${campNome} B`, objective: 'leads', audience: {}, formats: ['video'], budget_daily: 10 })).body;
+  await apiCall('POST', `/v1/workspaces/${wsId}/campaigns/${c2.id}/request-approval`, {});
+  await page.goto(`${BASE}/approvals`);
+  const titulo2 = `Publicar campanha "${campNome} B" na Meta`;
+  await page.getByText(titulo2).waitFor({ timeout: 15000 });
+  await page.locator('div.rounded-lg', { hasText: titulo2 }).last().getByRole('button', { name: 'Rejeitar' }).click();
+  await page.getByText('Rejeitado.').first().waitFor({ timeout: 15000 });
+  await page.waitForFunction((t) => [...document.querySelectorAll('div')].some((d) => d.innerText.includes(t) && d.innerText.includes('Rejeitado')), titulo2, { timeout: 15000 });
+  const apiCamp2 = (await apiCall('GET', `/v1/workspaces/${wsId}/campaigns/${c2.id}`)).body;
+  check('pedido rejeitado: a campanha volta para rascunho', apiCamp2.status === 'draft', apiCamp2.status);
+  check('audit log: approval.rejected', tem(await corpo(), 'approval.rejected'));
+  // decidir de novo (API): pedido já decidido
+  const reqs = (await apiCall('GET', `/v1/workspaces/${wsId}/approvals`)).body;
+  const r2 = reqs.find((r) => r.title === titulo2);
+  const again = await apiCall('POST', '/v1/approvals/decide-approval', { approvalId: r2.id, decision: 'approved' });
+  check('decidir pedido já decidido → 409 "Este pedido já foi decidido."', again.status === 409 && again.body.error.message === 'Este pedido já foi decidido.');
+  esperado(/\[http 409\]|409 \(Conflict\)/);
+
+  // limpeza: a mrc leva campanhas/estratégias/cópias/pedidos (cascade); sobra só o plano do Instagram (mrc SetNull)
+  await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${mrc.id}`);
+  try {
+    execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM ig_content_plans WHERE name LIKE 'Instagram · Campanha Check %'"`, { stdio: 'ignore' });
+  } catch { /* sem docker: o plano de teste fica (rascunho) */ }
+
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');
   for (const [label, path] of [['CRM', '/crm'], ['Campaigns', '/campaigns'], ['Settings', '/settings']]) {
@@ -403,6 +666,7 @@ try {
 }
 
 await browser.close();
+gateway.close();
 console.log(`\n${passou} ok, ${erros.length} falha(s)`);
 if (erros.length) {
   for (const e of erros) console.log(`  - ${e}`);

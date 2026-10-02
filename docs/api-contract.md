@@ -222,3 +222,48 @@ A tela `/settings` usa rotas do §3: `GET /v1/workspaces/:id/members` (membros +
 `PATCH /v1/workspaces/:id` agora grava `activity_logs` `workspace.updated {name}` (o protótipo gravava no navegador). `ActivityService.log(workspaceId, actorId, action, entityType, metadata)`
 (módulo global `modules/activity`) é o ponto único de auditoria para as próximas tarefas: mesmas strings de `action`, falha de auditoria nunca derruba a operação.
 
+
+## 15. Campanhas — `/v1/workspaces/:workspaceId/campaigns`
+
+Telas `/campaigns`, `/campaigns/new`, `/campaigns/$id`. GET = `read`; POST = `write` (viewer só lê). Toda id é conferida contra o workspace da URL
+(campanha/marca de outro workspace → `404`). Estáticas (`performance`) antes das `:id`.
+
+| rota | corpo | resposta |
+|---|---|---|
+| `GET /campaigns` | — | `campaigns[]` por `created_at` desc, cada uma com `brands: { name }` (embed `brands(name)`) |
+| `GET /campaigns/performance` | — | `performance_daily[]` do workspace com `source ≠ 'demo'` (KPIs por campanha da lista, calculados no navegador) |
+| `POST /campaigns` | `{ brand_id, name, objective, offer_product?, offer_price?, offer_promise?, landing_url?, start_date?, end_date?, audience{}, budget_total?, budget_daily?, goal_leads?, goal_sales?, avg_ticket?, margin_percent?, max_cac?, formats[] }` (números/datas aceitam `null`; datas `YYYY-MM-DD`) | `201` linha de `campaigns`. **`status` NÃO é aceito** (`400 VALIDATION_ERROR`): nasce sempre `draft`. Marca de outro workspace → `404 "Marca não encontrada."`; nome em branco → `400 "Informe o nome da campanha."`. Atividade `campaign.created {campaign_id, name}` |
+| `GET /campaigns/:id` | — | linha de `campaigns` + `brands: {…marca inteira}` (`brands(*)`); `404 "Campanha não encontrada."` |
+| `GET /campaigns/:id/detail` | — | as seis leituras de `["campaign", id]`: `{ campaign (com brands(*)), strategy (última versão ou null), copy (última versão ou null), creatives[] (created_at desc), perf[] (source ≠ 'demo'), costs[] }` |
+| `POST /campaigns/:id/copies` | `{ content }` (objeto `CopyContent`, ≤ 50 000 caracteres) | `201` linha de `copies`; `status` = `draft`, `version` = anterior + 1 (calculada no servidor; `version` no corpo → `400`). Atividade `campaign.copy_generated {campaign_id}` (também para a copy do wizard) |
+| `POST /campaigns/:id/request-approval` | `{}` | `201` linha de `approval_requests`. Só de `draft` (`400 "Só campanhas em rascunho podem solicitar aprovação."`). Numa transação: cria o pedido (`entity_type 'campaign'`, `title` `Publicar campanha "X" na Meta`, `summary` `Verba diária de R$…, N criativo(s), objetivo …`, `requested_by` = usuário) e leva a campanha a `pending_approval`. Atividade `campaign.approval_requested {campaign_id}` |
+
+**Gatilhos de papel (db.md §4) viraram guardas de serviço** (`CampaignGuardsService`, exportado por `CampaignsModule` para as próximas tarefas): campanha virar `approved|active` (vindo de outro estado) e decidir um pedido = owner|admin
+(`403 "Só o dono ou um administrador da empresa pode aprovar a campanha."` / `"…pode decidir aprovações."`); `meta_delivery_status` virar `ACTIVE` = owner|admin
+(`403 "Só o dono ou um administrador pode ativar a veiculação (gastar verba)."`). Alternar `approved`↔`active` e `PAUSED` são livres. **A tarefa de Meta Ads deve chamar `assertCanSetCampaignStatus`/`assertCanSetDelivery`**
+antes de gravar esses campos e registrar a atividade `campaign.published {campaign_id, mode:'live'}` (o navegador não grava mais auditoria).
+
+## 16. Estrategista e Copy Engine — `POST /v1/ai/*`, `POST /v1/copy-ai/*`
+
+Server fns portadas (corpo = o `data` do protótipo). IA só via `AiService` (chave OpenAI do workspace → chave Gemini → gateway do app; schema estrito).
+
+| rota | corpo | resposta / erros |
+|---|---|---|
+| `POST /v1/ai/generate-campaign-strategy` | `{ campaignId }` | `200 { version, content: FullStrategy }`. Precisa de `write` na empresa da campanha (viewer `403`; campanha de empresa alheia/malformada `404 "Campanha não encontrada."`). Lê campanha+marca, 4 personas, 6 produtos, 10 aprendizados (por `score`) e os resultados de campanhas anteriores da marca (`source ≠ 'demo'`), monta o prompt do protótipo (schema `campaign_strategy`), valida `big_idea` e ≥ 1 ângulo (`502 "A IA não devolveu uma estratégia completa. Tente de novo."`), grava `campaign_strategies {status 'draft', version = max+1}` (a versão é calculada DEPOIS da geração) e a atividade `campaign.strategy_generated {campaign_id, version}`. IA não configurada/falha → `502 AI_NOT_CONFIGURED`/`AI_ERROR` |
+| `POST /v1/ai/approve-campaign-strategy` | `{ strategyId }` | `200 { ok: true }`. `write`; as versões `approved` da campanha viram `superseded` e esta vira `approved` (transação). `404 "Estratégia não encontrada."` (inclui empresa alheia). Atividade `campaign.strategy_approved {campaign_id, version}` |
+| `POST /v1/ai/create-ig-plan-from-strategy` | `{ campaignId }` | `200 { planId }`: cria `ig_content_plans` em rascunho (`requires_approval true`, `auto_publish false`) a partir da estratégia em vigor (aprovada mais recente, senão a última). `400 "Gere a estratégia da campanha primeiro."` / `400 "Esta versão da estratégia não tem plano do Instagram. Regere a estratégia."` |
+| `POST /v1/copy-ai/generate-copy-with-ai` | `{ workspaceId, engine?: 'auto'\|'chatgpt'\|'gemini', brand{}, brief{}, seed?, campaignId?, angle? }` | `200 { content: CopyContent, engine }` com `engine` ∈ `"Sua conta OpenAI"` \| `"Sua conta Gemini"` \| `"IA do app"` \| `"IA do app (sua chave falhou)"`. Precisa de `write` (gasta crédito; o protótipo permitia qualquer membro) — não-membro `403 "Você não tem acesso a esta empresa."`. A estratégia aprovada da campanha (só dentro do workspace) entra no prompt (`big_idea`, `mensagem_principal`, ângulo/ângulos, 4 objeções, direção visual, CTA, vídeo). Briefing + marca ≤ 30 000 caracteres. Erros: `502 "A IA não devolveu a copy no formato esperado."`, `"Créditos de IA esgotados. Conecte sua própria chave em Integrações."`, `"Muitas solicitações agora. Tente em instantes."`, `"IA do app não configurada."` |
+
+`AiService.jsonWithEngine(ws, { prompt, schema, name, engine })` (novo) serve ao Copy Engine: prompt sem o sufixo "Devolva SOMENTE JSON…", motor escolhido e rótulo de quem respondeu.
+
+## 17. Aprovações — `/v1/workspaces/:workspaceId/{approvals,activity-logs}`, `POST /v1/approvals/*`
+
+| rota | nível | resposta |
+|---|---|---|
+| `GET /v1/workspaces/:ws/approvals` | read | `approval_requests[]` por `created_at` desc, com `campaigns: { name } \| null` |
+| `GET /v1/workspaces/:ws/activity-logs?limit=` | read | `activity_logs[]` por `created_at` desc (`limit` 30 por padrão, 1–200) — o "Audit log" da tela |
+| `POST /v1/approvals/decide-approval` `{ approvalId, decision: 'approved'\|'rejected' }` | manage (do workspace do pedido) | `200 { ok: true }`. `404 "Pedido de aprovação não encontrado."` (inclui empresa alheia, sem vazar); `409 "Este pedido já foi decidido."` (também em corrida: o UPDATE é guardado por `status = pending`); `403 "Só o dono ou um administrador da empresa pode aprovar ou rejeitar."` (marketing/viewer). Numa transação: pedido → `decided_*`; `entity_type 'campaign'` → campanha `approved` (rejeitar = `draft`); `'creative'` → criativo recebe o status da decisão (sempre filtrado pelo workspace do pedido). Atividade `approval.<decisão> {request_id, entity_id}` com `entity_type` do pedido |
+
+**Rotas que as telas chamam e ainda não existem** (shims criados; a API nasce nas tarefas indicadas, até lá a tela mostra o erro da API): `POST /v1/meta/meta-ads-status|meta-ads-publish|meta-ads-set-status`,
+`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (Task 4). Componentes `campaign-channels`, `campaign-ads-settings` e `instagram/approvals` (`IgApprovalList`) são
+**placeholders** com a assinatura final; as tarefas de Meta (6) e do Instagram (5) os substituem.

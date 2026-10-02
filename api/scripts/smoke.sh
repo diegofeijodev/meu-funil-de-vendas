@@ -206,6 +206,91 @@ check "aplicar a todas: 1 atualizada" "1" "$(curl -s -X POST $API/v1/agency/appl
 check "aplicar a todas: origem alheia → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/v1/agency/apply-ai-inheritance-to-all -H "$HD" -H "$J" -d "{\"sourceId\":\"$WID\"}")"
 check "limpa a herança (null)" "null" "$(curl -s -X POST $API/v1/agency/set-ai-inheritance -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"sourceId\":null}" >/dev/null; curl -s $API/v1/workspaces/$NID -H "$H" | jq -r .ai_inherit_from)"
 
+echo "── Task 3: campanhas, estrategista, copy, aprovações ──"
+EMAIL3="smoke3$SUF@meufunil.local"
+S3=$(curl -s -X POST $API/v1/auth/signup -H "$J" -d "{\"email\":\"$EMAIL3\",\"password\":\"segredo1\",\"full_name\":\"Marketing\",\"company_name\":\"Empresa Mkt\"}")
+HM="Authorization: Bearer $(echo "$S3" | jq -r .access_token)"
+MID=$(echo "$S3" | jq -r .user.id)
+PSQL "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES ('$WID','$MID','marketing')" >/dev/null
+CB=$(curl -s -X POST $API/v1/workspaces/$WID/brands -H "$H" -H "$J" -d '{"name":"Marca Campanhas","segment":"Bar"}' | jq -r .id)
+OTHERB=$(curl -s -X POST $API/v1/workspaces/$NID/brands -H "$H" -H "$J" -d '{"name":"Marca da outra empresa"}' | jq -r .id)
+CAMP="$API/v1/workspaces/$WID/campaigns"
+CBODY="{\"brand_id\":\"$CB\",\"name\":\"Campanha Smoke\",\"objective\":\"leads\",\"offer_product\":\"Chopp\",\"offer_price\":12.5,\"offer_promise\":\"\",\"landing_url\":\"\",\"start_date\":\"2026-10-05\",\"end_date\":null,\"audience\":{\"persona\":\"Ana\",\"idade\":\"25-45\"},\"budget_total\":1000,\"budget_daily\":50,\"goal_leads\":null,\"goal_sales\":null,\"avg_ticket\":null,\"margin_percent\":null,\"max_cac\":null,\"formats\":[\"static_image\",\"video\"]}"
+check "campanhas: lista vazia" "0" "$(curl -s $CAMP -H "$H" | jq length)"
+check "campanhas: viewer lê a lista" "200" "$(curl -s -o /dev/null -w '%{http_code}' $CAMP -H "$HV")"
+check "campanhas: estranho não lê a lista" "403" "$(curl -s -o /dev/null -w '%{http_code}' $CAMP -H "$HD")"
+check "campanhas: status NÃO é aceito no corpo (não nasce aprovada)" "VALIDATION_ERROR" "$(curl -s -X POST $CAMP -H "$H" -H "$J" -d "$(echo "$CBODY" | jq -c '. + {status:"approved"}')" | jq -r .error.code)"
+check "campanhas: marca de OUTRO workspace → 404" "Marca não encontrada." "$(curl -s -X POST $CAMP -H "$H" -H "$J" -d "$(echo "$CBODY" | jq -c --arg b "$OTHERB" '.brand_id=$b')" | jq -r .error.message)"
+check "campanhas: viewer não cria" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CAMP -H "$HV" -H "$J" -d "$CBODY")"
+check "campanhas: nome em branco → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CAMP -H "$H" -H "$J" -d "$(echo "$CBODY" | jq -c '.name="  "')")"
+C=$(curl -s -X POST $CAMP -H "$H" -H "$J" -d "$CBODY")
+CID=$(echo "$C" | jq -r .id)
+[ "$CID" != "null" ] && ok "campanhas: cria (wizard)" || ko "campanhas: cria" "$C"
+check "campanhas: nasce em rascunho; datas só-dia; números" "draft,2026-10-05,null,number" "$(echo "$C" | jq -r '"\(.status),\(.start_date),\(.end_date),\(.budget_total|type)"')"
+check "campanhas: lista com brands(name)" "1,Marca Campanhas" "$(curl -s $CAMP -H "$H" | jq -r '"\(length),\(.[0].brands.name)"')"
+check "campanhas: performance (vazia, sem demo)" "0" "$(curl -s $CAMP/performance -H "$HV" | jq length)"
+check "campanhas: get com brands(*)" "Bar" "$(curl -s $CAMP/$CID -H "$H" | jq -r .brands.segment)"
+check "campanhas: de outro workspace → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' $API/v1/workspaces/$NID/campaigns/$CID -H "$H")"
+check "campanhas: id malformado → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' $CAMP/xxx -H "$H")"
+DT=$(curl -s $CAMP/$CID/detail -H "$H")
+check "detalhe: 6 leituras (sem estratégia/copy ainda)" "null,null,0,0,0" "$(echo "$DT" | jq -r '"\(.strategy),\(.copy),\(.creatives|length),\(.perf|length),\(.costs|length)"')"
+check "copies: v1" "1,draft" "$(curl -s -X POST $CAMP/$CID/copies -H "$HM" -H "$J" -d '{"content":{"headline":"A"}}' | jq -r '"\(.version),\(.status)"')"
+check "copies: v2" "2" "$(curl -s -X POST $CAMP/$CID/copies -H "$H" -H "$J" -d '{"content":{"headline":"B"}}' | jq -r .version)"
+check "copies: detalhe traz a mais nova" "2,B" "$(curl -s $CAMP/$CID/detail -H "$H" | jq -r '"\(.copy.version),\(.copy.content.headline)"')"
+check "copies: viewer não grava" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CAMP/$CID/copies -H "$HV" -H "$J" -d '{"content":{}}')"
+check "copies: campo extra (version) barrado" "VALIDATION_ERROR" "$(curl -s -X POST $CAMP/$CID/copies -H "$H" -H "$J" -d '{"content":{},"version":9}' | jq -r .error.code)"
+check "atividade campaign.created/copy_generated gravada" "3" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$WID' AND action IN ('campaign.created','campaign.copy_generated')")"
+
+echo "── Estrategista e Copy Engine ──"
+AIU=$API/v1/ai
+check "estratégia sem gateway de IA → AI_NOT_CONFIGURED" "AI_NOT_CONFIGURED" "$(curl -s -X POST $AIU/generate-campaign-strategy -H "$H" -H "$J" -d "{\"campaignId\":\"$CID\"}" | jq -r .error.code)"
+check "estratégia: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $AIU/generate-campaign-strategy -H "$HV" -H "$J" -d "{\"campaignId\":\"$CID\"}")"
+check "estratégia: estranho → 404 (não vaza)" "Campanha não encontrada." "$(curl -s -X POST $AIU/generate-campaign-strategy -H "$HD" -H "$J" -d "{\"campaignId\":\"$CID\"}" | jq -r .error.message)"
+check "estratégia: id inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $AIU/generate-campaign-strategy -H "$H" -H "$J" -d '{"campaignId":"xxx"}')"
+check "estratégia: campo extra → 400" "VALIDATION_ERROR" "$(curl -s -X POST $AIU/generate-campaign-strategy -H "$H" -H "$J" -d "{\"campaignId\":\"$CID\",\"x\":1}" | jq -r .error.code)"
+check "plano do Instagram sem estratégia" "Gere a estratégia da campanha primeiro." "$(curl -s -X POST $AIU/create-ig-plan-from-strategy -H "$H" -H "$J" -d "{\"campaignId\":\"$CID\"}" | jq -r .error.message)"
+S1=$(PSQL "INSERT INTO campaign_strategies(workspace_id,campaign_id,version,status,content) VALUES ('$WID','$CID',1,'draft','{\"big_idea\":\"x\"}') RETURNING id")
+S2=$(PSQL "INSERT INTO campaign_strategies(workspace_id,campaign_id,version,status,content) VALUES ('$WID','$CID',2,'draft','{\"big_idea\":\"y\",\"objetivo_smart\":\"Meta\",\"icp\":\"Ana\",\"plano_instagram\":{\"pilares\":[{\"nome\":\"A\",\"peso\":3},{\"nome\":\"B\",\"peso\":1}],\"temas\":[\"t1\"],\"frequencia\":{\"feed\":5,\"reels\":3,\"stories\":10}}}') RETURNING id" | head -1)
+check "estratégia: v2 é a mais nova no detalhe" "2,draft" "$(curl -s $CAMP/$CID/detail -H "$H" | jq -r '"\(.strategy.version),\(.strategy.status)"')"
+check "aprovar estratégia: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $AIU/approve-campaign-strategy -H "$HV" -H "$J" -d "{\"strategyId\":\"$S1\"}")"
+check "aprovar estratégia: estranho → 404" "Estratégia não encontrada." "$(curl -s -X POST $AIU/approve-campaign-strategy -H "$HD" -H "$J" -d "{\"strategyId\":\"$S1\"}" | jq -r .error.message)"
+check "aprovar v1 (marketing pode)" "true" "$(curl -s -X POST $AIU/approve-campaign-strategy -H "$HM" -H "$J" -d "{\"strategyId\":\"$S1\"}" | jq -r .ok)"
+check "aprovar v2 → v1 vira superseded" "superseded,approved" "$(curl -s -X POST $AIU/approve-campaign-strategy -H "$H" -H "$J" -d "{\"strategyId\":\"$S2\"}" >/dev/null; PSQL "SELECT string_agg(status, ',' ORDER BY version) FROM campaign_strategies WHERE campaign_id='$CID'")"
+check "plano do Instagram a partir da estratégia aprovada (v2)" "Instagram · Campanha Smoke,draft,true,0.75" "$(PLAN=$(curl -s -X POST $AIU/create-ig-plan-from-strategy -H "$HM" -H "$J" -d "{\"campaignId\":\"$CID\"}" | jq -r .planId); PSQL "SELECT name||','||status||','||requires_approval||','||(pillar_weights->>'A') FROM ig_content_plans WHERE id='$PLAN'")"
+check "atividade campaign.strategy_approved gravada" "2" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$WID' AND action='campaign.strategy_approved'")"
+CPY=$API/v1/copy-ai/generate-copy-with-ai
+CPB="{\"workspaceId\":\"$WID\",\"engine\":\"auto\",\"brand\":{\"name\":\"M\"},\"brief\":{\"name\":\"C\"},\"seed\":0,\"campaignId\":\"$CID\",\"angle\":null}"
+check "copy sem gateway de IA → IA do app não configurada" "IA do app não configurada." "$(curl -s -X POST $CPY -H "$H" -H "$J" -d "$CPB" | jq -r .error.message)"
+check "copy: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$HV" -H "$J" -d "$CPB")"
+check "copy: estranho → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$HD" -H "$J" -d "$CPB")"
+check "copy: motor inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$H" -H "$J" -d "$(echo "$CPB" | jq -c '.engine="x"')")"
+
+echo "── Aprovações ──"
+check "solicitar aprovação: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CAMP/$CID/request-approval -H "$HV" -H "$J" -d "{}")"
+AP=$(curl -s -X POST $CAMP/$CID/request-approval -H "$HM" -H "$J" -d "{}")
+APID=$(echo "$AP" | jq -r .id)
+check "solicitar aprovação (marketing)" "pending,campaign,Publicar campanha \"Campanha Smoke\" na Meta" "$(echo "$AP" | jq -r '"\(.status),\(.entity_type),\(.title)"')"
+check "…o resumo traz verba, criativos e objetivo" "1" "$(echo "$AP" | jq -r .summary | grep -c 'Verba diária de R\$.*0 criativo(s), objetivo Leads\.')"
+check "…a campanha vira pending_approval" "pending_approval" "$(curl -s $CAMP/$CID -H "$H" | jq -r .status)"
+check "solicitar de novo → 400" "Só campanhas em rascunho podem solicitar aprovação." "$(curl -s -X POST $CAMP/$CID/request-approval -H "$H" -H "$J" -d "{}" | jq -r .error.message)"
+check "aprovações: lista com campaigns(name)" "1,Campanha Smoke" "$(curl -s $API/v1/workspaces/$WID/approvals -H "$HV" | jq -r '"\(length),\(.[0].campaigns.name)"')"
+check "aprovações: estranho → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' $API/v1/workspaces/$WID/approvals -H "$HD")"
+check "audit log: campaign.approval_requested presente (limit 30)" "1" "$(curl -s "$API/v1/workspaces/$WID/activity-logs?limit=30" -H "$H" | jq '[.[] | select(.action=="campaign.approval_requested")] | length')"
+DEC=$API/v1/approvals/decide-approval
+check "decidir: marketing NÃO decide (gatilho de papel)" "Só o dono ou um administrador da empresa pode aprovar ou rejeitar." "$(curl -s -X POST $DEC -H "$HM" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"approved\"}" | jq -r .error.message)"
+check "decidir: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $DEC -H "$HV" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"approved\"}")"
+check "decidir: estranho → 404 (não vaza)" "Pedido de aprovação não encontrado." "$(curl -s -X POST $DEC -H "$HD" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"approved\"}" | jq -r .error.message)"
+check "decidir: decisão inválida → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $DEC -H "$H" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"maybe\"}")"
+check "…nada mudou: continua pendente" "pending,pending_approval" "$(PSQL "SELECT (SELECT status FROM approval_requests WHERE id='$APID')||','||(SELECT status FROM campaigns WHERE id='$CID')")"
+check "decidir: dono aprova" "true" "$(curl -s -X POST $DEC -H "$H" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"approved\"}" | jq -r .ok)"
+check "…pedido aprovado, campanha aprovada, decisor gravado" "approved,approved,1" "$(PSQL "SELECT r.status||','||c.status||','||(r.decided_by IS NOT NULL AND r.decided_at IS NOT NULL)::int FROM approval_requests r, campaigns c WHERE r.id='$APID' AND c.id='$CID'")"
+check "decidir de novo → 409" "Este pedido já foi decidido." "$(curl -s -X POST $DEC -H "$H" -H "$J" -d "{\"approvalId\":\"$APID\",\"decision\":\"rejected\"}" | jq -r .error.message)"
+check "atividade approval.approved gravada" "1" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$WID' AND action='approval.approved'")"
+C2=$(curl -s -X POST $CAMP -H "$H" -H "$J" -d "$(echo "$CBODY" | jq -c '.name="Segunda"')" | jq -r .id)
+AP2=$(curl -s -X POST $CAMP/$C2/request-approval -H "$H" -H "$J" -d "{}" | jq -r .id)
+check "admin/dono rejeita: campanha volta para rascunho" "true,draft,rejected" "$(R=$(curl -s -X POST $DEC -H "$H" -H "$J" -d "{\"approvalId\":\"$AP2\",\"decision\":\"rejected\"}" | jq -r .ok); echo "$R,$(PSQL "SELECT (SELECT status FROM campaigns WHERE id='$C2')||','||(SELECT status FROM approval_requests WHERE id='$AP2')")")"
+check "pedido de aprovação de outro workspace não atinge a campanha de cá" "0" "$(PSQL "SELECT count(*) FROM approval_requests WHERE workspace_id='$NID'")"
+
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
 check "refresh ok" "$EMAIL" "$(echo "$R" | jq -r .user.email)"
@@ -216,9 +301,9 @@ check "refresh revogado após logout" "INVALID_REFRESH_TOKEN" "$(curl -s -X POST
 echo "── Limpeza ──"
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^meu-funil-postgres$'; then
   docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "
-    DELETE FROM workspaces WHERE owner_id IN (SELECT id FROM users WHERE email IN ('$EMAIL','$EMAIL2'));
-    DELETE FROM profiles WHERE email IN ('$EMAIL','$EMAIL2');
-    DELETE FROM users WHERE email IN ('$EMAIL','$EMAIL2');" >/dev/null && ok "usuário de teste removido"
+    DELETE FROM workspaces WHERE owner_id IN (SELECT id FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3'));
+    DELETE FROM profiles WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3');
+    DELETE FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3');" >/dev/null && ok "usuário de teste removido"
 fi
 rm -f /tmp/mf-smoke.png /tmp/mf-smoke-dl.png
 echo; echo "Passaram: $PASS  Falharam: $FAIL"
