@@ -37,6 +37,8 @@ export type PipelineInput = {
   createdBy?: string | null;
   /** Reescreve a direção de arte a partir do motivo do crítico. */
   rebuild?: (motivo: string) => Promise<ArtDirection>;
+  /** Chamado entre as etapas (rodada, nova tentativa, composição): quem chama renova o lease do post; se lançar, o pipeline aborta. */
+  onStage?: () => Promise<void>;
 };
 
 export type PipelineResult =
@@ -128,6 +130,7 @@ export class PipelineService {
 
     const pending = await round(Math.max(1, Math.min(4, inp.variations)));
     if (pending) return { pending, ad };
+    await inp.onStage?.();
 
     const best = () => [...pool].sort((a, b) => (b.score?.total ?? -1) - (a.score?.total ?? -1))[0]!;
     const top = best();
@@ -139,6 +142,7 @@ export class PipelineService {
         this.logger.warn(`[pipeline] nova tentativa falhou: ${e instanceof Error ? e.message : e}`);
       }
     }
+    await inp.onStage?.();
     const win = best();
 
     await Promise.all(pool.map((p) => this.patchReport(p.asset, { ai_score: p.score, winner: p === win, variation_group: group, version: 'clean' })));

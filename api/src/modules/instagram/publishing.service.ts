@@ -166,7 +166,14 @@ export class PublishingService {
       throw new Guardrail('Post não aprovado — publicação bloqueada.');
     }
     // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha).
-    if (!resume) await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+    if (!resume) {
+      try {
+        await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+      } catch (e) {
+        await lease.release();
+        throw e;
+      }
+    }
     return lease;
   }
 
@@ -186,7 +193,7 @@ export class PublishingService {
    * (a fila volta em 2 min) e não é tocado; post com lease vivo (publicação em andamento, mesmo vídeo longo) também não.
    */
   async sweepStalePublishing() {
-    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'publishing', ...leaseFree() }, select: { id: true, workspace_id: true, plan_id: true }, take: 50 });
+    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'publishing', publishing_jobs: { none: { status: { in: ['pending', 'running'] } } }, ...leaseFree() }, select: { id: true, workspace_id: true, plan_id: true }, orderBy: { updated_at: 'asc' }, take: 50 });
     const swept: string[] = [];
     for (const p of posts) {
       const active = await this.prisma.publishing_jobs.count({ where: { ig_post_id: p.id, status: { in: ['pending', 'running'] } } });

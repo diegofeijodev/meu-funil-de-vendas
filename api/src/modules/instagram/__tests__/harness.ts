@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { WorkspaceAccessService } from '../../access/access.service';
 import { memMembers, OWNER, VIEWER, WS_A } from '../../media/__tests__/mem';
 import { IgStore } from '../ig-store.service';
@@ -8,6 +9,8 @@ type Row = Record<string, any>;
 /** Tabela em memória com o subconjunto do Prisma que o Instagram usa (gt/gte/lt/lte, in/notIn/not, has, JSON path, OR/AND, orderBy com nulls). */
 export class IgTable {
   rows: Row[] = [];
+  /** Filtros de relação 1:N (`{ none | some: where }`): nome do campo → tabela filha + chave estrangeira. */
+  relations: Record<string, { table: IgTable; fk: string }> = {};
   constructor(private readonly defaults: () => Row = () => ({}), private readonly unique: string[] | null = null) {}
 
   private cmp(v: any, cond: any, key: string): boolean {
@@ -31,11 +34,21 @@ export class IgTable {
       }
     });
   }
-  private match(r: Row, where: Row = {}): boolean {
+  match(r: Row, where: Row = {}): boolean {
     return Object.entries(where).every(([k, v]) => {
       if (k === 'OR') return (v as Row[]).some((w) => this.match(r, w));
       if (k === 'AND') return (v as Row[]).every((w) => this.match(r, w));
-      if (v && typeof v === 'object' && 'path' in v) return (v.path as string[]).reduce((o: any, p: string) => o?.[p], r[k]) === v.equals;
+      const rel = this.relations[k];
+      if (rel && v && typeof v === 'object') {
+        const kids = rel.table.rows.filter((x) => x[rel.fk] === r.id);
+        const ok = (w: Row) => kids.filter((x) => rel.table.match(x, w));
+        if ('none' in v) return ok(v.none).length === 0;
+        if ('some' in v) return ok(v.some).length > 0;
+      }
+      if (v && typeof v === 'object' && 'path' in v) {
+        const got = (v.path as string[]).reduce((o: any, p: string) => o?.[p], r[k]);
+        return v.equals === Prisma.DbNull ? got === undefined : got === v.equals;
+      }
       return this.cmp(r[k], v, k);
     });
   }
@@ -168,6 +181,7 @@ export function igWorld() {
     crm_stage_history: new IgTable(),
     workspace_members: new IgTable(),
   };
+  t.ig_posts!.relations['publishing_jobs'] = { table: t.publishing_jobs!, fk: 'ig_post_id' };
   const prisma: any = { ...t, workspace_members: memMembers, $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops) };
   const access = new WorkspaceAccessService(prisma);
   const store = new IgStore(prisma);

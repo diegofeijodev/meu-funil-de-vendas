@@ -182,10 +182,12 @@ describe('lease do poller e varredor de geração', () => {
     s.provider.getGenerationStatus.mockResolvedValue(READY('veo:l'));
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const orig = s.assets.ingest.getMockImplementation()!;
-    s.assets.ingest.mockImplementationOnce(async (i: any) => { await gate; return orig(i); });
+    let entered!: () => void;
+    const inIngest = new Promise<void>((r) => (entered = r));
+    const base = s.assets.ingest.getMockImplementation()!;
+    s.assets.ingest.mockImplementationOnce(async (i: any) => { entered(); await gate; return base(i); });
     const first = gen.pollPendingMedia(); // pega o lease e fica preso na ingestão
-    await new Promise((r) => setTimeout(r, 20));
+    await inIngest; // sinal determinístico: a ingestão começou
     expect(post.lease_until).toBeInstanceOf(Date);
     expect(await gen.pollPendingMedia()).toEqual([]); // 2º ciclo: lease vivo, nada a fazer
     release();
@@ -193,6 +195,27 @@ describe('lease do poller e varredor de geração', () => {
     expect(s.assets.ingest.mock.calls.filter((c: any) => c[0].kind === 'video')).toHaveLength(1);
     expect(post.media).toHaveLength(1);
     expect(post.lease_until).toBeNull(); // solto no finally
+  });
+
+  it('snapshot velho: ciclo A lê o post, B avança o job (slide 1) e solta; A assume o lease e NÃO reprocessa o job antigo nem sobrescreve', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, { format: 'feed_carousel', status: 'generating', creative_brief: { pending_job: { provider: 'gemini', jobId: 'veo:s0', index: 0, prompts: ['p0', 'p1'], media: [], cost: 0, started_at: new Date().toISOString() } } });
+    const newBrief = { pending_job: { provider: 'gemini', jobId: 'veo:s1', index: 1, prompts: ['p0', 'p1'], media: [{ url: 'https://cdn.test/s0.jpg', order: 0 }], cost: 6, started_at: new Date().toISOString() } };
+    // A leu o post (snapshot com s0) e, antes de claimar, B ingeriu o slide 0 e iniciou o slide 1; o lease está livre de novo.
+    const tbl = w.t['ig_posts']!;
+    const realFind = tbl.findMany.bind(tbl);
+    tbl.findMany = (async (a: any) => {
+      const rows = await realFind(a);
+      if (a?.take === 20) { post.creative_brief = newBrief; post.media = [{ url: 'https://cdn.test/s0.jpg', order: 0 }]; }
+      return rows;
+    }) as any;
+    s.provider.getGenerationStatus.mockResolvedValue(READY('veo:s0'));
+    expect(await gen.pollPendingMedia()).toEqual([]);
+    expect(s.provider.getGenerationStatus).not.toHaveBeenCalled();
+    expect(s.assets.ingest).not.toHaveBeenCalled();
+    expect(post.creative_brief).toEqual(newBrief); // intacto
+    expect(post.media).toHaveLength(1);
+    expect(post.lease_until).toBeNull(); // lease solto
   });
 
   it('lease vencido (ciclo anterior morreu) é reassumido; lease vivo não', async () => {

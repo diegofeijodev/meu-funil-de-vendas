@@ -462,6 +462,19 @@ describe('IgStore', () => {
     w.t['ig_content_plans']!.rows.push(plan);
     expect(await s.approvalRequired({ plan_id: plan.id })).toBe(false);
   });
+  it('depois que B assume (lease_until diferente), release() de A não mexe no lease de B e renew() de A lança PublishClaimLost', async () => {
+    const w = igWorld();
+    const store = new IgStore(w.prisma);
+    const post = seedPost(w, { status: 'approved' });
+    const a = (await store.claimLease(post.id, post.workspace_id, { status: 'approved' }, { status: 'publishing' }, 60e3))!;
+    expect(a).toBeTruthy();
+    const bUntil = new Date(Date.now() + 99e3); // B assumiu (lease de A venceu): valor futuro diferente
+    post.lease_until = bUntil;
+    await a.release();
+    expect(post.lease_until).toBe(bUntil); // nada foi solto
+    expect(await err(a.renew())).toBeInstanceOf(PublishClaimLost);
+    expect(post.lease_until).toBe(bUntil);
+  });
   it('ContainerPending é erro próprio', () => {
     expect(new ContainerPending('x')).toBeInstanceOf(Error);
   });

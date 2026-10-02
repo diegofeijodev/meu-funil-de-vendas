@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import { buildVisualPrompt, providerPrompt } from '../creative/art-director';
@@ -297,6 +298,7 @@ export class MediaGenerationService {
           text: { title: brief.headline ?? post.hook ?? null, price: brief.price ?? null, cta: post.cta ?? null },
           title: post.theme ?? 'Post do Instagram',
           igPostId: post.id,
+          onStage: () => lease.renew(),
           rebuild: (motivo) => buildVisualPrompt(this.ai, { ...artBrief(base, 0), previousPrompt: ads[0]!.prompt_final, adjust: `Corrija: ${motivo}` }),
         });
         if (!res.pending) {
@@ -363,7 +365,12 @@ export class MediaGenerationService {
    * Posts com `pending_job` são do poller (que tem o próprio timeout de 1 h) e não são tocados.
    */
   async sweepStaleGenerating() {
-    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating', ...leaseFree() }, take: 50 });
+    // Só os sem job (o resto é do poller), os mais antigos primeiro: posts pulados não matam de fome os realmente parados.
+    const posts = await this.prisma.ig_posts.findMany({
+      where: { status: 'generating', creative_brief: { path: ['pending_job'], equals: Prisma.DbNull }, ...leaseFree() },
+      orderBy: { updated_at: 'asc' },
+      take: 50,
+    });
     const swept: string[] = [];
     for (const post of posts as PostRow[]) {
       if ((post.creative_brief as { pending_job?: unknown } | null)?.pending_job) continue;
@@ -381,15 +388,22 @@ export class MediaGenerationService {
   /** Consulta os provedores para posts com geração assíncrona pendente e conclui os prontos. */
   async pollPendingMedia() {
     await this.sweepStaleGenerating().catch((e) => this.logger.error(`[instagram] varredor de geração falhou: ${errText(e)}`));
-    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating', ...leaseFree() }, take: 20 });
+    const posts = await this.prisma.ig_posts.findMany({ where: { status: 'generating', ...leaseFree() }, orderBy: { updated_at: 'asc' }, take: 20 });
     const out: { post: string; status: string; error?: string }[] = [];
-    for (const post of posts as PostRow[]) {
-      const pj = post.creative_brief?.pending_job as PendingJob | undefined;
-      if (!pj?.jobId) continue;
+    for (const snap of posts as PostRow[]) {
+      const snapJob = (snap.creative_brief?.pending_job as PendingJob | undefined)?.jobId;
+      if (!snapJob) continue;
       // Lease do ciclo: só um poller conclui o job; um ciclo que começa enquanto outro ainda ingere (vídeo longo) não pega o post.
-      const lease = await this.store.claimLease(post.id, null, { status: 'generating' }, {}, MEDIA_LEASE_MS);
+      const lease = await this.store.claimLease(snap.id, null, { status: 'generating' }, {}, MEDIA_LEASE_MS);
       if (!lease) continue;
+      let post: PostRow = snap;
       try {
+        // O resultado da leitura acima pode estar velho (outro ciclo andou o job enquanto esperávamos na fila): relê já com o lease.
+        const fresh = (await this.prisma.ig_posts.findFirst({ where: { id: snap.id, status: 'generating' } })) as PostRow | null;
+        const pjFresh = fresh?.creative_brief?.pending_job as PendingJob | undefined;
+        if (!fresh || !pjFresh?.jobId || pjFresh.jobId !== snapJob) continue; // já concluído/avançado por outro ciclo; finally solta o lease
+        post = fresh;
+        const pj = pjFresh;
         // O id do job só chega ao provedor se estiver gravado neste post/workspace (vínculo no ProviderResolver).
         const provider = await this.providers.resolve(post.workspace_id, choiceForProvider(pj.provider));
         const r = await provider.getGenerationStatus(pj.jobId);
