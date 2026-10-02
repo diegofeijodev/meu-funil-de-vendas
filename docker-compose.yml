@@ -38,8 +38,10 @@ services:
       UPLOADS_DIR: /data/uploads
       # Flags declaradas no compose mesmo quando o default do zod já resolve
       # (regra de ops do workspace: flag nova precisa aparecer aqui).
-      # `TRUST_PROXY=false` porque o compose publica a porta direto; atrás de
-      # nginx, `true`.
+      # `TRUST_PROXY=false` porque o compose publica a porta direto. Atrás de
+      # nginx + rewrite do Next (cliente -> nginx -> Next -> API) use `2` (saltos)
+      # e o nginx com `proxy_set_header X-Forwarded-For $remote_addr;` (sobrescreve).
+      # Nunca `true`: o cliente forja o X-Forwarded-For e burla o limite por IP.
       TRUST_PROXY: ${TRUST_PROXY:-false}
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-false}
       AI_GATEWAY_URL: ${AI_GATEWAY_URL:-}

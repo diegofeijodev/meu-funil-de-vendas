@@ -44,7 +44,8 @@ export function formConfig(integration: { config?: unknown }): SiteFormConfig {
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-export function renderFormHtml(token: string, cfg: SiteFormConfig) {
+/** `now` = relógio do SERVIDOR: vai num campo oculto `_t` (o envio sem JS também o leva; o servidor exige `_t` válido e com ≥ 2,5 s). */
+export function renderFormHtml(token: string, cfg: SiteFormConfig, now = Date.now()) {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(cfg.title)}</title>
 <style>
@@ -64,6 +65,7 @@ small{display:block;margin-top:10px;color:#777;font-size:12px}
 ${cfg.ask_phone ? '<label for="p">WhatsApp</label><input id="p" name="phone" type="tel" required autocomplete="tel" placeholder="(11) 99999-9999">' : ""}
 ${cfg.ask_message ? '<label for="m">Mensagem</label><textarea id="m" name="message" rows="3"></textarea>' : ""}
 <input class="hp" name="website" tabindex="-1" autocomplete="off">
+<input type="hidden" name="_t" value="${Math.floor(now)}">
 <button type="submit">${esc(cfg.button)}</button>
 <small>Ao enviar, você concorda em ser contatado${cfg.privacy_url ? ` (<a href="${esc(cfg.privacy_url)}" target="_blank" rel="noopener">política de privacidade</a>)` : ""}.</small>
 <div class="err" id="err"></div>
@@ -76,7 +78,7 @@ ${cfg.ask_message ? '<label for="m">Mensagem</label><textarea id="m" name="messa
   f.addEventListener('submit',function(ev){
     ev.preventDefault();
     var d={};new FormData(f).forEach(function(v,k){d[k]=v});
-    d._t=t;d.page=q.get('page')||document.referrer||'';
+    d._t=Number(d._t)||t;d.page=q.get('page')||document.referrer||'';
     ['utm_source','utm_medium','utm_campaign','utm_content','utm_term'].forEach(function(k){if(q.get(k))d[k]=q.get(k)});
     var b=f.querySelector('button');b.disabled=true;
     fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})

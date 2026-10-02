@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
@@ -8,6 +9,48 @@ const bool = (def: 'true' | 'false') =>
     .enum(['true', 'false'])
     .default(def)
     .transform((v) => v === 'true');
+
+/**
+ * `TRUST_PROXY` do Fastify: número de saltos de proxy confiáveis (`2`), lista de IPs/CIDRs separados por vírgula
+ * (`10.0.0.0/8,172.16.0.0/12`) ou os atalhos `true`/`false`. ATENÇÃO: `true` confia no X-Forwarded-For INTEIRO (o cliente
+ * forja o primeiro item e burla qualquer limite por IP); em produção use o número de saltos.
+ */
+export function parseTrustProxy(raw: string | undefined): boolean | number | string[] {
+  const v = (raw ?? '').trim();
+  if (!v || v.toLowerCase() === 'false') return false;
+  if (v.toLowerCase() === 'true') return true;
+  if (/^\d+$/.test(v)) {
+    const n = Number(v);
+    return n === 0 ? false : n;
+  }
+  const list = v.split(',').map((x) => x.trim()).filter(Boolean);
+  const ok = list.length > 0 && list.every((x) => /^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(x) && (isIP(x.split('/')[0]!) !== 0) && (!x.includes('/') || Number(x.split('/')[1]) <= (x.includes(':') ? 128 : 32)));
+  if (!ok) throw new Error(`TRUST_PROXY inválido: "${v}". Use true, false, um número de saltos ou uma lista de IPs/CIDRs.`);
+  return list;
+}
+
+/**
+ * Valor para a opção `trustProxy` do Fastify. O Fastify 5 recente trata um NÚMERO como "não confiar em ninguém"
+ * (fail-closed), então o número de saltos vira uma função `(addr, i) => i < saltos`: confia no vizinho direto e nos
+ * saltos seguintes da cadeia, e o IP do cliente é o primeiro endereço fora dessa janela. Só é seguro se a API NÃO
+ * for alcançável sem passar pelos proxies (um cliente direto poderia mandar o X-Forwarded-For que quisesse).
+ */
+export function toFastifyTrustProxy(v: boolean | number | string[]): boolean | string[] | ((addr: string, i: number) => boolean) {
+  return typeof v === 'number' ? (_addr: string, i: number) => i < v : v;
+}
+
+const trustProxy = () =>
+  z
+    .string()
+    .default('false')
+    .transform((v, ctx) => {
+      try {
+        return parseTrustProxy(v);
+      } catch (e) {
+        ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'TRUST_PROXY inválido' });
+        return z.NEVER;
+      }
+    });
 
 const envSchema = z
   .object({
@@ -26,7 +69,7 @@ const envSchema = z
     /** URL do web (era https://www.meufunildevendas.com.br). Base de links de descadastro, SQL, Canva. */
     APP_URL: z.string().default('http://localhost:3025'),
     SWAGGER_ENABLED: opt(),
-    TRUST_PROXY: bool('false'),
+    TRUST_PROXY: trustProxy(),
 
     /** Arquivos em disco: UPLOADS_DIR/<bucket>/<chave>. */
     UPLOADS_DIR: z.string().default('./uploads'),

@@ -30,6 +30,9 @@ Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typ
 ### Variáveis principais (`api/.env.example` lista todas)
 
 - `DATABASE_URL`, `JWT_SECRET`, `PORT=3015`, `CORS_ORIGINS`, `PUBLIC_URL`, `APP_URL`, `TRUST_PROXY`.
+- `TRUST_PROXY` — quantos proxies confiar para descobrir o IP do cliente (limite do formulário público, throttle). Aceita um **número de saltos** (`2`), uma **lista de IPs/CIDRs** (`10.0.0.0/8,172.16.0.1`) ou `false`/`true`.
+  Cadeia de produção: cliente → nginx → rewrite do Next (http-proxy com `xfwd`) → API = **`TRUST_PROXY=2`**, com o nginx **sobrescrevendo** o cabeçalho (`proxy_set_header X-Forwarded-For $remote_addr;`, não `$proxy_add_x_forwarded_for`).
+  **`true` é inseguro**: confia em todo o `X-Forwarded-For` e o cliente forja o primeiro IP da cadeia (rotacionando-o, burla o limite de 5 envios/10 min). Fica só como atalho de desenvolvimento. `false` (padrão): `req.ip` é o do vizinho direto. Número de saltos só é seguro se a porta da API NÃO é alcançável de fora (um cliente direto poderia mandar o `X-Forwarded-For` que quisesse); se der para fixar os endereços dos proxies, prefira a lista de IPs/CIDRs (ex.: a sub-rede da rede docker).
 - `UPLOADS_DIR` — arquivos em disco (`<bucket>/<chave>`), servidos por URL assinada.
 - `CREDENTIALS_ENCRYPTION_KEY` — cofre AES-256-GCM; **obrigatória em produção**.
 - `UNSUBSCRIBE_SECRET` — HMAC dos links de descadastro; **obrigatória em produção**.

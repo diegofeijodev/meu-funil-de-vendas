@@ -5,7 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import { AppModule } from './app.module';
-import { validateEnv } from './common/config/env.validation';
+import { toFastifyTrustProxy, validateEnv } from './common/config/env.validation';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 const logger = new Logger('Bootstrap');
@@ -31,8 +31,8 @@ async function bootstrap() {
     new FastifyAdapter({
       logger: { timestamp: () => `,"time":"${new Date().toISOString()}"` },
       bodyLimit: 8 * 1024 * 1024,
-      // Atrás de nginx, `true`: sem isso `req.ip` é o do proxy e o throttle vira um balde global.
-      trustProxy: env.TRUST_PROXY,
+      // Atrás de nginx + rewrite do Next use o número de saltos (`2`); `true` deixa o cliente forjar o IP (ver README). Sem isso `req.ip` é o do proxy e o throttle vira um balde global.
+      trustProxy: toFastifyTrustProxy(env.TRUST_PROXY),
     }),
     // `req.rawBody`: os webhooks da Meta assinam o corpo bruto (x-hub-signature-256).
     { rawBody: true },

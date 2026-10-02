@@ -32,7 +32,7 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
 - IA só via `AiService` (porta `AI_FETCH` injetável): **nenhum teste faz rede** — injete um fake. Modelo do protótipo → modelo real pelo mapa `AI_MODEL_*`.
 - Arquivos só via `FilesService` (disco + URL assinada + contenção de caminho). Upload do navegador passa pela API (multipart).
 - Leituras de CRM chamam `CrmDefaultsService.ensure(workspaceId)` primeiro (funil/etapas/motivos/tags/settings são criados na 1ª leitura).
-- A API roda em **uma** instância: `SCHEDULER_ENABLED=true` em mais de uma duplicaria cada job. Throttle por IP exige `TRUST_PROXY=true` atrás de nginx.
+- A API roda em **uma** instância: `SCHEDULER_ENABLED=true` em mais de uma duplicaria cada job. Throttle e limite do formulário por IP exigem `TRUST_PROXY=2` em produção (cliente → nginx → rewrite do Next → API = 2 saltos; o nginx sobrescreve com `proxy_set_header X-Forwarded-For $remote_addr;`). `TRUST_PROXY=true` é inseguro (o cliente forja o IP); aceita também lista de IPs/CIDRs.
 - Flag/variável nova entra em `common/config/env.validation.ts`, no `.env.example` e no `docker-compose.yml`.
 - **Instagram (`api/src/modules/instagram`)**: o cliente da Graph API é UM só (`MetaGraphClient`, porta `META_FETCH` injetável; credenciais = cofre da empresa → global → env). Fila `publishing_jobs` (`instagram_organic`) com lock otimista, trava vencida em 15 min e 3 tentativas;
   cron `POST /api/public/cron/instagram` (+ 6 jobs do agendador em `InstagramCronService`) e webhook `/api/public/webhooks/instagram/:token` (corpo bruto: `rawBody: true` no `main.ts`; ledger em `modules/webhooks`). O `pollPendingCreatives` NÃO roda no cron do Instagram (já é o job `creative-poll-5min`).
