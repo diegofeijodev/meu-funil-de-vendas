@@ -34,11 +34,17 @@ export function CrmSettings() {
     queryFn: () => crm.getCrmExtras(workspaceId!),
   });
 
+  const [stageRev, setStageRev] = useState(0);
   const refreshStages = () => qc.invalidateQueries({ queryKey: ["crm-stages", workspaceId, pipelineId] });
   const refreshExtras = () => qc.invalidateQueries({ queryKey: ["crm-settings", workspaceId] });
 
   const updateStage = async (id: string, values: { name?: string; color?: string; sla_hours?: number; position?: number }) => {
-    await crm.updateStage(workspaceId!, id, values).catch(() => undefined);
+    try {
+      await crm.updateStage(workspaceId!, id, values);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar a etapa."));
+      setStageRev((n) => n + 1); // remonta os campos com o valor do servidor
+    }
     refreshStages();
   };
 
@@ -81,7 +87,7 @@ export function CrmSettings() {
         <Section title="Funil e etapas" description="Nome, cor, ordem e SLA em horas são editáveis.">
           <div className="space-y-2">
             {stages.map((s) => (
-              <div key={s.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-2 rounded-lg border border-border p-2">
+              <div key={`${s.id}-${stageRev}`} className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-2 rounded-lg border border-border p-2">
                 <Input defaultValue={s.name} onBlur={(e) => updateStage(s.id, { name: e.target.value })} />
                 <input
                   type="color"
