@@ -47,11 +47,11 @@ describe('TRUST_PROXY', () => {
   });
   it('validateEnv aplica o parse (e falha no boot com valor inválido)', () => {
     const dev = { ...base, NODE_ENV: 'development' };
-    expect(validateEnv({ ...dev, TRUST_PROXY: '2' }).TRUST_PROXY).toBe(2);
+    expect(validateEnv({ ...dev, TRUST_PROXY: '1' }).TRUST_PROXY).toBe(1);
     expect(validateEnv(dev).TRUST_PROXY).toBe(false);
     expect(() => validateEnv({ ...dev, TRUST_PROXY: 'xx' })).toThrow(/TRUST_PROXY/);
   });
-  it('com saltos, um X-Forwarded-For forjado no início da cadeia NÃO muda o req.ip (com true muda)', async () => {
+  it('com 1 salto (peer = Next), o cliente real é escolhido e um X-Forwarded-For forjado à esquerda NÃO muda o req.ip (com true muda)', async () => {
     const ipFor = async (trustProxy: boolean | number, xff: string) => {
       const app = Fastify({ trustProxy: toFastifyTrustProxy(trustProxy) as never });
       app.get('/ip', async (req) => ({ ip: req.ip }));
@@ -59,12 +59,13 @@ describe('TRUST_PROXY', () => {
       await app.close();
       return (r.json() as { ip: string }).ip;
     };
-    // cadeia real: cliente 203.0.113.9 → nginx (10.0.0.1, anexado pelo Next) → Next (10.0.0.3, conexão direta)
-    expect(await ipFor(2, '203.0.113.9, 10.0.0.1')).toBe('203.0.113.9');
-    // o atacante prefixa um IP falso (nginx que não sobrescreve): com 2 saltos o IP seguro continua sendo o real
-    expect(await ipFor(2, '1.2.3.4, 203.0.113.9, 10.0.0.1')).toBe('203.0.113.9');
-    expect(await ipFor(2, '9.9.9.9, 203.0.113.9, 10.0.0.1')).toBe('203.0.113.9');
-    // `true` confia na cadeia inteira: pega o primeiro item, controlado pelo cliente
-    expect(await ipFor(true, '1.2.3.4, 203.0.113.9, 10.0.0.1')).toBe('1.2.3.4');
+    // cadeia real: cliente → nginx → Next (peer TCP 10.0.0.3, que NÃO anexa ao XFF) → API. Com `1` salto o peer é o Next.
+    // nginx sobrescrevendo o XFF com $remote_addr: cadeia vista = [cliente]
+    expect(await ipFor(1, '203.0.113.9')).toBe('203.0.113.9');
+    // o cliente tenta forjar o cabeçalho, mas o nginx sobrescreve: nada do que ele mandou chega
+    // nginx anexando ($proxy_add_x_forwarded_for): [forjado, cliente] — o `1` ainda pega o cliente, não o item forjado
+    expect(await ipFor(1, '1.2.3.4, 203.0.113.9')).toBe('203.0.113.9');
+    expect(await ipFor(1, '9.9.9.9, 8.8.8.8, 203.0.113.9')).toBe('203.0.113.9');
+    expect(await ipFor(true, '1.2.3.4, 203.0.113.9')).toBe('1.2.3.4');
   });
 });

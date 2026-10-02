@@ -11,7 +11,7 @@ const bool = (def: 'true' | 'false') =>
     .transform((v) => v === 'true');
 
 /**
- * `TRUST_PROXY` do Fastify: número de saltos de proxy confiáveis (`2`), lista de IPs/CIDRs separados por vírgula
+ * `TRUST_PROXY` do Fastify: número de saltos de proxy confiáveis (`1` em produção), lista de IPs/CIDRs separados por vírgula
  * (`10.0.0.0/8,172.16.0.0/12`) ou os atalhos `true`/`false`. ATENÇÃO: `true` confia no X-Forwarded-For INTEIRO (o cliente
  * forja o primeiro item e burla qualquer limite por IP); em produção use o número de saltos.
  */
