@@ -5,6 +5,37 @@ import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl, EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { UserError } from '../media/user-error';
 
+/** Teto do corpo de qualquer resposta de servidor MCP / OAuth (5 MB). */
+export const MAX_MCP_BODY_BYTES = 5 * 1024 * 1024;
+
+/** Lê o corpo como texto aos pedaços e aborta ao passar do teto (não confia em content-length). */
+export async function readTextCapped(res: Response, max = MAX_MCP_BODY_BYTES): Promise<string> {
+  const tooBig = () => new UserError('A resposta do servidor MCP é grande demais.');
+  if (Number(res.headers.get('content-length') ?? 0) > max) {
+    await res.body?.cancel().catch(() => undefined);
+    throw tooBig();
+  }
+  if (!res.body) {
+    const t = await res.text();
+    if (Buffer.byteLength(t) > max) throw tooBig();
+    return t;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      throw tooBig();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export type McpTool = { name: string; description?: string | undefined; inputSchema?: unknown };
 export type McpCallResult = { text: string; mediaUrl: string | null; structured: string | null };
 export type AuthServerMetadata = { authorization_endpoint: string; token_endpoint: string; registration_endpoint?: string; scopes_supported?: string[] };
@@ -127,7 +158,7 @@ export class McpClient {
     if (sessionId) headers['Mcp-Session-Id'] = sessionId;
     const res = await this.follow(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params: params ?? {} }) });
     const newSession = res.headers.get('Mcp-Session-Id') ?? sessionId;
-    const text = await res.text();
+    const text = await readTextCapped(res);
     if (res.status === 401 || res.status === 403) {
       const meta = /resource_metadata="([^"]+)"/i.exec(res.headers.get('www-authenticate') ?? '')?.[1] ?? null;
       throw new McpAuthRequiredError('O servidor MCP exige autenticação.', meta);
@@ -211,7 +242,7 @@ export class McpClient {
   private async getJson(url: string): Promise<any | null> { // eslint-disable-line @typescript-eslint/no-explicit-any
     try {
       const res = await this.follow(this.assertUrl(url), { method: 'GET', headers: { Accept: 'application/json' } });
-      return res.ok ? await res.json() : null;
+      return res.ok ? JSON.parse(await readTextCapped(res)) : null;
     } catch {
       return null;
     }
@@ -257,7 +288,7 @@ export class McpClient {
       }),
     });
     if (!res.ok) throw new UserError(`Falha no registro do aplicativo OAuth (${res.status}).`);
-    const json = (await res.json()) as { client_id: string; client_secret?: string };
+    const json = JSON.parse(await readTextCapped(res)) as { client_id: string; client_secret?: string };
     return { clientId: json.client_id, clientSecret: json.client_secret ?? null };
   }
 
@@ -265,7 +296,7 @@ export class McpClient {
     const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
     if (clientSecret) headers['Authorization'] = `Basic ${Buffer.from(`${form['client_id']}:${clientSecret}`).toString('base64')}`;
     const res = await this.follow(this.assertUrl(tokenEndpoint), { method: 'POST', headers, body: new URLSearchParams(form).toString() });
-    const text = await res.text();
+    const text = await readTextCapped(res);
     if (!res.ok) throw new UserError(`Falha ao obter o token (${res.status}): ${text.slice(0, 160)}`);
     let json: { access_token: string; refresh_token?: string; expires_in?: number };
     try {

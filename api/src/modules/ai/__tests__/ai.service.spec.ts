@@ -152,3 +152,82 @@ describe('AiService.image / video / text', () => {
     expect(JSON.parse(String(f.calls[0]!.init!.body)).messages[0].content).toBe('sistema\n\noi');
   });
 });
+
+describe('AiService.video — download do Gemini (SSRF / chave / teto)', () => {
+  const op = (uri: string) => json({ done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri } }] } } });
+  /** Fluxo Veo: cria a operação, consulta (já pronta, com `uri`) e deixa o download por conta de `download`. */
+  function veo(uri: string, download: (url: string, init?: RequestInit) => Response) {
+    const calls: Call[] = [];
+    const fn: AiFetch = async (url, init) => {
+      calls.push({ url, init });
+      if (url.includes('predictLongRunning')) return json({ name: 'operations/op1' });
+      if (url.endsWith('operations/op1')) return op(uri);
+      return download(url, init);
+    };
+    return { calls, ai: setup(gwEnv, { gemini: 'gk' }, fn) };
+  }
+  const keyOf = (c: Call) => (c.init?.headers as Record<string, string> | undefined)?.['x-goog-api-key'];
+  const run = (ai: AiService) => ai.video(WS, { prompt: 'p', aspectRatio: '9:16', strict: true });
+
+  it('baixa o vídeo mandando a chave ao host original', async () => {
+    const v = veo('https://files.googleapis.com/v1/v.mp4', () => new Response(Buffer.from('MP4')));
+    const r = await run(v.ai);
+    expect(r.status === 'ready' && r.bytes.toString()).toBe('MP4');
+    const dl = v.calls.at(-1)!;
+    expect(keyOf(dl)).toBe('gk');
+    expect((dl.init as RequestInit).redirect).toBe('manual');
+  });
+
+  it('redirecionamento para IP privado é recusado', async () => {
+    const v = veo('https://files.googleapis.com/v.mp4', () => new Response(null, { status: 302, headers: { location: 'https://169.254.169.254/latest/meta-data' } }));
+    await expect(run(v.ai)).rejects.toThrow(/rede interna/);
+    expect(v.calls.some((c) => c.url.includes('169.254'))).toBe(false);
+  });
+
+  it('uri inicial interna é recusada sem chamar', async () => {
+    const v = veo('http://10.0.0.5/v.mp4', () => new Response('x'));
+    await expect(run(v.ai)).rejects.toThrow();
+    expect(v.calls.some((c) => c.url.includes('10.0.0.5'))).toBe(false);
+  });
+
+  it('a chave NÃO é enviada depois de um redirecionamento para outro host', async () => {
+    const v = veo('https://files.googleapis.com/v.mp4', (url) =>
+      url.includes('files.googleapis.com') ? new Response(null, { status: 302, headers: { location: 'https://cdn.example.com/v.mp4' } }) : new Response(Buffer.from('MP4')));
+    const r = await run(v.ai);
+    expect(r.status).toBe('ready');
+    const hops = v.calls.filter((c) => c.url.includes('v.mp4'));
+    expect(hops).toHaveLength(2);
+    expect(keyOf(hops[0]!)).toBe('gk');
+    expect(keyOf(hops[1]!)).toBeUndefined();
+  });
+
+  it('limita os saltos de redirecionamento', async () => {
+    const v = veo('https://files.googleapis.com/v.mp4', () => new Response(null, { status: 302, headers: { location: 'https://files.googleapis.com/v.mp4' } }));
+    await expect(run(v.ai)).rejects.toThrow(/vezes demais/);
+    expect(v.calls.filter((c) => c.url.includes('v.mp4')).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('corpo acima do teto é abortado', async () => {
+    let cancelled = false;
+    const chunk = new Uint8Array(40 * 1024 * 1024);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (sent++ > 5) return c.close();
+        c.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    let used = false;
+    const v = veo('https://files.googleapis.com/v.mp4', () => {
+      if (used) return new Response('x', { status: 500 });
+      used = true;
+      return new Response(body);
+    });
+    await expect(run(v.ai)).rejects.toThrow();
+    expect(cancelled).toBe(true);
+    expect(sent).toBeLessThan(5);
+  });
+});

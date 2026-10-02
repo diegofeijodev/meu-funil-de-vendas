@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { WorkspaceAccessService } from '../../access/access.service';
 import { MemTable, memMembers, OWNER, status, STRANGER, VIEWER, MARKETING, ADMIN, WS_A, WS_B } from '../../media/__tests__/mem';
 import { VaultService } from '../../vault/vault.service';
-import { buildAuthorizationUrl, McpAuthRequiredError, McpClient, pickTool, pkcePair } from '../mcp-client';
+import { buildAuthorizationUrl, MAX_MCP_BODY_BYTES, McpAuthRequiredError, McpClient, pickTool, pkcePair } from '../mcp-client';
 import { oauthPage } from '../mcp.controller';
 import { McpService } from '../mcp.service';
 
@@ -411,5 +411,40 @@ describe('McpService — conexões com token cifrado', () => {
       expect(await s.svc.disconnect(OWNER, WS_A, 'higgsfield')).toEqual({ ok: true });
       expect(s.conns.rows).toHaveLength(0);
     });
+  });
+});
+
+describe('McpClient — corpo das respostas com teto', () => {
+  const huge = () => {
+    let cancelled = false;
+    let sent = 0;
+    const chunk = new Uint8Array(2 * 1024 * 1024);
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (sent++ > 10) return c.close();
+        c.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { body, state: () => ({ cancelled, sent }) };
+  };
+
+  it('resposta JSON-RPC acima de 5 MB é abortada com erro pt-BR', async () => {
+    const h = huge();
+    await expect(clientFor(() => new Response(h.body, { status: 200 })).listTools(SERVER, null)).rejects.toThrow('A resposta do servidor MCP é grande demais.');
+    expect(h.state().cancelled).toBe(true);
+    expect(h.state().sent).toBeLessThan(6);
+  });
+
+  it('content-length declarado acima do teto é recusado sem ler', async () => {
+    const r = new Response('x', { status: 200, headers: { 'content-length': String(MAX_MCP_BODY_BYTES + 1) } });
+    await expect(clientFor(() => r).listTools(SERVER, null)).rejects.toThrow('grande demais');
+  });
+
+  it('resposta do endpoint de token acima do teto é abortada', async () => {
+    const h = huge();
+    await expect(clientFor(() => new Response(h.body, { status: 200 })).exchangeCode({ tokenEndpoint: 'https://auth.example.com/token', code: 'c', codeVerifier: 'v', clientId: 'id', redirectUri: 'https://x/cb' })).rejects.toThrow('grande demais');
   });
 });

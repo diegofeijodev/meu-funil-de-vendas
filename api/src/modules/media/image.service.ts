@@ -7,7 +7,7 @@ import { bad } from './user-error';
 export const MAX_IMAGE_PIXELS = 50_000_000;
 export const MAX_IMAGE_SIDE = 20_000;
 
-/** Largura/altura lidas do CABEÇALHO (PNG IHDR / JPEG SOF), sem decodificar. null = não é PNG/JPEG reconhecível. */
+/** Largura/altura lidas do CABEÇALHO (PNG, JPEG, GIF, WebP, BMP), sem decodificar. null = formato não reconhecido. */
 export function imageHeaderSize(b: Uint8Array): { width: number; height: number } | null {
   if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -22,6 +22,22 @@ export function imageHeaderSize(b: Uint8Array): { width: number; height: number 
       if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { height: (b[p + 5]! << 8) | b[p + 6]!, width: (b[p + 7]! << 8) | b[p + 8]! };
       p += 2 + ((b[p + 2]! << 8) | b[p + 3]!);
     }
+  }
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const ascii = (o: number, t: string) => b.length >= o + t.length && [...t].every((c, i) => b[o + i] === c.charCodeAt(0));
+  if (b.length >= 10 && (ascii(0, 'GIF87a') || ascii(0, 'GIF89a'))) return { width: dv.getUint16(6, true), height: dv.getUint16(8, true) };
+  if (b.length >= 30 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) {
+    if (ascii(12, 'VP8 ')) return { width: dv.getUint16(26, true) & 0x3fff, height: dv.getUint16(28, true) & 0x3fff };
+    if (ascii(12, 'VP8L')) {
+      const v = dv.getUint32(21, true);
+      return { width: (v & 0x3fff) + 1, height: ((v >>> 14) & 0x3fff) + 1 };
+    }
+    if (ascii(12, 'VP8X')) return { width: 1 + (b[24]! | (b[25]! << 8) | (b[26]! << 16)), height: 1 + (b[27]! | (b[28]! << 8) | (b[29]! << 16)) };
+    return { width: 0, height: 0 }; // WebP com cabeçalho desconhecido: recusa
+  }
+  if (b.length >= 26 && ascii(0, 'BM')) {
+    if (dv.getUint32(14, true) === 12) return { width: dv.getUint16(18, true), height: dv.getUint16(20, true) };
+    return { width: Math.abs(dv.getInt32(18, true)), height: Math.abs(dv.getInt32(22, true)) };
   }
   return null;
 }
@@ -52,6 +68,10 @@ export class ImageService {
     const dim = imageHeaderSize(bytes);
     if (dim && (dim.width < 1 || dim.height < 1 || dim.width > MAX_IMAGE_SIDE || dim.height > MAX_IMAGE_SIDE || dim.width * dim.height > MAX_IMAGE_PIXELS)) {
       throw bad(`Imagem grande demais (${dim.width}x${dim.height}). O limite é de 50 megapixels e 20.000 px por lado.`);
+    }
+    // TIFF: o jimp decodifica, mas sem como ler as dimensões do cabeçalho aqui — não entra.
+    if (bytes.length > 4 && ((bytes[0] === 0x49 && bytes[1] === 0x49 && bytes[2] === 0x2a && bytes[3] === 0) || (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0 && bytes[3] === 0x2a))) {
+      throw bad('Formato TIFF não suportado. Envie PNG ou JPEG.');
     }
     try {
       return await Jimp.read(Buffer.from(bytes));

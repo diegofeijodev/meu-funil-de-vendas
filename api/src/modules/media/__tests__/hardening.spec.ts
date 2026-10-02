@@ -142,6 +142,25 @@ describe('bomba de descompressão e vídeo corrompido', () => {
     w.cleanup();
   });
 
+  it('GIF, WebP (VP8/VP8L/VP8X) e BMP: dimensões do cabeçalho valem e passam pelo mesmo teto', async () => {
+    const w = mediaWorld();
+    const gif = Buffer.alloc(16); gif.write('GIF89a'); gif.writeUInt16LE(60000, 6); gif.writeUInt16LE(60000, 8);
+    const riff = (fourcc: string) => { const b = Buffer.alloc(40); b.write('RIFF', 0); b.write('WEBP', 8); b.write(fourcc, 12); return b; };
+    const vp8 = riff('VP8 '); vp8.writeUInt16LE(16000, 26); vp8.writeUInt16LE(15000, 28);
+    const vp8l = riff('VP8L'); vp8l.writeUInt32LE((16383) | (16383 << 14), 21);
+    const vp8x = riff('VP8X'); vp8x.writeUIntLE(99999, 24, 3); vp8x.writeUIntLE(99999, 27, 3);
+    const bmp = Buffer.alloc(40); bmp.write('BM', 0); bmp.writeUInt32LE(40, 14); bmp.writeInt32LE(100000, 18); bmp.writeInt32LE(-100000, 22);
+    expect(imageHeaderSize(gif)).toEqual({ width: 60000, height: 60000 });
+    expect(imageHeaderSize(vp8)).toEqual({ width: 16000, height: 15000 });
+    expect(imageHeaderSize(vp8l)).toEqual({ width: 16384, height: 16384 });
+    expect(imageHeaderSize(vp8x)).toEqual({ width: 100000, height: 100000 });
+    expect(imageHeaderSize(bmp)).toEqual({ width: 100000, height: 100000 });
+    for (const b of [gif, vp8, vp8l, vp8x, bmp]) expect(await status(w.images.read(b))).toContain('400:Imagem grande demais');
+    const tiff = Buffer.from([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0]);
+    expect(await status(w.images.read(tiff))).toBe('400:Formato TIFF não suportado. Envie PNG ou JPEG.');
+    w.cleanup();
+  });
+
   it('MP4 truncado vira 400 (não RangeError); upload "vídeo" sem ftyp é recusado', async () => {
     const mp4 = sampleMp4();
     const cut = mp4.subarray(0, mp4.length - 30);

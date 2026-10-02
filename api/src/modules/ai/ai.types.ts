@@ -63,3 +63,6 @@ export type AiVideoResult =
 /** Porta HTTP: no teste entra um fake (nenhuma chamada de rede). */
 export type AiFetch = (url: string, init?: RequestInit) => Promise<Response>;
 export const AI_FETCH = Symbol('AI_FETCH');
+
+/** Fetch com DNS verificado/fixado (anti-SSRF) para baixar URLs devolvidas por provedores. */
+export const AI_GUARDED_FETCH = Symbol('AI_GUARDED_FETCH');

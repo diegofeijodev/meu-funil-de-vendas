@@ -1,18 +1,23 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
+import { assertExternalUrl } from '../media/external-fetch';
 import { AiError } from './ai-error';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
 import {
-  AI_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
+  AI_FETCH, AI_GUARDED_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const OPENAI = 'https://api.openai.com/v1';
 const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Teto do vídeo baixado do Gemini e saltos de redirecionamento seguidos à mão. */
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+const MAX_VIDEO_HOPS = 4;
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const isVertical = (ar: string) => ar === '9:16' || ar === '4:5';
 
 /** Custos estimados (créditos do app); 0 quando é a chave do cliente. */
@@ -45,6 +50,8 @@ export class AiService {
     private readonly keys: AiKeysService,
     @Inject(AI_FETCH) private readonly http: AiFetch,
     @Inject(ENV) private readonly env: Env,
+    /** Fetch com DNS verificado (SSRF) para baixar URLs devolvidas pelo provedor; sem ele (testes) usa a porta comum. */
+    @Optional() @Inject(AI_GUARDED_FETCH) private readonly guarded?: AiFetch,
   ) {}
 
   model(id?: string): string {
@@ -417,9 +424,60 @@ export class AiService {
     if (op.error) throw new AiError(op.error.message ?? 'Geração de vídeo falhou.');
     const uri = op.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
     if (!uri) throw new AiError('O Gemini não devolveu vídeo (possível recusa de conteúdo).');
-    const dl = await this.http(uri, { headers: { 'x-goog-api-key': key }, redirect: 'follow' });
-    if (!dl.ok) throw await this.vendorError('gemini', dl);
-    return { bytes: Buffer.from(await dl.arrayBuffer()), id: name };
+    return { bytes: await this.downloadGeminiVideo(uri, key), id: name };
+  }
+
+  /**
+   * A `uri` vem do provedor, então não é confiável: https público, DNS verificado (fetch guardado), redirecionamentos
+   * seguidos à mão (≤ 4) revalidando cada salto, a chave só vai ao host original e o corpo é lido com teto.
+   */
+  private async downloadGeminiVideo(uri: string, key: string): Promise<Buffer> {
+    const allowLocal = this.env.NODE_ENV !== 'production';
+    const fetcher = this.guarded ?? this.http;
+    let url = assertExternalUrl(uri, allowLocal, 'endereço do vídeo');
+    const originHost = new URL(url).host;
+    for (let hop = 0; hop <= MAX_VIDEO_HOPS; hop++) {
+      const headers: Record<string, string> = new URL(url).host === originHost ? { 'x-goog-api-key': key } : {};
+      const dl = await fetcher(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(120_000) });
+      if (REDIRECTS.has(dl.status)) {
+        const loc = dl.headers.get('location');
+        await dl.body?.cancel().catch(() => undefined);
+        if (!loc) throw new AiError('O Gemini devolveu um redirecionamento sem destino ao baixar o vídeo.');
+        url = assertExternalUrl(new URL(loc, url).toString(), allowLocal, 'endereço do vídeo');
+        continue;
+      }
+      if (!dl.ok) throw await this.vendorError('gemini', dl);
+      return this.readVideoCapped(dl);
+    }
+    throw new AiError('O Gemini redirecionou o download do vídeo vezes demais.');
+  }
+
+  /** Lê o corpo aos pedaços e aborta ao passar do teto (não confia em content-length). */
+  private async readVideoCapped(res: Response): Promise<Buffer> {
+    const tooBig = () => new AiError('O vídeo devolvido pelo Gemini é grande demais.');
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_VIDEO_BYTES) {
+      await res.body?.cancel().catch(() => undefined);
+      throw tooBig();
+    }
+    if (!res.body) {
+      const all = Buffer.from(await res.arrayBuffer());
+      if (all.length > MAX_VIDEO_BYTES) throw tooBig();
+      return all;
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > MAX_VIDEO_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw tooBig();
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
   }
 
   private warn(what: string, e: unknown) {
