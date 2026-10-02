@@ -23,6 +23,7 @@ export class FilesController {
     @Param('*') key: string,
     @Query('exp') exp: string | undefined,
     @Query('sig') sig: string | undefined,
+    @Query('dl') dl: string | undefined,
     @Res() reply: FastifyReply,
   ) {
     this.files.assertBucket(bucket);
@@ -32,6 +33,11 @@ export class FilesController {
     const mime = mimeFromKey(decoded);
     // SVG pode carregar script: servido isolado (sandbox, sem rede) mesmo se alguém abrir o link direto.
     if (mime === 'image/svg+xml') reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    // `?dl=<nome>` (exportações da biblioteca): força o download com esse nome. Não é parte da assinatura (só muda o cabeçalho).
+    if (dl) {
+      const safe = dl.replace(/[\u0000-\u001f\u007f"\\/]/g, '').slice(0, 150) || 'arquivo';
+      reply.header('Content-Disposition', `attachment; filename="${safe.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
+    }
     return reply
       .header('Content-Type', mime)
       .header('Content-Length', bytes.length)

@@ -146,6 +146,21 @@ export class FilesService {
     return `${this.publicUrl}/v1/files/${bucket}/${encKey}?exp=${exp}&sig=${this.sign(bucket, key, exp)}`;
   }
 
+  /** Se `url` é uma URL assinada DESTA API (`<PUBLIC_URL>/v1/files/<bucket>/<chave>?exp&sig`), devolve suas partes (sem validar). */
+  parseOwnUrl(url: string): { bucket: string; key: string; exp: string | null; sig: string | null } | null {
+    if (!url.startsWith(`${this.publicUrl}/v1/files/`)) return null;
+    try {
+      const u = new URL(url);
+      const rest = u.pathname.slice('/v1/files/'.length);
+      const slash = rest.indexOf('/');
+      if (slash < 1) return null;
+      const key = rest.slice(slash + 1).split('/').map(decodeURIComponent).join('/');
+      return { bucket: rest.slice(0, slash), key, exp: u.searchParams.get('exp'), sig: u.searchParams.get('sig') };
+    } catch {
+      return null;
+    }
+  }
+
   /** Confere assinatura e validade. Lança 403 se inválida/expirada. */
   verify(bucket: string, key: string, exp: string | undefined, sig: string | undefined, nowMs = Date.now()): void {
     const bad = () => new ForbiddenException({ code: 'FORBIDDEN', message: 'Link inválido ou expirado.' });

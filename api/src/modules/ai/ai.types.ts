@@ -33,6 +33,8 @@ export interface AiImageRequest {
   vendor: AiVendor;
   /** `strict` = não cai para o gateway do app quando a chave própria falha. */
   strict?: boolean;
+  /** Ignora a chave própria do workspace e usa direto o gateway do app ("Créditos de IA do app"). */
+  appOnly?: boolean;
 }
 
 export interface AiImageResult {
@@ -50,6 +52,8 @@ export interface AiVideoRequest {
   referenceImages?: AiImageInput[];
   maxWaitMs?: number;
   strict?: boolean;
+  /** Ignora a chave própria do workspace e usa direto o gateway do app. */
+  appOnly?: boolean;
 }
 
 export type AiVideoResult =

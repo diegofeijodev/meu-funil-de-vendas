@@ -4,10 +4,11 @@ import { WorkspaceAccessService } from '../access/access.service';
 import { AiService } from '../ai/ai.service';
 import { AiImageInput } from '../ai/ai.types';
 import { FilesService, mimeFromKey } from '../files/files.service';
+import { ImageService } from '../media/image.service';
 
 const MAX_REFS = 6;
-/** Imagens maiores que isto ficam de fora do envio à IA (o protótipo reduzia para 1024px com Jimp). */
-const MAX_REF_BYTES = 8 * 1024 * 1024;
+/** Arquivo maior que isto nem é decodificado (a referência é reduzida a ≤1024px JPEG antes do envio à IA, como no protótipo). */
+const MAX_REF_BYTES = 20 * 1024 * 1024;
 const REF_KINDS = ['reference', 'photo'];
 
 const arr = { type: 'array', items: { type: 'string' } };
@@ -37,6 +38,7 @@ export class BrandGuideService {
     private readonly access: WorkspaceAccessService,
     private readonly ai: AiService,
     private readonly files: FilesService,
+    private readonly images: ImageService,
   ) {}
 
   async generate(userId: string, brandId: string) {
@@ -89,7 +91,8 @@ export class BrandGuideService {
         if (!mime.startsWith('image/') || mime === 'image/svg+xml') continue;
         const bytes = await this.files.read('creative-assets', r.storage_path);
         if (bytes.length > MAX_REF_BYTES) continue;
-        out.push({ id: r.id, image: { bytes, mime } });
+        // Mesmo `shrink` do protótipo (refs.server): ≤1024 px, JPEG q85. Foto ilegível é ignorada.
+        out.push({ id: r.id, image: await this.images.shrink(bytes, 1024) });
       } catch (e) {
         this.logger.warn(`[refs] referência ignorada ${r.id}: ${e instanceof Error ? e.message : e}`);
       }

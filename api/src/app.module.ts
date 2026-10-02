@@ -15,9 +15,13 @@ import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BrandsModule } from './modules/brands/brands.module';
 import { CampaignsModule } from './modules/campaigns/campaigns.module';
+import { CanvaModule } from './modules/canva/canva.module';
 import { CopyAiModule } from './modules/copy-ai/copy-ai.module';
+import { CreativeModule } from './modules/creative/creative.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
 import { FilesModule } from './modules/files/files.module';
+import { McpModule } from './modules/mcp/mcp.module';
+import { MediaModule } from './modules/media/media.module';
 import { OverviewModule } from './modules/overview/overview.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { SetupModule } from './modules/setup/setup.module';
@@ -50,6 +54,10 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     StrategistModule,
     CopyAiModule,
     ApprovalsModule,
+    MediaModule,
+    McpModule,
+    CanvaModule,
+    CreativeModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

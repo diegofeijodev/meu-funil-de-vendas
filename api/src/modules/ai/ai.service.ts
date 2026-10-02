@@ -4,6 +4,7 @@ import { Env } from '../../common/config/env.validation';
 import { AiError } from './ai-error';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
+import { isValidVideoJobId } from './video-job-id';
 import {
   AI_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
@@ -209,7 +210,7 @@ export class AiService {
   // ------------------------------------------------------------------ imagem
 
   async image(workspaceId: string, req: AiImageRequest): Promise<AiImageResult> {
-    const userKey = await this.keys.get(workspaceId, req.vendor);
+    const userKey = req.appOnly ? null : await this.keys.get(workspaceId, req.vendor);
     if (userKey) {
       try {
         const r = req.vendor === 'openai' ? await this.openaiDirectImage(userKey, req) : await this.geminiDirectImage(userKey, req);
@@ -309,7 +310,7 @@ export class AiService {
    */
   async video(workspaceId: string, req: AiVideoRequest): Promise<AiVideoResult> {
     const deadline = Date.now() + (req.maxWaitMs ?? 6 * 60_000);
-    const userKey = await this.keys.get(workspaceId, 'gemini');
+    const userKey = req.appOnly ? null : await this.keys.get(workspaceId, 'gemini');
     if (userKey) {
       try {
         const r = await this.geminiDirectVideo(userKey, req, deadline);
@@ -327,6 +328,8 @@ export class AiService {
 
   /** Consulta um job de vídeo que passou do prazo da requisição (`pending`). */
   async videoStatus(workspaceId: string, jobId: string, waitMs = 20_000): Promise<AiVideoResult | { status: 'failed' }> {
+    // Defesa em profundidade: o chamador também confere o vínculo com o workspace (ver createAiProvider).
+    if (!isValidVideoJobId(jobId)) return { status: 'failed' };
     const deadline = Date.now() + waitMs;
     if (jobId.startsWith('veo:')) {
       const r = await this.gatewayVideoWait(jobId.slice(4), deadline);
