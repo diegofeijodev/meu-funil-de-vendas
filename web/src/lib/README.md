@@ -14,5 +14,5 @@ Alterações permitidas: só imports.
 Cada arquivo `src/lib/**/<nome>.functions.ts` do protótipo vira um arquivo com o MESMO nome e os MESMOS exports, cada um
 `(opts?: { data?: T }) => Promise<R>` que faz `POST /v1/<módulo>/<nome-em-kebab>` com `opts.data` no corpo (ver `serverFnPost`).
 Quem porta a tela troca só o import do `@tanstack/react-start`; `useServerFn(fn)` + `run({ data })` ficam iguais.
-Cada tarefa de domínio cria os shims do seu domínio e acrescenta as rotas em `docs/api-contract.md`. Nenhum existe ainda.
+Cada tarefa de domínio cria os shims do seu domínio e acrescenta as rotas em `docs/api-contract.md`. Já existem: `setup`, `agency`, `creative` (`generateBrandGuide`) e `meta/ads-ops` (`syncAdsInsightsNow`, rota ainda a criar na tarefa de Meta).
 Os `*.server.ts` NÃO são portados (a lógica mora na API).
