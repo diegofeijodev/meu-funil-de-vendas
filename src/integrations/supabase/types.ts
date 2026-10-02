@@ -2328,12 +2328,15 @@ export type Database = {
           locked_until: string | null
           mode: string
           parent_id: string | null
+          paused_reason: string | null
           plan_id: string
           recurring: boolean
           slots: Json
           start_date: string
           status: string
           story_times: string[]
+          strategy: Json | null
+          strategy_status: string
           times: string[]
           updated_at: string
           weekdays: number[]
@@ -2352,12 +2355,15 @@ export type Database = {
           locked_until?: string | null
           mode?: string
           parent_id?: string | null
+          paused_reason?: string | null
           plan_id: string
           recurring?: boolean
           slots?: Json
           start_date: string
           status?: string
           story_times?: string[]
+          strategy?: Json | null
+          strategy_status?: string
           times?: string[]
           updated_at?: string
           weekdays?: number[]
@@ -2376,12 +2382,15 @@ export type Database = {
           locked_until?: string | null
           mode?: string
           parent_id?: string | null
+          paused_reason?: string | null
           plan_id?: string
           recurring?: boolean
           slots?: Json
           start_date?: string
           status?: string
           story_times?: string[]
+          strategy?: Json | null
+          strategy_status?: string
           times?: string[]
           updated_at?: string
           weekdays?: number[]
@@ -2663,6 +2672,7 @@ export type Database = {
           creative_brief: Json
           cta: string | null
           format: string
+          funnel_stage: string | null
           hashtags: string[]
           hook: string | null
           id: string
@@ -2672,10 +2682,16 @@ export type Database = {
           last_error: string | null
           media: Json
           metrics_collected: Json
+          objective_link: string | null
+          persona: string | null
+          pillar: string | null
           plan_id: string | null
+          product_id: string | null
           published_at: string | null
           rejection_reason: string | null
           retry_count: number
+          review_reason: string | null
+          review_score: number | null
           run_id: string | null
           scheduled_at: string | null
           source: string
@@ -2694,6 +2710,7 @@ export type Database = {
           creative_brief?: Json
           cta?: string | null
           format: string
+          funnel_stage?: string | null
           hashtags?: string[]
           hook?: string | null
           id?: string
@@ -2703,10 +2720,16 @@ export type Database = {
           last_error?: string | null
           media?: Json
           metrics_collected?: Json
+          objective_link?: string | null
+          persona?: string | null
+          pillar?: string | null
           plan_id?: string | null
+          product_id?: string | null
           published_at?: string | null
           rejection_reason?: string | null
           retry_count?: number
+          review_reason?: string | null
+          review_score?: number | null
           run_id?: string | null
           scheduled_at?: string | null
           source?: string
@@ -2725,6 +2748,7 @@ export type Database = {
           creative_brief?: Json
           cta?: string | null
           format?: string
+          funnel_stage?: string | null
           hashtags?: string[]
           hook?: string | null
           id?: string
@@ -2734,10 +2758,16 @@ export type Database = {
           last_error?: string | null
           media?: Json
           metrics_collected?: Json
+          objective_link?: string | null
+          persona?: string | null
+          pillar?: string | null
           plan_id?: string | null
+          product_id?: string | null
           published_at?: string | null
           rejection_reason?: string | null
           retry_count?: number
+          review_reason?: string | null
+          review_score?: number | null
           run_id?: string | null
           scheduled_at?: string | null
           source?: string
@@ -2752,6 +2782,13 @@ export type Database = {
             columns: ["plan_id"]
             isOneToOne: false
             referencedRelation: "ig_content_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ig_posts_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
           {

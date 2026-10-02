@@ -1,0 +1,5 @@
+ALTER TABLE public.ig_auto_runs ADD COLUMN IF NOT EXISTS strategy jsonb, ADD COLUMN IF NOT EXISTS strategy_status text NOT NULL DEFAULT 'pending', ADD COLUMN IF NOT EXISTS paused_reason text;
+ALTER TABLE public.ig_posts ADD COLUMN IF NOT EXISTS objective_link text, ADD COLUMN IF NOT EXISTS pillar text, ADD COLUMN IF NOT EXISTS persona text, ADD COLUMN IF NOT EXISTS product_id uuid REFERENCES public.products(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS funnel_stage text, ADD COLUMN IF NOT EXISTS review_reason text, ADD COLUMN IF NOT EXISTS review_score numeric;
+ALTER TABLE public.ig_posts DROP CONSTRAINT ig_posts_status_check;
+ALTER TABLE public.ig_posts ADD CONSTRAINT ig_posts_status_check CHECK (status = ANY (ARRAY['idea','generating','ready','pending_approval','approved','scheduled','publishing','published','failed','cancelled','needs_review']));
+NOTIFY pgrst, 'reload schema';

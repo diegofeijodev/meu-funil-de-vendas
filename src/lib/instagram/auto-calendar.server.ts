@@ -10,6 +10,7 @@
 import { normalizeHashtags, asText, asList } from "./normalize";
 import { aiJson, brandFor, ASPECT, schedulePost, type IgFormat } from "./instagram.server";
 import { logEvent } from "./autopilot.server";
+import { buildRunStrategy, validatePosts, brandContext, fullDate, DATE_RULES, isCreditFailure, type RunStrategy, type Verdict } from "./content-strategy.server";
 
 async function db() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -225,35 +226,52 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" });
 }
 
-/** Preenche o próximo lote de horários com conteúdo da IA estrategista. Seguro para chamadas concorrentes. */
+/** Preenche a programação: 1) estratégia do período (aprovada pelo usuário); 2) posts em lotes, validados. */
 export async function fillAutoRun(runId: string) {
   const s = await db();
   const nowIso = new Date().toISOString();
   const { data: claimed } = await s
     .from("ig_auto_runs")
-    .update({ locked_until: new Date(Date.now() + 150e3).toISOString() })
+    .update({ locked_until: new Date(Date.now() + 240e3).toISOString() })
     .eq("id", runId)
     .eq("status", "planning")
     .or(`locked_until.is.null,locked_until.lt.${nowIso}`)
     .select("*")
     .maybeSingle();
   if (!claimed) {
-    const { data: r } = await s.from("ig_auto_runs").select("status, filled, slots").eq("id", runId).maybeSingle();
-    return { filled: r?.filled ?? 0, total: (r?.slots ?? []).length, done: r?.status !== "planning", busy: r?.status === "planning" };
+    const { data: r } = await s.from("ig_auto_runs").select("status, filled, slots, strategy_status").eq("id", runId).maybeSingle();
+    return {
+      filled: r?.filled ?? 0,
+      total: (r?.slots ?? []).length,
+      done: r?.status !== "planning",
+      busy: r?.status === "planning" && r?.strategy_status !== "review",
+      strategyReview: r?.strategy_status === "review",
+    };
   }
   const run = claimed as any;
   const all = (run.slots ?? []) as Slot[];
-  // Horários que já passaram enquanto a programação esperava são descartados.
-  const chunk = all.slice(run.filled, run.filled + CHUNK);
-  const usable = chunk.filter((sl) => new Date(sl.at).getTime() > Date.now() + 10 * MIN);
+  const release = (extra: Record<string, unknown> = {}) =>
+    s.from("ig_auto_runs").update({ locked_until: null, updated_at: new Date().toISOString(), ...extra }).eq("id", runId);
   try {
-    if (usable.length) await writeChunk(run, usable);
+    const ctx = await runContext(run);
+    // Passo "Estratégia": criada antes dos posts e revisada pelo usuário.
+    if (!run.strategy || run.strategy_status === "pending") {
+      const { strategy } = await buildRunStrategy({ workspaceId: run.workspace_id, objective: ctx.objective, brand: ctx.brand, products: ctx.products, personas: ctx.personas, plan: ctx.plan, slots: all });
+      await release({ strategy, strategy_status: "review", last_error: null, paused_reason: null });
+      await logEvent({ workspace_id: run.workspace_id, plan_id: run.plan_id, kind: "generation", message: "Estratégia do período pronta: revise e aprove para gerar os posts." });
+      return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: true };
+    }
+    if (run.strategy_status !== "approved") {
+      await release();
+      return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: true };
+    }
+    // Horários que já passaram enquanto a programação esperava são descartados.
+    const chunk = all.slice(run.filled, run.filled + CHUNK);
+    const usable = chunk.filter((sl) => new Date(sl.at).getTime() > Date.now() + 10 * MIN);
+    if (usable.length) await writeChunk(run, usable, ctx);
     const filled = run.filled + chunk.length;
     const done = filled >= all.length;
-    await s
-      .from("ig_auto_runs")
-      .update({ filled, status: done ? "active" : "planning", locked_until: null, last_error: null, updated_at: new Date().toISOString() })
-      .eq("id", runId);
+    await release({ filled, status: done ? "active" : "planning", last_error: null, paused_reason: null });
     if (done)
       await logEvent({
         workspace_id: run.workspace_id,
@@ -261,31 +279,50 @@ export async function fillAutoRun(runId: string) {
         kind: "generation",
         message: `Estrategista concluiu os conteúdos da programação (${all.length} posts). Criativos sendo gerados, começando pelos mais próximos.`,
       });
-    return { filled, total: all.length, done, busy: false };
+    return { filled, total: all.length, done, busy: false, strategyReview: false };
   } catch (e) {
-    await s.from("ig_auto_runs").update({ locked_until: null, last_error: errMsg(e) }).eq("id", runId);
+    const credit = isCreditFailure(errMsg(e));
+    await release({ last_error: errMsg(e), paused_reason: credit ? "Créditos de IA esgotados — programação pausada" : null });
     await logEvent({
       workspace_id: run.workspace_id,
       plan_id: run.plan_id,
       kind: "failure",
       level: "error",
-      message: `Estrategista falhou num lote da programação (tenta de novo em 5 min): ${errMsg(e)}`,
+      message: credit
+        ? "Créditos de IA esgotados — programação pausada. Retoma sozinha quando houver crédito."
+        : `Estrategista falhou num lote da programação (tenta de novo em 5 min): ${errMsg(e)}`,
     });
     throw e;
   }
 }
 
-async function writeChunk(run: any, slots: Slot[]) {
+/** Marca, produtos, personas, plano e objetivo da programação. Sem marca, nada roda. */
+async function runContext(run: any) {
   const s = await db();
   const { data: plan } = await s.from("ig_content_plans").select("*").eq("id", run.plan_id).maybeSingle();
   if (!plan) throw new Error("Plano de conteúdo não encontrado.");
+  if (!plan.brand_id) throw new Error("Cadastre a marca em Brands antes.");
   const brand = await brandFor(plan.brand_id);
-  let strategy: unknown = null;
+  if (!brand) throw new Error("Cadastre a marca em Brands antes.");
+  const [products, personas] = await Promise.all([
+    s.from("products").select("id, name, description, price").eq("brand_id", brand.id).limit(20),
+    s.from("personas").select("name, age_range, pains, desires, interests").eq("brand_id", brand.id).limit(6),
+  ]);
+  const objective = (run.focus || plan.objective || "").trim();
+  if (!objective) throw new Error("Informe o objetivo deste período na programação.");
+  let campaign: unknown = null;
   if (run.campaign_id) {
     const { currentStrategy, strategyBrief } = await import("@/lib/ai/strategist.server");
-    strategy = strategyBrief(await currentStrategy(s, run.campaign_id));
+    campaign = strategyBrief(await currentStrategy(s, run.campaign_id));
   }
-  // Evita repetir temas: últimos posts da empresa + os já criados nesta programação.
+  return { plan, brand, products: (products.data ?? []) as any[], personas: (personas.data ?? []) as any[], objective, campaign };
+}
+type RunCtx = Awaited<ReturnType<typeof runContext>>;
+
+async function askPosts(run: any, slots: Slot[], ctx: RunCtx, fixes: Map<number, string>) {
+  const s = await db();
+  const { plan, brand, products, personas, objective, campaign } = ctx;
+  const strategy = run.strategy as RunStrategy;
   const { data: recent } = await s
     .from("ig_posts")
     .select("theme")
@@ -294,113 +331,154 @@ async function writeChunk(run: any, slots: Slot[]) {
     .order("created_at", { ascending: false })
     .limit(40);
   const used = [...new Set(((recent ?? []) as any[]).map((r) => r.theme as string))];
-  const notes = Array.isArray(plan.ai_notes) && plan.ai_notes.length ? plan.ai_notes[plan.ai_notes.length - 1]?.summary : null;
-  const brandInfo = brand
-    ? {
-        nome: brand.name,
-        descricao: brand.description,
-        publico: brand.target_audience,
-        diferenciais: brand.differentials,
-        tom: brand.tone_of_voice,
-        palavras_preferidas: brand.preferred_words,
-        palavras_proibidas: brand.banned_words,
-        segmento: brand.segment,
-        regiao: brand.region,
-      }
-    : null;
   const prompt = [
     "Você é a estrategista de conteúdo sênior de uma agência de marketing no Brasil. Escreva em português do Brasil.",
-    "Planeje o conteúdo de Instagram de CADA horário abaixo. Data, horário e formato já estão definidos: não mude.",
-    `Período completo da programação: ${run.start_date} a ${run.end_date}. Considere datas comemorativas, feriados e sazonalidade do Brasil que caiam nesses dias quando fizer sentido para a marca.`,
-    run.focus ? `FOCO DESTE PERÍODO (prioridade máxima): ${run.focus}` : "",
-    `Objetivo do plano: ${plan.objective ?? "-"}. Tom de voz: ${plan.tone_of_voice ?? brand?.tone_of_voice ?? "-"}.`,
-    `Pilares: ${JSON.stringify(plan.content_pillars)}.`,
-    plan.pillar_weights && Object.keys(plan.pillar_weights).length
-      ? `Pesos dos pilares (pelo desempenho real): ${JSON.stringify(plan.pillar_weights)}.`
-      : "",
-    notes ? `Aprendizados dos resultados: ${notes}` : "",
-    `Hashtags: ${JSON.stringify(plan.hashtag_strategy)}. CTA padrão: ${plan.cta_default ?? "-"}.`,
-    brandInfo ? `MARCA: ${JSON.stringify(brandInfo)}` : "",
-    strategy ? `ESTRATÉGIA DA CAMPANHA (siga a big idea, os ângulos e o CTA): ${JSON.stringify(strategy)}` : "",
-    "Equilíbrio do funil no período: ~50% atração (alcance: dicas, tendências, educativo), ~30% conexão (bastidores, prova social, autoridade), ~20% conversão (oferta e CTA direto). Varie pilares e ganchos; nada genérico.",
+    "Escreva o conteúdo de Instagram de CADA horário abaixo. Data, horário e formato já estão definidos: não mude.",
+    "ORDEM DE PRIORIDADE (nunca inverta):",
+    `1. OBJETIVO DO PERÍODO (fonte principal, cada post precisa servir a ele): ${objective}`,
+    `2. ESTRATÉGIA APROVADA: ${JSON.stringify(strategy.texto_editado ? { ...strategy, ajustes_do_cliente: strategy.texto_editado } : strategy)}`,
+    `3. DNA DA MARCA: ${JSON.stringify(brandContext(brand))}`,
+    `4. PRODUTOS (únicos preços válidos; cite pelo nome exato): ${JSON.stringify(products.map((p) => ({ nome: p.name, descricao: p.description, preco: p.price })))}`,
+    `   PERSONAS: ${JSON.stringify(personas.map((p) => p.name))}`,
+    `5. PLANO: tom ${plan.tone_of_voice ?? brand.tone_of_voice ?? "-"}; hashtags ${JSON.stringify(plan.hashtag_strategy)}; CTA padrão ${plan.cta_default ?? "-"}.`,
+    campaign ? `CAMPANHA LIGADA: ${JSON.stringify(campaign)}` : "",
+    "PROIBIDO: falar de outro negócio ou de temas fora do segmento da marca; inventar preço, promoção ou número fora dos produtos/DNA; usar palavras proibidas da marca; CTA fora da lista de CTAs da estratégia.",
+    DATE_RULES,
     used.length ? `Temas já usados (não repita): ${JSON.stringify(used.slice(0, 40))}.` : "",
     "Guia por formato:",
     ...Object.entries(FORMAT_GUIDE).map(([k, v]) => `- ${k}: ${v}.`),
-    "Campos: index (o mesmo do horário), theme, pillar, funnel_stage, hook (primeira linha da legenda), headline (texto curto aplicado por cima da arte, até 7 palavras, sem hashtags),",
-    "caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta, image_prompt (briefing visual em português do que aparece, SEM texto escrito na imagem — o texto é aplicado depois), slides (só carrossel, senão vazio).",
-    "HORÁRIOS:",
-    ...slots.map((sl) => `- index ${sl.index}: ${weekdayName(sl.at)} ${fmtDate(sl.at)} · ${sl.format}`),
+    "Campos: index, theme, pillar (um dos pilares da estratégia), persona, product_name (nome exato do produto citado ou vazio), funnel_stage (atracao|consideracao|conversao), objective_link (uma frase ligando o post ao objetivo), hook, headline (até 7 palavras, sem hashtags), caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta (um dos CTAs da estratégia), image_prompt (briefing visual em português do que aparece, SEM texto na imagem), slides (só carrossel, senão vazio).",
+    "HORÁRIOS (data real, fuso America/Sao_Paulo):",
+    ...slots.map((sl) => `- index ${sl.index}: ${fullDate(sl.at)} · ${sl.format}${fixes.get(sl.index) ? ` · REFAÇA, reprovado antes por: ${fixes.get(sl.index)}` : ""}`),
     'Devolva SOMENTE JSON estrito {"posts":[...]} com um item por horário.',
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter(Boolean).join("\n");
   const { json, provider } = await aiJson(run.workspace_id, "auto", prompt, SCHEMA, "ig_auto_calendar");
   const list = Array.isArray(json?.posts) ? (json.posts as any[]) : [];
-  const items = new Map<number, any>(
-    list.filter((p) => p && typeof p === "object").map((p) => [Number(p.index), p]),
-  );
-  if (!items.size) throw new Error("A IA não devolveu conteúdos.");
+  return { items: new Map<number, any>(list.filter((p) => p && typeof p === "object").map((p) => [Number(p.index), p])), provider };
+}
+
+async function writeChunk(run: any, slots: Slot[], ctx: RunCtx) {
+  const s = await db();
+  const { plan, products } = ctx;
+  const strategy = run.strategy as RunStrategy;
+  const final = new Map<number, { p: any; verdict: Verdict | null; attempts: number; provider: string; issues: string[] }>();
+  let pending = slots;
+  const fixes = new Map<number, string>();
+  let provider = "lovable_ai";
+  // Gera, valida e regera só os reprovados (até 2 novas tentativas).
+  for (let attempt = 0; attempt < 3 && pending.length; attempt++) {
+    const r = await askPosts(run, pending, ctx, fixes);
+    provider = r.provider;
+    if (!r.items.size && attempt === 0) throw new Error("A IA não devolveu conteúdos.");
+    const verdicts = await validatePosts({
+      workspaceId: run.workspace_id,
+      brand: ctx.brand,
+      objective: ctx.objective,
+      strategy,
+      products,
+      posts: pending.map((sl) => {
+        const p = r.items.get(sl.index) ?? {};
+        return { index: sl.index, at: sl.at, theme: asText(p.theme), hook: asText(p.hook), caption: asText(p.caption), headline: asText(p.headline), cta: asText(p.cta) };
+      }),
+    });
+    const next: Slot[] = [];
+    for (const sl of pending) {
+      const p = r.items.get(sl.index);
+      const v = verdicts.get(sl.index) ?? null;
+      const issues = p ? [] : ["a IA não devolveu conteúdo para este horário"];
+      if (p && p.hashtags != null && !Array.isArray(p.hashtags)) issues.push("hashtags vieram como texto e foram normalizadas");
+      const prev = final.get(sl.index);
+      final.set(sl.index, { p: p ?? prev?.p ?? {}, verdict: v, attempts: attempt + 1, provider, issues });
+      if (!p || (v && !v.aprovado)) {
+        fixes.set(sl.index, v?.motivo || "conteúdo ausente");
+        next.push(sl);
+      }
+    }
+    pending = next;
+  }
+  const productId = (name: unknown) => {
+    const n = (asText(name) ?? "").toLowerCase();
+    return n ? (products.find((x) => x.name?.toLowerCase() === n || n.includes(x.name?.toLowerCase()))?.id ?? null) : null;
+  };
+  const stage = (v: unknown) => {
+    const t = (asText(v) ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return t.startsWith("conv") ? "conversao" : t.startsWith("cons") || t.startsWith("cone") ? "consideracao" : "atracao";
+  };
   const rows = slots.map((sl) => {
-    const raw = items.get(sl.index);
-    const at = new Date().toISOString();
+    const f = final.get(sl.index)!;
+    const p = f.p ?? {};
     const soon = new Date(sl.at).getTime() - Date.now() < 90 * MIN;
-    const base = {
+    const rejected = !!f.verdict && !f.verdict.aprovado;
+    const empty = !asText(p.caption) && !asText(p.theme);
+    const needsReview = rejected || empty;
+    const at = new Date().toISOString();
+    return {
       workspace_id: run.workspace_id,
       plan_id: run.plan_id,
       run_id: run.id,
       automation: run.mode,
       format: sl.format,
-      status: "idea",
+      status: needsReview ? "needs_review" : "idea",
+      review_reason: needsReview ? (f.verdict?.motivo || "A IA não devolveu conteúdo para este horário.") : null,
+      review_score: f.verdict?.nota ?? null,
       scheduled_at: sl.at,
-      ai_provider: provider,
-    };
-    try {
-      const p = raw ?? {};
-      const issues: string[] = [];
-      if (!raw) issues.push("a IA não devolveu conteúdo para este horário");
-      if (p.hashtags != null && !Array.isArray(p.hashtags)) issues.push("hashtags vieram como texto e foram normalizadas");
-      return {
-        ...base,
-        theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
-        hook: asText(p.hook),
-        caption: asText(p.caption),
-        hashtags: normalizeHashtags(p.hashtags),
-        cta: asText(p.cta) || plan.cta_default || null,
-        creative_brief: {
-          prompt: asText(p.image_prompt) || asText(p.theme) || "",
-          slides: sl.format === "feed_carousel" ? asList(p.slides).slice(0, 10) : [],
-          aspect_ratio: ASPECT[sl.format],
-          headline: asText(p.headline),
-          pillar: asText(p.pillar),
-          funnel_stage: asText(p.funnel_stage),
-          campaign_id: run.campaign_id ?? null,
-          // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
-          variations: soon ? 1 : 3,
+      theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
+      hook: asText(p.hook),
+      caption: asText(p.caption),
+      hashtags: normalizeHashtags(p.hashtags),
+      cta: asText(p.cta) || plan.cta_default || null,
+      objective_link: asText(p.objective_link),
+      pillar: asText(p.pillar),
+      persona: asText(p.persona),
+      product_id: productId(p.product_name),
+      funnel_stage: stage(p.funnel_stage),
+      creative_brief: {
+        prompt: asText(p.image_prompt) || asText(p.theme) || "",
+        slides: sl.format === "feed_carousel" ? asList(p.slides).slice(0, 10) : [],
+        aspect_ratio: ASPECT[sl.format],
+        headline: asText(p.headline),
+        pillar: asText(p.pillar),
+        funnel_stage: stage(p.funnel_stage),
+        product_name: asText(p.product_name),
+        campaign_id: run.campaign_id ?? null,
+        // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
+        variations: soon ? 1 : 3,
+      },
+      ai_provider: f.provider,
+      ai_generation_log: [
+        {
+          at,
+          step: "auto_calendar",
+          provider: f.provider,
+          run_id: run.id,
+          attempts: f.attempts,
+          review: f.verdict,
+          ...(f.issues.length ? { warnings: f.issues } : {}),
+          ...(needsReview ? { status: "needs_review" } : {}),
         },
-        ai_generation_log: [
-          { at, step: "auto_calendar", provider, run_id: run.id, ...(issues.length ? { warnings: issues } : {}) },
-        ],
-      };
-    } catch (e) {
-      // Um item malformado não derruba a programação: vira um post simples com o aviso no log.
-      return {
-        ...base,
-        theme: `Post de ${weekdayName(sl.at)}`,
-        hook: null,
-        caption: null,
-        hashtags: [],
-        cta: plan.cta_default || null,
-        creative_brief: { prompt: "", slides: [], aspect_ratio: ASPECT[sl.format], campaign_id: run.campaign_id ?? null, variations: 1 },
-        ai_generation_log: [
-          { at, step: "auto_calendar", provider, run_id: run.id, status: "failed", error: `Item malformado da IA: ${e instanceof Error ? e.message : String(e)}` },
-        ],
-      };
-    }
+      ],
+    };
   });
   const { error } = await s.from("ig_posts").insert(rows);
   if (error) throw new Error(error.message);
 }
 
+/** Usuário aprova (e opcionalmente ajusta em texto) a estratégia: libera a geração dos posts. */
+export async function approveRunStrategy(runId: string, editedText?: string | null) {
+  const s = await db();
+  const { data: run } = await s.from("ig_auto_runs").select("id, strategy").eq("id", runId).maybeSingle();
+  if (!run?.strategy) throw new Error("A estratégia ainda não foi gerada.");
+  const strategy = { ...run.strategy, texto_editado: editedText?.trim() || run.strategy.texto_editado || null };
+  await s.from("ig_auto_runs").update({ strategy, strategy_status: "approved", locked_until: null }).eq("id", runId);
+  return { ok: true };
+}
+
+/** Pede uma nova estratégia (descarta a atual). */
+export async function redoRunStrategy(runId: string) {
+  const s = await db();
+  await s.from("ig_auto_runs").update({ strategy: null, strategy_status: "pending", locked_until: null }).eq("id", runId).eq("status", "planning");
+  return { ok: true };
+}
 /**
  * Agenda um post automático com mídia pronta. No modo "approval" só agenda depois de aprovado.
  * Se a mídia ficou pronta depois do horário, publica o quanto antes (até 12 h de atraso);
