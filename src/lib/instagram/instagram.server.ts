@@ -322,11 +322,11 @@ export async function generateContentCalendar(
     const d = new Date(p.scheduled_at);
     const dateBad = isNaN(d.getTime()) ? [] : dateIssues([p.theme, p.hook, p.caption, p.cta].filter(Boolean).join(" "), d.toISOString());
     return {
-      ...(dateBad.length ? { status: "needs_review", review_reason: `Incoerência de data: ${dateBad.join("; ")}.` } : {}),
       workspace_id: workspaceId,
       plan_id: planId,
       format,
-      status: "idea",
+      status: dateBad.length ? "needs_review" : "idea",
+      review_reason: dateBad.length ? `Incoerência de data: ${dateBad.join("; ")}.` : null,
       scheduled_at: isNaN(d.getTime()) ? null : d.toISOString(),
       theme: asText(p.theme),
       hook: asText(p.hook),
