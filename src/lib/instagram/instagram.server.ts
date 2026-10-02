@@ -279,6 +279,7 @@ export async function generateContentCalendar(
     .maybeSingle();
   if (!plan) throw new Error("Plano de conteúdo não encontrado.");
   const brand = await brandFor(plan.brand_id);
+  if (!brand) throw new Error("Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).");
   const start = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
   const prompt = [
     "Você é estrategista de conteúdo de Instagram no Brasil. Escreva em português do Brasil.",

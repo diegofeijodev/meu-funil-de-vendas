@@ -30,7 +30,7 @@ export const createAutoCalendar = createServerFn({ method: "POST" })
         times: z.array(time).max(8),
         storyTimes: z.array(time).max(10),
         formats: z.array(z.enum(FORMATS)).min(1),
-        focus: z.string().max(1000).optional(),
+        focus: z.string().trim().min(30, "Descreva o objetivo deste período (mínimo de 30 caracteres).").max(1000),
         mode: z.enum(["publish", "approval"]),
         recurring: z.boolean().optional(),
         asap: z.boolean().optional(),
@@ -112,4 +112,24 @@ export const previewAutoCalendar = createServerFn({ method: "POST" })
     } catch (e) {
       return { ok: false as const, error: e instanceof Error ? e.message : "Configuração inválida." };
     }
+  });
+
+/** Aprova (e opcionalmente ajusta em texto) a estratégia do período: libera a geração dos posts. */
+export const approveAutoStrategy = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ runId: z.string().uuid(), editedText: z.string().max(4000).nullable().optional() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const run = await runOf(context, data.runId);
+    await requireRole(context, run.workspace_id, EDITORS);
+    return (await lib()).approveRunStrategy(run.id, data.editedText ?? null);
+  });
+
+/** Descarta a estratégia atual e pede outra à IA. */
+export const redoAutoStrategy = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ runId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const run = await runOf(context, data.runId);
+    await requireRole(context, run.workspace_id, EDITORS);
+    return (await lib()).redoRunStrategy(run.id);
   });
