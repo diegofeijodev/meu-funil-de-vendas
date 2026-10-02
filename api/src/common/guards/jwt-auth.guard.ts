@@ -33,7 +33,7 @@ export class JwtAuthGuard implements CanActivate {
     const token = header.slice(7).trim();
     if (!token) throw unauthorized('Unauthorized: No token provided');
 
-    let payload: { sub?: string; email?: string; typ?: string };
+    let payload: { sub?: string; email?: string; typ?: string; ver?: number };
     try {
       payload = await this.jwt.verifyAsync(token, { algorithms: ['HS256'] });
     } catch {
@@ -42,8 +42,9 @@ export class JwtAuthGuard implements CanActivate {
     if (!payload.sub || payload.typ !== 'access') throw unauthorized('Unauthorized: Invalid token');
 
     // Conferir no banco: conta removida não pode continuar usando um token ainda válido.
-    const user = await this.prisma.users.findUnique({ where: { id: payload.sub }, select: { id: true, email: true } });
-    if (!user) throw unauthorized('Unauthorized: Invalid token');
+    const user = await this.prisma.users.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, token_version: true } });
+    // `ver` != users.token_version: logout/troca de credencial invalida o access token na hora.
+    if (!user || payload.ver !== user.token_version) throw unauthorized('Unauthorized: Invalid token');
 
     request.user = { id: user.id, email: user.email } satisfies AuthUser;
     return true;

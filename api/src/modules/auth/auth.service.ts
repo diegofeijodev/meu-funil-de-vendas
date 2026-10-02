@@ -13,6 +13,7 @@ export const MSG = {
   ALREADY_REGISTERED: 'User already registered',
   INVALID_CREDENTIALS: 'Invalid login credentials',
   WEAK_PASSWORD: 'Password is known to be weak and easy to guess, please choose a different one.',
+  LONG_PASSWORD: 'Password should be at most 72 bytes.',
   SHORT_PASSWORD: 'Password should be at least 6 characters.',
   NO_PASSWORD: 'Signup requires a valid password',
   INVALID_EMAIL: 'Unable to validate email address: invalid format',
@@ -33,6 +34,8 @@ export interface SessionView {
   user: { id: string; email: string };
 }
 
+const MAX_PASSWORD_BYTES = 72; // limite do bcrypt
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normEmail = (e: string | undefined) => (e ?? '').trim().toLowerCase();
 
@@ -56,6 +59,7 @@ export class AuthService {
     if (!EMAIL_RE.test(email)) throw new UnprocessableEntityException({ code: 'EMAIL_ADDRESS_INVALID', message: MSG.INVALID_EMAIL });
     const password = input.password ?? '';
     if (!password) throw new BadRequestException({ code: 'VALIDATION_FAILED', message: MSG.NO_PASSWORD });
+    if (Buffer.byteLength(password) > MAX_PASSWORD_BYTES) throw new UnprocessableEntityException({ code: 'WEAK_PASSWORD', message: MSG.LONG_PASSWORD });
     if (password.length < 6) throw new UnprocessableEntityException({ code: 'WEAK_PASSWORD', message: MSG.SHORT_PASSWORD });
     if (COMMON_PASSWORDS.has(password.toLowerCase())) throw new UnprocessableEntityException({ code: 'WEAK_PASSWORD', message: MSG.WEAK_PASSWORD });
 
@@ -80,7 +84,10 @@ export class AuthService {
     const email = normEmail(input.email);
     const user = email ? await this.prisma.users.findUnique({ where: { email } }) : null;
     // Sem hash (conta só-Google) também é "credenciais inválidas", como no GoTrue.
-    const ok = !!user?.password_hash && !!input.password && (await bcrypt.compare(input.password, user.password_hash));
+    const pwd = input.password ?? '';
+    // bcrypt sempre roda (hash falso se o e-mail não existe) para não vazar existência por tempo.
+    const match = await bcrypt.compare(Buffer.byteLength(pwd) > MAX_PASSWORD_BYTES ? '' : pwd, user?.password_hash || DUMMY_HASH);
+    const ok = !!user?.password_hash && !!pwd && Buffer.byteLength(pwd) <= MAX_PASSWORD_BYTES && match;
     if (!user || !ok) throw new BadRequestException({ code: 'INVALID_CREDENTIALS', message: MSG.INVALID_CREDENTIALS });
     return this.issueSession(user);
   }
@@ -117,7 +124,7 @@ export class AuthService {
   // ---------- tokens ----------
 
   async issueSession(user: { id: string; email: string; token_version: number }): Promise<SessionView> {
-    const access_token = await this.jwt.signAsync({ sub: user.id, email: user.email, typ: 'access' }, { expiresIn: this.env.ACCESS_TOKEN_TTL as never });
+    const access_token = await this.jwt.signAsync({ sub: user.id, email: user.email, typ: 'access', ver: user.token_version }, { expiresIn: this.env.ACCESS_TOKEN_TTL as never });
     const refresh_token = await this.jwt.signAsync(
       { sub: user.id, typ: 'refresh', ver: user.token_version, jti: randomUUID() },
       { secret: this.refreshSecret, expiresIn: this.env.REFRESH_TOKEN_TTL as never },
@@ -206,7 +213,7 @@ export class AuthService {
       const infoRes = await fetchFn('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${access_token}` } });
       if (!infoRes.ok) return fail('google_userinfo_failed');
       const info = (await infoRes.json()) as { sub?: string; email?: string; email_verified?: boolean; name?: string; picture?: string };
-      if (!info.sub || !info.email || info.email_verified === false) return fail('google_email_unverified');
+      if (!info.sub || !info.email || info.email_verified !== true) return fail('google_email_unverified');
       const user = await this.findOrCreateGoogleUser({ sub: info.sub, email: normEmail(info.email), name: info.name, picture: info.picture });
       const s = await this.issueSession(user);
       const frag = new URLSearchParams({ access_token: s.access_token, refresh_token: s.refresh_token, token_type: 'bearer', expires_in: String(s.expires_in) });
@@ -221,7 +228,14 @@ export class AuthService {
     const bySub = await this.prisma.users.findUnique({ where: { google_sub: g.sub } });
     if (bySub) return bySub;
     const byEmail = await this.prisma.users.findUnique({ where: { email: g.email } });
-    if (byEmail) return this.prisma.users.update({ where: { id: byEmail.id }, data: { google_sub: g.sub } });
+    if (byEmail) {
+      // O Google prova a posse do e-mail: a senha criada por quem cadastrou primeiro (sem verificação) morre,
+      // e as sessões existentes caem (pre-hijack).
+      return this.prisma.users.update({
+        where: { id: byEmail.id },
+        data: { google_sub: g.sub, password_hash: null, token_version: { increment: 1 } },
+      });
+    }
     const { user } = await this.prisma.$transaction((tx) =>
       provisionUser(tx, { email: g.email, passwordHash: null, googleSub: g.sub, fullName: g.name, avatarUrl: g.picture, companyName: g.name ? `Workspace de ${g.name}` : null }),
     );

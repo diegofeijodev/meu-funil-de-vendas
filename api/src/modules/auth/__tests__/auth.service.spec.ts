@@ -186,3 +186,40 @@ describe('AuthService — Google OAuth opcional', () => {
     expect((await rejects(svc.googleCallback('code', 'lixo', fakeFetch))).status).toBe(400);
   });
 });
+
+describe('AuthService — fixes de segurança', () => {
+  const gEnv = validateEnv({ DATABASE_URL: 'x', JWT_SECRET: env.JWT_SECRET, NODE_ENV: 'test', GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'sec' });
+  const fetchFor = (verified: boolean | undefined) => (async (url: string) =>
+    String(url).includes('token')
+      ? new Response(JSON.stringify({ access_token: 'x' }), { status: 200 })
+      : new Response(JSON.stringify({ sub: 'g-1', email: 'vitima@x.com', ...(verified === undefined ? {} : { email_verified: verified }) }), { status: 200 })) as unknown as typeof fetch;
+
+  it('Google vinculando por e-mail apaga a senha pré-existente e derruba sessões (pre-hijack)', async () => {
+    const p = fakePrisma();
+    const svc = new AuthService(p.db, new JwtService({ secret: gEnv.JWT_SECRET }), gEnv);
+    const atacante = await svc.signup({ email: 'vitima@x.com', password: 'senha-do-atacante' });
+    const state = new URL(await svc.googleAuthUrl()).searchParams.get('state')!;
+    await svc.googleCallback('c', state, fetchFor(true));
+    expect(p.users[0].google_sub).toBe('g-1');
+    expect(p.users[0].password_hash).toBeNull();
+    expect(p.users[0].token_version).toBe(1);
+    expect((await rejects(svc.login({ email: 'vitima@x.com', password: 'senha-do-atacante' }))).message).toBe('Invalid login credentials');
+    expect((await rejects(svc.refresh(atacante.refresh_token))).status).toBe(401);
+  });
+
+  it.each([undefined, false])('Google com email_verified=%s é recusado (sem criar usuário)', async (v) => {
+    const p = fakePrisma();
+    const svc = new AuthService(p.db, new JwtService({ secret: gEnv.JWT_SECRET }), gEnv);
+    const state = new URL(await svc.googleAuthUrl()).searchParams.get('state')!;
+    expect(await svc.googleCallback('c', state, fetchFor(v))).toContain('error=google_email_unverified');
+    expect(p.users).toHaveLength(0);
+  });
+
+  it('access token carrega ver = token_version; senha > 72 bytes é recusada', async () => {
+    const { svc, jwt } = make();
+    const s = await svc.signup({ email: 'a@b.com', password: 'segredo1' });
+    expect(((await jwt.verifyAsync(s.access_token)) as any).ver).toBe(0);
+    expect((await rejects(svc.signup({ email: 'c@b.com', password: 'a'.repeat(73) }))).message).toBe('Password should be at most 72 bytes.');
+    expect((await rejects(svc.login({ email: 'a@b.com', password: 'a'.repeat(73) }))).message).toBe('Invalid login credentials');
+  });
+});

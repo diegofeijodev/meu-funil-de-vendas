@@ -18,7 +18,7 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
 - Erros sempre `{ error: { code, message } }` (`HttpExceptionFilter` global), com a MESMA mensagem pt-BR do protótipo (no auth, a string do GoTrue).
   Lance `new XException({ code, message })`. No web, ler com um helper que não achate para `error.message`.
 - Funções que no protótipo devolviam `{ ok:false, error }` continuam devolvendo isso (HTTP 200).
-- **Autenticação**: guard JWT global (`JwtAuthGuard`); rota pública = `@Public()`. Access token HS256 (`typ: access`) + refresh stateless (`typ: refresh`, revogado por `users.token_version`).
+- **Autenticação**: guard JWT global (`JwtAuthGuard`); rota pública = `@Public()`. Access token HS256 (`typ: access`) + refresh stateless (`typ: refresh`); ambos levam `ver` e morrem quando `users.token_version` muda (logout).
   `users.id` é o MESMO id de `profiles.id` e de todo `user_id`/`owner_id`/`created_by` (colunas uuid sem FK, como no protótipo).
 - **Autorização**: toda rota de workspace exige membro — `WorkspaceAccessService.require(userId, workspaceId, 'read'|'write'|'manage')` ou
   `@UseGuards(WorkspaceAccessGuard)`. Viewer só lê; aprovar decisão e aprovar/ativar campanha = `manage` (owner|admin). Toda id recebida
@@ -78,3 +78,5 @@ Seed de dev: `demo@meufunil.local` / `meufunil123` (owner de "Meu Funil Demo").
   conhecidas (fora delas: 404 do root, sem shell). Cada tarefa de página cria o `page.tsx` real em `(app)/<rota>/`.
 - `lib/workspace.tsx` (`WorkspaceProvider`/`useWorkspace`): `GET /v1/workspaces`; `logActivity` virou no-op (a API registra a atividade). `lib/ig-pending.ts` é o selo do Instagram no menu (0 até a tarefa do Instagram).
 - `scripts/browser-check.mjs` (Playwright do freela-web-v2): login pelo formulário, shell, menu, 404, refresh de token, Sair; falha em console/pageerror/rede/HTTP>=400. Cresce a cada tarefa.
+
+- `NODE_ENV` não tem default: chave de dev do cofre e Swagger só com `NODE_ENV=development` (test p/ a chave). Sem NODE_ENV explícito e sem `CREDENTIALS_ENCRYPTION_KEY` a API não sobe.

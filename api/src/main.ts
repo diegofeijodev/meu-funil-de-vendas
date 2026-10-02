@@ -71,7 +71,7 @@ async function bootstrap() {
     credentials: true,
   });
 
-  if (env.NODE_ENV !== 'production' || env.SWAGGER_ENABLED === 'true') {
+  if (env.NODE_ENV === 'development' || env.SWAGGER_ENABLED === 'true') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Meu Funil — API')
       .setDescription('Contrato canônico em docs/api-contract.md.')

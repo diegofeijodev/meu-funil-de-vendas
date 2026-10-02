@@ -11,7 +11,8 @@ const bool = (def: 'true' | 'false') =>
 
 const envSchema = z
   .object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    /** Sem default de propósito: só 'development'/'test' liberam a chave de dev do cofre e o Swagger. */
+    NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
     PORT: z.coerce.number().default(3015),
     DATABASE_URL: z.string().min(1),
     JWT_SECRET: z.string().min(16),
@@ -79,11 +80,11 @@ const envSchema = z
     CALCOM_API_KEY: opt(),
   })
   .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production' && !env.CREDENTIALS_ENCRYPTION_KEY) {
+    if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test' && !env.CREDENTIALS_ENCRYPTION_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['CREDENTIALS_ENCRYPTION_KEY'],
-        message: 'obrigatória em produção (cofre de credenciais)',
+        message: 'obrigatória fora de NODE_ENV=development/test (cofre de credenciais); defina NODE_ENV explicitamente',
       });
     }
   });

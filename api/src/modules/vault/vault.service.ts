@@ -34,10 +34,10 @@ export class VaultService {
 
   constructor(
     private readonly store: CredentialStore,
-    @Inject(ENV) env: Pick<Env, 'CREDENTIALS_ENCRYPTION_KEY' | 'NODE_ENV'>,
+    @Inject(ENV) env: { CREDENTIALS_ENCRYPTION_KEY?: string; NODE_ENV?: Env['NODE_ENV'] },
   ) {
-    const secret = env.CREDENTIALS_ENCRYPTION_KEY || (env.NODE_ENV === 'production' ? '' : DEV_ENCRYPTION_KEY);
-    if (!secret) throw new Error('CREDENTIALS_ENCRYPTION_KEY é obrigatória em produção.');
+    const secret = env.CREDENTIALS_ENCRYPTION_KEY || (env.NODE_ENV === 'development' || env.NODE_ENV === 'test' ? DEV_ENCRYPTION_KEY : '');
+    if (!secret) throw new Error('CREDENTIALS_ENCRYPTION_KEY é obrigatória (a chave de dev só vale com NODE_ENV=development/test).');
     this.key = deriveKey(secret, 'vault-aes-256-gcm');
   }
 
@@ -50,10 +50,15 @@ export class VaultService {
 
   decryptValue(value: string | null | undefined): string | null {
     if (!value) return null;
+    if (value.startsWith('enc:v1:')) {
+      // Formato do protótipo (SHA-256): não é lido aqui e nunca vale como texto puro.
+      this.logger.warn('[cofre] valor no formato legado enc:v1 ignorado.');
+      return null;
+    }
     if (!value.startsWith(ENC_PREFIX)) return value.trim() || null;
     const [iv, ct, tag] = value.slice(ENC_PREFIX.length).split(':');
     try {
-      const d = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv ?? '', 'base64'));
+      const d = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv ?? '', 'base64'), { authTagLength: 16 });
       d.setAuthTag(Buffer.from(tag ?? '', 'base64'));
       const pt = Buffer.concat([d.update(Buffer.from(ct ?? '', 'base64')), d.final()]).toString('utf8');
       return pt.trim() || null;

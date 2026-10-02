@@ -61,7 +61,7 @@ Nesta tarefa só existem `GET /health`, o download de arquivo assinado e o iníc
 ## 2. Auth — `POST /v1/auth/*`
 
 Sessão (`SessionView`): `{ access_token, refresh_token, token_type: "bearer", expires_in, expires_at, user: { id, email } }`.
-Access token HS256 (`typ: "access"`, vida `ACCESS_TOKEN_TTL`, padrão 1 h). Refresh token stateless (`typ: "refresh"`, segredo derivado,
+Access token HS256 (`typ: "access"`, claim `ver` = `users.token_version`, vida `ACCESS_TOKEN_TTL`, padrão 1 h). Refresh token stateless (`typ: "refresh"`, segredo derivado,
 vida `REFRESH_TOKEN_TTL`, padrão 30 d), revogado por `users.token_version`.
 
 | rota | corpo | resposta |
@@ -69,7 +69,7 @@ vida `REFRESH_TOKEN_TTL`, padrão 30 d), revogado por `users.token_version`.
 | `POST /v1/auth/signup` **(pública)** | `{ email, password, full_name?, company_name? }` | `201` `SessionView` |
 | `POST /v1/auth/login` **(pública)** | `{ email, password }` | `200` `SessionView` |
 | `POST /v1/auth/refresh` **(pública)** | `{ refresh_token }` | `200` `SessionView` (token novo) |
-| `POST /v1/auth/logout` | — | `204`; invalida TODOS os refresh tokens do usuário |
+| `POST /v1/auth/logout` | — | `204`; incrementa `token_version`: invalida TODOS os refresh tokens **e os access tokens** já emitidos (o guard compara `ver` com o banco) |
 | `GET /v1/auth/me` | — | `{ user: { id, email, created_at }, profile: { id, email, full_name, avatar_url, created_at } }` |
 | `GET /v1/auth/google?redirect_uri=` **(pública)** | — | `302` para o Google; `503 GOOGLE_NOT_CONFIGURED` sem `GOOGLE_CLIENT_ID/SECRET` |
 | `GET /v1/auth/google/callback` **(pública)** | query do Google | `302` para `redirect_uri#access_token=…&refresh_token=…&token_type=bearer&expires_in=…` (ou `#error=…`) |
@@ -92,7 +92,7 @@ Mensagens (iguais às do GoTrue que `routes/auth.tsx` mapeia):
 **não** semeia dados de demonstração (db.md §4/§8). Diferença deliberada: o signup já devolve a sessão (o protótipo fazia
 `signUp` + `signInWithPassword`). E-mail é normalizado (trim + minúsculas).
 
-**Google**: `redirect_uri` precisa ser da origem de `APP_URL` ou de `CORS_ORIGINS`. A sessão volta no fragmento (`#`), como o fluxo implícito do Supabase.
+**Google**: exige `email_verified === true`; ao vincular a um usuário existente por e-mail, a senha dele é apagada e as sessões caem (anti pre-hijack). Senha > 72 bytes → 422 `Password should be at most 72 bytes.`. `redirect_uri` precisa ser da origem de `APP_URL` ou de `CORS_ORIGINS`. A sessão volta no fragmento (`#`), como o fluxo implícito do Supabase.
 
 ## 3. Workspaces e perfil — `/v1/workspaces`, `/v1/profiles`
 

@@ -41,6 +41,8 @@ describe('FilesService — URL assinada', () => {
     expect(code(() => svc.verify('creative-assets', key, String(Number(exp) + 1), sig))).toBe(403);
     expect(code(() => svc.verify('creative-assets', key, exp, sig.replace(/^./, sig[0] === 'a' ? 'b' : 'a')))).toBe(403);
     expect(code(() => svc.verify('creative-assets', key, exp, 'zz'))).toBe(403);
+    expect(code(() => svc.verify('creative-assets', key, exp, 'g'.repeat(64)))).toBe(403);
+    expect(code(() => svc.verify('creative-assets', key, exp, sig.toUpperCase()))).toBe(403);
     expect(code(() => svc.verify('creative-assets', key, undefined, undefined))).toBe(403);
   });
 

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class CreateWorkspaceDto {
   // Validado no serviço ("nome obrigatório", igual ao RPC create_workspace).
@@ -11,5 +11,5 @@ export class UpdateWorkspaceDto {
 
 export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(200) full_name?: string;
-  @IsOptional() @IsString() @MaxLength(2000) avatar_url?: string;
+  @IsOptional() @IsString() @MaxLength(2000) @Matches(/^(https?:\/\/\S+|\/(?!\/)\S*)$/, { message: 'avatar_url deve ser http(s) ou caminho relativo' }) avatar_url?: string;
 }

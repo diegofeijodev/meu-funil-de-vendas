@@ -74,6 +74,18 @@ describe('VaultService (AES-256-GCM + HKDF)', () => {
     expect(maskSecret(null)).toBe('');
   });
 
+  it('chave de dev SÓ com NODE_ENV development/test; NODE_ENV ausente ou production sem chave falha', () => {
+    expect(() => new VaultService(new MemoryStore(), {})).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
+    expect(() => new VaultService(new MemoryStore(), { NODE_ENV: 'production' })).toThrow();
+    expect(() => new VaultService(new MemoryStore(), { NODE_ENV: 'test' })).not.toThrow();
+  });
+
+  it('valor enc:v1: do protótipo é rejeitado (null), nunca tratado como texto', async () => {
+    const { store, vault } = mk();
+    await store.upsert(null, 'V1', 'enc:v1:abc:def');
+    expect(await vault.get(null, 'V1')).toBeNull();
+  });
+
   it('em produção exige a chave; em dev cai na chave de desenvolvimento', () => {
     expect(() => new VaultService(new MemoryStore(), { NODE_ENV: 'production' })).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
     const dev = new VaultService(new MemoryStore(), { NODE_ENV: 'development' });

@@ -127,8 +127,8 @@ export class FilesService {
     const expN = Number(exp);
     if (!sig || !exp || !Number.isFinite(expN)) throw bad();
     const expected = Buffer.from(this.sign(bucket, key, expN), 'hex');
-    let given: Buffer;
-    try { given = Buffer.from(sig, 'hex'); } catch { throw bad(); }
+    if (!/^[0-9a-f]{64}$/.test(sig)) throw bad();
+    const given = Buffer.from(sig, 'hex');
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw bad();
     if (expN * 1000 < nowMs) throw bad();
   }

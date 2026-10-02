@@ -9,6 +9,7 @@ const EMAIL = 'demo@meufunil.local';
 const PASSWORD = 'meufunil123';
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') throw new Error('seed de desenvolvimento: recusado com NODE_ENV=production.');
   const prisma = new PrismaClient();
   try {
     const existing = await prisma.users.findUnique({ where: { email: EMAIL } });

@@ -113,6 +113,7 @@ model workspace_members {
   workspace    workspaces     @relation("workspace_members_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
 
   @@unique([workspace_id, user_id])
+  @@index([user_id], map: "workspace_members_user_idx")
 }
 
 model brands {
