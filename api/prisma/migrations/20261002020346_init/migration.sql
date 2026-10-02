@@ -14,6 +14,7 @@ CREATE TABLE "users" (
     "email" TEXT NOT NULL,
     "password_hash" TEXT,
     "google_sub" TEXT,
+    "token_version" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
