@@ -13,6 +13,9 @@ import * as crm from "@/modules/crm/infrastructure/crm.api";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { ROLE_LABELS } from "@/lib/labels";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { HowTo } from "@/components/how-to";
+import { GUIDES } from "@/lib/guides";
+import { SdrAgentPanel } from "@/components/crm/sdr-agent-panel";
 
 export function CrmSettings() {
   const { workspaceId } = useWorkspace();
@@ -201,7 +204,10 @@ export function CrmSettings() {
         </Section>
       </div>
 
-      {/* Task 8: HowTo GUIDES.sdr + <SdrAgentPanel workspaceId={workspaceId} /> entram aqui. */}
+      <div className="mt-6">
+        <HowTo title={GUIDES.sdr.title} steps={GUIDES.sdr.steps} />
+        <SdrAgentPanel workspaceId={workspaceId} />
+      </div>
     </div>
   );
 }
