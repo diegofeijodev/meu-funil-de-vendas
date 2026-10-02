@@ -465,3 +465,68 @@ O heartbeat (`instagram-<task>`, `instagram-all`) é gravado **depois** (o prot�
 processado/em processamento (< 10 min) não repete; `failed` ou preso > 10 min é reprocessado. Cada evento vira lead (`source instagram_dm|instagram_comment`, `instagram_id`), conversa (`phone = ig:<igsid>`, janela de 24 h), mensagem e interação;
 descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; palavra-chave de comentário envia DM privada + resposta pública (`crm_integrations.config.keywords`). **Cadências, agente SDR e compreensão de áudio/imagem são da Task 8** — entram pelo ponto de extensão
 `CRM_CHANNEL_HOOKS` (`startCadence`, `stopCadences`, `runSdr`, `describeMedia`); sem ele o canal grava tudo e não responde sozinho. `WebhookLedgerService` (`webhooks/`) é o mesmo ledger/assinatura que os webhooks de WhatsApp e Lead Ads usarão.
+
+## 23. Meta Ads, gestor de tráfego, Google/TikTok Ads, Performance e Insights
+
+Módulo `api/src/modules/ads`. Telas `/performance`, `/insights`, abas "Anúncios e regras" da campanha e (Task 9) o painel de Integrações. Todas as ações são `POST` com o `data` do protótipo no corpo, HTTP 200; `workspaceId`/`campaignId`/`id` são uuid (`400 VALIDATION_ERROR` se não). Erros dos provedores: Meta = `502 META_ERROR`, Google/TikTok = `502 ADS_PROVIDER_ERROR` (mensagem pt-BR do protótipo); falta de credencial = `400`. Todo id que entra em caminho da Graph/GAQL é só dígitos (`act_`+dígitos para a conta); fora disso nunca vira URL. A Graph usa `MetaGraphClient` (Task 5): `access_token` + `appsecret_proof` em toda chamada; `META_GRAPH_BASE_URL` (só testes, ignorada em produção) aponta para a Graph falsa.
+
+### 23.1 Leituras diretas (`WorkspaceAccessGuard`, GET = read)
+
+| rota | resposta |
+|---|---|
+| `GET /v1/workspaces/:ws/performance-daily` | `performance_daily[]` com `source ≠ 'demo'`, por `date` asc (number/`YYYY-MM-DD`) |
+| `GET /v1/workspaces/:ws/campaign-costs` | `campaign_costs[]` |
+| `GET /v1/workspaces/:ws/ai-recommendations` | até 200, `created_at` desc, com `campaigns: { name } \| null` |
+
+(`/performance` ainda usa `GET …/campaigns` e `GET …/creatives`; `/insights` usa estas duas leituras.)
+
+### 23.2 Meta — `POST /v1/meta/<kebab>`
+
+Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem acesso a esta área de trabalho."`; viewer em ação de edição `403 "Seu perfil não pode alterar campanhas."`; conexão `403 "Só o dono ou um administrador conecta a Meta."`.
+
+| rota (`server fn`) | acesso | corpo → resposta |
+|---|---|---|
+| `meta-ads-save-credentials` | **owner\|admin** (o protótipo deixava marketing: corrigido) | `{ workspaceId, appId≥4, appSecret≥8, systemUserToken≥20, adAccountId (act_?dígitos), pageId (dígitos), instagramId? }` → `{ ok, configured, missing[] }`; grava no cofre (cifrado), `META_TOKEN_SOURCE=system_user`, expiração vazia |
+| `meta-ads-status` | membro | `{ workspaceId }` → `{ configured, missing[], tokenExpiresAt, tokenSource }` (sem chamar a Meta) |
+| `meta-ads-test` | membro | → `{ ok, missing[], user, account{id,name,status,currency,timezone}, page, instagram, error }` (`ok:false` com HTTP 200) |
+| `meta-ads-list` | membro | → `{ campaigns[], adsets[], ads[] }` (limite 50) |
+| `meta-ads-insights` | membro | `{ workspaceId, since, until (YYYY-MM-DD), campaignId? }` → `{ spend, impressions, clicks, ctr, cpc, leads, cpl }`; campanha sem `meta_campaign_id` (ou de outro workspace) `400 "Esta campanha ainda não foi publicada na Meta."` |
+| `meta-ads-publish` | não-viewer | `{ workspaceId, campaignId }` → `{ campaignId, adsetId, adsetIds[], adIds[], adMap, leadFormId, steps[{key,label,status,detail}] }`. Tudo **PAUSADO**; UTM no destino; falha total → `publishing_jobs failed` + 502; sucesso → grava ids, `meta_delivery_status=PAUSED`, job `done\|partial` e atividade **`campaign.published {campaign_id, mode:'live'}`**. Erros: `404 "Campanha não encontrada."`, `400` "A campanha precisa ser aprovada em Aprovações antes de ir para a Meta." / "Esta campanha já foi enviada para a Meta. Use Ativar/Pausar." / "Preencha a página de destino (URL) da campanha antes de publicar." / "Aprove pelo menos um criativo desta campanha antes de publicar."; `409` se a mesma campanha já está sendo enviada (trava em memória: clique duplo) |
+| `meta-ads-set-status` | não-viewer; **ACTIVE = owner\|admin** | `{ workspaceId, campaignId, status: ACTIVE\|PAUSED }` → `{ ok }`. Chama `CampaignGuardsService.assertCanSetDelivery/assertCanSetCampaignStatus` antes de qualquer chamada à Meta (`403 "Só o dono ou um administrador pode ativar a veiculação (gastar verba)."`). Ao ativar, anúncios pausados pelo otimizador (`ai_recommendations pause_ad applied`) continuam pausados; campanha ↔ `active`/`approved` |
+| `meta-save-app` | owner\|admin | `{ workspaceId, appId, appSecret }` → `{ ok }` |
+| `meta-login-url` | owner\|admin | `{ workspaceId, origin }` → `{ url }` (Facebook, 14 escopos). `origin` é **ignorado**: retorno = `PUBLIC_URL`; `state` aleatório de uso único (§23.5) |
+| `meta-list-assets` | owner\|admin | → `{ adAccounts[{id,name,active,currency}], pages[{id,name,instagramId,instagramUsername}] }` |
+| `meta-save-assets` | owner\|admin | `{ workspaceId, adAccountId, pageId, instagramId? }` → `{ ok }` |
+
+### 23.3 Gestor de tráfego — `POST /v1/meta/<kebab>`
+
+| rota | acesso | corpo → resposta |
+|---|---|---|
+| `sync-ads-insights-now` | membro | `{ workspaceId }` → `{ campaigns, rows }`: 30 dias da Meta + Google/TikTok → `performance_daily` (upsert em lote por `(campaign_id, meta_ad_id, date)` / `(campaign_id, source, external_id, date)`); `creative_id` só se for criativo deste workspace; carimba `last_insights_sync_at` |
+| `generate-ads-recommendations` | editores | `{ workspaceId, campaignId? }` → `{ created, errors[] }` (IA com 14 dias reais; ids da IA validados contra os dados) |
+| `decide-ads-recommendation` | owner\|admin | `{ id, decision: apply\|dismiss }` → `{ result }`. De outro workspace/inexistente `404 "Recomendação não encontrada."`; já decidida `400 "Esta recomendação já foi decidida."` (reserva atômica `pending→applying`: dois cliques executam uma vez; falha na Meta volta a `pending`). `apply` executa pause/activate/verba (teto +30%); alvo que não é da campanha `400 "Recomendação sem alvo válido."` |
+| `save-campaign-ads-settings` | editores | `{ campaignId, adsConfig{}, rules{}, privacyUrl? }` → `{ ok }`. Saneado: só chaves conhecidas, `structure`/`cta`/`placements` válidos, ids de público só dígitos, mínimo 5 / passo 5–30 %; URL só http(s) |
+| `list-meta-audiences` | membro | → `[{ id, name, subtype, size }]` |
+| `sync-crm-customer-audience` | owner\|admin | `{ workspaceId, onlyWon? }` → `{ id, uploaded }` (até 50 000 leads sem descadastro; e-mail/telefone com SHA-256; id guardado cifrado em `META_AUDIENCE_CRM_WON\|ALL`). `400` "Nenhuma etapa marcada como ganho no funil do CRM." / "Nenhum lead com e-mail ou telefone no CRM." |
+
+### 23.4 Google Ads / TikTok Ads — `POST /v1/ads/<kebab>`
+
+| rota | acesso | corpo → resposta |
+|---|---|---|
+| `ads-channels-status` | membro | → `{ google: string[], tiktok: string[] }` (o que falta) |
+| `save-ads-channel-app` | owner\|admin | `{ workspaceId, channel, values{} }` → `{ ok }`; só as chaves do canal; ids de conta numéricos; `400 "Nada para salvar."` |
+| `ads-channel-login-url` | owner\|admin | `{ workspaceId, channel, origin }` → `{ url }` (retorno = `PUBLIC_URL/api/public/ads/oauth/<canal>`; `origin` ignorado) |
+| `list-ads-channel-accounts` | owner\|admin | → `[{ id, name }]` |
+| `link-external-campaign` | editores | `{ campaignId, channel, externalId }` → `{ ok }` (só dígitos) |
+| `create-external-campaign` | editores | `{ campaignId, channel }` → `{ campaignId, steps[] }`: Google Pesquisa PAUSADA (IA escreve títulos ≤30, descrições ≤90, palavras-chave) / TikTok em vídeo DESATIVADO; mensagens do protótipo |
+| `set-external-campaign-status` | **ativar = owner\|admin**, pausar = editores | `{ campaignId, channel, active }` → `{ ok }` |
+
+### 23.5 OAuth (públicas) e `state`
+
+`oauth_states` (migração `20261002120000`): `state` = 32 bytes aleatórios, guardado só como hash SHA-256, validade 15 min, **uso único** (consumo por `DELETE`), preso a canal + empresa + usuário que iniciou (no retorno ele ainda precisa ser owner|admin). Tokens vão para o cofre (cifrado).
+- `GET /api/public/meta/oauth/callback?code&state` → `302 {APP_URL}/integrations?meta=conectado` ou `?meta_erro=<msg>` (`retorno_incompleto`, "Assinatura do retorno inválida.", "O login expirou. Tente de novo.", mensagem do Facebook).
+- `GET /api/public/ads/oauth/:channel` (`google`: `code`; `tiktok`: `auth_code`) → `302 {APP_URL}/integrations?ads=<canal>` ou `?ads_erro=<msg>` (`canal_invalido`, `retorno_incompleto`, …). O destino sai de `APP_URL`, nunca do Host.
+
+### 23.6 Cron — `POST /api/public/cron/ads`
+
+`x-cron-secret` = `CRM_CRON_SECRET` ou `cron_tokens.name='ads'` (tempo constante), senão `401 "Unauthorized"`. Corpo `{ task?: sync\|rules }` (outro valor `400`). `sync` (sempre): 3 dias de cada empresa com campanha em algum canal → `{ sync:[{workspace, rows?, error?}] }`; `rules` acrescenta `{ rules:[{campaign, actions?\|error?}] }` (pausa anúncio caro/sem lead com irmão ativo; escala conjunto barato +passo% até o teto, no máx. 1×/24 h; cada ação vira `ai_recommendations` `source='rule'`). Heartbeat depois: `ads-sync` / `ads-rules`. Jobs do agendador: `ads-insights-3h` `17 */3 * * *` (`ads-sync`) e `ads-rules-daily` `40 12 * * *` (`ads-rules`), UTC.
