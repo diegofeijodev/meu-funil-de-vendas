@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { roleAllows, WorkspaceAccessService, WorkspaceRole } from '../../access/access.service';
 import { FilesService } from '../../files/files.service';
+import { ImageService } from '../../media/image.service';
 import { BrandGuideService } from '../brand-guide.service';
 import { FakeTable } from './fake-prisma';
 
@@ -13,7 +14,12 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const WS = randomUUID();
 const OTHER_WS = randomUUID();
 const USER = randomUUID();
-const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
+// PNG de verdade (a referência passa pelo jimp antes de ir para a IA); 2000x1000 para provar a redução a 1024 px.
+let PNG: Buffer;
+const images = new ImageService();
+beforeAll(async () => {
+  PNG = Buffer.from(await images.encode(images.blank(2000, 1000, 0x336699ff), true));
+});
 
 function setup(role: WorkspaceRole | null) {
   const brands = new FakeTable();
@@ -23,7 +29,7 @@ function setup(role: WorkspaceRole | null) {
   const calls: any[] = [];
   const ai: any = { vision: async (ws: string, req: any) => { calls.push({ ws, req }); return { estilo_fotografico: 'x', paleta_hex: ['#fff'] }; } };
   const files = new FilesService({ UPLOADS_DIR: dir, JWT_SECRET: 'segredo-de-teste-16+', PUBLIC_URL: 'http://api.test', FILES_SIGNING_SECRET: undefined } as any);
-  return { svc: new BrandGuideService(prisma, access, ai, files), brands, brand_assets, files, calls };
+  return { svc: new BrandGuideService(prisma, access, ai, files, images), brands, brand_assets, files, calls };
 }
 
 const status = async (p: Promise<unknown>) => {
@@ -71,6 +77,9 @@ describe('BrandGuideService.generate', () => {
     expect(calls[0].ws).toBe(WS);
     expect(calls[0].req.images).toHaveLength(2);
     expect(calls[0].req.images[0].mime).toBe('image/jpeg');
+    // reduzida a no máximo 1024 px no maior lado (como o `shrink` do protótipo)
+    const small = await images.read(calls[0].req.images[0].bytes);
+    expect(Math.max(small.bitmap.width, small.bitmap.height)).toBe(1024);
     expect(calls[0].req.name).toBe('brand_guide');
     expect(calls[0].req.prompt).toContain('"Bar do Zé" (Bar)');
   });

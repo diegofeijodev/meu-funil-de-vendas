@@ -265,5 +265,118 @@ Server fns portadas (corpo = o `data` do protótipo). IA só via `AiService` (ch
 | `POST /v1/approvals/decide-approval` `{ approvalId, decision: 'approved'\|'rejected' }` | manage (do workspace do pedido) | `200 { ok: true }`. `404 "Pedido de aprovação não encontrado."` (inclui empresa alheia, sem vazar); `409 "Este pedido já foi decidido."` (também em corrida: o UPDATE é guardado por `status = pending`); `403 "Só o dono ou um administrador da empresa pode aprovar ou rejeitar."` (marketing/viewer). Numa transação: pedido → `decided_*`; `entity_type 'campaign'` → campanha `approved` (rejeitar = `draft`); `'creative'` → criativo recebe o status da decisão (sempre filtrado pelo workspace do pedido). Atividade `approval.<decisão> {request_id, entity_id}` com `entity_type` do pedido |
 
 **Rotas que as telas chamam e ainda não existem** (shims criados; a API nasce nas tarefas indicadas, até lá a tela mostra o erro da API): `POST /v1/meta/meta-ads-status|meta-ads-publish|meta-ads-set-status`,
-`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (Task 4). Componentes `campaign-channels`, `campaign-ads-settings` e `instagram/approvals` (`IgApprovalList`) são
+`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (**feita na Task 4**, §20). Componentes `campaign-channels`, `campaign-ads-settings` e `instagram/approvals` (`IgApprovalList`) são
 **placeholders** com a assinatura final; as tarefas de Meta (6) e do Instagram (5) os substituem.
+
+## 18. Biblioteca de mídia — `/v1/workspaces/:workspaceId/{media-assets,copies}` e `POST /v1/media/*`
+
+Tela `/library` (+ `MediaPicker` do Instagram). Toda mídia entra por **um só caminho** (`AssetsService.ingest`): baixa/recebe os bytes, padroniza (imagem: corte "cover" no tamanho do formato de destino, JPEG q92 ou PNG com alfa, miniatura 400 px;
+**jimp**, JS puro), valida contra o Instagram (imagem: largura ≥ 320 e proporção 0,56–1,91; vídeo: **só o cabeçalho MP4/MOV** — H.264, AAC, ≥ 720 px, 9:16 p/ Reel/Story, 3 s–15 min / ≤ 60 s, 23–60 fps, ≤ 1 GB; **sem transcodificar**),
+grava em `creative-assets` (`media/<workspace>/<dia>/<uuid>.<ext>` + `_thumb.jpg`) e registra em `media_assets` (URL assinada de 5 anos). Todo filtro é por `workspace_id`; id de outro workspace nunca é tocado.
+
+### 18.1 Leituras/escritas diretas (`@UseGuards(WorkspaceAccessGuard)`; GET = read, resto = write)
+
+| rota | corpo / query | resposta |
+|---|---|---|
+| `GET /media-assets` | `search` (título/prompt, `% , ( )` viram espaço), `brand_id`, `campaign_id`, `kind` (image\|video), `target_format`, `status` (`active` = tudo menos arquivadas; draft\|approved\|rejected\|archived), `tag`, `folder`, `source`, `period` (7\|30\|90 dias), `sort` (new\|old\|title\|size; `size` com nulos por último), `limit` (1–1000, padrão 60) | `{ rows, count }`: `rows` = linhas de `media_assets` com `brands: { name } \| null` e `campaigns: { name } \| null`; `count` = total do filtro (a tela pagina com `limit = páginas × 60`) |
+| `GET /media-assets/facets` | — | `[{ tags, folder }]` (até 5000; a tela tira as tags/pastas únicas) |
+| `PATCH /media-assets/bulk` | `{ ids[1..500], status?, folder? }` (`folder` `null`/vazio = sem pasta) | `{ updated }` — só ids do workspace |
+| `PATCH /media-assets/:id` | `{ tags[] }` (limpa, tira vazios e repetidos) | linha atualizada; `404 "Mídia não encontrada."` |
+| `GET /copies` | — | aba "Textos": `copies[]` (`id, version, status, angle, created_at, content`) com `campaigns: { name, brand_id }`, `created_at` desc, até 300 |
+
+### 18.2 Ações — `POST /v1/media/<nome-em-kebab>` (workspace no corpo)
+
+Erros de acesso das funções de `export.functions`: não membro `403 "Você não tem acesso a esta área de trabalho."`; viewer em ação de edição `403 "Seu papel não permite esta ação."`. As de `manage.functions` usam as mensagens padrão (§1.4).
+
+| rota | corpo | resposta / erros |
+|---|---|---|
+| `download-asset` (qualquer membro) | `{ workspaceId, assetId, format?: original\|png\|jpg }` | `{ url, name }` — link de **10 min** (`…?exp&sig&dl=<nome>`: o download força `Content-Disposition: attachment`). Nome `marca_formato_AAAA-MM-DD.ext`. `404 "Mídia não encontrada."` |
+| `export-pdf` (membro) | `{ workspaceId, assetIds[1..100], layout: one_per_page\|contact_sheet }` | `{ url, name }` — **pdf-lib**: uma peça por página no tamanho real (px × 0,75 pt) ou folha de contato A4 2×3 com título/formato/medidas/prompt; vídeo vira caixa "VIDEO" |
+| `export-zip` (membro) | `{ workspaceId, assetIds[1..100] }` | `{ url, name, count }` — **jszip** (STORE), nomes `marca_formato_data_<n>.ext`; `400 "Seleção grande demais para um ZIP (limite de 250 MB). Selecione menos itens."` |
+| `upload-media` (edição) | **multipart**: `workspaceId`, `target` (padrão `other`), `brandId?`, `file` — um arquivo por chamada | `{ id, igReady, issues[] }`. `400 "<nome>: envie imagem ou vídeo."`, `400 "<nome>: arquivo maior que 100 MB."` (o protótipo aceitava 500 MB; o teto é o do `@fastify/multipart` do `main.ts`), `400 "Arquivo ausente."`, `404` marca inexistente no workspace |
+| `reformat-media` (edição) | `{ workspaceId, assetId, targets[1..8] }` | `{ ids[] }` — recorta (sem IA) para cada formato, como filhas (`parent_id`) do original; `400 "Vídeos não são recortados no servidor. Gere um novo vídeo neste formato."` |
+| `use-media-in-instagram` (edição) | `{ workspaceId, assetIds[1..100] }` | `{ postId, format }` — cria `ig_posts` rascunho (`status 'idea'`; formato da 1ª mídia, `feed_carousel` se > 1; `media[]` até 10; `creative_brief.from_library`) e liga `media_assets.ig_post_id`. `400 "Selecione ao menos uma mídia."` |
+| `use-media-in-campaign` (edição) | `{ workspaceId, assetIds[], campaignId }` | `{ count }` — cria `creatives` aprovados (`preview_url` = url da mídia) e liga a mídia; `404 "Campanha não encontrada."` |
+| `attach-media-to-post` (edição) | `{ workspaceId, postId, assetIds[] }` | `{ ok: true, items }` — substitui `ig_posts.media` (até 10 no carrossel, senão 1). `400 "Post não encontrado."`; `400 "Mídia não está pronta para o Instagram: <problemas>"` |
+| `revalidate-assets` (edição) | `{ workspaceId, assetIds[] }` | `{ total, ready, archived, failed, results[] }` — refaz medidas/validação/miniatura; mídia `mock`/picsum é arquivada |
+| `delete-media-assets` (write) | `{ workspaceId, assetIds[1..200] }` | `{ deleted }` — apaga arquivo + miniatura do disco e o registro; versões filhas ficam soltas (`parent_id = null`) |
+| `rename-media-tag` (write) | `{ workspaceId, from, to }` (`to` vazio remove a tag) | `{ updated }` |
+| `rename-media-folder` (write) | `{ workspaceId, from, to }` (`to` vazio desfaz a pasta) | `{ updated }` |
+| `media-ad-results` (read) | `{ workspaceId, creativeId }` | `{ spend, impressions, clicks, leads, conversions, revenue, campaigns[], days }` (soma de `performance_daily` com `source ≠ 'demo'`) |
+
+`GET /v1/files/:bucket/*` ganhou `?dl=<nome>` (cabeçalho `Content-Disposition`; não faz parte da assinatura).
+
+## 19. Creative Studio — `/v1/workspaces/:workspaceId/{creatives,creative-generation-jobs}` e `POST /v1/creative/*`
+
+### 19.1 Leituras/escritas diretas (WorkspaceAccessGuard; GET = read, resto = write)
+
+| rota | resposta |
+|---|---|
+| `GET /creatives` | `creatives[]` `created_at` desc, com `campaigns: { name } \| null` |
+| `PATCH /creatives/:id` `{ status: draft\|ready\|approved\|rejected\|published }` | linha atualizada; atividade `creative.<status> {creative_id}` (antes gravada pelo navegador). `404 "Criativo não encontrado."` |
+| `GET /creative-generation-jobs?limit=` | jobs `created_at` desc (padrão 12, máx. 100) — "Gerações recentes" |
+| `GET /campaigns/:id/brief` | `{ strategies[10], copies[10] }` (`content, status, version`, versão desc) — a tela escolhe a aprovada, senão a primeira |
+
+### 19.2 Ações (`POST /v1/creative/<nome-em-kebab>`) — a IA e o provedor só rodam no servidor
+
+Diferente do protótipo (que só confiava no RLS), **todas exigem papel**: gerar/prévia/retry/nova versão = `write` (viewer `403`); pacote CapCut = qualquer membro. O job/criativo vem da linha (não do corpo): quem não é membro do workspace dela
+recebe `404` (`"Job de geração não encontrado."` / `"Criativo não encontrado."`). `campaignId`/`brandId` de outro workspace → `404 "Campanha não encontrada."` / `"Marca não encontrada."` (antes de gastar IA).
+
+| rota | corpo | resposta |
+|---|---|---|
+| `generate-creative` | `{ workspaceId, campaignId?, brandId?, title?, type?, aspectRatio?, targetFormat?, prompt?, copyText?, provider?: auto\|higgsfield\|chatgpt\|gemini, visualPrompt?(≤4000), artDirection?{}, adjust?(≤300), layout?: limpo\|titulo_topo\|preco_destaque\|cta_rodape, variations?(1–4, padrão 3), headline?(≤120), price?(≤40), cta?(≤40), angle?(≤200), useBrandImage?, coverWithLogo? }` | `{ jobId, creativeId, status: ready\|generating\|failed, assetUrl, provider, sandbox:false, error, artDirection, variations:[{assetId,url,score,winner}] }`. **Erro do provedor VOLTA em `error` (200, `status:'failed'`)**; sem gateway de IA e sem chave própria: `502 AI_NOT_CONFIGURED` (a direção de arte vem antes do job). Atividade `creative.generated {creative_id, provider}` quando `ready` |
+| `preview-visual-prompt` | mesmo corpo | `{ artDirection }` — só o diretor de arte (1 chamada de LLM); se vierem `visualPrompt`+`artDirection` e não houver `adjust`, devolve o editado sem chamar a IA |
+| `retry-creative-job` | `{ jobId }` | mesmo formato (sem `variations`/`artDirection`); refaz com o `final_prompt` guardado |
+| `new-creative-version` | `{ creativeId }` | idem; atualiza o MESMO criativo (`version + 1`, linha em `creative_versions`) |
+| `capcut-package` | `{ creativeId }` | `{ url }` — zip (vídeo/imagem, `legendas.srt`, `capa.jpg`, `LEIA-ME.txt` com o roteiro do Reels), link de **10 min** (no protótipo, 5 anos). `400 "Este criativo ainda não tem arquivo."` |
+| `generate-brand-guide` | (Task 2) | as fotos de referência agora são reduzidas a ≤ 1024 px JPEG (jimp) antes de ir à IA, como no protótipo |
+| `POST /v1/ai-keys/ai-keys-health` `{ workspaceId }` | membro | `{ outOfCredit:[{vendor,error}] }` — só esta ação de chaves de IA mora aqui; as demais ficam em Integrações |
+
+**Pipeline de imagem** (`PipelineService`): diretor de arte (LLM com schema estrito: sujeito, cena, luz, câmera, paleta… `prompt_final` em inglês) → N variações em paralelo (1–4) → cada uma entra na biblioteca (`source = provedor`) e é nota­da pelo **crítico visual**
+(visão: produto, fidelidade, composição, defeitos, paleta; 0–10 cada, total/50; candidata reduzida a 768 px) → se a melhor tiver < 28/50, **1 nova rodada** com o motivo do crítico → a vencedora recebe, por cima, **título/preço/chamada e logo**
+(`composeCreative`: **jimp + opentype.js**, texto desenhado por varredura com antisserrilhado, zonas seguras do 9:16, faixa com contraste automático; **nunca gerado pela IA**) e vira o criativo final (filha da vencedora). A fonte padrão é a **Archivo Black vendorizada** em `api/assets/fonts/`
+(o protótipo a baixava do GitHub a cada partida); fonte `.ttf/.otf` da marca vale se o opentype a entender. **Vídeo**: sem transcodificação; MP4 validado pelo cabeçalho; legendas `.vtt/.srt` (blocos de 6 palavras) e capa composta (logo/título/CTA) opcionais.
+
+**Provedor** (`provider = auto`): chave OpenAI do workspace (estrita) → chave Gemini (estrita) → Higgsfield (MCP, se conectado) → créditos do app (gateway, ignora as chaves do workspace); qualquer erro avança para o próximo e o caminho vai em `creative_generation_jobs.provider_log`.
+`chatgpt`/`gemini` escolhidos vão direto; `higgsfield` sem conexão: `400 "Higgsfield não está conectado nesta empresa. Conecte em Integrações."`.
+
+**Vídeo assíncrono — id do job vinculado ao workspace**: o vídeo espera até 25 s na requisição (e usa a foto do produto da marca como 1º quadro, salvo `useBrandImage:false`); passou disso, o job fica `generating` com `external_job_id` (`veo:<id>` / `gveo:<operação>` / UUID do Higgsfield)
+**gravado na própria linha do job (workspace_id)** e o agendador (`creative-poll-5min`, heartbeat `creative`) conclui. O poller só consulta ids que (a) têm o **formato válido** (`isValidVideoJobId`; Higgsfield só UUID) e (b) **estão gravados num job do mesmo workspace** — nunca um id/nome vindo de fora;
+`AiService.videoStatus` também recusa formato inválido. Passou de 1 h: `failed` ("Tempo esgotado no provedor."). O `options` do job guarda título/ângulo/texto/formato/capa para o poller concluir como o fluxo normal.
+
+## 20. Canva — `POST /v1/creative/canva-*` e `GET /api/public/canva/oauth/callback`
+
+Credenciais por empresa no **cofre** (`app_credentials`, AES-256-GCM): `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET` (também valem os globais), `CANVA_TOKENS` (JSON), `CANVA_OAUTH` (state + verifier PKCE, vale 20 min, uso único). Empresas com `ai_inherit_from` usam a conexão da agência.
+O redirect cadastrado no app Canva é `<PUBLIC_URL>/api/public/canva/oauth/callback` (o protótipo usava o domínio do site); a volta é `302 <APP_URL>/integrations?canva=ok|error[&msg=]`.
+
+| rota | nível | corpo → resposta |
+|---|---|---|
+| `canva-get-status` | read | `{ workspaceId }` → `{ appSaved, clientIdHint ("abcd••••"), connected, inherited, name, email }` |
+| `canva-save-app` | manage | `{ workspaceId, clientId (trim 4–200), clientSecret? (≤500) }` → `{ ok: true }` |
+| `canva-o-auth-start` | manage | `{ workspaceId }` → `{ authUrl }` (PKCE S256; `400 "Salve o Client ID e o Client secret do app Canva antes de entrar."`) |
+| `canva-test` | read | → `{ name }` |
+| `canva-disconnect` | manage | → `{ ok: true }` |
+| `canva-send-asset` | write | `{ workspaceId, assetId }` → `{ assetId }` (id do Canva); `404 "Mídia não encontrada."` |
+| `canva-create-from-brief` | write | `{ workspaceId, title (1–250), size?: square\|portrait\|story\|landscape (portrait), assetId? }` → `{ designId, editUrl }` |
+| `canva-list-designs` | read | `{ workspaceId, query? (≤100) }` → `[{ id, title, thumbnail }]` |
+| `canva-import-design` | write | `{ workspaceId, designId (id ou link `…/design/<id>/…`), title?, format?: png\|jpg\|mp4, brandId?, campaignId? }` → `{ id, url }` (1ª mídia; `source 'canva'`, `provider 'canva'`, `prompt 'canva_design_id:<id>'`, sem recorte) |
+
+Erros do Canva: `400 "Canva não está conectado nesta empresa. Entre com Canva em Integrações."`; `400 "Canva: <mensagem>"`; 401 do Canva ou refresh recusado desconecta e pede novo login. O download do arquivo exportado só vai para https público (SSRF).
+`GET /api/public/canva/oauth/callback?code&state` **(pública)**: o `state` guardado no cofre é a credencial; qualquer falha → `302` com `canva=error`.
+
+## 21. Conexões MCP (Higgsfield / Meta / Canva) — `POST /v1/mcp/*`
+
+Cliente MCP Streamable-HTTP (JSON-RPC 2.0, `protocolVersion 2025-06-18`, aceita JSON ou SSE, `Mcp-Session-Id`, sessão nova a cada chamada) + OAuth 2.1/PKCE com registro dinâmico (RFC 7591) e descoberta RFC 9728/8414.
+**Só https** (`localhost`/127.x só fora de produção); nunca para a rede interna (IPs privados/link-local, `*.internal`); redirecionamentos seguidos à mão (≤ 5; sem `Authorization` entre origens). `access_token`, `refresh_token`, `oauth_client_secret` e `oauth_code_verifier` ficam
+**cifrados** em `mcp_connections` (`enc:v2:`, `VaultService`) — o protótipo os guardava em texto puro; a API nunca devolve essas colunas.
+
+| rota | nível | corpo → resposta |
+|---|---|---|
+| `POST mcp-connect` | dono/admin (`403 "Só o dono ou um administrador conecta contas."`; não membro `403 "Você não tem acesso a este workspace."`) | `{ workspaceId, provider: higgsfield\|meta\|canva, serverUrl (≥4), accessToken?, label? }` → `{ status, tools[{name,description}], error, needsAuth }` — testa (`initialize` + `tools/list`) e faz upsert por `(workspace_id, provider)`; sem `accessToken`, reaproveita o guardado |
+| `POST mcp-o-auth-start` | dono/admin | `{ workspaceId, provider, serverUrl, label? }` → `{ authUrl }` (cliente registrado de novo a cada vez; `redirect_uri = <PUBLIC_URL>/api/public/mcp/callback`); `400 "Este servidor MCP não aceita registro automático de aplicativo. Informe uma chave de acesso manualmente."` |
+| `POST mcp-disconnect` | dono/admin | → `{ ok: true }` |
+| `POST mcp-run` | **write** (o protótipo deixava qualquer membro; gasta crédito da conta conectada) | `{ workspaceId, provider, keywords?[], toolName?, args? }` → `{ tool, text, mediaUrl, structured }`; `400 "Nenhuma conexão MCP ativa para este provedor."` / `"O servidor MCP não expôs nenhuma ferramenta utilizável."`. Renova o token quando falta < 60 s; sem conexão própria ativa usa a da agência |
+| `GET /v1/workspaces/:ws/mcp-connections` | read | `[{ id, provider, label, server_url, status, tools, last_error, connected_at, expires_at }]` (nunca tokens) |
+| `GET /v1/mcp/status/:provider` | autenticado | `[{ workspace_id, provider, status }]` das empresas do usuário (cartão "Higgsfield" de Integrações) |
+| `GET /api/public/mcp/callback?code&state&error` | **pública** | troca o code, testa as ferramentas e grava os tokens cifrados; devolve **HTML** (mensagem escapada; `postMessage({type:"mcp-oauth",ok})` só para a origem de `APP_URL`). O `state` é de uso único e vale 30 min |
+

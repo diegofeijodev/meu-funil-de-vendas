@@ -44,6 +44,8 @@ const REDE_IGNORADA = [
   { url: /\/_next\/static\/webpack\/.*\.hot-update\.js$/, erro: 'net::ERR_ABORTED' },
   // Navegar para outra tela enquanto o checklist (`setup/status`, ~1 s) ainda carrega cancela o XHR.
   { url: /\/v1\/setup\/status$/, erro: 'net::ERR_ABORTED' },
+  // Download de exportação da biblioteca: o link assinado (`?dl=<nome>`) vira download e o navegador "aborta" a navegação do <a>.
+  { url: /\/v1\/files\/creative-assets\/.*[?&]dl=/, erro: 'net::ERR_ABORTED' },
 ];
 const redeIgnorada = (url, erro) =>
   ignorada(url) || REDE_IGNORADA.some((r) => r.url.test(url) && erro === r.erro);
@@ -68,18 +70,41 @@ const copia = (n) => ({
   meta_ad: 'Anúncio Meta', instagram_feed: 'Feed', reels: '0-3s abertura', stories: 'Story 1', script_ugc: 'UGC', script_institucional: 'Institucional',
   carrossel: ['s1', 's2', 's3', 's4', 's5', 's6', 's7'], quiz: [{ pergunta: 'Qual chopp?', opcoes: ['Claro', 'Escuro', 'Misto'] }],
 });
+// Task 4: imagem (1x1 — a API recorta/cobre para o formato), direção de arte e nota do crítico.
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const direcaoDeArte = {
+  subject: 'copo de chopp', scene: 'balcão de madeira', composition: 'centrado', lighting: 'luz quente', camera: '50mm', style: 'foto realista',
+  color_palette: ['#c0392b'], mood: 'convidativo', text_in_image: 'none', negative: 'blurry', aspect_ratio: '1:1',
+  prompt_final: 'A frosty glass of draft beer on a wooden bar counter, warm light, 50mm lens, photorealistic, shallow depth of field, highly detailed', video_shots: [],
+};
+let notaN = 0;
 const gateway = createServer((req, res) => {
   let raw = '';
   req.on('data', (c) => (raw += c));
   req.on('end', () => {
-    const body = raw ? JSON.parse(raw) : {};
+    let body = {};
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch {
+      /* multipart (images/edits) */
+    }
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url?.endsWith('/images/generations') || req.url?.endsWith('/images/edits')) {
+      fakeAi.images = (fakeAi.images ?? 0) + 1;
+      res.end(JSON.stringify({ data: [{ b64_json: PNG_1X1 }] }));
+      return;
+    }
     const name = body.response_format?.json_schema?.name;
     const prompt = String(body.messages?.[0]?.content ?? '');
     fakeAi.prompts.push({ name, prompt });
     let out = {};
     if (name === 'campaign_strategy') out = estrategia(++fakeAi.strategy);
     else if (name === 'copy') out = copia(++fakeAi.copy);
-    res.setHeader('Content-Type', 'application/json');
+    else if (name === 'art_direction') out = direcaoDeArte;
+    else if (name === 'creative_score') {
+      const t = [9, 7][notaN++ % 2];
+      out = { produto: t, fidelidade: t, composicao: t, defeitos: t, paleta: t, motivo: 'Boa composição' };
+    }
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(out) } }] }));
   });
 });
@@ -609,6 +634,211 @@ try {
   try {
     execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM ig_content_plans WHERE name LIKE 'Instagram · Campanha Check %'"`, { stdio: 'ignore' });
   } catch { /* sem docker: o plano de teste fica (rascunho) */ }
+
+
+  // ── 2d. Task 4: Creative Studio, Biblioteca de mídia, Canva ──────
+  console.log('-- Creative Studio --');
+  const t4 = Date.now();
+  const marcaS = `Marca Studio ${t4}`;
+  const campS = `Campanha Studio ${t4}`;
+  const brandS = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: marcaS, segment: 'Bar' })).body;
+  const campaignS = (await apiCall('POST', `/v1/workspaces/${wsId}/campaigns`, { brand_id: brandS.id, name: campS, objective: 'leads', audience: {}, formats: ['static_image'], budget_daily: 10 })).body;
+  await apiCall('POST', `/v1/workspaces/${wsId}/campaigns/${campaignS.id}/copies`, { content: { headline: 'Chopp em dobro', cta: 'Peça já', reels: 'Cena 1: copo suado' } });
+
+  await page.goto(`${BASE}/studio`);
+  await page.getByRole('heading', { name: 'Creative Studio' }).waitFor({ timeout: 30000 });
+  await page.getByText('Novo criativo').first().waitFor({ timeout: 30000 });
+  check('studio: título da aba', (await page.title()) === 'Creative Studio · Meu Funil', await page.title());
+  const txtSt = await corpo();
+  for (const t of ['Gere imagens, vídeos, carrosséis', 'Custo acumulado', 'Novo criativo', 'Gerações recentes', 'Biblioteca de criativos', 'Montar com diretor de arte', 'Gerar com IA', 'Prompt visual', 'Texto sobre a imagem', 'Variações', 'Qual IA usar']) {
+    check(`studio mostra "${t}"`, tem(txtSt, t));
+  }
+  check('studio: sem chaves próprias não há aviso de crédito', !tem(txtSt, 'sem crédito'));
+
+  if (aiLive) {
+    await page.fill('#t', 'Criativo Check');
+    await page.selectOption('#camp', campaignS.id);
+    await page.selectOption('#ai', 'gemini');
+    await page.selectOption('#vc', '2');
+    await page.fill('#pr', 'Prompt check copo suado');
+    await page.locator('select').filter({ has: page.locator('option[value="titulo_topo"]') }).selectOption('titulo_topo');
+    await page.fill('input[placeholder="Título (curto)"]', 'Chopp em dobro');
+    const antes = fakeAi.images ?? 0;
+    await page.getByRole('button', { name: 'Gerar com IA' }).click();
+    await page.getByText('Criativo gerado com Gemini.').waitFor({ timeout: 180000 });
+    check('studio: gerou com o provedor Gemini (gateway do app)', true);
+    check('studio: 2 variações pediram 2 imagens ao provedor', (fakeAi.images ?? 0) - antes === 2, String((fakeAi.images ?? 0) - antes));
+    await page.getByText('Variações da última geração').waitFor({ timeout: 15000 });
+    check('studio: grade com 2 variações e a nota do crítico', (await page.locator('img[alt="Variação"]').count()) === 2 && tem(await corpo(), '/50'));
+    check('studio: cada variação carrega (URL assinada)', await page.locator('img[alt="Variação"]').first().evaluate((i) => i.complete && i.naturalWidth > 0));
+    const prompts = fakeAi.prompts.map((p) => p.name);
+    check('studio: diretor de arte e crítico chamaram a IA', prompts.includes('art_direction') && prompts.filter((n) => n === 'creative_score').length === 2, prompts.join(','));
+    const direcao = fakeAi.prompts.find((p) => p.name === 'art_direction');
+    check('studio: o prompt do diretor leva marca/briefing/Provedor', direcao && direcao.prompt.includes('Provedor de destino: gemini') && direcao.prompt.includes('Prompt check copo suado'));
+    check('studio: "Prompt visual" preenchido com o prompt do diretor de arte', (await page.inputValue('#vp')).startsWith('A frosty glass of draft beer'));
+    check('studio: "Gerações recentes" mostra o job como Pronto', (await page.locator('div.rounded-lg', { hasText: 'No text, letters or logos' }).first().innerText()).includes('Pronto'));
+    const card = page.locator('div.overflow-hidden.rounded-lg', { hasText: 'Criativo Check' }).first();
+    await card.waitFor({ timeout: 15000 });
+    check('studio: criativo na grade com formato, versão, campanha e status', tem(await card.innerText(), `v1 · ${campS}`) && tem(await card.innerText(), 'Pronto'));
+    await card.getByRole('button', { name: 'Aprovar' }).click();
+    await page.waitForFunction((n) => [...document.querySelectorAll('div.overflow-hidden.rounded-lg')].some((d) => d.innerText.includes(n) && d.innerText.includes('Aprovado')), 'Criativo Check', { timeout: 15000 });
+    ok('studio: Aprovar muda o status do criativo');
+    const crs = (await apiCall('GET', `/v1/workspaces/${wsId}/creatives`)).body.filter((c) => c.title === 'Criativo Check');
+    check('API: criativo aprovado + atividade creative.approved', crs.length === 1 && crs[0].status === 'approved' && tem(JSON.stringify((await apiCall('GET', `/v1/workspaces/${wsId}/activity-logs?limit=30`)).body), 'creative.approved'));
+    await card.getByRole('button', { name: 'Nova versão' }).click();
+    await page.getByText('Nova versão gerada.').waitFor({ timeout: 120000 });
+    await page.waitForFunction((n) => [...document.querySelectorAll('div.overflow-hidden.rounded-lg')].some((d) => d.innerText.includes(n) && d.innerText.includes('v2')), 'Criativo Check', { timeout: 15000 });
+    ok('studio: Nova versão → v2 no mesmo criativo');
+    // "Tentar novamente": job que falha (provedor) e é refeito
+    const nUsados = (await apiCall('GET', `/v1/workspaces/${wsId}/creative-generation-jobs?limit=12`)).body.length;
+    check('API: jobs recentes (limit 12)', nUsados >= 2 && nUsados <= 12, String(nUsados));
+  } else {
+    ko('studio: geração ponta a ponta', 'a API não está com o gateway de IA falso (AI_GATEWAY_URL=http://127.0.0.1:3099/v1)');
+  }
+
+  // vídeo sem Higgsfield: a escolha é recusada com a mensagem do protótipo (volta em `error`)
+  const rv = await apiCall('POST', '/v1/creative/generate-creative', { workspaceId: wsId, type: 'video', provider: 'higgsfield', prompt: 'x' });
+  check('provedor Higgsfield sem conexão → mensagem do protótipo', rv.status === 400 && rv.body.error.message === 'Higgsfield não está conectado nesta empresa. Conecte em Integrações.', JSON.stringify(rv.body));
+  await page.waitForTimeout(500);
+  esperado(/\[http 400\] POST api\/v1\/creative\/generate-creative|400 \(Bad Request\)/);
+
+  console.log('-- Biblioteca de mídia --');
+  await page.goto(`${BASE}/library`);
+  await page.getByRole('heading', { name: 'Biblioteca de mídia' }).waitFor({ timeout: 30000 });
+  check('biblioteca: título da aba', (await page.title()) === 'Biblioteca de mídia · Meu Funil', await page.title());
+  const txtLib = await corpo();
+  for (const t of ['Enviar arquivos', 'Importar do Canva', 'Imagens e vídeos', 'Textos (copies, legendas, roteiros)', 'Buscar', 'Marca', 'Campanha', 'Tipo', 'Formato', 'Status', 'Tag', 'Pasta', 'Fonte', 'Período', 'Ordenar', 'Mais recentes']) {
+    check(`biblioteca mostra "${t}"`, tem(txtLib, t));
+  }
+  if (aiLive) {
+    await page.getByRole('checkbox', { name: /Selecionar Criativo Check/ }).first().waitFor({ timeout: 30000 });
+    check('biblioteca: a geração do Studio aparece (variações + final + versão nova)', (await page.getByRole('checkbox', { name: /Selecionar Criativo Check/ }).count()) >= 2);
+    const aviso = await page.locator('span', { hasText: /Pronto p\/ Instagram|Fora do padrão|Não validado/ }).count();
+    check('biblioteca: selo de validação do Instagram nos cartões', aviso > 0);
+  }
+
+  // upload (um arquivo por chamada, multipart) — formato "manter tamanho" → 1x1 fica fora do padrão
+  const tmp4 = mkdtempSync(path.join(tmpdir(), 'mf-t4-'));
+  const upFile = path.join(tmp4, 'upload-check.png');
+  writeFileSync(upFile, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+  await page.selectOption('select[aria-label="Formato do upload"]', 'other');
+  await page.locator('input[type=file]').setInputFiles(upFile);
+  await page.getByText('1 arquivo enviado e padronizado.').waitFor({ timeout: 60000 });
+  check('biblioteca: aviso de mídia fora do padrão do Instagram no envio', true);
+  await page.fill('input[placeholder="Título ou prompt"]', 'upload-check');
+  await page.getByText(/^1 de 1 mídia/).waitFor({ timeout: 15000 });
+  ok('biblioteca: busca por título filtra no servidor (1 de 1)');
+  const cardUp = page.getByRole('checkbox', { name: 'Selecionar upload-check' });
+  await cardUp.click();
+  await page.getByText('1 selecionada').waitFor({ timeout: 10000 });
+  // tag e pasta via window.prompt
+  page.once('dialog', (d) => d.accept('promo-check'));
+  await page.getByRole('button', { name: 'Adicionar tags' }).click();
+  await page.getByText('Tag adicionada.').waitFor({ timeout: 15000 });
+  page.once('dialog', (d) => d.accept('Pasta Check'));
+  await page.getByRole('button', { name: 'Mover para pasta' }).click();
+  await page.getByText('Mídias movidas.').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Aprovar' }).click();
+  await page.getByText('Mídias aprovadas.').waitFor({ timeout: 15000 });
+  const lista = (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?search=upload-check`)).body;
+  check('API: tag, pasta e status gravados', lista.count === 1 && lista.rows[0].tags.join() === 'promo-check' && lista.rows[0].folder === 'Pasta Check' && lista.rows[0].status === 'approved' && lista.rows[0].ig_ready === false, JSON.stringify(lista.rows?.[0]));
+  // filtros por tag e pasta (opções vindas das facetas)
+  const selTag = page.locator('select').filter({ has: page.locator('option[value="promo-check"]') });
+  await selTag.waitFor({ timeout: 15000 });
+  ok('biblioteca: a tag nova aparece nos filtros (facetas)');
+  // downloads (a URL assinada força o download com o nome marca_formato_data)
+  const baixa = async (abrir) => {
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), abrir()]);
+    return dl;
+  };
+  const dl1 = await baixa(async () => {
+    await page.getByRole('button', { name: 'Baixar', exact: true }).click();
+    await page.getByRole('menuitem', { name: /Original/ }).click();
+  });
+  check('download original: nome meu-funil_other_AAAA-MM-DD.png', /^meu-funil_other_\d{4}-\d{2}-\d{2}\.png$/.test(dl1.suggestedFilename()), dl1.suggestedFilename());
+  const dl2 = await baixa(() => page.getByRole('button', { name: 'Baixar ZIP' }).click());
+  check('ZIP: biblioteca_AAAA-MM-DD.zip', /^biblioteca_\d{4}-\d{2}-\d{2}\.zip$/.test(dl2.suggestedFilename()), dl2.suggestedFilename());
+  const dl3 = await baixa(async () => {
+    await page.getByRole('button', { name: /Exportar PDF/ }).click();
+    await page.getByRole('menuitem', { name: /Uma por página/ }).click();
+  });
+  check('PDF: biblioteca_impressao_AAAA-MM-DD.pdf', /^biblioteca_impressao_\d{4}-\d{2}-\d{2}\.pdf$/.test(dl3.suggestedFilename()), dl3.suggestedFilename());
+  const dl4 = await baixa(async () => {
+    await page.getByRole('button', { name: /Exportar PDF/ }).click();
+    await page.getByRole('menuitem', { name: /Folha de contato/ }).click();
+  });
+  check('PDF folha de contato', /folha-de-contato/.test(dl4.suggestedFilename()), dl4.suggestedFilename());
+  // detalhe: dimensões, "Fora do padrão", revalidar
+  await page.locator('button', { hasText: 'upload-check' }).first().click();
+  await page.getByText('Dimensões').waitFor({ timeout: 15000 });
+  const det = await page.locator('[role=dialog]').innerText();
+  check('detalhe: dimensões 1 x 1px, "Fora do padrão", fonte Upload, tag e pasta', det.includes('1 x 1px') && tem(det, 'Fora do padrão') && det.includes('Upload') && det.includes('promo-check') && det.includes('Pasta Check'), det.slice(0, 300));
+  check('detalhe: "Ainda não foi usada em anúncio."', tem(det, 'Ainda não foi usada em anúncio'));
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Revalidar' }).click();
+  await page.getByText(/1 revalidada\(s\): 0 pronta\(s\) p\/ Instagram/).waitFor({ timeout: 30000 });
+  ok('biblioteca: Revalidar refaz a validação do Instagram');
+  // usar em campanha
+  await page.getByRole('button', { name: 'Usar em campanha' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: campS }).click();
+  await page.getByText('1 criativo aprovado adicionado à campanha.').waitFor({ timeout: 15000 });
+  check('API: criativo aprovado criado na campanha', (await apiCall('GET', `/v1/workspaces/${wsId}/campaigns/${campaignS.id}/detail`)).body.creatives.some((c) => c.title === 'upload-check' && c.status === 'approved'));
+  // usar no Instagram: cria o post-rascunho e navega
+  await page.getByRole('button', { name: 'Usar no Instagram' }).click();
+  await page.getByText('Post rascunho criado no Instagram (Calendário).').waitFor({ timeout: 15000 });
+  await page.waitForURL('**/instagram', { timeout: 15000 });
+  ok('biblioteca: "Usar no Instagram" cria o rascunho e vai para /instagram');
+  await page.goto(`${BASE}/library`);
+  await page.getByRole('heading', { name: 'Biblioteca de mídia' }).waitFor({ timeout: 30000 });
+  // aba Textos
+  await page.getByRole('button', { name: 'Textos (copies, legendas, roteiros)' }).click();
+  await page.getByText(campS).first().waitFor({ timeout: 15000 });
+  check('biblioteca: aba Textos lista a copy da campanha', tem(await corpo(), 'v1') && tem(await corpo(), 'Chopp em dobro'));
+  await page.getByRole('button', { name: 'Imagens e vídeos' }).click();
+  // Canva sem conexão: erro com a mensagem do protótipo e o import manual valida o id
+  await page.getByRole('button', { name: 'Importar do Canva' }).click();
+  await page.getByRole('dialog').getByText('Importar design do Canva').waitFor({ timeout: 15000 });
+  await page.getByText('Canva não está conectado nesta empresa. Entre com Canva em Integrações.').first().waitFor({ timeout: 15000 });
+  ok('Canva: listar designs sem conexão mostra a mensagem do protótipo');
+  await page.getByRole('dialog').locator('input[placeholder="Ou cole o link ou ID do design"]').fill('###');
+  await page.getByRole('dialog').getByRole('button', { name: 'Importar', exact: true }).click();
+  await page.getByText('Endereço ou id do design inválido.').first().waitFor({ timeout: 15000 });
+  ok('Canva: id de design inválido é recusado');
+  await page.waitForTimeout(500);
+  esperado(/canva-list-designs|canva-import-design|400 \(Bad Request\)/);
+  await page.keyboard.press('Escape');
+  // enviar ao Canva (sem conexão) pela barra de seleção
+  await page.fill('input[placeholder="Título ou prompt"]', 'upload-check');
+  await page.getByRole('checkbox', { name: 'Selecionar upload-check' }).click();
+  await page.getByRole('button', { name: 'Enviar ao Canva' }).click();
+  await page.getByText('Canva não está conectado nesta empresa. Entre com Canva em Integrações.').first().waitFor({ timeout: 15000 });
+  ok('Canva: "Enviar ao Canva" sem conexão mostra a mensagem do protótipo');
+  await page.waitForTimeout(500);
+  esperado(/canva-send-asset|400 \(Bad Request\)/);
+  // excluir (window.confirm) — o arquivo some do disco
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: 'Excluir' }).click();
+  await page.getByText('1 mídia(s) excluída(s).').waitFor({ timeout: 30000 });
+  check('API: mídia excluída de vez', (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?search=upload-check`)).body.count === 0);
+
+  // viewer/estranho e mídia alheia pela API (isolamento)
+  const alheia = await apiCall('POST', '/v1/media/download-asset', { workspaceId: wsId, assetId: '00000000-0000-4000-8000-000000000000' });
+  check('API: download de mídia inexistente → 404 "Mídia não encontrada."', alheia.status === 404 && alheia.body.error.message === 'Mídia não encontrada.');
+  await page.waitForTimeout(500);
+  esperado(/download-asset|404 \(Not Found\)/);
+
+  rmSync(tmp4, { recursive: true, force: true });
+  // exportações (ZIP/PDF/download) ficam em exports/<workspace> no disco da API — sem residuo.
+  rmSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../api/uploads/creative-assets/exports', wsId), { recursive: true, force: true });
+  // limpeza: mídia da marca de teste (arquivos do disco), marca (cascade campanha/criativos), jobs e post do Instagram
+  const sobras = (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?brand_id=${brandS.id}&limit=1000`)).body.rows.map((r) => r.id);
+  const sobras2 = (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?search=Criativo%20Check&limit=1000`)).body.rows.map((r) => r.id);
+  const todas = [...new Set([...sobras, ...sobras2])];
+  if (todas.length) await apiCall('POST', '/v1/media/delete-media-assets', { workspaceId: wsId, assetIds: todas.slice(0, 200) });
+  await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${brandS.id}`);
+  try {
+    execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM creative_generation_jobs WHERE prompt LIKE 'Prompt check %'; DELETE FROM creatives WHERE title IN ('Criativo Check','upload-check'); DELETE FROM ig_posts WHERE creative_brief->>'from_library' IS NOT NULL AND theme='upload-check'"`, { stdio: 'ignore' });
+  } catch { /* sem docker: sobram jobs/posts de teste */ }
 
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');

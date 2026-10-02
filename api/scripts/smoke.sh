@@ -139,7 +139,8 @@ check "aprendizados por score desc" "alto" "$(curl -s $API/v1/workspaces/$WID/br
 check "produto removido" "204" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/v1/workspaces/$WID/brands/$BID/products/$PID -H "$H")"
 
 echo "── Arquivos da marca ──"
-printf '\x89PNG\r\n\x1a\nref-bytes' > /tmp/mf-ref.png
+# PNG de verdade (1x1): a referência passa pelo jimp (reduzida a ≤1024 px) antes de ir à IA
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' | base64 -d > /tmp/mf-ref.png
 printf '\x00\x01\x00\x00fontbytes' > /tmp/mf-font.ttf
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > /tmp/mf-logo.svg
 check "guia sem referência → 400" "Envie ao menos uma foto de referência (produto, ambiente ou equipe)." "$(curl -s -X POST $API/v1/creative/generate-brand-guide -H "$H" -H "$J" -d "{\"brandId\":\"$BID\"}" | jq -r .error.message)"
@@ -290,6 +291,163 @@ C2=$(curl -s -X POST $CAMP -H "$H" -H "$J" -d "$(echo "$CBODY" | jq -c '.name="S
 AP2=$(curl -s -X POST $CAMP/$C2/request-approval -H "$H" -H "$J" -d "{}" | jq -r .id)
 check "admin/dono rejeita: campanha volta para rascunho" "true,draft,rejected" "$(R=$(curl -s -X POST $DEC -H "$H" -H "$J" -d "{\"approvalId\":\"$AP2\",\"decision\":\"rejected\"}" | jq -r .ok); echo "$R,$(PSQL "SELECT (SELECT status FROM campaigns WHERE id='$C2')||','||(SELECT status FROM approval_requests WHERE id='$AP2')")")"
 check "pedido de aprovação de outro workspace não atinge a campanha de cá" "0" "$(PSQL "SELECT count(*) FROM approval_requests WHERE workspace_id='$NID'")"
+
+echo "── Task 4: biblioteca de mídia ──"
+MED=$API/v1/workspaces/$WID
+MEDA=$API/v1/media
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' | base64 -d > /tmp/mf-smoke-1x1.png
+printf 'isto nao e um mp4 de verdade' > /tmp/mf-smoke-fake.mp4
+printf 'texto' > /tmp/mf-smoke.txt
+UPM=$(curl -s -X POST $MEDA/upload-media -H "$HM" -F "workspaceId=$WID" -F target=other -F "brandId=$CB" -F "file=@/tmp/mf-smoke-1x1.png;type=image/png;filename=Foto do bar.png")
+M1=$(echo "$UPM" | jq -r .id)
+[ "$M1" != "null" ] && ok "mídia: upload multipart (marketing)" || ko "mídia: upload" "$UPM"
+check "mídia: 1x1 fica fora do padrão do Instagram (relatório volta)" "false,1" "$(echo "$UPM" | jq -r '"\(.igReady),\(.issues|length)"')"
+check "mídia: arquivo gravado em media/<ws>/…" "1" "$(PSQL "SELECT count(*) FROM media_assets WHERE id='$M1' AND storage_path LIKE 'media/$WID/%' AND source='upload' AND title='Foto do bar' AND brand_id='$CB'")"
+UPV=$(curl -s -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=ig_reel -F "file=@/tmp/mf-smoke-fake.mp4;type=video/mp4")
+M2=$(echo "$UPV" | jq -r .id)
+check "mídia: vídeo ilegível entra com os problemas (sem transcodificar)" "false" "$(echo "$UPV" | jq -r .igReady)"
+check "mídia: viewer não envia" "Seu papel não permite esta ação." "$(curl -s -X POST $MEDA/upload-media -H "$HV" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke-1x1.png;type=image/png" | jq -r .error.message)"
+check "mídia: estranho não envia" "Você não tem acesso a esta área de trabalho." "$(curl -s -X POST $MEDA/upload-media -H "$HD" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke-1x1.png;type=image/png" | jq -r .error.message)"
+check "mídia: só imagem/vídeo" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=other -F "file=@/tmp/mf-smoke.txt;type=text/plain")"
+check "mídia: sem arquivo" "Arquivo ausente." "$(curl -s -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$WID" -F target=other | jq -r .error.message)"
+check "mídia: marca de outro workspace → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/upload-media -H "$H" -F "workspaceId=$NID" -F target=other -F "brandId=$CB" -F "file=@/tmp/mf-smoke-1x1.png;type=image/png")"
+check "mídia: lista com brands/campaigns embutidos e contagem" "2,Marca Campanhas" "$(curl -s "$MED/media-assets?sort=old" -H "$HV" | jq -r '"\(.count),\(.rows[0].brands.name)"')"
+check "mídia: filtro por tipo" "1" "$(curl -s "$MED/media-assets?kind=video" -H "$H" | jq .count)"
+check "mídia: busca por título" "1" "$(curl -s "$MED/media-assets?search=foto" -H "$H" | jq .count)"
+check "mídia: busca sanitizada (% , ( ))" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$MED/media-assets?search=%25%2C(x)" -H "$H")"
+check "mídia: status inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' "$MED/media-assets?status=zzz" -H "$H")"
+check "mídia: estranho não lista" "403" "$(curl -s -o /dev/null -w '%{http_code}' "$MED/media-assets" -H "$HD")"
+check "mídia: outro workspace não vê as mídias daqui" "0" "$(curl -s "$API/v1/workspaces/$NID/media-assets" -H "$H" | jq .count)"
+check "mídia: facetas (tags/pasta)" "2" "$(curl -s $MED/media-assets/facets -H "$H" | jq length)"
+check "mídia: aprovar em lote" "1" "$(curl -s -X PATCH $MED/media-assets/bulk -H "$HM" -H "$J" -d "{\"ids\":[\"$M1\"],\"status\":\"approved\"}" | jq .updated)"
+check "mídia: …status gravado" "approved" "$(PSQL "SELECT status FROM media_assets WHERE id='$M1'")"
+check "mídia: mover para pasta e tirar da pasta" "Verão,vazio" "$(curl -s -X PATCH $MED/media-assets/bulk -H "$H" -H "$J" -d "{\"ids\":[\"$M1\"],\"folder\":\"Verão\"}" >/dev/null; A=$(PSQL "SELECT folder FROM media_assets WHERE id='$M1'"); curl -s -X PATCH $MED/media-assets/bulk -H "$H" -H "$J" -d "{\"ids\":[\"$M1\"],\"folder\":null}" >/dev/null; echo "$A,$(PSQL "SELECT coalesce(folder,'vazio') FROM media_assets WHERE id='$M1'")")"
+check "mídia: viewer não edita em lote" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $MED/media-assets/bulk -H "$HV" -H "$J" -d "{\"ids\":[\"$M1\"],\"status\":\"approved\"}")"
+check "mídia: status inválido no lote → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $MED/media-assets/bulk -H "$H" -H "$J" -d "{\"ids\":[\"$M1\"],\"status\":\"x\"}")"
+check "mídia: campo extra no lote → 400" "VALIDATION_ERROR" "$(curl -s -X PATCH $MED/media-assets/bulk -H "$H" -H "$J" -d "{\"ids\":[\"$M1\"],\"workspace_id\":\"$NID\"}" | jq -r .error.code)"
+check "mídia: id de OUTRO workspace no lote não atinge nada" "0" "$(curl -s -X PATCH $API/v1/workspaces/$NID/media-assets/bulk -H "$H" -H "$J" -d "{\"ids\":[\"$M1\"],\"status\":\"rejected\"}" | jq .updated)"
+check "mídia: tags (limpa e deduplica)" "a,b" "$(curl -s -X PATCH $MED/media-assets/$M1 -H "$H" -H "$J" -d '{"tags":[" a ","a","b",""]}' | jq -r '.tags|join(",")')"
+check "mídia: tags de mídia alheia → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/v1/workspaces/$NID/media-assets/$M1 -H "$H" -H "$J" -d '{"tags":["x"]}')"
+check "mídia: filtro por tag" "1" "$(curl -s "$MED/media-assets?tag=a" -H "$H" | jq .count)"
+check "mídia: renomear tag" "1" "$(curl -s -X POST $MEDA/rename-media-tag -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"from\":\"a\",\"to\":\"promo\"}" | jq .updated)"
+check "mídia: renomear pasta (nenhuma) → 0" "0" "$(curl -s -X POST $MEDA/rename-media-folder -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"from\":\"Nada\",\"to\":\"x\"}" | jq .updated)"
+check "mídia: viewer não renomeia" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/rename-media-tag -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"from\":\"a\",\"to\":\"b\"}")"
+DL=$(curl -s -X POST $MEDA/download-asset -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M1\",\"format\":\"original\"}")
+DLU=$(echo "$DL" | jq -r .url)
+check "mídia: download (viewer pode) devolve nome marca_formato_data" "1" "$(echo "$DL" | jq -r .name | grep -cE '^marca-campanhas_other_[0-9]{4}-[0-9]{2}-[0-9]{2}\.(jpg|png)$')"
+check "mídia: …link força o download com o nome" "1" "$(curl -sI "$DLU" | tr -d '\r' | grep -ci '^content-disposition: attachment; filename="marca-campanhas_other_')"
+check "mídia: …link adulterado → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' "${DLU/sig=/sig=0}")"
+check "mídia: download em PNG" "1" "$(curl -s -X POST $MEDA/download-asset -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M1\",\"format\":\"png\"}" | jq -r .name | grep -c '\.png$')"
+check "mídia: download de mídia alheia → 404" "Mídia não encontrada." "$(curl -s -X POST $MEDA/download-asset -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"assetId\":\"$M1\"}" | jq -r .error.message)"
+check "mídia: estranho não baixa" "Você não tem acesso a esta área de trabalho." "$(curl -s -X POST $MEDA/download-asset -H "$HD" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M1\"}" | jq -r .error.message)"
+ZIPR=$(curl -s -X POST $MEDA/export-zip -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\",\"$M2\"]}")
+check "mídia: ZIP com as 2 mídias" "2" "$(echo "$ZIPR" | jq .count)"
+check "mídia: …é um ZIP de verdade" "PK" "$(curl -s "$(echo "$ZIPR" | jq -r .url)" | head -c2)"
+check "mídia: PDF (uma por página)" "%PDF" "$(curl -s "$(curl -s -X POST $MEDA/export-pdf -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\",\"$M2\"],\"layout\":\"one_per_page\"}" | jq -r .url)" | head -c4)"
+check "mídia: PDF folha de contato" "%PDF" "$(curl -s "$(curl -s -X POST $MEDA/export-pdf -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\"],\"layout\":\"contact_sheet\"}" | jq -r .url)" | head -c4)"
+check "mídia: PDF layout inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/export-pdf -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\"],\"layout\":\"x\"}")"
+check "mídia: exportar 0 ids → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/export-zip -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[]}")"
+RF=$(curl -s -X POST $MEDA/reformat-media -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M1\",\"targets\":[\"ig_story\"]}")
+check "mídia: reformatar para Story 1080x1920 (filha do original)" "1,1080,1920,$M1" "$(echo "$RF" | jq -r '.ids|length' | tr '\n' ','; PSQL "SELECT width||','||height||','||parent_id FROM media_assets WHERE id='$(echo "$RF" | jq -r '.ids[0]')'")"
+check "mídia: vídeo não é recortado" "Vídeos não são recortados no servidor. Gere um novo vídeo neste formato." "$(curl -s -X POST $MEDA/reformat-media -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M2\",\"targets\":[\"ig_story\"]}" | jq -r .error.message)"
+check "mídia: reformatar formato inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/reformat-media -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetId\":\"$M1\",\"targets\":[\"xx\"]}")"
+check "mídia: revalidar" "3,0" "$(curl -s -X POST $MEDA/revalidate-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\",\"$M2\",\"$(echo "$RF" | jq -r '.ids[0]')\"]}" | jq -r '"\(.total),\(.failed)"')"
+check "mídia: usar no Instagram cria post-rascunho" "feed_carousel,idea" "$(IGP=$(curl -s -X POST $MEDA/use-media-in-instagram -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\",\"$M2\"]}"); echo "$(echo "$IGP" | jq -r .format),$(PSQL "SELECT status FROM ig_posts WHERE id='$(echo "$IGP" | jq -r .postId)'")")"
+IGP1=$(PSQL "SELECT id FROM ig_posts WHERE workspace_id='$WID' LIMIT 1")
+check "mídia: anexar a post exige mídia pronta p/ Instagram" "1" "$(curl -s -X POST $MEDA/attach-media-to-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"postId\":\"$IGP1\",\"assetIds\":[\"$M1\"]}" | jq -r .error.message | grep -c '^Mídia não está pronta para o Instagram: ')"
+check "mídia: anexar a post alheio → Post não encontrado." "Post não encontrado." "$(curl -s -X POST $MEDA/attach-media-to-post -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"postId\":\"$IGP1\",\"assetIds\":[\"$M1\"]}" | jq -r .error.message)"
+check "mídia: usar em campanha de outro workspace → 404" "Campanha não encontrada." "$(curl -s -X POST $MEDA/use-media-in-campaign -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"assetIds\":[\"$M1\"],\"campaignId\":\"$CID\"}" | jq -r .error.message)"
+check "mídia: usar em campanha (viewer → 403)" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/use-media-in-campaign -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\"],\"campaignId\":\"$CID\"}")"
+check "mídia: usar em campanha cria criativo aprovado" "1,approved" "$(curl -s -X POST $MEDA/use-media-in-campaign -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\"],\"campaignId\":\"$CID\"}" | jq -r .count | tr '\n' ','; PSQL "SELECT status FROM creatives WHERE campaign_id='$CID' AND title='Foto do bar'")"
+check "mídia: resultados em anúncios (zerados)" "0,0" "$(curl -s -X POST $MEDA/media-ad-results -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"creativeId\":\"$(PSQL "SELECT id FROM creatives WHERE title='Foto do bar'")\"}" | jq -r '"\(.days),\(.spend)"')"
+check "textos da biblioteca (copies com campaigns(name, brand_id))" "Campanha Smoke" "$(curl -s $MED/copies -H "$HV" | jq -r '.[0].campaigns.name')"
+
+echo "── Task 4: Studio (criativos) ──"
+CRE=$(PSQL "SELECT id FROM creatives WHERE title='Foto do bar'")
+check "criativos: lista com campaigns(name)" "Foto do bar,Campanha Smoke" "$(curl -s $MED/creatives -H "$HV" | jq -r '"\(.[0].title),\(.[0].campaigns.name)"')"
+check "criativos: aprovar/rejeitar (marketing)" "rejected" "$(curl -s -X PATCH $MED/creatives/$CRE -H "$HM" -H "$J" -d '{"status":"rejected"}' | jq -r .status)"
+check "criativos: viewer não muda status" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $MED/creatives/$CRE -H "$HV" -H "$J" -d '{"status":"approved"}')"
+check "criativos: status inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $MED/creatives/$CRE -H "$H" -H "$J" -d '{"status":"zzz"}')"
+check "criativos: de outro workspace → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/v1/workspaces/$NID/creatives/$CRE -H "$H" -H "$J" -d '{"status":"approved"}')"
+check "criativos: atividade creative.rejected gravada" "1" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$WID' AND action='creative.rejected'")"
+check "criativos: jobs recentes (vazio)" "0" "$(curl -s "$MED/creative-generation-jobs?limit=12" -H "$HV" | jq length)"
+check "criativos: brief da campanha (estratégias e copies)" "2,2" "$(curl -s $MED/campaigns/$CID/brief -H "$HV" | jq -r '"\(.strategies|length),\(.copies|length)"')"
+check "criativos: brief de campanha alheia → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' $API/v1/workspaces/$NID/campaigns/$CID/brief -H "$H")"
+CRV=$API/v1/creative
+GEN="{\"workspaceId\":\"$WID\",\"campaignId\":\"$CID\",\"title\":\"T\",\"variations\":1}"
+check "gerar: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/generate-creative -H "$HV" -H "$J" -d "$GEN")"
+check "gerar: estranho → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/generate-creative -H "$HD" -H "$J" -d "$GEN")"
+check "gerar: campanha de outro workspace → 404" "Campanha não encontrada." "$(curl -s -X POST $CRV/generate-creative -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"campaignId\":\"$CID\"}" | jq -r .error.message)"
+check "gerar: campo extra → 400" "VALIDATION_ERROR" "$(curl -s -X POST $CRV/generate-creative -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"x\":1}" | jq -r .error.code)"
+check "gerar: variações fora de 1..4 → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/generate-creative -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"variations\":9}")"
+check "gerar: provedor inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/generate-creative -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"x\"}")"
+check "gerar sem gateway de IA → AI_NOT_CONFIGURED (nada é cobrado nem gravado)" "AI_NOT_CONFIGURED,0" "$(curl -s -X POST $CRV/generate-creative -H "$H" -H "$J" -d "$GEN" | jq -r .error.code | tr '\n' ','; PSQL "SELECT count(*) FROM creative_generation_jobs WHERE workspace_id='$WID'")"
+check "prévia do prompt: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/preview-visual-prompt -H "$HV" -H "$J" -d "$GEN")"
+check "retry: job inexistente → 404" "Job de geração não encontrado." "$(curl -s -X POST $CRV/retry-creative-job -H "$H" -H "$J" -d '{"jobId":"00000000-0000-4000-8000-000000000000"}' | jq -r .error.message)"
+check "nova versão: criativo de estranho → 404" "Criativo não encontrado." "$(curl -s -X POST $CRV/new-creative-version -H "$HD" -H "$J" -d "{\"creativeId\":\"$CRE\"}" | jq -r .error.message)"
+check "nova versão: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/new-creative-version -H "$HV" -H "$J" -d "{\"creativeId\":\"$CRE\"}")"
+NV=$(curl -s -X POST $CRV/new-creative-version -H "$HM" -H "$J" -d "{\"creativeId\":\"$CRE\"}")
+check "nova versão sem gateway: o erro VOLTA em `error` (200), job failed" "failed,IA do app não configurada.,failed" "$(echo "$NV" | jq -r '"\(.status),\(.error)"' | tr '\n' ','; PSQL "SELECT status FROM creative_generation_jobs WHERE id='$(echo "$NV" | jq -r .jobId)'")"
+check "retry do job falho (mesma falha, mesmo job)" "failed" "$(curl -s -X POST $CRV/retry-creative-job -H "$HM" -H "$J" -d "{\"jobId\":\"$(echo "$NV" | jq -r .jobId)\"}" | jq -r .status)"
+PKG=$(curl -s -X POST $CRV/capcut-package -H "$HV" -H "$J" -d "{\"creativeId\":\"$CRE\"}")
+check "pacote CapCut: zip com imagem + LEIA-ME" "PK,1" "$(curl -s "$(echo "$PKG" | jq -r .url)" -o /tmp/mf-smoke-capcut.zip; head -c2 /tmp/mf-smoke-capcut.zip; echo -n ","; unzip -l /tmp/mf-smoke-capcut.zip 2>/dev/null | grep -c 'LEIA-ME.txt')"
+check "pacote CapCut: estranho → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/capcut-package -H "$HD" -H "$J" -d "{\"creativeId\":\"$CRE\"}")"
+check "chaves de IA: aviso de crédito (nenhuma chave → vazio)" "0" "$(curl -s -X POST $API/v1/ai-keys/ai-keys-health -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq '.outOfCredit|length')"
+check "chaves de IA: estranho → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/v1/ai-keys/ai-keys-health -H "$HD" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
+
+echo "── Task 4: Canva ──"
+check "canva: status sem app" "false,false" "$(curl -s -X POST $CRV/canva-get-status -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r '"\(.appSaved),\(.connected)"')"
+check "canva: marketing não salva o app" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-save-app -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"clientId\":\"abcd1234\",\"clientSecret\":\"s\"}")"
+check "canva: client id curto → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-save-app -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"clientId\":\"ab\"}")"
+check "canva: login exige o app salvo" "Salve o Client ID e o Client secret do app Canva antes de entrar." "$(curl -s -X POST $CRV/canva-o-auth-start -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .error.message)"
+check "canva: dono salva o app (cifrado no cofre)" "true,1,0" "$(curl -s -X POST $CRV/canva-save-app -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"clientId\":\"abcd1234\",\"clientSecret\":\"segredo-canva-smoke\"}" | jq -r .ok | tr '\n' ','; PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key='CANVA_CLIENT_SECRET' AND value LIKE 'enc:v2:%'" | tr '\n' ','; PSQL "SELECT count(*) FROM app_credentials WHERE value LIKE '%segredo-canva-smoke%'")"
+check "canva: status mostra a dica do id" "true,abcd••••" "$(curl -s -X POST $CRV/canva-get-status -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r '"\(.appSaved),\(.clientIdHint)"')"
+check "canva: login devolve a URL de autorização (PKCE S256)" "1,1" "$(AU=$(curl -s -X POST $CRV/canva-o-auth-start -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .authUrl); echo "$AU" | grep -c '^https://www.canva.com/api/oauth/authorize?' | tr '\n' ','; echo "$AU" | grep -c 'code_challenge_method=S256')"
+check "canva: marketing não inicia login" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-o-auth-start -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
+check "canva: testar sem conexão" "Canva não está conectado nesta empresa. Entre com Canva em Integrações." "$(curl -s -X POST $CRV/canva-test -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .error.message)"
+check "canva: criar design sem conexão (marketing)" "Canva não está conectado nesta empresa. Entre com Canva em Integrações." "$(curl -s -X POST $CRV/canva-create-from-brief -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"title\":\"T\"}" | jq -r .error.message)"
+check "canva: criar design (viewer → 403)" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-create-from-brief -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"title\":\"T\"}")"
+check "canva: tamanho inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-create-from-brief -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"title\":\"T\",\"size\":\"x\"}")"
+check "canva: enviar mídia alheia → 404" "Mídia não encontrada." "$(curl -s -X POST $CRV/canva-send-asset -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"assetId\":\"$M1\"}" | jq -r .error.message)"
+check "canva: importar com id inválido" "Endereço ou id do design inválido." "$(curl -s -X POST $CRV/canva-import-design -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"designId\":\"###\"}" | jq -r .error.message)"
+check "canva: listar designs sem conexão" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-list-designs -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
+CBK=$API/api/public/canva/oauth/callback
+check "canva callback (pública): erro do Canva → 302 p/ /integrations?canva=error" "302,1" "$(curl -s -o /dev/null -w '%{http_code},' "$CBK?error=access_denied"; curl -sI "$CBK?error=access_denied" | tr -d '\r' | grep -ci '^location: .*/integrations?canva=error')"
+check "canva callback: sem code/state → erro" "1" "$(curl -sI "$CBK" | tr -d '\r' | grep -ci '^location: .*canva=error')"
+check "canva callback: state forjado → erro, nada gravado" "1,0" "$(curl -sI "$CBK?code=x&state=$WID.forjado" | tr -d '\r' | grep -ci 'canva=error' | tr '\n' ','; PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key='CANVA_TOKENS'")"
+check "canva: marketing não desconecta" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-disconnect -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
+check "canva: desconectar" "true" "$(curl -s -X POST $CRV/canva-disconnect -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .ok)"
+
+echo "── Task 4: MCP ──"
+MCP=$API/v1/mcp
+check "mcp: marketing não conecta" "Só o dono ou um administrador conecta contas." "$(curl -s -X POST $MCP/mcp-connect -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"higgsfield\",\"serverUrl\":\"https://mcp.higgsfield.ai/mcp\"}" | jq -r .error.message)"
+check "mcp: estranho não é membro" "Você não tem acesso a este workspace." "$(curl -s -X POST $MCP/mcp-connect -H "$HD" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"higgsfield\",\"serverUrl\":\"https://mcp.higgsfield.ai/mcp\"}" | jq -r .error.message)"
+check "mcp: provedor inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MCP/mcp-connect -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"x\",\"serverUrl\":\"https://a.b/mcp\"}")"
+check "mcp: endereço http é recusado (status error, vira linha)" "error,Use um endereço https:// para o servidor MCP." "$(curl -s -X POST $MCP/mcp-connect -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"higgsfield\",\"serverUrl\":\"http://exemplo.invalid/mcp\",\"accessToken\":\"token-mcp-smoke-123\"}" | jq -r '"\(.status),\(.error)"')"
+check "mcp: o token fica CIFRADO no banco (nunca em texto puro)" "1,0" "$(PSQL "SELECT count(*) FROM mcp_connections WHERE workspace_id='$WID' AND access_token LIKE 'enc:v2:%'" | tr '\n' ','; PSQL "SELECT count(*) FROM mcp_connections WHERE access_token LIKE '%token-mcp-smoke-123%'")"
+check "mcp: a lista nunca devolve colunas de token" "error,false" "$(curl -s $API/v1/workspaces/$WID/mcp-connections -H "$HV" | jq -r '.[0] | "\(.status),\(has("access_token") or has("refresh_token") or has("oauth_client_secret") or has("oauth_code_verifier"))"')"
+check "mcp: estranho não lê as conexões" "403" "$(curl -s -o /dev/null -w '%{http_code}' $API/v1/workspaces/$WID/mcp-connections -H "$HD")"
+check "mcp: status do provedor nas minhas empresas" "1" "$(curl -s $MCP/status/higgsfield -H "$H" | jq length)"
+check "mcp: status de provedor inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' $MCP/status/xx -H "$H")"
+check "mcp: OAuth em servidor inalcançável → mensagem" "Não foi possível descobrir o servidor de autenticação (OAuth) deste MCP." "$(curl -s -X POST $MCP/mcp-o-auth-start -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"meta\",\"serverUrl\":\"https://nao-existe.invalid/mcp\"}" | jq -r .error.message)"
+check "mcp: executar sem conexão ativa" "Nenhuma conexão MCP ativa para este provedor." "$(curl -s -X POST $MCP/mcp-run -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"canva\"}" | jq -r .error.message)"
+check "mcp: viewer não executa" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MCP/mcp-run -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"canva\"}")"
+MCB=$API/api/public/mcp/callback
+check "mcp callback (pública): erro do provedor → página de falha" "1" "$(curl -s "$MCB?error=access_denied" | grep -c 'Não foi possível conectar')"
+check "mcp callback: state desconhecido → expirada" "1" "$(curl -s "$MCB?code=x&state=nada" | grep -c 'Sessão de conexão não encontrada ou expirada.')"
+check "mcp callback: sem parâmetros" "1" "$(curl -s "$MCB" | grep -c 'Retorno de autenticação incompleto.')"
+check "mcp: marketing não desconecta" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MCP/mcp-disconnect -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"higgsfield\"}")"
+check "mcp: dono desconecta (a linha e o token somem)" "true,0" "$(curl -s -X POST $MCP/mcp-disconnect -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"provider\":\"higgsfield\"}" | jq -r .ok | tr '\n' ','; PSQL "SELECT count(*) FROM mcp_connections WHERE workspace_id='$WID'")"
+
+echo "── Task 4: exclusão e limpeza da mídia ──"
+check "mídia: viewer não exclui" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $MEDA/delete-media-assets -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":[\"$M1\"]}")"
+check "mídia: id de outro workspace não é excluído" "0" "$(curl -s -X POST $MEDA/delete-media-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$NID\",\"assetIds\":[\"$M1\"]}" | jq .deleted)"
+ALLM=$(PSQL "SELECT json_agg(id) FROM media_assets WHERE workspace_id='$WID'")
+MPATH=$(PSQL "SELECT storage_path FROM media_assets WHERE id='$M1'")
+check "mídia: dono exclui tudo (arquivo + registro)" "true" "$(curl -s -X POST $MEDA/delete-media-assets -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"assetIds\":$ALLM}" | jq '.deleted >= 3')"
+check "mídia: …o arquivo sumiu do disco (link antigo → 404)" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$DLU")"
+check "mídia: …e não sobrou linha" "0" "$(PSQL "SELECT count(*) FROM media_assets WHERE workspace_id='$WID'")"
+rm -rf "$(dirname "$0")/../uploads/creative-assets/exports/$WID" "$(dirname "$0")/../uploads/creative-assets/media/$WID" /tmp/mf-smoke-1x1.png /tmp/mf-smoke-fake.mp4 /tmp/mf-smoke.txt /tmp/mf-smoke-capcut.zip
 
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
