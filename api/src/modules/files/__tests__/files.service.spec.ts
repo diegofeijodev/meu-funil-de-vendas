@@ -95,3 +95,26 @@ describe('FilesService — disco e chaves de upload', () => {
     expect(mimeFromKey('a/b.xyz')).toBe('application/octet-stream');
   });
 });
+
+describe('uploads da marca — fontes e SVG', () => {
+  const { resolveUploadMime, contentMatchesMime, isAllowedMime, extFromMime, BRAND_ONLY_MIMES } = jest.requireActual('../files.service');
+
+  it('fonte é resolvida pela extensão (octet-stream, x-font-ttf…) e ganha extensão certa', () => {
+    expect(resolveUploadMime('Marca.TTF', 'application/octet-stream')).toBe('font/ttf');
+    expect(resolveUploadMime('a.otf', 'application/x-font-opentype')).toBe('font/otf');
+    expect(resolveUploadMime('a.png', 'application/octet-stream')).toBe('application/octet-stream');
+    expect(isAllowedMime('font/ttf') && isAllowedMime('image/svg+xml')).toBe(true);
+    expect([extFromMime('font/ttf'), extFromMime('font/otf'), extFromMime('image/svg+xml')]).toEqual(['ttf', 'otf', 'svg']);
+    expect(mimeFromKey('brands/x/y.svg')).toBe('image/svg+xml');
+    expect(BRAND_ONLY_MIMES).toEqual(expect.arrayContaining(['font/ttf', 'font/otf', 'image/svg+xml']));
+  });
+
+  it('confere o conteúdo: fonte precisa da assinatura sfnt/OTTO; SVG precisa de <svg', () => {
+    expect(contentMatchesMime('font/ttf', Buffer.from([0, 1, 0, 0, 9, 9]))).toBe(true);
+    expect(contentMatchesMime('font/otf', Buffer.from('OTTO....'))).toBe(true);
+    expect(contentMatchesMime('font/ttf', Buffer.from('MZ\x90\x00 exe'))).toBe(false);
+    expect(contentMatchesMime('image/svg+xml', Buffer.from('<?xml version="1.0"?><svg xmlns="x"></svg>'))).toBe(true);
+    expect(contentMatchesMime('image/svg+xml', Buffer.from('<html><script>alert(1)</script>'))).toBe(false);
+    expect(contentMatchesMime('image/png', Buffer.from('qualquer'))).toBe(true);
+  });
+});

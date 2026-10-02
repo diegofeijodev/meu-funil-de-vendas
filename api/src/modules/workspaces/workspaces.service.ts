@@ -2,12 +2,14 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
+import { ActivityService } from '../activity/activity.service';
 
 @Injectable()
 export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
+    private readonly activity: ActivityService,
   ) {}
 
   /** Equivalente ao RPC `create_workspace(_name)`: devolve só o id. */
@@ -47,7 +49,10 @@ export class WorkspacesService {
     await this.access.require(userId, workspaceId, 'manage');
     const trimmed = (name ?? '').trim();
     if (!trimmed) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'nome obrigatório' });
-    return this.prisma.workspaces.update({ where: { id: workspaceId }, data: { name: trimmed } });
+    const ws = await this.prisma.workspaces.update({ where: { id: workspaceId }, data: { name: trimmed } });
+    // O protótipo gravava `logActivity('workspace.updated', 'workspace', { name })` depois do update.
+    await this.activity.log(workspaceId, userId, 'workspace.updated', 'workspace', { name: trimmed });
+    return ws;
   }
 
   /**

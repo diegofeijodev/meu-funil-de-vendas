@@ -16,11 +16,36 @@ export const UPLOAD_KINDS = ['brands', 'media', 'posts', 'tmp'] as const;
 const MIME_EXT: Record<string, string> = {
   'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'application/pdf': 'pdf',
+  // Só no upload de arquivos da marca (kind=brands): logo/identidade em SVG e fontes.
+  'image/svg+xml': 'svg', 'font/ttf': 'ttf', 'font/otf': 'otf',
 };
+/** Tipos aceitos SOMENTE em `kind=brands` (a biblioteca de mídia/posts não os usa). */
+export const BRAND_ONLY_MIMES = ['image/svg+xml', 'font/ttf', 'font/otf'];
 const EXT_MIME: Record<string, string> = Object.fromEntries(Object.entries(MIME_EXT).map(([m, e]) => [e, m]));
 EXT_MIME['jpeg'] = 'image/jpeg';
 
 export const isAllowedMime = (mime: string) => mime in MIME_EXT;
+
+/** Navegadores mandam fontes como `font/*`, `application/x-font-*` ou `octet-stream`: a extensão decide. */
+const FONT_MIME_ALIASES = new Set(['application/octet-stream', 'application/x-font-ttf', 'application/x-font-otf', 'application/x-font-opentype', 'application/font-sfnt', 'font/sfnt', 'font/truetype', 'font/opentype', 'font/ttf', 'font/otf']);
+
+/** Tipo efetivo do upload (resolve o caso das fontes pela extensão do nome). */
+export function resolveUploadMime(filename: string, mime: string): string {
+  const m = mime.toLowerCase();
+  const ext = path.extname(filename || '').slice(1).toLowerCase();
+  if ((ext === 'ttf' || ext === 'otf') && FONT_MIME_ALIASES.has(m)) return ext === 'ttf' ? 'font/ttf' : 'font/otf';
+  return m;
+}
+
+/** O conteúdo bate com o tipo declarado? (só os tipos novos têm checagem de conteúdo) */
+export function contentMatchesMime(mime: string, bytes: Buffer): boolean {
+  if (mime === 'font/ttf' || mime === 'font/otf') {
+    const sig = bytes.subarray(0, 4).toString('latin1');
+    return sig === '\u0000\u0001\u0000\u0000' || sig === 'OTTO' || sig === 'true' || sig === 'ttcf';
+  }
+  if (mime === 'image/svg+xml') return /<svg[\s>]/i.test(bytes.subarray(0, 4096).toString('utf8'));
+  return true;
+}
 export const mimeFromKey = (key: string) => EXT_MIME[path.extname(key).slice(1).toLowerCase()] ?? 'application/octet-stream';
 export const extFromMime = (mime: string) => MIME_EXT[mime] ?? 'bin';
 

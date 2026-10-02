@@ -4,7 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Public } from '../../common/decorators/public.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
-import { extFromMime, FilesService, isAllowedMime, mimeFromKey } from './files.service';
+import { BRAND_ONLY_MIMES, contentMatchesMime, extFromMime, FilesService, isAllowedMime, mimeFromKey, resolveUploadMime } from './files.service';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 100 * 1024 * 1024;
@@ -29,8 +29,11 @@ export class FilesController {
     const decoded = key;
     this.files.verify(bucket, decoded, exp, sig);
     const bytes = await this.files.read(bucket, decoded);
+    const mime = mimeFromKey(decoded);
+    // SVG pode carregar script: servido isolado (sandbox, sem rede) mesmo se alguém abrir o link direto.
+    if (mime === 'image/svg+xml') reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     return reply
-      .header('Content-Type', mimeFromKey(decoded))
+      .header('Content-Type', mime)
       .header('Content-Length', bytes.length)
       .header('Cache-Control', 'private, max-age=31536000, immutable')
       .header('X-Content-Type-Options', 'nosniff')
@@ -49,8 +52,8 @@ export class FilesController {
     if (!req.isMultipart()) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Envie o arquivo como multipart/form-data.' });
     const part = await (req as unknown as { file: () => Promise<{ file: AsyncIterable<Buffer>; mimetype: string; filename: string; truncated?: boolean } | undefined> }).file();
     if (!part) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Nenhum arquivo enviado.' });
-    const mime = part.mimetype.toLowerCase();
-    if (!isAllowedMime(mime)) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Tipo de arquivo não suportado.' });
+    const mime = resolveUploadMime(part.filename, part.mimetype);
+    if (!isAllowedMime(mime) || (BRAND_ONLY_MIMES.includes(mime) && kind !== 'brands')) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Tipo de arquivo não suportado.' });
     const chunks: Buffer[] = [];
     for await (const c of part.file) chunks.push(c);
     if (part.truncated) throw new BadRequestException({ code: 'PAYLOAD_TOO_LARGE', message: 'Arquivo grande demais.' });
@@ -58,6 +61,7 @@ export class FilesController {
     const max = mime.startsWith('video/') ? MAX_VIDEO : mime === 'application/pdf' ? MAX_DOC : MAX_IMAGE;
     if (bytes.length > max) throw new BadRequestException({ code: 'PAYLOAD_TOO_LARGE', message: 'Arquivo grande demais.' });
     if (bytes.length === 0) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Arquivo vazio.' });
+    if (!contentMatchesMime(mime, bytes)) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'O conteúdo do arquivo não corresponde ao tipo.' });
 
     const bucket = 'creative-assets';
     const key = this.files.newUploadKey(kind ?? 'media', workspaceId, extFromMime(mime));

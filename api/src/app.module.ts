@@ -8,11 +8,16 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { HealthModule } from './common/health/health.module';
 import { WireInterceptor } from './common/http/wire.interceptor';
 import { AccessModule } from './modules/access/access.module';
+import { ActivityModule } from './modules/activity/activity.module';
+import { AgencyModule } from './modules/agency/agency.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BrandsModule } from './modules/brands/brands.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
 import { FilesModule } from './modules/files/files.module';
+import { OverviewModule } from './modules/overview/overview.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { SetupModule } from './modules/setup/setup.module';
 import { VaultModule } from './modules/vault/vault.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
@@ -32,6 +37,11 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     AiModule,
     SchedulerModule,
     CrmDefaultsModule,
+    ActivityModule,
+    BrandsModule,
+    OverviewModule,
+    SetupModule,
+    AgencyModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
