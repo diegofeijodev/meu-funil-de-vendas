@@ -915,7 +915,7 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
     if (!post.objective_link || !post.pillar || !post.persona) problems.push("faltam ligação com o objetivo, pilar ou persona");
     problems.push(...dateIssues([post.theme, post.hook, post.caption, post.cta].filter(Boolean).join(" "), scheduledAt));
     const { data: run } = await s.from("ig_auto_runs").select("strategy").eq("id", post.run_id).maybeSingle();
-    const ctas: string[] = (run?.strategy?.ctas ?? []).map((c: string) => c.toLowerCase().trim());
+    const ctas: string[] = (((run?.strategy as any)?.ctas ?? []) as string[]).map((c: string) => c.toLowerCase().trim());
     const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").trim();
     if (ctas.length && post.cta && !ctas.some((c) => norm(c) === norm(post.cta) || norm(post.cta).includes(norm(c)) || norm(c).includes(norm(post.cta))))
       problems.push("CTA fora dos CTAs da estratégia");
