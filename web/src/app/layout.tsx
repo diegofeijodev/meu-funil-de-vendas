@@ -36,8 +36,8 @@ export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR">
-      <body className={`${inter.variable} ${manrope.variable}`}>
+    <html lang="pt-BR" className={`${inter.variable} ${manrope.variable}`}>
+      <body>
         <Providers>{children}</Providers>
       </body>
     </html>

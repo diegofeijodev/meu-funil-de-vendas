@@ -20,7 +20,11 @@ api.interceptors.request.use((config) => {
 
 let refreshing: Promise<AuthSession | null> | null = null;
 
-/** Troca o refresh token por uma sessão nova. Várias 401 paralelas dividem UMA chamada. */
+/**
+ * Troca o refresh token por uma sessão nova. Várias 401 paralelas dividem UMA chamada.
+ * Devolve `null` só quando a API REJEITA o refresh (400/401: sessão morta).
+ * Rede caindo ou 5xx: a promessa rejeita com o erro original e a sessão é mantida.
+ */
 function refreshSession(): Promise<AuthSession | null> {
   const current = getStoredAuth();
   if (!current?.refresh_token) return Promise.resolve(null);
@@ -30,7 +34,11 @@ function refreshSession(): Promise<AuthSession | null> {
       storeAuth(data);
       return data;
     })
-    .catch(() => null)
+    .catch((e: unknown) => {
+      const status = axios.isAxiosError(e) ? e.response?.status : undefined;
+      if (status === 400 || status === 401) return null;
+      throw e;
+    })
     .finally(() => {
       refreshing = null;
     });
@@ -59,7 +67,13 @@ api.interceptors.response.use(undefined, async (error: AxiosError) => {
       // 401 uma única vez: tenta o refresh e repete a chamada com o token novo.
       if (!config._retried) {
         config._retried = true;
-        const fresh = await refreshSession();
+        let fresh: AuthSession | null;
+        try {
+          fresh = await refreshSession();
+        } catch {
+          // Falha transitória (rede/5xx): mantém a sessão e devolve o 401 original.
+          return Promise.reject(error);
+        }
         if (fresh) {
           config.headers.Authorization = `Bearer ${fresh.access_token}`;
           return api.request(config);

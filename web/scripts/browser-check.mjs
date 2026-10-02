@@ -91,10 +91,9 @@ try {
   await page.getByText('E-mail ou senha incorretos.').waitFor({ timeout: 15000 });
   ok('senha errada mostra "E-mail ou senha incorretos."');
   // o 400 do login errado é esperado nesta etapa
-  const i400 = erros.findIndex((e) => e.startsWith('[http 400] POST api/v1/auth/login'));
-  const i400c = erros.findIndex((e) => e.includes('400 (Bad Request)'));
-  if (i400 >= 0) erros.splice(i400, 1);
-  if (i400c >= 0) erros.splice(i400c > i400 ? i400c - 1 : i400c, 1);
+  for (let k = erros.length - 1; k >= 0; k--) {
+    if (erros[k].startsWith('[http 400] POST api/v1/auth/login') || erros[k].includes('400 (Bad Request)')) erros.splice(k, 1);
+  }
 
   // Google sem credenciais: 503 -> mesmo toast do protótipo (sem navegar)
   await page.getByRole('button', { name: 'Continuar com Google' }).click();
@@ -130,6 +129,12 @@ try {
   const opcoes = await aside.locator('select option').allInnerTexts();
   check('seletor de empresa lista "Meu Funil Demo" e "+ Nova empresa"', opcoes.includes('Meu Funil Demo') && opcoes.includes('+ Nova empresa'), opcoes.join('|'));
   check('item ativo (Overview) destacado', (await aside.locator('a', { hasText: 'Overview' }).getAttribute('class')).includes('bg-sidebar-accent'));
+  const fontes = await page.evaluate(() => ({
+    corpo: getComputedStyle(document.body).fontFamily,
+    h: getComputedStyle(document.querySelector('h1,h2,h3,.font-display')).fontFamily,
+  }));
+  check('fonte do corpo é a Inter do next/font', /inter/i.test(fontes.corpo.split(',')[0]), fontes.corpo);
+  check('fonte display (Manrope) aplicada em .font-display', /manrope/i.test(fontes.h.split(',')[0]), fontes.h);
   check('tab title do root', (await page.title()).includes('Meu Funil'), await page.title());
 
   // ── 3. navegação por placeholders ──────────────────────────────

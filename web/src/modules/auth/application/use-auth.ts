@@ -19,11 +19,12 @@ export function useAuth() {
     signUp,
     setSession,
     signOut: async () => {
-      // Limpa o cache ANTES de trocar de conta — senão os dados da conta anterior
+      // Cancela as consultas, apaga o token e SÓ ENTÃO limpa o cache: assim nada
+      // é rebuscado com o token antigo, e os dados da conta anterior não
       // aparecem por um instante na próxima.
       await queryClient.cancelQueries();
-      queryClient.clear();
       await signOut();
+      queryClient.clear();
     },
   };
 }
