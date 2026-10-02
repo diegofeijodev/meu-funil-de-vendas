@@ -43,6 +43,6 @@ import { PublishingService } from './publishing.service';
     InboundService,
     InstagramCronService,
   ],
-  exports: [MetaGraphClient, MetaConfigService, IgStore, InboundService],
+  exports: [MetaGraphClient, MetaConfigService, META_FETCH, IgStore, InboundService],
 })
 export class InstagramModule {}

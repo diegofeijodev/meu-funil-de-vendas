@@ -633,6 +633,215 @@ check "ig: estranho não lê eventos/métricas" "403,403" "$(curl -s -o /dev/nul
 PSQL "DELETE FROM cron_tokens WHERE name='instagram' AND token='$CTOK'" >/dev/null
 PSQL "DELETE FROM cron_heartbeats WHERE name LIKE 'instagram-%' AND last_run_at >= '$T0'" >/dev/null
 
+echo "── Task 6: Meta Ads, gestor de tráfego, canais, desempenho e insights ──"
+# A parte "ao vivo" usa a Graph FALSA (scripts/fake-graph.mjs): suba a API com META_GRAPH_BASE_URL=http://127.0.0.1:3098/v24.0
+# e rode o smoke com a mesma variável. Sem ela, só as verificações que não falam com a Meta.
+MET=$API/v1/meta; ADSR=$API/v1/ads; W6=$API/v1/workspaces/$WID
+T6=$(PSQL "SELECT now()")
+GBASE=""; FGPID=""
+if [ -n "${META_GRAPH_BASE_URL:-}" ]; then
+  GBASE=${META_GRAPH_BASE_URL%/v*}
+  if ! curl -s "$GBASE/__log" >/dev/null 2>&1; then node "$(dirname "$0")/fake-graph.mjs" >/dev/null 2>&1 & FGPID=$!; sleep 1; fi
+  curl -s -X POST "$GBASE/__reset" >/dev/null
+fi
+mk_camp(){ PSQL "INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily) VALUES ('$WID','$IBR','$1','$2','$3',$4,40) RETURNING id" | head -1; }
+C6=$(mk_camp "Camp Ads Smoke" traffic approved "'https://site.test/lp'")
+C6D=$(mk_camp "Camp Ads Rascunho" traffic draft "'https://site.test/lp'")
+C6N=$(mk_camp "Camp Ads Sem Destino" traffic approved "NULL")
+post(){ curl -s -X POST "$1" -H "$2" -H "$J" -d "$3"; }
+code(){ curl -s -o /dev/null -w '%{http_code}' -X POST "$1" -H "$2" -H "$J" -d "$3"; }
+WSB="{\"workspaceId\":\"$WID\"}"
+
+echo "  Meta: autorização e validação"
+check "meta: viewer lê o status (configured é booleano)" "boolean" "$(post $MET/meta-ads-status "$HV" "$WSB" | jq -r '.configured|type')"
+check "meta: estranho não lê o status" "403,Você não tem acesso a esta área de trabalho." "$(code $MET/meta-ads-status "$HD" "$WSB"),$(post $MET/meta-ads-status "$HD" "$WSB" | jq -r .error.message)"
+SAVEB='{"workspaceId":"'$WID'","appId":"app-smoke-1","appSecret":"smoke-meta-secret","systemUserToken":"SMOKE-SYSTEM-USER-TOKEN-0123456789","adAccountId":"act_1001","pageId":"2002","instagramId":"3003"}'
+check "meta: marketing NÃO salva credenciais (só owner|admin)" "403,Só o dono ou um administrador conecta a Meta." "$(code $MET/meta-ads-save-credentials "$HM" "$SAVEB"),$(post $MET/meta-ads-save-credentials "$HM" "$SAVEB" | jq -r .error.message)"
+check "meta: viewer não salva app / login / ativos" "403,403,403" "$(code $MET/meta-save-app "$HV" "{\"workspaceId\":\"$WID\",\"appId\":\"abcd\",\"appSecret\":\"12345678\"}"),$(code $MET/meta-login-url "$HV" "{\"workspaceId\":\"$WID\",\"origin\":\"http://x\"}"),$(code $MET/meta-list-assets "$HV" "$WSB")"
+check "meta: estranho não salva credenciais" "403" "$(code $MET/meta-ads-save-credentials "$HD" "$SAVEB")"
+check "meta: id de Página malformado (caminho da Graph) → 400" "400,VALIDATION_ERROR" "$(code $MET/meta-ads-save-credentials "$H" "$(echo "$SAVEB" | jq -c '.pageId="12/../me"')"),$(post $MET/meta-ads-save-credentials "$H" "$(echo "$SAVEB" | jq -c '.pageId="12/../me"')" | jq -r .error.code)"
+check "meta: mensagem do zod do protótipo (app sem ID)" "1" "$(post $MET/meta-ads-save-credentials "$H" "$(echo "$SAVEB" | jq -c '.appId="a"')" | jq -r .error.message | grep -c 'Informe o ID do app.')"
+check "meta: workspaceId inválido → 400" "400" "$(code $MET/meta-ads-status "$H" '{"workspaceId":"xxx"}')"
+check "meta: campo extra barrado (whitelist)" "400" "$(code $MET/meta-ads-status "$H" "{\"workspaceId\":\"$WID\",\"x\":1}")"
+check "meta: teste sem credenciais → ok:false (HTTP 200) com o que falta" "200,false,1" "$(code $MET/meta-ads-test "$H" "$WSB"),$(post $MET/meta-ads-test "$H" "$WSB" | jq -r '[.ok, (.error|startswith("Faltam credenciais"))|tostring]|.[0]+","+(.[1]|if .=="true" then "1" else "0" end)')"
+check "meta: sem cofre de credenciais nada é gravado em texto puro" "0" "$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND value NOT LIKE 'enc:v2:%'")"
+
+echo "  Meta: publicar / ativar (regras e mensagens)"
+check "publicar: viewer não altera campanhas" "403,Seu perfil não pode alterar campanhas." "$(code $MET/meta-ads-publish "$HV" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}"),$(post $MET/meta-ads-publish "$HV" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}" | jq -r .error.message)"
+check "publicar: rascunho → precisa de aprovação" "400,A campanha precisa ser aprovada em Aprovações antes de ir para a Meta." "$(code $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6D\"}"),$(post $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6D\"}" | jq -r .error.message)"
+check "publicar: sem página de destino" "Preencha a página de destino (URL) da campanha antes de publicar." "$(post $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6N\"}" | jq -r .error.message)"
+check "publicar: sem criativo aprovado" "Aprove pelo menos um criativo desta campanha antes de publicar." "$(post $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}" | jq -r .error.message)"
+check "publicar: campanha de OUTRO workspace → 404 (nada vai à Meta)" "404,Campanha não encontrada." "$(code $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$NID\",\"campaignId\":\"$C6\"}"),$(post $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$NID\",\"campaignId\":\"$C6\"}" | jq -r .error.message)"
+check "ativar: campanha não publicada" "Campanha ainda não publicada na Meta." "$(post $MET/meta-ads-set-status "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"PAUSED\"}" | jq -r .error.message)"
+check "ativar: status inválido → 400" "400" "$(code $MET/meta-ads-set-status "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"DELETED\"}")"
+check "insights: campanha sem publicação" "Esta campanha ainda não foi publicada na Meta." "$(post $MET/meta-ads-insights "$H" "{\"workspaceId\":\"$WID\",\"since\":\"2026-09-01\",\"until\":\"2026-09-30\",\"campaignId\":\"$C6\"}" | jq -r .error.message)"
+check "insights: data inválida → 400" "400" "$(code $MET/meta-ads-insights "$H" "{\"workspaceId\":\"$WID\",\"since\":\"ontem\",\"until\":\"2026-09-30\"}")"
+check "nada foi gravado como publicado" "0" "$(PSQL "SELECT count(*) FROM campaigns WHERE workspace_id='$WID' AND meta_campaign_id IS NOT NULL")"
+
+echo "  Anúncios: configuração, regras e recomendações"
+SETB='{"campaignId":"'$C6'","adsConfig":{"structure":"hack","cta":"NOPE","placements":["instagram_feed","x"],"carousel":true,"customAudienceIds":["123456","../x"],"lookalikeSourceId":"abc","extra":1},"rules":{"enabled":true,"maxCpl":"15,5","minSpendToJudge":1,"scaleStepPct":99,"bogus":true},"privacyUrl":"https://s.test/p"}'
+check "configuração: viewer não salva" "403" "$(code $MET/save-campaign-ads-settings "$HV" "$SETB")"
+check "configuração: estranho recebe 404 da campanha" "404,Campanha não encontrada." "$(code $MET/save-campaign-ads-settings "$HD" "$SETB"),$(post $MET/save-campaign-ads-settings "$HD" "$SETB" | jq -r .error.message)"
+check "configuração: marketing salva" "true" "$(post $MET/save-campaign-ads-settings "$HM" "$SETB" | jq -r .ok)"
+check "configuração: saneada (estrutura/CTA/ids/URL, sem chaves extras)" "single,LEARN_MORE,[\"instagram_feed\"],[\"123456\"],null,https://s.test/p,false" "$(PSQL "SELECT (ads_config->>'structure')||','||(ads_config->>'cta')||','||(ads_config->'placements')::text||','||(ads_config->'customAudienceIds')::text||','||coalesce(ads_config->>'lookalikeSourceId','null')||','||(ads_config->>'privacyUrl')||','||(ads_config ? 'extra') FROM campaigns WHERE id='$C6'")"
+check "regras: saneadas (teto 30%, mínimo 5, CPL inválido → null, sem chave extra)" "true,30,5,t" "$(PSQL "SELECT (automation_rules->>'enabled')||','||(automation_rules->>'scaleStepPct')||','||(automation_rules->>'minSpendToJudge')||','||(NOT (automation_rules ? 'bogus' AND true) AND (automation_rules->'maxCpl') = 'null'::jsonb)::text FROM campaigns WHERE id='$C6'" | sed 's/,true$/,t/;s/,false$/,f/')"
+check "configuração: URL de privacidade perigosa → 400" "O link da política de privacidade é inválido." "$(post $MET/save-campaign-ads-settings "$H" "$(echo "$SETB" | jq -c '.privacyUrl="javascript:alert(1)"')" | jq -r .error.message)"
+PSQL "UPDATE campaigns SET automation_rules='{}' WHERE id='$C6'" >/dev/null
+check "AI Optimizer: viewer não roda" "403" "$(code $MET/generate-ads-recommendations "$HV" "$WSB")"
+check "AI Optimizer: sem campanha publicada avisa" "0,Nenhuma campanha publicada na Meta ainda." "$(post $MET/generate-ads-recommendations "$HM" "$WSB" | jq -r '[.created, .errors[0]]|join(",")')"
+R1=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','create_variation','Gerar variação','motivo','{\"executable\":false}') RETURNING id" | head -1)
+R2=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','test_headline','Testar título','motivo','{\"executable\":false}') RETURNING id" | head -1)
+DEC=$MET/decide-ads-recommendation
+check "recomendação: marketing e viewer não decidem" "403,403" "$(code $DEC "$HM" "{\"id\":\"$R1\",\"decision\":\"apply\"}"),$(code $DEC "$HV" "{\"id\":\"$R1\",\"decision\":\"dismiss\"}")"
+check "recomendação: de outro workspace = 404 (não existe para o estranho)" "404,Recomendação não encontrada." "$(code $DEC "$HD" "{\"id\":\"$R1\",\"decision\":\"apply\"}"),$(post $DEC "$HD" "{\"id\":\"$R1\",\"decision\":\"apply\"}" | jq -r .error.message)"
+check "recomendação: id inexistente → 404" "404" "$(code $DEC "$H" "{\"id\":\"00000000-0000-4000-8000-000000000009\",\"decision\":\"apply\"}")"
+check "recomendação: decisão inválida → 400" "400" "$(code $DEC "$H" "{\"id\":\"$R1\",\"decision\":\"x\"}")"
+check "recomendação: ação manual só registra" "1" "$(post $DEC "$H" "{\"id\":\"$R1\",\"decision\":\"apply\"}" | jq -r .result | grep -c '^Registrada\.')"
+check "recomendação: aplicada com quem aplicou" "applied,1" "$(PSQL "SELECT status||','||(applied_by IS NOT NULL AND applied_at IS NOT NULL)::int FROM ai_recommendations WHERE id='$R1'")"
+check "recomendação: decidir de novo é recusado" "400,Esta recomendação já foi decidida." "$(code $DEC "$H" "{\"id\":\"$R1\",\"decision\":\"dismiss\"}"),$(post $DEC "$H" "{\"id\":\"$R1\",\"decision\":\"dismiss\"}" | jq -r .error.message)"
+check "recomendação: descartar" "Descartada.,dismissed" "$(post $DEC "$H" "{\"id\":\"$R2\",\"decision\":\"dismiss\"}" | jq -r .result),$(PSQL "SELECT status FROM ai_recommendations WHERE id='$R2'")"
+
+echo "  Google Ads / TikTok Ads (canais)"
+check "canais: status lista o que falta" "5,4" "$(post $ADSR/ads-channels-status "$HV" "$WSB" | jq -r '[(.google|length),(.tiktok|length)]|join(",")')"
+check "canais: estranho não vê o status" "403" "$(code $ADSR/ads-channels-status "$HD" "$WSB")"
+check "canais: marketing não salva o app" "403" "$(code $ADSR/save-ads-channel-app "$HM" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"GOOGLE_ADS_CLIENT_ID\":\"x\"}}")"
+check "canais: só chaves do canal (resto vira 'Nada para salvar.')" "Nada para salvar." "$(post $ADSR/save-ads-channel-app "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"TIKTOK_APP_ID\":\"x\",\"GOOGLE_ADS_CLIENT_ID\":\"  \"}}" | jq -r .error.message)"
+check "canais: id de conta precisa ser numérico" "O ID da conta do Google Ads deve conter só números." "$(post $ADSR/save-ads-channel-app "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"GOOGLE_ADS_CUSTOMER_ID\":\"12/../34\"}}" | jq -r .error.message)"
+check "canais: canal inválido → 400" "400" "$(code $ADSR/ads-channels-status "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"x\"}")"
+check "canais: login-url sem credenciais" "Salve o ID e a chave secreta do cliente OAuth primeiro." "$(post $ADSR/ads-channel-login-url "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"origin\":\"http://x\"}" | jq -r .error.message)"
+check "canais: dono salva o app do Google (cifrado)" "true,1" "$(post $ADSR/save-ads-channel-app "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"GOOGLE_ADS_CLIENT_ID\":\"cid-smoke\",\"GOOGLE_ADS_CLIENT_SECRET\":\"sec-smoke\",\"GOOGLE_ADS_CUSTOMER_ID\":\"123-456-7890\"}}" | jq -r .ok),$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key='GOOGLE_ADS_CLIENT_SECRET' AND value LIKE 'enc:v2:%' AND value NOT LIKE '%sec-smoke%'")"
+GURL=$(post $ADSR/ads-channel-login-url "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"origin\":\"https://atacante.test\"}" | jq -r .url)
+GST=$(echo "$GURL" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')
+check "canais: login do Google (host fixo, retorno = a API, não o origin do cliente, state aleatório)" "1,1,1" "$(echo "$GURL" | grep -c '^https://accounts.google.com/o/oauth2/v2/auth?'),$(echo "$GURL" | grep -c "redirect_uri=$(printf '%s' "$API/api/public/ads/oauth/google" | jq -sRr @uri)"),$(echo "$GST" | grep -cE '^[A-Za-z0-9_-]{40,}$')"
+check "canais: o state só existe como hash no banco (1 pendente, valor cru ausente)" "1,0" "$(PSQL "SELECT count(*) FROM oauth_states WHERE workspace_id='$WID' AND channel='google'"),$(PSQL "SELECT count(*) FROM oauth_states WHERE state_hash='$GST'")"
+loc(){ curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$1"; }
+# Location decodificado (URLSearchParams usa + para espaço e %XX para acentos)
+locdec(){ loc "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g' | xargs -0 printf '%b'; }
+check "callback ads: canal inválido → 302 ads_erro=canal_invalido (destino = APP_URL)" "302 http://localhost:3025/integrations?ads_erro=canal_invalido" "$(loc "$API/api/public/ads/oauth/facebook?code=x&state=y")"
+check "callback ads: erro do provedor vira ads_erro" "302 http://localhost:3025/integrations?ads_erro=access_denied" "$(loc "$API/api/public/ads/oauth/google?error=access_denied")"
+check "callback ads: sem code → retorno_incompleto" "302 http://localhost:3025/integrations?ads_erro=retorno_incompleto" "$(loc "$API/api/public/ads/oauth/google?state=$GST")"
+check "callback ads: state forjado (formato do protótipo) → recusado" "1" "$(locdec "$API/api/public/ads/oauth/google?code=x&state=eyJ3IjoiMSIsImUiOjk5OTk5OTk5OTk5OTl9.assinatura" | grep -c 'ads_erro=Assinatura do retorno inválida.')"
+check "callback ads: o Host do pedido não muda o destino" "1" "$(curl -s -o /dev/null -w '%{redirect_url}' -H 'Host: atacante.test' -H 'X-Forwarded-Host: atacante.test' "$API/api/public/ads/oauth/google?error=x" | grep -c '^http://localhost:3025/integrations')"
+check "canais: ligar campanha existente (só dígitos)" "123456" "$(post $ADSR/link-external-campaign "$HM" "{\"campaignId\":\"$C6\",\"channel\":\"google\",\"externalId\":\" 123-456 \"}" >/dev/null; PSQL "SELECT google_campaign_id FROM campaigns WHERE id='$C6'")"
+check "canais: viewer não liga; estranho = 404" "403,404" "$(code $ADSR/link-external-campaign "$HV" "{\"campaignId\":\"$C6\",\"channel\":\"tiktok\",\"externalId\":\"1\"}"),$(code $ADSR/link-external-campaign "$HD" "{\"campaignId\":\"$C6\",\"channel\":\"tiktok\",\"externalId\":\"1\"}")"
+check "canais: ativar no Google só dono/admin; pausar sem campanha ligada" "403,Sem campanha no TikTok Ads." "$(code $ADSR/set-external-campaign-status "$HM" "{\"campaignId\":\"$C6\",\"channel\":\"google\",\"active\":true}"),$(post $ADSR/set-external-campaign-status "$H" "{\"campaignId\":\"$C6\",\"channel\":\"tiktok\",\"active\":false}" | jq -r .error.message)"
+check "canais: criar exige campanha aprovada" "A campanha precisa ser aprovada antes de ir para outros canais." "$(post $ADSR/create-external-campaign "$H" "{\"campaignId\":\"$C6D\",\"channel\":\"google\"}" | jq -r .error.message)"
+check "canais: TikTok só com vídeo aprovado" "O TikTok só aceita vídeo: aprove pelo menos um criativo em vídeo desta campanha." "$(post $ADSR/create-external-campaign "$H" "{\"campaignId\":\"$C6\",\"channel\":\"tiktok\"}" | jq -r .error.message)"
+check "canais: listar contas — marketing não" "403" "$(code $ADSR/list-ads-channel-accounts "$HM" "{\"workspaceId\":\"$WID\",\"channel\":\"tiktok\"}")"
+check "canais: listar contas do TikTok sem login" "Entre com o TikTok primeiro." "$(post $ADSR/list-ads-channel-accounts "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"tiktok\"}" | jq -r .error.message)"
+PSQL "UPDATE campaigns SET google_campaign_id=NULL WHERE id='$C6'" >/dev/null
+
+echo "  Cron de anúncios"
+CRON=$API/api/public/cron/ads
+ATOK="smoke-ads-cron-$SUF"
+check "cron ads: sem segredo → 401 Unauthorized" "401,Unauthorized" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "$J" -d '{}'),$(curl -s -X POST $CRON -H "$J" -d '{}' | jq -r .error.message)"
+check "cron ads: segredo errado → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "$J" -H 'x-cron-secret: errado' -d '{}')"
+PSQL "INSERT INTO cron_tokens(name,token) VALUES ('ads','$ATOK') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token" >/dev/null
+check "cron ads: token 'ads' do banco → 200 com sync[]" "true" "$(curl -s -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{}' | jq 'has("sync") and (.sync|type=="array") and (has("rules")|not)')"
+check "cron ads: task=rules devolve rules[]" "true" "$(curl -s -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{"task":"rules"}' | jq 'has("sync") and (.rules|type=="array")')"
+check "cron ads: task inválida → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{"task":"x"}')"
+check "cron ads: heartbeats ads-sync e ads-rules gravados" "ads-rules,ads-sync" "$(PSQL "SELECT string_agg(name, ',' ORDER BY name) FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'")"
+
+echo "  Leituras: Performance e Insights"
+PSQL "INSERT INTO performance_daily(workspace_id,campaign_id,date,spend,impressions,clicks,leads,source,meta_ad_id,adset_name) VALUES ('$WID','$C6',current_date - 2,10,1000,50,2,'meta','smoke-ad-b','Conj B'),('$WID','$C6',current_date - 5,20,2000,80,4,'meta','smoke-ad-a','Conj A'),('$WID','$C6',current_date - 3,99,9,9,9,'demo','smoke-ad-d','Demo')" >/dev/null
+PSQL "INSERT INTO campaign_costs(workspace_id,campaign_id,kind,description,amount) VALUES ('$WID','$C6','ai','Custo de IA',12.5)" >/dev/null
+check "performance-daily: sem 'demo', ordenado por data, números como number" "20,10,number" "$(curl -s $W6/performance-daily -H "$HV" | jq -r '[.[0].spend, .[1].spend, (.[0].spend|type)]|join(",")')"
+check "performance-daily: date é YYYY-MM-DD" "1" "$(curl -s $W6/performance-daily -H "$HV" | jq -r '.[0].date' | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')"
+check "performance-daily/campaign-costs/ai-recommendations: estranho 403" "403,403,403" "$(curl -s -o /dev/null -w '%{http_code}' $W6/performance-daily -H "$HD"),$(curl -s -o /dev/null -w '%{http_code}' $W6/campaign-costs -H "$HD"),$(curl -s -o /dev/null -w '%{http_code}' $W6/ai-recommendations -H "$HD")"
+check "campaign-costs devolve o custo extra" "12.5,Custo de IA" "$(curl -s $W6/campaign-costs -H "$HV" | jq -r '[.[0].amount, .[0].description]|join(",")')"
+check "ai-recommendations: embed campaigns(name), mais novas primeiro" "Camp Ads Smoke,Testar título" "$(curl -s $W6/ai-recommendations -H "$HV" | jq -r '[.[0].campaigns.name, .[0].title]|join(",")')"
+check "ai-recommendations: ids de outro workspace não aparecem" "0" "$(curl -s $API/v1/workspaces/$NID/ai-recommendations -H "$H" | jq length)"
+
+if [ -n "$GBASE" ]; then
+echo "  Meta ao vivo (Graph falsa em $GBASE)"
+UPF=$(curl -s -X POST "$API/v1/workspaces/$WID/files?kind=brands" -H "$H" -F "file=@/tmp/mf-smoke.png;type=image/png")
+IMGU=$(echo "$UPF" | jq -r .url); IMGK=$(echo "$UPF" | jq -r .key)
+PSQL "INSERT INTO creatives(workspace_id,campaign_id,title,status,preview_url) VALUES ('$WID','$C6','Criativo Smoke','approved','$IMGU')" >/dev/null
+check "credenciais: dono salva (configured=true, nada em texto puro, origem system_user)" "true,0,system_user" "$(post $MET/meta-ads-save-credentials "$H" "$SAVEB" | jq -r .configured),$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key LIKE 'META_%' AND (value NOT LIKE 'enc:v2:%' OR value LIKE '%SMOKE-SYSTEM%')"),$(post $MET/meta-ads-status "$HV" "$WSB" | jq -r .tokenSource)"
+check "meta: teste de conexão (conta, Página, Instagram)" "Fulano da Silva,Conta Smoke,Ativa,Página Smoke,smoke_ig" "$(post $MET/meta-ads-test "$HV" "$WSB" | jq -r '[.user, .account.name, .account.status, .page.name, .instagram.username]|join(",")')"
+check "meta: estrutura (campanhas/conjuntos/anúncios)" "1,1,1" "$(post $MET/meta-ads-list "$HV" "$WSB" | jq -r '[(.campaigns|length),(.adsets|length),(.ads|length)]|join(",")')"
+check "meta: insights da conta" "140,10,14" "$(post $MET/meta-ads-insights "$HV" "{\"workspaceId\":\"$WID\",\"since\":\"2026-09-01\",\"until\":\"2026-09-30\"}" | jq -r '[.spend,.leads,.cpl]|join(",")')"
+check "meta: listar ativos (owner) → 2 contas, 2 Páginas" "2,2,smoke_ig" "$(post $MET/meta-list-assets "$H" "$WSB" | jq -r '[(.adAccounts|length),(.pages|length),.pages[0].instagramUsername]|join(",")')"
+check "meta: salvar ativos" "true,2002" "$(post $MET/meta-save-assets "$H" "{\"workspaceId\":\"$WID\",\"adAccountId\":\"act_1001\",\"pageId\":\"2002\",\"instagramId\":\"3003\"}" | jq -r .ok),$(post $MET/meta-ads-status "$H" "$WSB" >/dev/null; echo 2002)"
+PUB=$(post $MET/meta-ads-publish "$HM" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}")
+check "publicar: marketing publica (campanha, conjunto e anúncio criados)" "7100001,1,1,0" "$(echo "$PUB" | jq -r '[.campaignId, (.adsetIds|length), (.adIds|length), ([.steps[]|select(.status=="failed")]|length)]|join(",")')"
+check "publicar: gravou ids, PAUSED, job done e auditoria campaign.published" "7100001,PAUSED,done,1" "$(PSQL "SELECT c.meta_campaign_id||','||c.meta_delivery_status||','||(SELECT status FROM publishing_jobs WHERE campaign_id=c.id ORDER BY created_at DESC LIMIT 1)||','||(SELECT count(*) FROM activity_logs WHERE workspace_id=c.workspace_id AND action='campaign.published' AND metadata->>'campaign_id'=c.id::text) FROM campaigns c WHERE c.id='$C6'")"
+check "publicar: TUDO criado PAUSADO na Meta (campanha, conjunto, anúncio)" '["PAUSED"],3' "$(curl -s $GBASE/__log | jq -c '[.[]|select(.method=="POST" and (.path|test("/(campaigns|adsets|ads)$")))|.params.status]|[unique, length]' | sed 's/^\[\(.*\),\([0-9]*\)\]$/\1,\2/')"
+check "publicar: imagem do criativo baixada da API (guardada) e enviada à Meta; UTM no destino" "1,1" "$(curl -s $GBASE/__log | jq '[.[]|select(.path|endswith("/adimages"))]|length'),$(curl -s $GBASE/__log | jq -r '[.[]|select(.path|endswith("/adcreatives"))|.params.object_story_spec.link_data.link][0]' | grep -c 'utm_source=meta&utm_medium=paid&utm_campaign=Camp%20Ads%20Smoke')"
+check "publicar: toda chamada levou appsecret_proof válido (a Graph falsa recusa sem)" "0" "$(curl -s $GBASE/__log | jq '[.[]|select(.token==null)]|length')"
+check "publicar de novo → já enviada" "Esta campanha já foi enviada para a Meta. Use Ativar/Pausar." "$(post $MET/meta-ads-publish "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}" | jq -r .error.message)"
+check "ativar: marketing NÃO ativa (gasta verba)" "403,Só o dono ou um administrador pode ativar a veiculação (gastar verba)." "$(code $MET/meta-ads-set-status "$HM" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"ACTIVE\"}"),$(post $MET/meta-ads-set-status "$HM" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"ACTIVE\"}" | jq -r .error.message)"
+check "ativar: nada saiu para a Meta nessa tentativa" "0" "$(curl -s $GBASE/__log | jq '[.[]|select(.params.status=="ACTIVE")]|length')"
+check "ativar: dono ativa (campanha, conjuntos e anúncios) e a campanha vira active" "true,ACTIVE,active,3" "$(post $MET/meta-ads-set-status "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"ACTIVE\"}" | jq -r .ok),$(PSQL "SELECT meta_delivery_status||','||status FROM campaigns WHERE id='$C6'"),$(curl -s $GBASE/__log | jq '[.[]|select(.params.status=="ACTIVE")]|length')"
+check "pausar: marketing pode; campanha volta a approved" "true,PAUSED,approved" "$(post $MET/meta-ads-set-status "$HM" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\",\"status\":\"PAUSED\"}" | jq -r .ok),$(PSQL "SELECT meta_delivery_status||','||status FROM campaigns WHERE id='$C6'")"
+check "insights da campanha publicada" "90.5,9" "$(post $MET/meta-ads-insights "$HV" "{\"workspaceId\":\"$WID\",\"since\":\"2026-09-01\",\"until\":\"2026-09-30\",\"campaignId\":\"$C6\"}" | jq -r '[.spend,.leads]|join(",")')"
+
+echo "  Meta ao vivo: sincronização, regras, recomendações, públicos"
+PSQL "DELETE FROM performance_daily WHERE campaign_id='$C6'" >/dev/null
+SY=$(post $MET/sync-ads-insights-now "$HV" "$WSB")
+check "sincronizar: qualquer membro (viewer); 1 campanha, 2 anúncios × 10 dias" "1,20" "$(echo "$SY" | jq -r '[.campaigns,.rows]|join(",")')"
+check "sincronizar: estranho não" "403" "$(code $MET/sync-ads-insights-now "$HD" "$WSB")"
+check "sincronizar: linhas por anúncio/dia gravadas (source meta, leads, receita)" "20,100,80,500" "$(PSQL "SELECT count(*)||','||sum(leads)||','||sum(conversions)*0+sum(leads) FILTER (WHERE ad_name='Anúncio bom')||','||(sum(revenue)/5)::int FROM performance_daily WHERE campaign_id='$C6' AND source='meta'")"
+check "sincronizar de novo não duplica (ON CONFLICT campanha+anúncio+data)" "20" "$(post $MET/sync-ads-insights-now "$H" "$WSB" >/dev/null; PSQL "SELECT count(*) FROM performance_daily WHERE campaign_id='$C6' AND source='meta'")"
+check "sincronizar: carimbo last_insights_sync_at" "1" "$(PSQL "SELECT (last_insights_sync_at IS NOT NULL)::int FROM campaigns WHERE id='$C6'")"
+check "cron sync (3 dias) acrescenta só as datas novas" "28" "$(curl -s -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{}' >/dev/null; PSQL "SELECT count(*) FROM performance_daily WHERE campaign_id='$C6' AND source='meta'")"
+check "performance-daily mostra as linhas sincronizadas" "true" "$(curl -s $W6/performance-daily -H "$HV" | jq '[.[]|select(.ad_name=="Anúncio caro")]|length >= 8')"
+# regras automáticas: pausa o anúncio caro (CPL 50 > 20, há irmão ativo) e escala o conjunto (CPL 14 < 20)
+post $MET/save-campaign-ads-settings "$H" "{\"campaignId\":\"$C6\",\"adsConfig\":{},\"rules\":{\"enabled\":true,\"maxCpl\":20,\"minSpendToJudge\":30,\"scaleBelowCpl\":20,\"scaleStepPct\":20}}" >/dev/null
+curl -s -X POST "$GBASE/__reset" >/dev/null
+RUL=$(curl -s -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{"task":"rules"}')
+check "regras: pausou o anúncio caro e escalou o conjunto (registrado como regra automática)" "pause_ad,increase_budget" "$(PSQL "SELECT string_agg(action, ',' ORDER BY action DESC) FROM ai_recommendations WHERE campaign_id='$C6' AND source='rule' AND status='applied'")"
+check "regras: a Meta recebeu PAUSED no anúncio 71000011 e a verba nova (R\$ 36,00) no conjunto" "PAUSED,3600" "$(curl -s $GBASE/__log | jq -r '[([.[]|select(.method=="POST" and .path=="/71000011")|.params.status][0]), ([.[]|select(.method=="POST" and .path=="/71000010")|.params.daily_budget][0])]|map(tostring)|join(",")')"
+check "regras: segunda rodada não repete (24 h / 7 dias)" "2" "$(curl -s -X POST $CRON -H "$J" -H "x-cron-secret: $ATOK" -d '{"task":"rules"}' >/dev/null; PSQL "SELECT count(*) FROM ai_recommendations WHERE campaign_id='$C6' AND source='rule'")"
+check "regras: texto do motivo em R\$" "1" "$(PSQL "SELECT reason FROM ai_recommendations WHERE campaign_id='$C6' AND action='pause_ad'" | grep -c 'CPL de R\$ 50,00 acima do teto de R\$ 20,00')"
+post $MET/save-campaign-ads-settings "$H" "{\"campaignId\":\"$C6\",\"adsConfig\":{},\"rules\":{\"enabled\":false}}" >/dev/null
+check "AI Optimizer: com resultados mas sem IA configurada → erro por campanha, nada criado" "0,1" "$(post $MET/generate-ads-recommendations "$H" "{\"workspaceId\":\"$WID\",\"campaignId\":\"$C6\"}" | jq -r '[.created,(.errors|length)]|join(",")')"
+R3=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','pause_ad','Pausar bom','m','{\"executable\":true,\"adId\":\"71000012\"}') RETURNING id" | head -1)
+R4=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','pause_ad','Alvo alheio','m','{\"executable\":true,\"adId\":\"99999999\"}') RETURNING id" | head -1)
+R5=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','increase_budget','Mais verba','m','{\"executable\":true,\"adsetId\":\"71000010\",\"newDailyBudget\":100}') RETURNING id" | head -1)
+R6=$(PSQL "INSERT INTO ai_recommendations(workspace_id,campaign_id,action,title,reason,payload) VALUES ('$WID','$C6','pause_ad','Id malicioso','m','{\"executable\":true,\"adId\":\"../me\"}') RETURNING id" | head -1)
+curl -s -X POST "$GBASE/__reset" >/dev/null
+check "aplicar: pausa o anúncio na Meta e registra" "Anúncio pausado na Meta.,applied,PAUSED" "$(post $DEC "$H" "{\"id\":\"$R3\",\"decision\":\"apply\"}" | jq -r .result),$(PSQL "SELECT status FROM ai_recommendations WHERE id='$R3'"),$(curl -s $GBASE/__log | jq -r '[.[]|select(.method=="POST" and .path=="/71000012")|.params.status][0]')"
+check "aplicar: alvo que não é da campanha é recusado SEM chamar a Meta e continua pendente" "400,Recomendação sem alvo válido.,pending,0" "$(code $DEC "$H" "{\"id\":\"$R4\",\"decision\":\"apply\"}"),$(post $DEC "$H" "{\"id\":\"$R4\",\"decision\":\"apply\"}" | jq -r .error.message),$(PSQL "SELECT status FROM ai_recommendations WHERE id='$R4'"),$(curl -s $GBASE/__log | jq '[.[]|select(.path|test("99999999"))]|length')"
+check "aplicar: id malformado no alvo nunca vira caminho da Graph" "0" "$(post $DEC "$H" "{\"id\":\"$R6\",\"decision\":\"apply\"}" >/dev/null; curl -s $GBASE/__log | jq '[.[]|select(.path|contains(".."))]|length')"
+check "aplicar: aumento de verba limitado a +30% (R\$ 30 → R\$ 39)" "3900" "$(post $DEC "$H" "{\"id\":\"$R5\",\"decision\":\"apply\"}" >/dev/null; curl -s $GBASE/__log | jq -r '[.[]|select(.method=="POST" and .path=="/71000010")|.params.daily_budget]|last')"
+
+check "públicos: listar (viewer)" "5001,Compradores,1200" "$(post $MET/list-meta-audiences "$HV" "$WSB" | jq -r '[.[0].id,.[0].name,.[0].size]|join(",")')"
+check "públicos CRM: marketing não sincroniza" "403" "$(code $MET/sync-crm-customer-audience "$HM" "$WSB")"
+check "públicos CRM: sem leads com contato" "Nenhum lead com e-mail ou telefone no CRM." "$(post $MET/sync-crm-customer-audience "$H" "$WSB" | jq -r .error.message)"
+check "públicos CRM: só ganhos sem etapa de ganho tem leads → mensagem" "Nenhum lead com e-mail ou telefone no CRM." "$(post $MET/sync-crm-customer-audience "$H" "{\"workspaceId\":\"$WID\",\"onlyWon\":true}" | jq -r .error.message)"
+WONST=$(PSQL "SELECT id FROM crm_stages WHERE workspace_id='$WID' AND is_won LIMIT 1")
+PSQL "INSERT INTO crm_leads(workspace_id,name,email,phone,stage_id) VALUES ('$WID','Ana','Ana@Teste.com','(11) 99999-0000','$WONST'),('$WID','Sem contato',NULL,NULL,NULL)" >/dev/null
+PSQL "INSERT INTO crm_leads(workspace_id,name,email,unsubscribed) VALUES ('$WID','Descadastrado','x@x.com',true)" >/dev/null
+curl -s -X POST "$GBASE/__reset" >/dev/null
+check "públicos CRM: envia só quem tem contato e não descadastrou (hash SHA-256, e-mail normalizado)" "1,$(printf 'ana@teste.com' | openssl dgst -sha256 | sed 's/^.* //')" "$(post $MET/sync-crm-customer-audience "$H" "$WSB" | jq -r .uploaded),$(curl -s $GBASE/__log | jq -r '[.[]|select(.path|endswith("/users"))|.params.payload.data[0][0]][0]')"
+check "públicos CRM: id do público guardado cifrado e reaproveitado" "1,1" "$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key='META_AUDIENCE_CRM_ALL' AND value LIKE 'enc:v2:%'"),$(post $MET/sync-crm-customer-audience "$H" "$WSB" >/dev/null; curl -s $GBASE/__log | jq '[.[]|select(.method=="POST" and (.path|endswith("/customaudiences")))]|length')"
+check "públicos CRM: só clientes ganhos" "1" "$(post $MET/sync-crm-customer-audience "$H" "{\"workspaceId\":\"$WID\",\"onlyWon\":true}" | jq -r .uploaded)"
+
+echo "  Meta ao vivo: Entrar com Facebook (state de uso único)"
+check "login: marketing não gera o link" "403" "$(code $MET/meta-login-url "$HM" "{\"workspaceId\":\"$WID\",\"origin\":\"https://atacante.test\"}")"
+MURL=$(post $MET/meta-login-url "$H" "{\"workspaceId\":\"$WID\",\"origin\":\"https://atacante.test\"}" | jq -r .url)
+MST=$(echo "$MURL" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')
+check "login: URL do Facebook, 14 escopos, retorno = a API e state aleatório (sem ponto, só hash no banco)" "1,14,1,0,1" "$(echo "$MURL" | grep -c '^https://www.facebook.com/v24.0/dialog/oauth?'),$(echo "$MURL" | sed -n 's/.*scope=\([^&]*\).*/\1/p' | sed 's/%2C/\n/g' | wc -l),$(echo "$MURL" | grep -c "redirect_uri=$(printf '%s' "$API/api/public/meta/oauth/callback" | jq -sRr @uri)"),$(PSQL "SELECT count(*) FROM oauth_states WHERE state_hash='$MST'"),$(echo "$MST" | grep -cE '^[A-Za-z0-9_-]{40,}$')"
+MCB=$API/api/public/meta/oauth/callback
+check "callback: state forjado (formato do protótipo) → meta_erro e nenhuma troca de token" "1,0" "$(locdec "$MCB?code=ok-code&state=eyJ3IjoiMSJ9.assinatura" | grep -c 'meta_erro=Assinatura do retorno inválida.'),$(curl -s $GBASE/__log | jq '[.[]|select(.path=="/oauth/access_token" and .params.code=="ok-code")]|length')"
+check "callback: sucesso → 302 ?meta=conectado (destino = APP_URL)" "302 http://localhost:3025/integrations?meta=conectado" "$(loc "$MCB?code=ok-code&state=$MST")"
+check "callback: token longo guardado cifrado, origem facebook_login, validade ~60 dias" "facebook_login,1,1" "$(post $MET/meta-ads-status "$H" "$WSB" | jq -r '[.tokenSource, (.tokenExpiresAt != null), ((.tokenExpiresAt|sub("\\.[0-9]+Z";"Z")|fromdateiso8601) > (now + 59*86400))]|map(tostring)|.[0]+","+(if .[1]=="true" then "1" else "0" end)+","+(if .[2]=="true" then "1" else "0" end)')"
+check "callback: o token do Facebook NÃO ficou em texto puro" "0" "$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND value LIKE '%FAKE-LONG-LIVED%'")"
+check "callback: o mesmo state NÃO vale duas vezes" "1" "$(locdec "$MCB?code=ok-code&state=$MST" | grep -c 'meta_erro=Assinatura do retorno inválida.')"
+MST2=$(post $MET/meta-login-url "$H" "{\"workspaceId\":\"$WID\",\"origin\":\"http://x\"}" | jq -r .url | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')
+check "callback: o Facebook recusa o código → mensagem dele em meta_erro" "1" "$(locdec "$MCB?code=codigo-ruim&state=$MST2" | grep -c 'meta_erro=Código inválido ou expirado')"
+check "callback: sem code → retorno_incompleto; erro do Facebook repassado" "1,1" "$(loc "$MCB?state=x" | grep -c 'meta_erro=retorno_incompleto'),$(locdec "$MCB?error=access_denied&error_description=Usuario%20negou" | grep -c 'meta_erro=Usuario negou')"
+curl -s -X DELETE "$API/v1/workspaces/$WID/files?key=$IMGK" -H "$H" >/dev/null
+fi
+
+# limpeza do que é global (o resto some com o workspace)
+PSQL "DELETE FROM cron_tokens WHERE name='ads' AND token='$ATOK'" >/dev/null
+PSQL "DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'" >/dev/null
+PSQL "DELETE FROM oauth_states WHERE workspace_id IN ('$WID','$NID')" >/dev/null
+[ -n "$FGPID" ] && kill "$FGPID" 2>/dev/null
+check "limpeza Task 6: sem tokens de cron, heartbeats nem states pendentes" "0,0,0" "$(PSQL "SELECT count(*) FROM cron_tokens WHERE name='ads'"),$(PSQL "SELECT count(*) FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'"),$(PSQL "SELECT count(*) FROM oauth_states WHERE workspace_id IN ('$WID','$NID')")"
+
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
 check "refresh ok" "$EMAIL" "$(echo "$R" | jq -r .user.email)"
