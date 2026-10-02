@@ -19,6 +19,7 @@ import { CanvaModule } from './modules/canva/canva.module';
 import { CopyAiModule } from './modules/copy-ai/copy-ai.module';
 import { CreativeModule } from './modules/creative/creative.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
+import { InstagramModule } from './modules/instagram/instagram.module';
 import { FilesModule } from './modules/files/files.module';
 import { McpModule } from './modules/mcp/mcp.module';
 import { MediaModule } from './modules/media/media.module';
@@ -58,6 +59,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     McpModule,
     CanvaModule,
     CreativeModule,
+    InstagramModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

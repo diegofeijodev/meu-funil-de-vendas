@@ -34,6 +34,8 @@ async function bootstrap() {
       // Atrás de nginx, `true`: sem isso `req.ip` é o do proxy e o throttle vira um balde global.
       trustProxy: env.TRUST_PROXY,
     }),
+    // `req.rawBody`: os webhooks da Meta assinam o corpo bruto (x-hub-signature-256).
+    { rawBody: true },
   );
 
   await app.register(helmet as never, {

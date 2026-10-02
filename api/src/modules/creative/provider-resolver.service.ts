@@ -70,7 +70,9 @@ export class ProviderResolverService {
 
   /** O id de job externo está gravado num job deste workspace? (vínculo exigido antes de consultar qualquer provedor) */
   readonly owns: OwnsJob = async (workspaceId, externalJobId) =>
-    (await this.prisma.creative_generation_jobs.count({ where: { workspace_id: workspaceId, external_job_id: externalJobId } })) > 0;
+    (await this.prisma.creative_generation_jobs.count({ where: { workspace_id: workspaceId, external_job_id: externalJobId } })) > 0 ||
+    // Vídeo de post do Instagram: o job fica em `ig_posts.creative_brief.pending_job` (gravado só pelo servidor — o PATCH do cliente não o toca).
+    (await this.prisma.ig_posts.count({ where: { workspace_id: workspaceId, status: 'generating', creative_brief: { path: ['pending_job', 'jobId'], equals: externalJobId } } })) > 0;
 
   /** Envolve o provedor: `getGenerationStatus`/`getAsset` só aceitam ids vinculados ao workspace. */
   private bind(p: ChainedProvider, workspaceId: string): ChainedProvider {

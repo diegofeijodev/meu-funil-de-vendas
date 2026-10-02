@@ -13,6 +13,6 @@ import { VideoExtrasService } from './video-extras.service';
   imports: [MediaModule, McpModule, StrategistModule],
   controllers: [CreativeController, CreativeResourceController, AiKeysHealthController],
   providers: [CreativeService, CreativeResourcesService, PipelineService, ProviderResolverService, RefsService, VideoExtrasService, CreativePollJob],
-  exports: [CreativeService, ProviderResolverService, RefsService, PipelineService],
+  exports: [CreativeService, ProviderResolverService, RefsService, PipelineService, VideoExtrasService],
 })
 export class CreativeModule {}
