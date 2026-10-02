@@ -515,7 +515,7 @@ export async function autoCalendarTick() {
   const out: Record<string, unknown> = {};
 
   // 1) Lotes pendentes da estrategista (o usuário pode ter fechado a página).
-  const { data: planning } = await s.from("ig_auto_runs").select("id").eq("status", "planning").order("created_at").limit(1);
+  const { data: planning } = await s.from("ig_auto_runs").select("id").eq("status", "planning").neq("strategy_status", "review").order("created_at").limit(1);
   let filled = 0;
   for (const r of (planning ?? []) as any[]) {
     await fillAutoRun(r.id).then(() => filled++).catch(() => null);
