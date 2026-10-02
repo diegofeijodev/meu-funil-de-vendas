@@ -36,8 +36,10 @@ export function LeadDetail() {
     enabled: !!workspaceId,
     queryFn: async () => {
       if (!workspaceId) return { lead: null as Lead | null, interactions: [], tasks: [] };
-      const [lead, interactions, tasks] = await Promise.all([
-        getLead(workspaceId, id),
+      const lead = await getLead(workspaceId, id);
+      // lead inexistente: não consulta timeline/tarefas (a ficha fica em "Carregando lead…", como no protótipo)
+      if (!lead) return { lead: null as Lead | null, interactions: [], tasks: [] };
+      const [interactions, tasks] = await Promise.all([
         listLeadInteractions(workspaceId, id).catch(() => []),
         listLeadTasks(workspaceId, id).catch(() => []),
       ]);
