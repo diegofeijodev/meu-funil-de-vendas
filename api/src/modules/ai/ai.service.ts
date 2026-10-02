@@ -133,6 +133,31 @@ export class AiService {
     return this.gatewayJson<T>(req);
   }
 
+  /**
+   * JSON com escolha de motor e rótulo do motor usado (Copy Engine). Diferente de `json`, o prompt vai
+   * como veio (sem o sufixo "Devolva SOMENTE JSON…": o prompt de copy já lista as chaves), `engine`
+   * limita quais chaves próprias são tentadas (`chatgpt` só OpenAI, `gemini` só Gemini, `auto` as duas)
+   * e o resultado diz quem respondeu. Chave própria que falha cai para o gateway (rótulo "sua chave falhou").
+   */
+  async jsonWithEngine<T = any>(
+    workspaceId: string,
+    req: Pick<AiJsonRequest, 'prompt' | 'schema' | 'name' | 'model'> & { engine?: 'auto' | 'chatgpt' | 'gemini' },
+  ): Promise<{ content: T; engine: string }> {
+    const engine = req.engine ?? 'auto';
+    const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
+    const fails: string[] = [];
+    if ((engine === 'chatgpt' || engine === 'auto') && o) {
+      try { return { content: parseJsonLoose(await this.openaiText(o, req.prompt, true)), engine: 'Sua conta OpenAI' }; }
+      catch (e) { fails.push(`OpenAI: ${e instanceof Error ? e.message : 'falhou'}`); }
+    }
+    if ((engine === 'gemini' || engine === 'auto') && g) {
+      try { return { content: parseJsonLoose(await this.geminiText(g, [{ text: req.prompt }], true)), engine: 'Sua conta Gemini' }; }
+      catch (e) { fails.push(`Gemini: ${e instanceof Error ? e.message : 'falhou'}`); }
+    }
+    if (fails.length) this.logger.warn(`chaves próprias falharam: ${fails.join(' | ')}`);
+    return { content: await this.gatewayJson<T>(req), engine: fails.length ? 'IA do app (sua chave falhou)' : 'IA do app' };
+  }
+
   /** Atalho de visão: JSON a partir de imagens + prompt. */
   vision<T = any>(workspaceId: string, req: AiJsonRequest & { images: AiImageInput[] }): Promise<T> {
     return this.json<T>(workspaceId, req);

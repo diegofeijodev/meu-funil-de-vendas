@@ -11,13 +11,17 @@ import { AccessModule } from './modules/access/access.module';
 import { ActivityModule } from './modules/activity/activity.module';
 import { AgencyModule } from './modules/agency/agency.module';
 import { AiModule } from './modules/ai/ai.module';
+import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BrandsModule } from './modules/brands/brands.module';
+import { CampaignsModule } from './modules/campaigns/campaigns.module';
+import { CopyAiModule } from './modules/copy-ai/copy-ai.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
 import { FilesModule } from './modules/files/files.module';
 import { OverviewModule } from './modules/overview/overview.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { SetupModule } from './modules/setup/setup.module';
+import { StrategistModule } from './modules/strategist/strategist.module';
 import { VaultModule } from './modules/vault/vault.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
@@ -42,6 +46,10 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     OverviewModule,
     SetupModule,
     AgencyModule,
+    CampaignsModule,
+    StrategistModule,
+    CopyAiModule,
+    ApprovalsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
