@@ -34,7 +34,9 @@ export class CrmConversionService {
     ]);
     if (!integration || integration.status !== 'connected' || !lead) return { skipped: true };
     try {
-      await this.sendConversionEvent(workspaceId, integration.config as Record<string, unknown>, event, lead.phone, lead.email, Number(lead.estimated_value ?? 0));
+      const r = await this.sendConversionEvent(workspaceId, integration.config as Record<string, unknown>, event, lead.phone, lead.email, Number(lead.estimated_value ?? 0));
+      // sem pixel ou sem dado de contato nada foi enviado: não reportar "enviado"
+      if ('skipped' in r) return { skipped: true };
       return { sent: true };
     } catch (e) {
       this.logger.warn(`CAPI falhou: ${e instanceof Error ? e.message : e}`);
@@ -42,7 +44,7 @@ export class CrmConversionService {
     }
   }
 
-  private async sendConversionEvent(workspaceId: string, config: Record<string, unknown>, eventName: ConversionEvent, phone: string | null, email: string | null, value: number) {
+  private async sendConversionEvent(workspaceId: string, config: Record<string, unknown>, eventName: ConversionEvent, phone: string | null, email: string | null, value: number): Promise<{ sent: true } | { skipped: string }> {
     const pixelRaw = String(config['pixel_id'] ?? '');
     if (!pixelRaw) return { skipped: 'pixel_id não configurado' };
     const pixelId = gid(pixelRaw, 'pixel');

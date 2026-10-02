@@ -122,6 +122,7 @@ export class CrmLeadsService {
   /** `crm_leads update {...patch} eq id` da ficha do lead (campos limitados; a etapa por aqui NÃO grava histórico — quirk do protótipo). */
   async update(ws: string, id: string, dto: UpdateLeadDto) {
     await this.leadOr404(ws, id);
+    if ((dto.stage_id as unknown) === null) throw badRequest('Informe a etapa do lead.');
     if (dto.stage_id !== undefined) await this.stageOr404(ws, dto.stage_id);
     if (dto.owner_id) await this.assertMember(ws, dto.owner_id);
     const data: Prisma.crm_leadsUncheckedUpdateInput = {};
