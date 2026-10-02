@@ -43,7 +43,22 @@ Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typ
 JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... docker compose --profile full up --build
 ```
 
+## Rodar o web
+
+```bash
+cd web
+yarn install
+cp .env.example .env.local        # NEXT_PUBLIC_API_URL=http://localhost:3015
+yarn dev                          # http://localhost:3025  (next dev -p 3025, webpack)
+yarn typecheck | yarn lint
+yarn browser-check                # com API (3015) e web (3025) de pé; login demo@meufunil.local / meufunil123
+```
+
+A API precisa liberar a origem do web: `CORS_ORIGINS=http://localhost:3025` no `api/.env` (está no `.env.example`).
+Nunca `next build` durante uma tarefa comum (a máquina trava).
+
 ## Estado
 
-Task 0 (fundação da API + banco com todas as tabelas) concluída. Próximas: web (Task 1), marca/visão geral/configurações/agência, campanhas,
+Tasks 0 (API + banco) e 1 (fundação do web: login, shell, workspace, shims de rota) concluídas.
+Próximas: marca/visão geral/configurações/agência, campanhas,
 criativos, Instagram, anúncios, CRM — ver `docs/superpowers/plans/`.

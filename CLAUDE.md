@@ -56,7 +56,25 @@ docker compose up -d postgres          # na raiz
 # api/
 npm run start:dev | start:smoke | typecheck | lint | test | seed | smoke
 npm run prisma:migrate:dev | prisma:migrate:deploy | prisma:generate | prisma:studio
-# web/ (yarn)  — Task 1 em diante
+# web/ (yarn)
+yarn dev | typecheck | lint | browser-check
 ```
 
 Seed de dev: `demo@meufunil.local` / `meufunil123` (owner de "Meu Funil Demo").
+
+## Web (`web/`) — Next 15 App Router, yarn, porta 3025
+
+- `dev` = `next dev -p 3025` (webpack; turbopack tem 500 conhecido com `next/font`). `NEXT_PUBLIC_API_URL` (padrão `http://localhost:3015`); a API precisa de `CORS_ORIGINS=http://localhost:3025`.
+  `next.config.ts`: `rewrites` de `/api/public/:path*` para a API; `/calendar` -> `/instagram?tab=calendar`. Nunca `next build`.
+- Telas 1:1 com `.prototype/src`: `components/ui/*` (46, verbatim), `app/globals.css` = `styles.css` (só `@source` e as fontes mudaram), `lib/{format,labels,metrics,crm,guides,utils}.ts` e `lib/creative/visual-style.ts` verbatim
+  (só imports; `components/how-to.tsx` veio junto porque `guides.ts` importa o tipo). Logos reais em `public/meu-funil-{logo,symbol}.png`; `lib/assets.ts` mantém o `.url` do protótipo.
+- **Shims de compat** (portar página = trocar só imports): `lib/router.tsx` (`Link`/`useNavigate`/`useSearch`/`useParams`/`useLocation`/`useRouterState`/`useRouter`/`redirect` com `to` + `params` (`/x/$id`) + `search`);
+  `lib/server-fn.ts` (`useServerFn` = identidade; `serverFnPost` fabrica os shims `*.functions.ts`). Padrão dos shims em `src/lib/README.md`. **Não** existe `createFileRoute`/`Route`: o `page.tsx` é a rota
+  (`Route.useSearch()` -> `useSearch()`, `Route.useParams()` -> `useParams()`, `head()` -> `export const metadata` num `page.tsx` de servidor).
+- Auth: `modules/auth/**` (axios + zustand). `auth.storage.ts` é o ÚNICO dono do `localStorage` (sessão em `authUser`, empresa atual em `aimos.workspace`; ESLint barra o resto).
+  `modules/shared/infrastructure/http.ts`: bearer, **refresh uma vez no 401** (chamadas paralelas dividem um refresh), `apiErrorMessage()` lê `{error:{message}}` — nunca achate para `error.message`.
+  Google: `GET /v1/auth/google` (503 sem credenciais -> toast "Não foi possível entrar com o Google."); a sessão volta no fragmento `#access_token=…` para `/auth`.
+- Guarda de sessão em `app/(app)/layout.tsx` (valida com `GET /v1/auth/me`; nenhuma página monta sem sessão). `(app)/[...rest]` é o placeholder das telas ainda não portadas (shell + área vazia); `lib/app-routes.ts` lista as 29 rotas
+  conhecidas (fora delas: 404 do root, sem shell). Cada tarefa de página cria o `page.tsx` real em `(app)/<rota>/`.
+- `lib/workspace.tsx` (`WorkspaceProvider`/`useWorkspace`): `GET /v1/workspaces`; `logActivity` virou no-op (a API registra a atividade). `lib/ig-pending.ts` é o selo do Instagram no menu (0 até a tarefa do Instagram).
+- `scripts/browser-check.mjs` (Playwright do freela-web-v2): login pelo formulário, shell, menu, 404, refresh de token, Sair; falha em console/pageerror/rede/HTTP>=400. Cresce a cada tarefa.
