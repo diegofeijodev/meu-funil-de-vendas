@@ -82,7 +82,8 @@ describe('BrandsService — marcas', () => {
     expect(up.description).toBe('d');
     expect(logs).toEqual([[WS_A, USER, 'brand.updated', 'brand', { brand_id: b.id }]]);
     logs.length = 0;
-    const g = await svc.update(USER, WS_A, b.id, { visual_style: { iluminacao: 'quente' } });
+    // instância de DTO: campos não enviados chegam como `undefined`
+    const g = await svc.update(USER, WS_A, b.id, { visual_style: { iluminacao: 'quente' }, name: undefined, description: undefined } as any);
     expect(g.visual_style).toEqual({ iluminacao: 'quente' });
     expect(logs).toHaveLength(0);
     expect(await status(svc.update(USER, WS_A, b.id, { visual_style: { x: 'a'.repeat(60_000) } }))).toBe('400:Guia visual grande demais.');

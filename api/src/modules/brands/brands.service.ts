@@ -63,7 +63,8 @@ export class BrandsService {
       data: { ...rest, ...(visual_style !== undefined ? { visual_style: visual_style as Prisma.InputJsonObject } : {}) },
     });
     // O "Salvar guia visual" (só `visual_style`) não gravava atividade no protótipo.
-    if (Object.keys(rest).length) await this.activity.log(workspaceId, userId, 'brand.updated', 'brand', { brand_id: brandId });
+    // (a instância do DTO traz as chaves não enviadas como `undefined`: conta só o que veio)
+    if (Object.values(rest).some((v) => v !== undefined)) await this.activity.log(workspaceId, userId, 'brand.updated', 'brand', { brand_id: brandId });
     return brand;
   }
 
