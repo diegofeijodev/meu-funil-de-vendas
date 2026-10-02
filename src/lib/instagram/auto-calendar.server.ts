@@ -111,7 +111,7 @@ async function ensurePlan(workspaceId: string, planId: string | null | undefined
     if (!data) throw new Error("Plano de conteúdo não encontrado.");
     return planId;
   }
-  if (!brandId) throw new Error("Escolha um plano de conteúdo ou uma marca.");
+  if (!brandId) throw new Error("Cadastre a marca em Brands antes.");
   const brand = await brandFor(brandId);
   if (!brand || brand.workspace_id !== workspaceId) throw new Error("Marca não encontrada.");
   const { suggestPillars } = await import("./instagram.server");
@@ -154,8 +154,11 @@ export async function createAutoRun(
         ? "Todos os horários escolhidos já passaram ou estão a menos de 20 minutos. Escolha horários mais tarde ou marque \"o quanto antes\"."
         : "Nenhum horário no período: confira os dias da semana e os horários.",
     );
+  if (!input.focus || input.focus.trim().length < 30) throw new Error("Descreva o objetivo deste período (mínimo de 30 caracteres).");
   const planId = await ensurePlan(workspaceId, input.planId, input.brandId, input.mode);
   const s = await db();
+  const { data: planRow } = await s.from("ig_content_plans").select("brand_id").eq("id", planId).maybeSingle();
+  if (!planRow?.brand_id) throw new Error("Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).");
   const { data, error } = await s
     .from("ig_auto_runs")
     .insert({
@@ -512,7 +515,7 @@ export async function autoCalendarTick() {
   const out: Record<string, unknown> = {};
 
   // 1) Lotes pendentes da estrategista (o usuário pode ter fechado a página).
-  const { data: planning } = await s.from("ig_auto_runs").select("id").eq("status", "planning").order("created_at").limit(1);
+  const { data: planning } = await s.from("ig_auto_runs").select("id").eq("status", "planning").neq("strategy_status", "review").order("created_at").limit(1);
   let filled = 0;
   for (const r of (planning ?? []) as any[]) {
     await fillAutoRun(r.id).then(() => filled++).catch(() => null);
@@ -656,6 +659,9 @@ export async function renewRecurring() {
         story_times: root.story_times,
         formats: root.formats,
         focus: root.focus,
+        // Semana repetida herda a estratégia aprovada (só redistribui os dias).
+        strategy: root.strategy_status === "approved" ? root.strategy : null,
+        strategy_status: root.strategy_status === "approved" ? "approved" : "pending",
         mode: root.mode,
         recurring: false,
         slots,

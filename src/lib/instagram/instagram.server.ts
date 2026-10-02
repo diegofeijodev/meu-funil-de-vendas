@@ -3,6 +3,7 @@
  * Token da Meta vem do cofre (metaConfig) — nunca é salvo em instagram_accounts.
  */
 import { normalizeHashtags, asText, asList } from "./normalize";
+import { DATE_RULES, dateIssues, brandContext } from "./content-strategy.server";
 import { graph, metaConfig, MetaError, runWithMetaWorkspace } from "@/lib/meta/graph.server";
 import { getWorkspaceAiKey } from "@/lib/ai-keys.server";
 import { viaGateway, viaGemini, viaOpenAI } from "@/lib/copy-ai.server";
@@ -279,10 +280,13 @@ export async function generateContentCalendar(
     .maybeSingle();
   if (!plan) throw new Error("Plano de conteúdo não encontrado.");
   const brand = await brandFor(plan.brand_id);
+  if (!brand) throw new Error("Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).");
   const start = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
   const prompt = [
     "Você é estrategista de conteúdo de Instagram no Brasil. Escreva em português do Brasil.",
     `Crie o calendário de ${weeks} semana(s) começando em ${start} (fuso America/Sao_Paulo, use ISO 8601 com -03:00).`,
+    `OBJETIVO (fonte principal): ${plan.objective ?? "-"}. MARCA: ${JSON.stringify(brandContext(brand))}. Nunca fale de outro negócio nem invente preço ou promoção.`,
+    DATE_RULES,
     `Frequência semanal por formato: ${JSON.stringify(plan.posting_frequency)} (feed = feed_image ou feed_carousel; reels = reel; stories = story_image ou story_video).`,
     `Horários preferidos: ${JSON.stringify(plan.preferred_times)}.`,
     Array.isArray(plan.posting_days) && plan.posting_days.length && plan.posting_days.length < 7
@@ -316,11 +320,13 @@ export async function generateContentCalendar(
   const rows = posts.map((p: any) => {
     const format = (Object.keys(ASPECT).includes(p.format) ? p.format : "feed_image") as IgFormat;
     const d = new Date(p.scheduled_at);
+    const dateBad = isNaN(d.getTime()) ? [] : dateIssues([p.theme, p.hook, p.caption, p.cta].filter(Boolean).join(" "), d.toISOString());
     return {
       workspace_id: workspaceId,
       plan_id: planId,
       format,
-      status: "idea",
+      status: dateBad.length ? "needs_review" : "idea",
+      review_reason: dateBad.length ? `Incoerência de data: ${dateBad.join("; ")}.` : null,
       scheduled_at: isNaN(d.getTime()) ? null : d.toISOString(),
       theme: asText(p.theme),
       hook: asText(p.hook),
@@ -903,6 +909,28 @@ export async function schedulePost(workspaceId: string, postId: string, schedule
   const s = await db();
   if ((await approvalRequired(post)) && !post.approved_at && post.status !== "approved")
     throw new Error("Este post exige aprovação antes de agendar.");
+  // Checagem final de alinhamento com a estratégia (posts da programação com IA).
+  if (post.run_id) {
+    const problems: string[] = [];
+    if (!post.objective_link || !post.pillar || !post.persona) problems.push("faltam ligação com o objetivo, pilar ou persona");
+    problems.push(...dateIssues([post.theme, post.hook, post.caption, post.cta].filter(Boolean).join(" "), scheduledAt));
+    const { data: run } = await s.from("ig_auto_runs").select("strategy").eq("id", post.run_id).maybeSingle();
+    const ctas: string[] = (((run?.strategy as any)?.ctas ?? []) as string[]).map((c: string) => c.toLowerCase().trim());
+    const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").trim();
+    if (ctas.length && post.cta && !ctas.some((c) => norm(c) === norm(post.cta) || norm(post.cta).includes(norm(c)) || norm(c).includes(norm(post.cta))))
+      problems.push("CTA fora dos CTAs da estratégia");
+    const brand = post.plan_id ? (await s.from("ig_content_plans").select("brand_id").eq("id", post.plan_id).maybeSingle()).data : null;
+    if (brand?.brand_id) {
+      const { data: prods } = await s.from("products").select("price").eq("brand_id", brand.brand_id);
+      const valid = new Set(((prods ?? []) as any[]).map((p) => Number(p.price)).filter((n) => n > 0).map((n) => n.toFixed(2)));
+      const prices = [...`${post.caption ?? ""} ${post.creative_brief?.headline ?? ""}`.matchAll(/R\$\s?(\d{1,5}(?:[.,]\d{2})?)/g)].map((m) => Number(m[1]!.replace(",", ".")).toFixed(2));
+      if (prices.some((p) => !valid.has(p))) problems.push("preço fora do cadastro de produtos");
+    }
+    if (problems.length) {
+      await patchPost(postId, { status: "needs_review", review_reason: `Checagem final: ${problems.join("; ")}.` });
+      throw new Error(`Post enviado para revisão: ${problems.join("; ")}.`);
+    }
+  }
   await s
     .from("publishing_jobs")
     .update({ status: "cancelled" } as never)

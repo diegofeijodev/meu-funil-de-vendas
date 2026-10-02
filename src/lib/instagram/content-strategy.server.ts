@@ -108,6 +108,7 @@ export async function buildRunStrategy(args: {
     DATE_RULES,
     "DIAS DO PERÍODO:",
     ...days.map((d) => `- ${d}`),
+    'Devolva SOMENTE JSON exatamente neste formato: {"objetivo_resumido":"...","kpi_principal":"...","publico_foco":"...","mensagem_central":"...","pilares":[{"nome":"...","peso_percentual":40,"por_que_serve_ao_objetivo":"..."}],"distribuicao_por_dia":[{"data":"dd/mm/aaaa","dia_da_semana":"...","tema_do_dia":"...","momento_do_funil":"atração"}],"ctas":["..."],"proibicoes":["..."]}',
   ].join("\n");
   const { json, provider } = await aiJson(args.workspaceId, "auto", prompt, STRATEGY_SCHEMA, "ig_run_strategy");
   const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);

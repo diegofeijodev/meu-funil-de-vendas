@@ -42,6 +42,7 @@ export const STATUS_LABEL: Record<string, string> = {
   generating: "Gerando",
   ready: "Pronto",
   pending_approval: "Aguardando aprovação",
+  needs_review: "Precisa de revisão",
   approved: "Aprovado",
   scheduled: "Agendado",
   publishing: "Publicando",
