@@ -44,6 +44,15 @@ const server = createServer((req, res) => {
       if (p.grant_type === 'fb_exchange_token') return send(res, 200, { access_token: 'FAKE-LONG-LIVED-TOKEN-0123456789', expires_in: 5184000 });
       return send(res, 400, { error: { message: 'bad request' } });
     }
+    // WhatsApp Cloud API (Task 8): Bearer no cabeçalho, sem appsecret_proof.
+    if (/^Bearer /.test(req.headers.authorization ?? '')) {
+      const [wa, wb] = path.split('/').filter(Boolean);
+      log[log.length - 1].bearer = req.headers.authorization;
+      log[log.length - 1].body = raw ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : undefined;
+      if (req.method === 'GET' && wb === 'message_templates') return send(res, 200, { data: [{ name: 'boas_vindas', language: 'pt_BR', category: 'MARKETING', status: 'APPROVED', components: [{ type: 'BODY', text: 'Olá {{1}}, bem-vindo!' }] }, { name: 'retomar', language: 'pt_BR', category: 'UTILITY', status: 'PENDING', components: [{ type: 'BODY', text: 'Oi de novo' }] }] });
+      if (req.method === 'POST' && wb === 'messages') return send(res, 200, { messages: [{ id: `wamid.FAKE${log.length}` }] });
+      return send(res, 404, { error: { message: `Cloud ${req.method} ${path} não existe na Graph falsa`, code: 100 } });
+    }
     const proof = createHmac('sha256', SECRET).update(String(p.access_token ?? '')).digest('hex');
     if (!p.access_token || p.appsecret_proof !== proof) return send(res, 400, { error: { message: 'Invalid appsecret_proof', code: 190 } });
 
@@ -75,6 +84,11 @@ const server = createServer((req, res) => {
         return send(res, 200, { data: [{ spend: '140.00', impressions: '15000', clicks: '350', ctr: '2.33', cpc: '0.4', actions: [{ action_type: 'lead', value: '10' }] }] });
       }
       if (b === 'insights') return send(res, 200, { data: [{ spend: '90.5', impressions: '9000', clicks: '180', ctr: '2', cpc: '0.5', actions: [{ action_type: 'lead', value: '9' }] }] });
+      if (a && !b && fields.includes('field_data')) {   // Lead Ads: GET /{leadgen_id} (Task 8); 666000 simula falha
+        if (a === '666000') return send(res, 400, { error: { message: 'Lead não encontrado', code: 100 } });
+        return send(res, 200, { id: a, form_id: '7777', campaign_name: 'Camp Leads', adset_name: 'Conj L', ad_name: 'Anúncio L', field_data: [{ name: 'full_name', values: ['Lead do Anúncio ' + a] }, { name: 'phone_number', values: ['11 97777-' + a.slice(-4)] }, { name: 'email', values: [`lead${a}@ads.test`] }, { name: 'cidade_ou_city', values: ['Valinhos'] }] });
+      }
+      if (a && !b && fields.includes('questions')) return send(res, 200, { name: 'Formulário Smoke', questions: [{ key: 'full_name', label: 'Nome completo' }, { key: 'phone_number', label: 'Telefone' }, { key: 'pergunta_x', label: 'Pergunta X' }] });
       if (a && !b) {
         if (fields.includes('access_token')) return send(res, 200, { access_token: 'FAKE-PAGE-TOKEN', id: a });
         if (fields.includes('daily_budget')) return send(res, 200, { daily_budget: '3000', name: 'Conjunto Smoke', effective_status: 'ACTIVE' });
@@ -95,6 +109,7 @@ const server = createServer((req, res) => {
     if (b === 'advideos') return send(res, 200, { id: '7500001' });
     if (b === 'leadgen_forms') return send(res, 200, { id: String(7600000 + ++n.form) });
     if (b === 'customaudiences') return send(res, 200, { id: String(5100000 + ++n.audience) });
+    if (b === 'subscribed_apps') return send(res, 200, { success: true });   // Task 8: inscrever a Página
     if (b === 'events') return send(res, 200, { events_received: (params.data ?? []).length });   // API de Conversões (CRM, Task 7)
     if (b === 'users') return send(res, 200, { audience_id: a, num_received: (params.payload?.data ?? []).length });
     if (a && !b) return send(res, 200, { success: true });   // status / orçamento

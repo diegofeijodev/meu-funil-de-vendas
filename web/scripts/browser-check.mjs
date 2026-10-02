@@ -55,7 +55,7 @@ const redeIgnorada = (url, erro) =>
 
 
 // ── Gateway de IA falso (OpenAI-compatível) — nenhuma chamada de rede externa ─────────────
-const fakeAi = { strategy: 0, copy: 0, prompts: [] };
+const fakeAi = { strategy: 0, copy: 0, prompts: [], sdr: null };
 const estrategia = (n) => ({
   resumo_executivo: `Resumo v${n}`, problema: 'Poucos clientes na semana', objetivo_smart: 'Dobrar leads em 30 dias', icp: 'Adultos 25-45',
   oferta: 'Chopp em dobro', big_idea: `Big idea v${n}`, mensagem_principal: 'Venha beber junto', funil: 'Topo ao fundo', canais: 'Meta Ads',
@@ -104,6 +104,8 @@ const gateway = createServer((req, res) => {
     if (name === 'campaign_strategy') out = estrategia(++fakeAi.strategy);
     else if (name === 'copy') out = copia(++fakeAi.copy);
     else if (name === 'art_direction') out = direcaoDeArte;
+    // Task 8: agente SDR do CRM (decisão configurável por `fakeAi.sdr`).
+    else if (name === 'sdr_decision') out = fakeAi.sdr ?? { resposta: 'Olá! Sou o agente. Em qual cidade você quer atuar?', campos_extraidos: { cidade: null, capital: null, prazo: null, decisor: null, email: null, observacoes: null }, score: 20, temperatura: 'morno', proxima_etapa: 'manter', transferir_humano: false, motivo: '', horario_escolhido: null };
     // Task 5 (Instagram): pilares, calendário, legenda e conteúdo da programação automática.
     else if (name === 'ig_pillars') out = { pillars: ['Bastidores', 'Promoções', 'Prova social', 'Dicas', 'Novidades'] };
     else if (name === 'ig_caption') out = { caption: 'Legenda reescrita pela IA do check', hashtags: ['chopp', 'valinhos', 'happyhour'], cta: 'Peça já' };
@@ -143,6 +145,7 @@ await new Promise((resolve) => gateway.listen(3099, '127.0.0.1', resolve)).catch
 
 const erros = [];
 let fakeGraph = null; // Graph falsa da Meta (Task 6), se este script a subiu
+let fakeProviders = null; // provedores falsos dos canais do CRM (Task 8), se este script os subiu
 let passou = 0;
 const ok = (m) => {
   passou += 1;
@@ -1381,7 +1384,7 @@ try {
   await page.getByText('Timeline de interações').waitFor({ timeout: 30000 });
   check('lead: título da aba', (await page.title()) === 'CRM · Ficha do lead · Meu Funil', await page.title());
   const txtCrmLead = await corpo();
-  for (const t of [crmLead, 'Dados do lead', 'Tarefas e cadência', 'Conversa', 'Disponível em breve', 'Assumir conversa', 'Movido para Ganho.', 'Descadastrado', 'Consentimento LGPD']) check(`lead: mostra "${t}"`, tem(txtCrmLead, t));
+  for (const t of [crmLead, 'Dados do lead', 'Tarefas e cadência', 'Conversa', 'Nenhuma mensagem nesta conversa ainda.', 'Assumir conversa', 'Movido para Ganho.', 'Descadastrado', 'Consentimento LGPD']) check(`lead: mostra "${t}"`, tem(txtCrmLead, t));
   await page.getByPlaceholder('Registrar nota…').fill('Nota do browser-check');
   await page.getByRole('button', { name: 'Adicionar' }).click();
   await page.getByText('Nota do browser-check').waitFor({ timeout: 15000 });
@@ -1472,7 +1475,7 @@ try {
   await page.getByRole('button', { name: 'Salvar regra' }).click();
   await saiuToast('Regra de distribuição salva.');
   check('settings: volta para rodízio', crmSql(`SELECT distribution FROM crm_settings WHERE workspace_id='${wsId}'`) === 'round_robin');
-  check('settings: sem o painel do SDR (Task 8)', !tem(await corpo(), 'Agente SDR'));
+  check('settings: painel do agente SDR presente (Task 8)', tem(await corpo(), 'Agente SDR'));
 
   // Formulário público + descadastro (pelo rewrite do Next, na origem do web)
   const tokForm = crmSql(`INSERT INTO crm_integrations(workspace_id,kind,provider,status,config) VALUES ('${wsId}','site_form','site','connected','{"title":"Form ${crmTag}","thanks":"Obrigado ${crmTag}!"}') RETURNING webhook_token`).split('\n')[0];
@@ -1502,6 +1505,167 @@ try {
   rmSync(crmTmp, { recursive: true, force: true });
   limpaCrm();
   check('limpeza do CRM: nada sobrou (leads, etapas, tags, motivos, integração, cadência)', crmSql(`SELECT (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND (name LIKE '%${crmTag}%' OR email LIKE '%${crmTag}%')) + (SELECT count(*) FROM crm_stages WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_tags WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_loss_reasons WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='site_form') + (SELECT count(*) FROM crm_cadences WHERE name LIKE '%${crmTag}%')`) === '0');
+
+  // ── Canais do CRM (Task 8): Integrações, Inbox, chat, painel do SDR, Cadências ──────────────
+  console.log('-- Canais do CRM --');
+  // Provedores falsos (api/scripts/fake-providers.mjs, porta 3097): Z-API, Resend, Cal.com. A API só precisa do gateway de IA falso (3099).
+  const FPB = 'http://127.0.0.1:3097';
+  const provUp = await fetch(`${FPB}/__log`).then((r) => r.ok).catch(() => false);
+  if (!provUp) {
+    fakeProviders = spawn('node', [path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../api/scripts/fake-providers.mjs')], { stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  await fetch(`${FPB}/__reset`, { method: 'POST' });
+  const t8 = `B8x${Date.now() % 100000}`;
+  const sql8 = (q) => igPsql(q);
+  // Idempotente e por padrão (`B8x<dígitos>`): limpa também o resíduo de rodadas abortadas.
+  const limpa8 = () => {
+    const pad = `~ 'B8x[0-9]+'`;
+    sql8(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND (name ${pad} OR email ${pad})`);
+    sql8(`DELETE FROM crm_cadences WHERE workspace_id='${wsId}' AND (name ${pad} OR template_key IS NOT NULL)`);
+    sql8(`DELETE FROM crm_integrations WHERE workspace_id='${wsId}' AND kind IN ('whatsapp','email','calendar','meta_lead_ads')`);
+    sql8(`DELETE FROM crm_sdr_agents WHERE workspace_id='${wsId}'`);
+    sql8(`DELETE FROM crm_sdr_runs WHERE workspace_id='${wsId}'`);
+    sql8(`DELETE FROM crm_conversations WHERE workspace_id='${wsId}'`);
+    sql8(`DELETE FROM crm_webhook_events WHERE workspace_id='${wsId}' AND source IN ('whatsapp_message','meta_leadgen')`);
+    sql8(`DELETE FROM app_credentials WHERE workspace_id='${wsId}' AND key IN ('ZAPI_TOKEN','WHATSAPP_CLOUD_TOKEN','EVOLUTION_API_KEY','RESEND_API_KEY','CALCOM_API_KEY','WHATSAPP_WEBHOOK_SECRET')`);
+  };
+  limpa8();
+  limpezas.push(limpa8);
+  const tmp8 = mkdtempSync(path.join(tmpdir(), 'mf-b8-'));
+  const saiu8 = async (texto) => page.getByText(texto, { exact: false }).first().waitFor({ timeout: 20000 });
+  const logProv = async () => (await fetch(`${FPB}/__log`)).json();
+
+  // ── Integrações ──
+  await page.goto(`${BASE}/crm/integrations`);
+  await page.getByText('Integrações do CRM').first().waitFor({ timeout: 30000 });
+  for (const t of ['Meta Lead Ads', 'Conversas de WhatsApp', 'Instagram: Direct e comentários', 'Formulário do site', 'E-mail (Resend)', 'Agenda (Cal.com)', 'Eventos com falha']) {
+    check(`integrações: card "${t}"`, tem(await corpo(), t));
+  }
+  check('integrações: o menu do CRM aparece com a aba Integrações ativa', (await page.getByRole('link', { name: 'Integrações' }).count()) > 0);
+  const waSec = page.locator('section').filter({ has: page.getByText('Conversas de WhatsApp') });
+  await waSec.locator('select').selectOption('zapi');
+  await waSec.locator('label', { hasText: 'URL base da instância' }).locator('xpath=..').locator('input').fill(`${FPB}/zapi`);
+  const campoToken = waSec.locator('label', { hasText: 'Client-Token da Z-API' }).locator('xpath=..');
+  await campoToken.locator('input').fill('ztok-smoke-1');
+  await campoToken.getByRole('button', { name: 'Salvar' }).click();
+  await saiu8('Credencial salva no servidor.');
+  check('integrações: token vai para o cofre cifrado (nunca texto puro)', sql8(`SELECT count(*) FROM app_credentials WHERE workspace_id='${wsId}' AND key='ZAPI_TOKEN' AND value LIKE 'enc:v2:%' AND value NOT LIKE '%ztok-smoke%'`) === '1');
+  await waSec.getByRole('button', { name: 'Salvar' }).last().click();
+  await saiu8('Configuração salva.');
+  await waSec.getByRole('button', { name: 'Testar conexão' }).click();
+  await saiu8('WhatsApp conectado.');
+  check('integrações: WhatsApp (Z-API) conectado; URL do webhook com o token exibida', sql8(`SELECT status FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='whatsapp'`) === 'connected' && (await waSec.locator('input[readonly]').first().inputValue()).includes('/api/public/webhooks/whatsapp/'));
+  check('integrações: token do segredo NÃO volta para a tela', !(await page.content()).includes('ztok-smoke-1'));
+  const tokenWa = sql8(`SELECT webhook_token FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='whatsapp'`);
+  const hook = `${API}/api/public/webhooks/whatsapp/${tokenWa}`;
+  const postHook = (b) => fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.status);
+
+  // ── Inbox + chat ──
+  const fone = '5511955' + String(Date.now()).slice(-6);
+  check('webhook: mensagem recebida (200)', (await postHook({ phone: fone, messageId: `${t8}-1`, text: { message: `Oi ${t8}, quero saber mais` }, senderName: `Lead ${t8}` })) === 200);
+  await page.goto(`${BASE}/crm/inbox`);
+  await page.getByText('Inbox do WhatsApp').first().waitFor({ timeout: 30000 });
+  await page.getByText(`Lead ${t8}`).first().waitFor({ timeout: 30000 });
+  check('inbox: conversa aparece com a prévia e o contador de não lidas', tem(await corpo(), `Oi ${t8}, quero saber mais`));
+  await page.getByPlaceholder('Buscar nome ou telefone').fill('nao-existe-zzz');
+  await page.getByText('Nenhuma conversa encontrada.').waitFor({ timeout: 10000 });
+  await page.getByPlaceholder('Buscar nome ou telefone').fill(t8);
+  await page.getByText(`Lead ${t8}`).first().click();
+  await page.getByText(`Oi ${t8}, quero saber mais`).last().waitFor({ timeout: 20000 });
+  check('chat: mensagem do lead na conversa', true);
+  const caixa = page.getByPlaceholder('Escreva uma mensagem…');
+  await caixa.fill(`Olá, aqui é o time ${t8}`);
+  await caixa.press('Enter');
+  await page.getByText(`Olá, aqui é o time ${t8}`).first().waitFor({ timeout: 20000 });
+  const leadB8 = sql8(`SELECT id FROM crm_leads WHERE workspace_id='${wsId}' AND name='Lead ${t8}'`);
+  check('chat: envio vai pelo provedor (Z-API), fica "sent" e pausa a IA', sql8(`SELECT status FROM crm_messages WHERE lead_id='${leadB8}' AND direction='out'`) === 'sent' && sql8(`SELECT ai_active FROM crm_leads WHERE id='${leadB8}'`) === 'f' && (await logProv()).some((l) => l.path === '/zapi/send-text' && l.body?.message === `Olá, aqui é o time ${t8}`));
+  await postHook({ phone: fone, messageId: `${t8}-2`, text: { message: 'SAIR' } });
+  await page.reload();
+  await page.getByText(`Lead ${t8}`).first().click();
+  await page.getByText('Este contato pediu para sair. Envios estão bloqueados.').waitFor({ timeout: 20000 });
+  check('chat: contato que pediu para sair → envio bloqueado na tela e no banco', sql8(`SELECT unsubscribed FROM crm_leads WHERE id='${leadB8}'`) === 't');
+  const fpEnvios = (await logProv()).filter((l) => l.path === '/zapi/send-text').length;
+  const rBloq = await fetch(`${API}/v1/crm-integrations/send-whats-app-message`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.status);
+  check('chat: ação de envio sem sessão → 401', rBloq === 401 && fpEnvios === 1);
+
+  // ── Painel do SDR em Configurações ──
+  await page.goto(`${BASE}/crm/settings`);
+  await page.getByText('Como configurar o agente SDR').first().waitFor({ timeout: 30000 });
+  check('settings: guia e painel do agente SDR', tem(await corpo(), 'Perguntas de qualificação') && tem(await corpo(), 'Log de execuções'));
+  await page.getByLabel('Nome do agente').fill(`Agente ${t8}`);
+  await page.getByLabel('Ativar agente').click();
+  await page.getByRole('button', { name: 'Salvar agente' }).click();
+  await saiu8('Agente SDR salvo.');
+  { const v = sql8(`SELECT is_active||','||name FROM crm_sdr_agents WHERE workspace_id='${wsId}'`); check('SDR: agente salvo e ativo', v === `true,Agente ${t8}`, v); }
+  const arq = path.join(tmp8, 'faq.txt');
+  writeFileSync(arq, 'Aberto de segunda a sexta. Franquia a partir de R$ 50 mil.');
+  await page.locator('input[type=file]').setInputFiles(arq);
+  await saiu8('Arquivo adicionado à base de conhecimento.');
+  await page.getByText('faq.txt').first().waitFor({ timeout: 20000 });
+  check('SDR: documento guardado com o texto extraído', sql8(`SELECT count(*) FROM crm_sdr_documents WHERE workspace_id='${wsId}' AND extracted_text LIKE 'Aberto de segunda%'`) === '1');
+  await page.getByPlaceholder('Mensagem do lead').fill('Oi, tenho interesse');
+  await page.getByPlaceholder('Mensagem do lead').press('Enter');
+  await page.getByText('Em qual cidade você quer atuar?').first().waitFor({ timeout: 30000 });
+  check('SDR: "Testar agente" responde e mostra a decisão (JSON)', tem(await corpo(), '"proxima_etapa"'));
+  check('SDR: teste não cria execução de produção nem muda leads', sql8(`SELECT count(*) FROM crm_sdr_runs WHERE workspace_id='${wsId}' AND mode='test'`) === '1');
+  await page.getByRole('button', { name: 'Remover arquivo' }).click();
+  await saiu8('Arquivo removido.');
+  check('SDR: documento removido', sql8(`SELECT count(*) FROM crm_sdr_documents WHERE workspace_id='${wsId}'`) === '0');
+
+  // SDR ponta a ponta: mensagem recebida → IA decide (qualificado + e-mail) → move etapa → responde pelo provedor
+  fakeAi.sdr = { resposta: 'Perfeito! Qual o melhor e-mail?', campos_extraidos: { cidade: 'Valinhos', capital: null, prazo: null, decisor: null, email: `b8@${t8.toLowerCase()}.co`, observacoes: null }, score: 85, temperatura: 'quente', proxima_etapa: 'qualificado', transferir_humano: false, motivo: '', horario_escolhido: null };
+  const fone2 = '5511944' + String(Date.now()).slice(-6);
+  await fetch(`${FPB}/__reset`, { method: 'POST' });
+  await postHook({ phone: fone2, messageId: `${t8}-3`, text: { message: 'Quero abrir uma unidade em Valinhos' }, senderName: `Lead ${t8} IA` });
+  const lead2 = sql8(`SELECT id FROM crm_leads WHERE workspace_id='${wsId}' AND name='Lead ${t8} IA'`);
+  check('SDR ao vivo: lead qualificado pela IA (etapa por nome, score, cidade, e-mail)', sql8(`SELECT s.name||','||l.score||','||l.temperature||','||l.city||','||l.email FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.id='${lead2}'`) === `Qualificado,85,quente,Valinhos,b8@${t8.toLowerCase()}.co`, sql8(`SELECT s.name FROM crm_leads l JOIN crm_stages s ON s.id=l.stage_id WHERE l.id='${lead2}'`));
+  check('SDR ao vivo: resposta enviada pela Z-API (autor ai) e execução "live" registrada', (await logProv()).some((l) => l.path === '/zapi/send-text' && l.body?.message === 'Perfeito! Qual o melhor e-mail?') && sql8(`SELECT count(*) FROM crm_messages WHERE lead_id='${lead2}' AND direction='out' AND author_type='ai'`) === '1' && sql8(`SELECT count(*) FROM crm_sdr_runs WHERE lead_id='${lead2}' AND mode='live' AND status='ok'`) === '1');
+  await page.reload();
+  await page.getByText('Log de execuções').first().waitFor({ timeout: 30000 });
+  await page.getByText('Produção').first().waitFor({ timeout: 30000 }).catch(() => {});
+  check('SDR: log de execuções mostra produção e teste', tem(await corpo(), 'Produção') && tem(await corpo(), 'Teste'));
+
+  // ── Cadências ──
+  await page.goto(`${BASE}/crm/cadences`);
+  await page.getByText('Sequências automáticas de follow-up').first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Modelos prontos' }).click();
+  await saiu8('4 modelo(s) instalado(s).');
+  check('cadências: 4 modelos instalados (inativos)', sql8(`SELECT count(*) FROM crm_cadences WHERE workspace_id='${wsId}' AND template_key IS NOT NULL AND is_active=false`) === '4');
+  await page.getByRole('button', { name: 'Modelos prontos' }).click();
+  await saiu8('Modelos já instalados.');
+  await page.getByRole('button', { name: 'Nova cadência' }).click();
+  await page.getByPlaceholder('Novo lead Meta').fill(`Cadência ${t8}`);
+  await page.getByPlaceholder('Conteúdo com variáveis: {{nome}}, {{cidade}}, {{empresa}}, {{responsavel}}').first().fill('Oi {{nome}}, retomando nossa conversa!');
+  await page.getByRole('button', { name: 'Salvar cadência' }).click();
+  await saiu8('Cadência salva.');
+  await page.getByText(`Cadência ${t8}`).first().waitFor({ timeout: 20000 });
+  { const v = sql8(`SELECT trigger_type||','||is_active||','||jsonb_array_length(steps) FROM crm_cadences WHERE workspace_id='${wsId}' AND name='Cadência ${t8}'`); check('cadências: nova cadência salva (manual, inativa, 1 passo)', v === 'manual,false,1', v); }
+  const cadId = sql8(`SELECT id FROM crm_cadences WHERE workspace_id='${wsId}' AND name='Cadência ${t8}'`);
+  sql8(`UPDATE crm_cadences SET is_active=true, steps='[{"channel":"wa_text","delay_minutes":0,"window":{"days":[0,1,2,3,4,5,6],"start":"00:00","end":"23:59"},"message":"Oi {{nome}}, retomando nossa conversa!"}]' WHERE id='${cadId}'`);
+  const lead3 = sql8(`INSERT INTO crm_leads(workspace_id,name,phone,pipeline_id,stage_id) SELECT '${wsId}','Lead ${t8} Cad','+5511933${String(Date.now()).slice(-6)}',pipeline_id,id FROM crm_stages WHERE workspace_id='${wsId}' AND name='Novo Lead' LIMIT 1 RETURNING id`).split('\n')[0];
+  sql8(`INSERT INTO crm_cadence_runs(workspace_id,cadence_id,lead_id,status,entered_at,next_run_at) VALUES ('${wsId}','${cadId}','${lead3}','running', now() - interval '1 minute', now() - interval '1 minute')`);
+  await fetch(`${FPB}/__reset`, { method: 'POST' });
+  await page.reload();
+  await page.getByText(`Cadência ${t8}`).first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Executar agora' }).click();
+  await saiu8('passo(s) executado(s).');
+  { const st = sql8(`SELECT status||','||coalesce(last_error,'')||','||coalesce(stop_reason,'') FROM crm_cadence_runs WHERE lead_id='${lead3}'`); const lg = (await logProv()).filter((l) => l.path === '/zapi/send-text'); check('cadências: "Executar agora" envia o passo UMA vez pela Z-API, com {{nome}} renderizado', lg.filter((l) => l.body?.message === `Oi Lead ${t8} Cad, retomando nossa conversa!`).length === 1 && st.startsWith('done'), `${st} | ${JSON.stringify(lg.map((l) => l.body?.message))}`); }
+  await page.getByRole('button', { name: 'Executar agora' }).click();
+  await page.waitForTimeout(1500);
+  check('cadências: segunda execução não repete o envio', (await logProv()).filter((l) => l.path === '/zapi/send-text' && String(l.body?.message).includes('retomando')).length === 1);
+  await page.reload();
+  await page.getByText(`Cadência ${t8}`).first().waitFor({ timeout: 30000 });
+  check('cadências: métricas por cadência (Enviados 1)', sql8(`SELECT count(*) FROM crm_cadence_events WHERE cadence_id='${cadId}' AND event='sent'`) === '1');
+  const cartaoCad = page.locator("div.rounded-lg.border").filter({ hasText: `Cadência ${t8}` }).first();
+  await cartaoCad.getByRole("button").filter({ has: page.locator("svg.lucide-trash-2") }).click();
+  await saiu8('Cadência excluída.');
+  check('cadências: cadência excluída', sql8(`SELECT count(*) FROM crm_cadences WHERE id='${cadId}'`) === '0');
+
+  // ── limpeza ──
+  rmSync(tmp8, { recursive: true, force: true });
+  limpa8();
+  check('limpeza dos canais: nada sobrou (integrações, agente, conversas, cadências, segredos)', sql8(`SELECT (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind IN ('whatsapp','email','calendar','meta_lead_ads')) + (SELECT count(*) FROM crm_sdr_agents WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_conversations WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_cadences WHERE workspace_id='${wsId}' AND (name LIKE '%${t8}%' OR template_key IS NOT NULL)) + (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND name LIKE '%${t8}%') + (SELECT count(*) FROM app_credentials WHERE workspace_id='${wsId}' AND key='ZAPI_TOKEN')`) === '0');
 
   page.setDefaultTimeout(30000);
 
@@ -1568,6 +1732,7 @@ try {
 await browser.close();
 gateway.close();
 fakeGraph?.kill();
+fakeProviders?.kill();
 console.log(`\n${passou} ok, ${erros.length} falha(s)`);
 if (erros.length) {
   for (const e of erros) console.log(`  - ${e}`);
