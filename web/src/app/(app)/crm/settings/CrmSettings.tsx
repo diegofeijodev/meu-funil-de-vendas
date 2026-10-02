@@ -12,6 +12,7 @@ import { Select } from "@/components/crm/select";
 import * as crm from "@/modules/crm/infrastructure/crm.api";
 import { usePipelines, useStages, useMembers } from "@/lib/crm-queries";
 import { ROLE_LABELS } from "@/lib/labels";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export function CrmSettings() {
   const { workspaceId } = useWorkspace();
@@ -40,7 +41,12 @@ export function CrmSettings() {
 
   const addStage = async () => {
     if (!workspaceId || !pipelineId || !newStage.trim()) return;
-    await crm.createStage(workspaceId, { pipeline_id: pipelineId, name: newStage.trim(), position: (stages.at(-1)?.position ?? 0) + 1 }).catch(() => undefined);
+    try {
+      await crm.createStage(workspaceId, { pipeline_id: pipelineId, name: newStage.trim(), position: (stages.at(-1)?.position ?? 0) + 1 });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível criar a etapa."));
+      return;
+    }
     setNewStage("");
     refreshStages();
     toast.success("Etapa criada.");
@@ -53,7 +59,13 @@ export function CrmSettings() {
 
   const saveDistribution = async (distribution: string, defaultOwner: string) => {
     if (!workspaceId) return;
-    await crm.saveDistribution(workspaceId, distribution, defaultOwner || null).catch(() => undefined);
+    try {
+      await crm.saveDistribution(workspaceId, distribution, defaultOwner || null);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar a regra de distribuição."));
+      refreshExtras();
+      return;
+    }
     refreshExtras();
     toast.success("Regra de distribuição salva.");
   };

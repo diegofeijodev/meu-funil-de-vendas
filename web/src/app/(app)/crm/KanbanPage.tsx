@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@/lib/server-fn";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader } from "@/components/ui-bits";
@@ -64,8 +65,8 @@ export function KanbanPage() {
     try {
       // lead + histórico + interação "Movido para X." numa transação só (no protótipo eram 3 escritas do navegador)
       await moveLead(workspaceId, leadId, stageId);
-    } catch {
-      toast.error("Não foi possível mover o lead.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível mover o lead."));
       return;
     }
     const stageName = (stages.find((s) => s.id === stageId)?.name ?? "").toLowerCase();

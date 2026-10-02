@@ -4,6 +4,7 @@ import { Link, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { ArrowLeft, Bot, UserCheck } from "lucide-react";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
@@ -53,8 +54,8 @@ export function LeadDetail() {
   const patch = async (values: Record<string, string | boolean | number | null>) => {
     try {
       await updateLead(workspaceId!, id, values);
-    } catch {
-      toast.error("Não foi possível salvar.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar."));
       return;
     }
     refresh();
@@ -65,8 +66,8 @@ export function LeadDetail() {
     try {
       // alterna ai_active e grava a nota ("Atendimento assumido…" / "Conversa devolvida…") numa transação
       await setLeadAi(workspaceId, id, active);
-    } catch {
-      toast.error("Não foi possível salvar.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar."));
       return;
     }
     refresh();
@@ -77,8 +78,8 @@ export function LeadDetail() {
     if (!workspaceId || !note.trim()) return;
     try {
       await addLeadNote(workspaceId, id, note.trim());
-    } catch {
-      toast.error("Não foi possível salvar.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar."));
       return;
     }
     setNote("");
@@ -89,8 +90,8 @@ export function LeadDetail() {
     if (!workspaceId || !taskTitle.trim()) return;
     try {
       await createLeadTask(workspaceId, id, taskTitle.trim());
-    } catch {
-      toast.error("Não foi possível criar a tarefa.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível criar a tarefa."));
       return;
     }
     setTaskTitle("");

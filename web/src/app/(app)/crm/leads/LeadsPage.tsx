@@ -72,8 +72,8 @@ export function LeadsPage() {
     }
     try {
       await bulkLeads(workspaceId!, { ids: selected, stage_id: patch.stage_id, owner_id: patch.owner_id });
-    } catch {
-      toast.error("Não foi possível aplicar a ação.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível aplicar a ação."));
       return;
     }
     toast.success(label);
@@ -85,8 +85,8 @@ export function LeadsPage() {
     if (!tag || !selected.length) return;
     try {
       await bulkLeads(workspaceId!, { ids: selected, add_tag: tag });
-    } catch {
-      toast.error("Não foi possível aplicar a ação.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível aplicar a ação."));
       return;
     }
     toast.success("Tag aplicada aos leads selecionados.");
@@ -160,8 +160,8 @@ export function LeadsPage() {
     }
     try {
       await createLeadApi(workspaceId, { pipeline_id: pipelineId, stage_id: stages[0]?.id ?? null, ...form });
-    } catch {
-      toast.error("Não foi possível criar o lead.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível criar o lead."));
       return;
     }
     setOpen(false);
@@ -282,8 +282,8 @@ export function LeadsPage() {
                 const r = await enroll({ data: { workspaceId, cadenceId: v, leadIds: selected } });
                 toast.success(`${r.enrolled} lead(s) incluído(s) na cadência.`);
                 setSelected([]);
-              } catch {
-                toast.error("Não foi possível incluir na cadência.");
+              } catch (e) {
+                toast.error(apiErrorMessage(e, "Não foi possível incluir na cadência."));
               }
             }}
           >
