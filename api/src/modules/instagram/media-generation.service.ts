@@ -224,7 +224,12 @@ export class MediaGenerationService {
     const brandId = await this.brandIdOfPost(post);
     const brand = await this.content.brandFor(workspaceId, brandId);
     post._brandId = brand?.id ?? null;
-    await this.store.patchPost(postId, { status: 'generating', last_error: null });
+    // Claim atômico: dois processos (editor, tick do cron, laço do navegador) nunca geram o mesmo post.
+    const claimed = await this.prisma.ig_posts.updateMany({
+      where: { id: postId, workspace_id: workspaceId, status: { in: ['idea', 'failed', 'pending_approval', 'ready', 'approved', 'scheduled', 'cancelled'] } },
+      data: { status: 'generating', last_error: null },
+    });
+    if (!claimed.count) return { ok: false, error: 'Este post já está com a mídia sendo gerada (ou já foi publicado).' };
     let used: ChainedProvider | null = null;
     try {
       const provider = await this.providers.resolve(workspaceId, providerChoice);
@@ -334,6 +339,9 @@ export class MediaGenerationService {
     for (const post of posts as PostRow[]) {
       const pj = post.creative_brief?.pending_job as PendingJob | undefined;
       if (!pj?.jobId) continue;
+      // Claim do ciclo: só um poller conclui o job (o UPDATE condicional troca `updated_at`).
+      const got = await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: 'generating', updated_at: post.updated_at }, data: { updated_at: new Date() } });
+      if (!got.count) continue;
       try {
         // O id do job só chega ao provedor se estiver gravado neste post/workspace (vínculo no ProviderResolver).
         const provider = await this.providers.resolve(post.workspace_id, choiceForProvider(pj.provider));

@@ -1,5 +1,6 @@
 import { Controller, Get, HttpCode, Logger, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Public } from '../../common/decorators/public.decorator';
 import { WebhookLedgerService } from '../webhooks/webhook-ledger.service';
@@ -62,7 +63,10 @@ export class InstagramWebhookController {
   @Get(':token')
   async verify(@Param('token') token: string, @Query() q: Record<string, string>, @Res({ passthrough: true }) reply: FastifyReply) {
     const integration = await this.ledger.integrationByToken(token, 'instagram');
-    if (!integration || q['hub.mode'] !== 'subscribe' || q['hub.verify_token'] !== integration.verify_token) {
+    const given = Buffer.from(String(q['hub.verify_token'] ?? ''));
+    const stored = Buffer.from(integration?.verify_token ?? '');
+    const same = stored.length > 0 && given.length === stored.length && timingSafeEqual(given, stored);
+    if (!integration || q['hub.mode'] !== 'subscribe' || !same) {
       reply.status(403);
       return 'Forbidden';
     }

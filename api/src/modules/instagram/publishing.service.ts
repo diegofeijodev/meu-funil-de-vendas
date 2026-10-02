@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, PostRow } from './ig-types';
-import { ContainerPending, Guardrail, IgStore, RateLimited, errText } from './ig-store.service';
-import { META_FETCH, MetaError, MetaFetch, MetaGraphClient } from './meta-graph';
+import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited, errText } from './ig-store.service';
+import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
+import { MetaError, MetaGraphClient } from './meta-graph';
 import { normalizeHashtags } from './normalize';
 
 const MAX_ATTEMPTS = 3;
@@ -36,7 +37,7 @@ export class PublishingService {
   constructor(
     private readonly store: IgStore,
     private readonly graph: MetaGraphClient,
-    @Inject(META_FETCH) private readonly http: MetaFetch,
+    @Inject(EXTERNAL_FETCH) private readonly http: ExternalFetch,
   ) {}
 
   private get prisma() {
@@ -102,17 +103,53 @@ export class PublishingService {
     throw new ContainerPending('A Meta ainda está processando a mídia; nova verificação em 2 minutos.');
   }
 
-  /** Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). */
+  /**
+   * Confere que a URL da mídia responde publicamente (HEAD; alguns servidores só aceitam GET com Range). Passa pelo fetch guardado
+   * (DNS verificado; nunca rede interna) e os redirecionamentos são seguidos à mão, cada um revalidado.
+   */
   private async assertPublicUrl(url: string) {
     if (!/^https:\/\//i.test(url ?? '')) throw new Guardrail('Mídia sem URL pública válida (HTTPS).');
-    let res = await this.http(url, { method: 'HEAD' }).catch(() => null);
-    if (!res || res.status === 405 || res.status === 403) res = await this.http(url, { method: 'GET', headers: { Range: 'bytes=0-0' } }).catch(() => null);
+    const probe = async (init: RequestInit): Promise<Response | null> => {
+      let cur = url;
+      for (let hop = 0; hop < 4; hop++) {
+        try {
+          cur = assertExternalUrl(cur, false, 'endereço da mídia');
+        } catch {
+          throw new Guardrail('Mídia sem URL pública válida (HTTPS).');
+        }
+        const res = await this.http(cur, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15_000) }).catch(() => null);
+        const loc = res?.headers.get('location');
+        if (res && res.status >= 300 && res.status < 400 && loc) {
+          cur = new URL(loc, cur).toString();
+          continue;
+        }
+        return res;
+      }
+      return null;
+    };
+    let res = await probe({ method: 'HEAD' });
+    if (!res || res.status === 405 || res.status === 403) res = await probe({ method: 'GET', headers: { Range: 'bytes=0-0' } });
     if (!res || !(res.ok || res.status === 206)) throw new Guardrail(`A mídia não está acessível publicamente (HTTP ${res?.status ?? 'sem resposta'}).`);
   }
 
-  async publishInstagramPost(postId: string, workspaceId?: string): Promise<PublishResult> {
+  /**
+   * Pega o post de forma atômica (UPDATE condicional) para que a fila e o "publicar agora" nunca publiquem o mesmo post ao mesmo tempo.
+   * Retomada (`resume`, só a fila): post `publishing` com container criado e sem atividade há > 90 s (a fila voltou depois do ContainerPending).
+   */
+  private async claim(postId: string, workspaceId: string, resume: boolean): Promise<void> {
+    const where = resume
+      ? { id: postId, workspace_id: workspaceId, OR: [{ status: { in: ['approved', 'ready', 'scheduled', 'failed'] } }, { status: 'publishing', updated_at: { lt: new Date(Date.now() - 90e3) } }] }
+      : { id: postId, workspace_id: workspaceId, status: { in: ['approved', 'ready', 'scheduled', 'failed'] } };
+    const got = await this.prisma.ig_posts.updateMany({ where, data: { status: 'publishing' } });
+    if (!got.count) throw new PublishClaimLost('Este post já está sendo publicado ou já foi publicado.');
+    // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha).
+    if (!resume) await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+  }
+
+  async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean } = {}): Promise<PublishResult> {
     const post = await this.store.getPost(postId, workspaceId);
-    return this.publishInner(postId, post);
+    await this.claim(postId, post.workspace_id, !!opts.fromQueue);
+    return this.publishInner(postId, { ...post, status: post.status });
   }
 
   private async publishInner(postId: string, post: PostRow): Promise<PublishResult> {
@@ -237,7 +274,7 @@ export class PublishingService {
       const logWith = (line: string) => `${job.log ?? ''}\n[${stamp}] ${line}`.trim();
       try {
         if (!job.ig_post_id) throw new Guardrail('Job sem post.');
-        const r = await this.publishInstagramPost(job.ig_post_id);
+        const r = await this.publishInstagramPost(job.ig_post_id, undefined, { fromQueue: true });
         await this.prisma.publishing_jobs.update({
           where: { id: job.id },
           data: { status: 'done', locked_at: null, mode: r.sandbox ? 'mock' : 'live', log: logWith(`publicado ${r.permalink ?? ''}`) },
@@ -247,6 +284,17 @@ export class PublishingService {
         results.push({ job: job.id, status: 'done' });
       } catch (e) {
         const msg = errText(e);
+        if (e instanceof PublishClaimLost) {
+          // Outro processo está publicando (volta em 2 min) ou o post já saiu/foi cancelado (o job é encerrado). Não conta tentativa.
+          const cur = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id }, select: { status: true } }) : null;
+          const over = !cur || ['published', 'cancelled'].includes(cur.status);
+          await this.prisma.publishing_jobs.update({
+            where: { id: job.id },
+            data: { status: over ? 'cancelled' : 'pending', locked_at: null, attempts: job.attempts, ...(over ? {} : { run_at: new Date(Date.now() + 2 * 60e3) }), log: logWith(msg) },
+          });
+          results.push({ job: job.id, status: over ? 'skipped' : 'processing' });
+          continue;
+        }
         if (e instanceof ContainerPending) {
           await this.prisma.publishing_jobs.update({
             where: { id: job.id },

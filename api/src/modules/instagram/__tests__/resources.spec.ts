@@ -86,6 +86,28 @@ describe('planos de conteúdo (ig_content_plans)', () => {
   });
 });
 
+describe('flags do plano exigem manage (publicar sem revisão)', () => {
+  it('marketing edita o resto mas não auto_publish/requires_approval; owner e admin podem', async () => {
+    const w = igWorld();
+    const s = igServices(w);
+    const ctrl = new InstagramResourcesController(s.resources, s.actions);
+    const plan = await s.resources.createPlan(WS_A, { name: 'P' } as any);
+    const msg = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e: any) { return `${e.getStatus()}:${e.getResponse().message}`; } };
+    const asMkt = { id: MARKETING } as any;
+    expect(await msg(ctrl.patchPlan(asMkt, WS_A, plan.id, { auto_publish: true }))).toBe('403:Seu perfil não tem permissão para esta ação.');
+    expect(await msg(ctrl.patchPlan(asMkt, WS_A, plan.id, { requires_approval: false }))).toBe('403:Seu perfil não tem permissão para esta ação.');
+    expect(await msg(ctrl.createPlan(asMkt, WS_A, { name: 'x', auto_publish: true } as any))).toMatch(/^403:/);
+    expect(await msg(ctrl.patchPlan(asMkt, WS_A, plan.id, { name: 'Novo nome' }))).toBe('ok');
+    expect(await msg(ctrl.patchPlan({ id: OWNER } as any, WS_A, plan.id, { auto_publish: true, requires_approval: false }))).toBe('ok');
+    expect(await msg(ctrl.patchPlan({ id: ADMIN } as any, WS_A, plan.id, { auto_publish: false }))).toBe('ok');
+  });
+  it('pageId só dígitos', async () => {
+    const { ConnectInstagramDto } = await import('../instagram.dto');
+    expect(await errs(ConnectInstagramDto, { workspaceId: uuid(), pageId: '123456' })).toEqual([]);
+    expect(await errs(ConnectInstagramDto, { workspaceId: uuid(), pageId: '12/../me' })).toEqual(['pageId']);
+  });
+});
+
 describe('leituras (todas escopadas no workspace)', () => {
   it('posts: por horário (sem data por último); contagem de aprovações; eventos/ métricas/ insights', async () => {
     const { w, r } = setup();

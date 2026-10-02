@@ -4,6 +4,9 @@ import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CreateIgPlanDto, IgEventsQueryDto, IgInsightsQueryDto, IgPlansQueryDto, PatchIgPlanDto, PatchIgPostDto } from './instagram.dto';
 import { InstagramResourcesService } from './instagram-resources.service';
+import { InstagramActionsService } from './instagram-actions.service';
+import { AuthUser } from '../../common/auth/auth-user';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 /**
  * Tabelas do Instagram que o navegador lia/gravava direto (`instagram_accounts`, `ig_posts`, `ig_content_plans`,
@@ -15,7 +18,10 @@ import { InstagramResourcesService } from './instagram-resources.service';
 @UseGuards(WorkspaceAccessGuard)
 @Controller('v1/workspaces/:workspaceId')
 export class InstagramResourcesController {
-  constructor(private readonly res: InstagramResourcesService) {}
+  constructor(
+    private readonly res: InstagramResourcesService,
+    private readonly actions: InstagramActionsService,
+  ) {}
 
   @Get('instagram-account')
   account(@Param('workspaceId', ParseUuidPipe) ws: string) {
@@ -48,12 +54,14 @@ export class InstagramResourcesController {
   }
 
   @Post('ig-content-plans')
-  createPlan(@Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: CreateIgPlanDto) {
+  async createPlan(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: CreateIgPlanDto) {
+    if (dto.auto_publish !== undefined || dto.requires_approval !== undefined) await this.actions.assertManage(u.id, ws);
     return this.res.createPlan(ws, dto);
   }
 
   @Patch('ig-content-plans/:id')
-  patchPlan(@Param('workspaceId', ParseUuidPipe) ws: string, @Param('id', ParseUuidPipe) id: string, @Body() dto: PatchIgPlanDto) {
+  async patchPlan(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Param('id', ParseUuidPipe) id: string, @Body() dto: PatchIgPlanDto) {
+    if (dto.auto_publish !== undefined || dto.requires_approval !== undefined) await this.actions.assertManage(u.id, ws);
     return this.res.patchPlan(ws, id, dto);
   }
 

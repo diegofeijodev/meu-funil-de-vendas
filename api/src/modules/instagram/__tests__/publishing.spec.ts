@@ -1,4 +1,4 @@
-import { ContainerPending, Guardrail, IgStore, RateLimited } from '../ig-store.service';
+import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited } from '../ig-store.service';
 import { MetaError } from '../meta-graph';
 import { fullCaption, PublishingService } from '../publishing.service';
 import { igWorld, IgWorld, seedPost, uuid } from './harness';
@@ -146,8 +146,8 @@ describe('PublishingService.publishInstagramPost (Graph)', () => {
 
   it('retoma o container já criado (status publishing + ig_creation_id) sem criar outro', async () => {
     const { w, svc, created } = setup();
-    const p = seedPost(w, { status: 'publishing', ig_creation_id: 'c99' });
-    await svc.publishInstagramPost(p.id);
+    const p = seedPost(w, { status: 'publishing', ig_creation_id: 'c99', updated_at: new Date(Date.now() - 5 * 60e3) });
+    await svc.publishInstagramPost(p.id, undefined, { fromQueue: true });
     expect(created()).toHaveLength(0);
     expect(p.status).toBe('published');
   });
@@ -279,6 +279,64 @@ describe('PublishingService.runPublishingQueue (publishing_jobs, lock, retentati
     expect(plan.status).toBe('paused');
     expect(other.status).toBe('cancelled');
     expect(w.t['ig_autopilot_events']!.rows.some((e) => e.kind === 'guardrail' && /Token da Meta expirado/.test(e.message))).toBe(true);
+  });
+});
+
+describe('URL da mídia (SSRF)', () => {
+  it('URL privada/loopback/interna é recusada ANTES de qualquer requisição; redirecionamento para rede interna também', async () => {
+    const { w, svc, head } = setup();
+    for (const url of ['https://10.0.0.5/a.jpg', 'https://127.0.0.1/a.jpg', 'https://169.254.169.254/latest', 'https://db.internal/a.jpg', 'https://localhost/a.jpg']) {
+      const p = seedPost(w, { media: [{ url, type: 'image', order: 0 }] });
+      expect(msgOf(await err(svc.publishInstagramPost(p.id)))).toBe('Mídia sem URL pública válida (HTTPS).');
+    }
+    expect(head).not.toHaveBeenCalled();
+    const calls: string[] = [];
+    const s2 = setup({ head: async (u) => { calls.push(u); return u.includes('cdn.test') ? new Response(null, { status: 302, headers: { location: 'https://192.168.1.10/x' } }) : new Response(null, { status: 200 }); } });
+    const p2 = seedPost(s2.w);
+    expect(msgOf(await err(s2.svc.publishInstagramPost(p2.id)))).toBe('Mídia sem URL pública válida (HTTPS).');
+    expect(calls).toEqual(['https://cdn.test/a.jpg']);
+  });
+});
+
+describe('publicar agora × fila (claim atômico)', () => {
+  it('só um dos dois publica; o perdedor não conta falha e a fila encerra/adia o job', async () => {
+    const { w, svc, created } = setup();
+    const p = seedPost(w, { status: 'scheduled' });
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: p.id, target: 'instagram', status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null };
+    w.t['publishing_jobs']!.rows.push(j);
+    const [a, b] = await Promise.allSettled([svc.publishInstagramPost(p.id), svc.runPublishingQueue()]);
+    expect(a.status).toBe('fulfilled');
+    expect(b.status).toBe('fulfilled');
+    expect(created()).toHaveLength(1);
+    expect(p.status).toBe('published');
+    // perdeu o claim (outro estava no meio): volta em 2 min sem gastar tentativa; ou foi cancelado pelo "publicar agora"
+    expect(['cancelled', 'pending', 'done']).toContain(j.status);
+    expect(j.attempts).toBeLessThanOrEqual(1);
+  });
+  it('segundo "publicar agora" no mesmo post = PublishClaimLost; job de post já publicado é cancelado sem tentativa', async () => {
+    const { w, svc } = setup();
+    const p = seedPost(w);
+    await svc.publishInstagramPost(p.id);
+    await expect(svc.publishInstagramPost(p.id)).rejects.toBeInstanceOf(PublishClaimLost);
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: p.id, status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null };
+    w.t['publishing_jobs']!.rows.push(j);
+    const res = await svc.runPublishingQueue();
+    expect(res[0]!.status).toBe('skipped');
+    expect(j).toMatchObject({ status: 'cancelled', attempts: 0 });
+  });
+  it('publicar agora tira os jobs pendentes do post da fila; post publicando por outro volta em 2 min', async () => {
+    const { w, svc } = setup();
+    const p = seedPost(w, { status: 'scheduled' });
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: p.id, status: 'pending', mode: 'live', run_at: new Date(Date.now() + 3600e3), attempts: 0, locked_at: null, log: null };
+    w.t['publishing_jobs']!.rows.push(j);
+    await svc.publishInstagramPost(p.id);
+    expect(j.status).toBe('cancelled');
+    const q = seedPost(w, { status: 'publishing', ig_creation_id: 'cX' }); // outro processo no meio
+    const j2: any = { ...j, id: uuid(), ig_post_id: q.id, status: 'pending', run_at: new Date(Date.now() - 1000) };
+    w.t['publishing_jobs']!.rows.push(j2);
+    const res = await svc.runPublishingQueue();
+    expect(res.find((r) => r.job === j2.id)!.status).toBe('processing');
+    expect(j2).toMatchObject({ status: 'pending', attempts: 0 });
   });
 });
 

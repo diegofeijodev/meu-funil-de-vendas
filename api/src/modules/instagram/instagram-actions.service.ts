@@ -8,7 +8,7 @@ import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
 import { CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
 import { Engine } from './ig-types';
-import { IgStore, errText } from './ig-store.service';
+import { IgStore, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
@@ -32,6 +32,16 @@ export class InstagramActionsService {
     private readonly autopilot: AutopilotService,
     private readonly auto: AutoCalendarService,
   ) {}
+
+  /** Autoriza escrita ANTES de ler o corpo (upload multipart). */
+  async assertWrite(userId: string, workspaceId: string) {
+    await this.access.require(userId, workspaceId, 'write');
+  }
+
+  /** Mudar `auto_publish`/`requires_approval` do plano = publicar sem revisão: só dono/admin. */
+  async assertManage(userId: string, workspaceId: string) {
+    await this.access.require(userId, workspaceId, 'manage');
+  }
 
   // ------------------------------------------------------------------ conta
 
@@ -120,6 +130,7 @@ export class InstagramActionsService {
       return await this.publishing.publishInstagramPost(postId, workspaceId);
     } catch (e) {
       const msg = errText(e);
+      if (e instanceof PublishClaimLost) return { ok: false as const, sandbox: false, error: msg };
       await this.store.patchPost(postId, { status: 'failed', last_error: msg });
       return { ok: false as const, sandbox: false, error: msg };
     }

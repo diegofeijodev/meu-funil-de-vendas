@@ -48,6 +48,11 @@ describe('GET /api/public/webhooks/instagram/:token (verificação da Meta)', ()
     expect(await ctrl.verify(token as string, q as any, reply)).toBe('Forbidden');
     expect(reply.status).toHaveBeenCalledWith(403);
   });
+  it('verify_token vazio guardado na integração nunca verifica (nem com hub.verify_token vazio)', async () => {
+    const { w, ctrl, reply } = setup();
+    w.t['crm_integrations']!.rows[0]!.verify_token = '';
+    expect(await ctrl.verify('tok-abc', { 'hub.mode': 'subscribe', 'hub.verify_token': '', 'hub.challenge': '1' }, reply)).toBe('Forbidden');
+  });
   it('integração de outro tipo (mesmo token) não vale para o Instagram', async () => {
     const { w, ctrl, reply } = setup();
     w.t['crm_integrations']!.rows[0]!.kind = 'whatsapp';

@@ -14,7 +14,7 @@ export class WorkspaceDto {
 
 export class ConnectInstagramDto {
   @IsUUID() workspaceId!: string;
-  @IsOptional() @IsString() @MaxLength(64) pageId?: string;
+  @IsOptional() @IsString() @MaxLength(64) @Matches(/^\d+$/, { message: 'pageId deve conter só dígitos' }) pageId?: string;
 }
 
 export class GenerateContentCalendarDto {

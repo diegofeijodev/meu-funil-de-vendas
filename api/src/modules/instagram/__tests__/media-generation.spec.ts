@@ -148,6 +148,30 @@ describe('generatePostAssets — carrossel e vídeo', () => {
   });
 });
 
+describe('claim atômico da geração', () => {
+  it('duas gerações simultâneas do mesmo post: só uma roda; post já "generating" ou publicado é recusado sem virar failed', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, {});
+    const [a, b] = await Promise.all([gen.generatePostAssets(WS_A, post.id), gen.generatePostAssets(WS_A, post.id)]);
+    expect([a.ok, b.ok].sort()).toEqual([false, true]);
+    expect(s.pipeline.run).toHaveBeenCalledTimes(1);
+    const busy = idea(w, { status: 'generating' });
+    expect((await gen.generatePostAssets(WS_A, busy.id)).ok).toBe(false);
+    expect(busy.status).toBe('generating');
+    const pub = seedPost(w, { status: 'published' });
+    expect((await gen.generatePostAssets(WS_A, pub.id)).ok).toBe(false);
+    expect(pub.status).toBe('published');
+  });
+  it('poller: dois ciclos concorrentes não concluem o mesmo job duas vezes', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, { updated_at: new Date(Date.now() - 60e3), format: 'reel', status: 'generating', creative_brief: { pending_job: { provider: 'gemini', jobId: 'veo:r', index: 0, prompts: ['p'], media: [], cost: 0, started_at: new Date().toISOString() } } });
+    s.provider.getGenerationStatus.mockResolvedValue({ status: 'ready', assetUrl: 'https://provider.test/v.mp4', thumbnailUrl: null, externalJobId: 'veo:r', cost: 6 });
+    await Promise.all([gen.pollPendingMedia(), gen.pollPendingMedia()]);
+    expect(s.assets.ingest.mock.calls.filter((c: any) => c[0].kind === 'video').length).toBe(1);
+    expect(post.media).toHaveLength(1);
+  });
+});
+
 describe('uploadPostMedia (a própria mídia)', () => {
   const file = (mimetype: string, size = 10, filename = 'foto.final.png') => ({ filename, mimetype, bytes: Buffer.alloc(size, 1) });
 

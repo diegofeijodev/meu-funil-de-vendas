@@ -7,6 +7,8 @@ import { AutopilotEventKind, PostRow } from './ig-types';
 /** Erros de regra (nunca repetidos pela fila). */
 export class Guardrail extends Error {}
 export class RateLimited extends Error {}
+/** Outro processo (fila ou "publicar agora") já pegou o post: não é falha do post. */
+export class PublishClaimLost extends Error {}
 /** Container ainda em processamento na Meta: a fila tenta de novo em 2 min sem contar tentativa. */
 export class ContainerPending extends Error {}
 
