@@ -96,6 +96,7 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
             scheduled: c(["scheduled", "publishing"]),
             published: c(["published"]),
             failed: c(["failed"]),
+            review: c(["needs_review"]),
           },
         };
       });
@@ -115,6 +116,10 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
         const r = await fill({ data: { runId } });
         setProgress({ label: "Estrategista planejando os conteúdos", done: r.filled, total: r.total || total || 1 });
         refresh();
+        if (r.strategyReview) {
+          toast.info("Estratégia do período pronta: revise no card da programação e clique em Aprovar e gerar posts.");
+          return;
+        }
         if (r.done) break;
         if (r.busy) await new Promise((res) => setTimeout(res, 4000));
       }
@@ -184,11 +189,15 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
                   {[...r.times, ...r.story_times.map((t: string) => `${t} (story)`)].join(", ") || "o quanto antes"} ·{" "}
                   {r.mode === "publish" ? "publica sozinho" : "com aprovação"}
                 </p>
-                {r.focus && <p className="truncate text-xs text-muted-foreground">Foco: {r.focus}</p>}
+                {r.focus && <p className="line-clamp-2 text-xs text-muted-foreground">Objetivo: {r.focus}</p>}
+                {r.paused_reason && <p className="text-xs font-medium text-destructive">{r.paused_reason}</p>}
+                {r.strategy && <StrategySummary run={r} canEdit={canEdit} onChanged={() => { refresh(); if (r.status === "planning") void drive(r.id); }} />}
+                {r.status === "planning" && !r.strategy && <p className="text-xs text-muted-foreground">Montando a estratégia do período…</p>}
                 <p className="text-xs">
                   {r.counts.total} conteúdos · {r.counts.media} criativos · {r.counts.waiting > 0 && `${r.counts.waiting} aguardando aprovação · `}
                   {r.counts.scheduled} agendados · {r.counts.published} publicados
                   {r.counts.failed > 0 && <span className="text-destructive"> · {r.counts.failed} com falha</span>}
+                  {r.counts.review > 0 && <span className="text-destructive"> · {r.counts.review} precisam de revisão (veja Aprovações)</span>}
                 </p>
                 {r.last_error && <p className="text-xs text-destructive">Último erro: {r.last_error}</p>}
               </div>
@@ -462,13 +471,16 @@ function AutoCalendarDialog({
             </label>
           )}
 
-          <Field label="Foco do período (opcional)">
+          <Field label="Objetivo deste período (obrigatório)">
             <Textarea
-              rows={2}
+              rows={3}
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
-              placeholder="Ex.: Semana do Consumidor — 20% de desconto até sexta; lançamento do produto X no sábado."
+              placeholder="Ex.: Levar público de Valinhos para almoçar o prato executivo durante a semana e lotar o happy hour de sexta"
             />
+            <p className={`mt-1 text-xs ${focus.trim().length < 30 ? "text-destructive" : "text-muted-foreground"}`}>
+              {focus.trim().length < 30 ? `Escreva pelo menos 30 caracteres (${focus.trim().length}/30). A estratégia e todos os posts partem daqui.` : "A estratégia e todos os posts partem deste objetivo."}
+            </p>
           </Field>
 
           <Field label="Modo">
@@ -525,7 +537,7 @@ function AutoCalendarDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Fechar
             </Button>
-            <Button onClick={submit} disabled={busy || !pv?.ok || !pv.total || (!planId && !brandId)}>
+            <Button onClick={submit} disabled={busy || !pv?.ok || !pv.total || (!planId && !brandId) || focus.trim().length < 30}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               Criar e {mode === "publish" ? "publicar automaticamente" : "gerar para aprovação"}
             </Button>
@@ -593,3 +605,58 @@ function TimeList({ value, onChange, presets }: { value: string[]; onChange: (v:
   );
 }
 
+
+function StrategySummary({ run, canEdit, onChanged }: { run: any; canEdit: boolean; onChanged: () => void }) {
+  const st = run.strategy ?? {};
+  const approve = useServerFn(approveAutoStrategy);
+  const redo = useServerFn(redoAutoStrategy);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState<string>(st.texto_editado ?? "");
+  const [busy, setBusy] = useState(false);
+  const review = run.strategy_status === "review";
+  const go = async (fn: () => Promise<unknown>, msg: string) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.success(msg);
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falhou.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={`mt-2 space-y-1 rounded-md border p-2 text-xs ${review ? "border-primary/50" : "border-border"}`}>
+      <p className="font-medium">
+        Estratégia {review ? "· aguardando sua aprovação" : run.strategy_status === "approved" ? "· aprovada" : ""}
+      </p>
+      {st.mensagem_central && <p><b>Mensagem:</b> {st.mensagem_central}</p>}
+      {st.kpi_principal && <p><b>KPI:</b> {st.kpi_principal}</p>}
+      {st.publico_foco && <p><b>Público:</b> {st.publico_foco}</p>}
+      {!!st.pilares?.length && <p><b>Pilares:</b> {st.pilares.map((p: any) => `${p.nome} (${p.peso_percentual}%)`).join(" · ")}</p>}
+      {!!st.ctas?.length && <p><b>CTAs:</b> {st.ctas.join(" · ")}</p>}
+      {!!st.proibicoes?.length && <p className="text-muted-foreground"><b>Proibido:</b> {st.proibicoes.join(" · ")}</p>}
+      {st.texto_editado && !editing && <p><b>Seus ajustes:</b> {st.texto_editado}</p>}
+      {editing && (
+        <Textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ex.: foque no prato executivo de segunda a quinta; nada de promoção; CTA sempre 'Reserve pelo WhatsApp'." />
+      )}
+      {canEdit && run.status === "planning" && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {review || editing ? (
+            <Button size="sm" disabled={busy} onClick={() => go(() => approve({ data: { runId: run.id, editedText: editing ? text : null } }), "Estratégia aprovada. Gerando os posts…")}>
+              {busy && <Loader2 className="size-4 animate-spin" />} Aprovar e gerar posts
+            </Button>
+          ) : null}
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => setEditing((v) => !v)}>
+            {editing ? "Fechar edição" : "Editar estratégia"}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => go(() => redo({ data: { runId: run.id } }), "Pedindo uma nova estratégia…")}>
+            Refazer estratégia
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
