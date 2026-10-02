@@ -5,6 +5,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3015';
 const nextConfig: NextConfig = {
   // O selo do dev (canto inferior esquerdo) cobre o botão "Sair" do menu lateral.
   devIndicators: false,
+  // Dev: descarta páginas compiladas inativas (poupa memória nesta máquina).
+  onDemandEntries: { maxInactiveAge: 15000, pagesBufferLength: 2 },
   // As rotas públicas do protótipo (`/api/public/**`: webhooks, OAuth, descadastro…)
   // vivem na API com o mesmo caminho. Os links exibidos na tela usam a origem do
   // web, então o Next repassa.

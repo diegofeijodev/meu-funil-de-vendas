@@ -14,7 +14,7 @@
 //   AI_GATEWAY_URL=http://127.0.0.1:3099/v1 AI_GATEWAY_API_KEY=fake npm run start:smoke
 // (sem isso a seção de campanhas detecta "IA do app não configurada" e testa o caminho sem IA).
 import { chromium } from '/home/doutor/coding/freela/freela-web-v2/node_modules/playwright/index.mjs';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -44,6 +44,8 @@ const REDE_IGNORADA = [
   { url: /\/_next\/static\/webpack\/.*\.hot-update\.js$/, erro: 'net::ERR_ABORTED' },
   // Navegar para outra tela enquanto o checklist (`setup/status`, ~1 s) ainda carrega cancela o XHR.
   { url: /\/v1\/setup\/status$/, erro: 'net::ERR_ABORTED' },
+  // Instagram: sair da tela cancela as leituras que ainda estavam a caminho.
+  { url: /\/v1\/workspaces\/[^/]+\/(instagram-account|ig-[a-z-]+)(\?|$)/, erro: 'net::ERR_ABORTED' },
   // Download de exportação da biblioteca: o link assinado (`?dl=<nome>`) vira download e o navegador "aborta" a navegação do <a>.
   { url: /\/v1\/files\/creative-assets\/.*[?&]dl=/, erro: 'net::ERR_ABORTED' },
 ];
@@ -119,6 +121,16 @@ const gateway = createServer((req, res) => {
         })),
       };
     }
+    // Task 6 (Meta Ads): recomendações do AI Optimizer sobre os ids que aparecem nos dados do prompt.
+    else if (name === 'optimizer') {
+      const adId = /ANÚNCIOS: \[\{"id":"(\d+)"/.exec(prompt)?.[1] ?? '';
+      out = {
+        recomendacoes: [
+          { action: 'pause_ad', title: 'Pausar o anúncio mais caro', reason: 'CPL muito acima da meta', estimated_impact: '-20% de CPL', severity: 'high', target_ad_id: adId, target_adset_id: '', new_daily_budget: 0 },
+          { action: 'create_variation', title: 'Criar variação do melhor criativo', reason: 'Boa taxa de clique', estimated_impact: '+10% de CTR', severity: 'low', target_ad_id: '', target_adset_id: '', new_daily_budget: 0 },
+        ],
+      };
+    }
     else if (name === 'creative_score') {
       const t = [9, 7][notaN++ % 2];
       out = { produto: t, fidelidade: t, composicao: t, defeitos: t, paleta: t, motivo: 'Boa composição' };
@@ -129,6 +141,7 @@ const gateway = createServer((req, res) => {
 await new Promise((resolve) => gateway.listen(3099, '127.0.0.1', resolve)).catch(() => {});
 
 const erros = [];
+let fakeGraph = null; // Graph falsa da Meta (Task 6), se este script a subiu
 let passou = 0;
 const ok = (m) => {
   passou += 1;
@@ -1067,6 +1080,172 @@ try {
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`);
   check('limpeza do Instagram: nada sobrou do teste', igPsql(`SELECT count(*) FROM ig_posts WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM ig_auto_runs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0');
 
+  // ── Task 6: Meta Ads, gestor de tráfego, Performance e AI Insights ──────────────────────────
+  // Graph FALSA (api/scripts/fake-graph.mjs, porta 3098): a API precisa ter subido com
+  //   META_GRAPH_BASE_URL=http://127.0.0.1:3098/v24.0 AI_GATEWAY_URL=http://127.0.0.1:3099/v1 AI_GATEWAY_API_KEY=fake
+  console.log('-- Meta Ads, Performance e Insights --');
+  page.setDefaultTimeout(60000); // a máquina do dono fica lenta sob o `next dev` (ver CLAUDE.md)
+  const GBASE = 'http://127.0.0.1:3098';
+  const graphUp = () => fetch(`${GBASE}/__log`).then((r) => r.ok, () => false);
+  if (!(await graphUp())) {
+    fakeGraph = spawn('node', [path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../api/scripts/fake-graph.mjs')], { stdio: 'ignore' });
+    for (let i = 0; i < 20 && !(await graphUp()); i++) await new Promise((r) => setTimeout(r, 250));
+  }
+  const graphLog = () => fetch(`${GBASE}/__log`).then((r) => r.json());
+  await fetch(`${GBASE}/__reset`, { method: 'POST' });
+  const mT0 = igPsql('SELECT now()');
+  const metaAntes = igPsql(`SELECT string_agg(key, ',') FROM app_credentials WHERE workspace_id='${wsId}' AND key LIKE 'META_%'`);
+  const norm = (t) => t.replace(/ /g, ' ');
+  const cronTok = `browser-ads-${Date.now()}`;
+  igPsql(`INSERT INTO cron_tokens(name,token) VALUES ('ads','${cronTok}') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token`);
+
+  const salvou = (await apiCall('POST', '/v1/meta/meta-ads-save-credentials', { workspaceId: wsId, appId: 'app-check-1', appSecret: 'smoke-meta-secret', systemUserToken: 'CHECK-SYSTEM-USER-TOKEN-0123456789', adAccountId: 'act_1001', pageId: '2002', instagramId: '3003' })).body;
+  const teste = (await apiCall('POST', '/v1/meta/meta-ads-test', { workspaceId: wsId })).body;
+  check('API com a Graph falsa (META_GRAPH_BASE_URL=http://127.0.0.1:3098/v24.0)', salvou?.configured === true && teste?.ok === true && teste?.account?.name === 'Conta Smoke', JSON.stringify(teste));
+
+  const marcaMeta = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: `Marca Meta ${Date.now()}`, segment: 'Bar' })).body;
+  const campMetaId = igPsql(`INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily) VALUES ('${wsId}','${marcaMeta.id}','Campanha Meta Check','traffic','approved','https://site.test/lp',40) RETURNING id`).split('\n')[0];
+  igPsql(`INSERT INTO creatives(workspace_id,campaign_id,title,status,preview_url) VALUES ('${wsId}','${campMetaId}','Criativo Meta Check','approved','${BASE}/meu-funil-symbol.png')`);
+
+  // ── Publicar / ativar / pausar pela tela da campanha ──
+  await page.goto(`${BASE}/campaigns/${campMetaId}`);
+  await page.getByRole('button', { name: 'Publicar na Meta' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Publicar na Meta' }).click();
+  await page.getByText('Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.').waitFor({ timeout: 60000 });
+  const txtPub = await corpo();
+  check('publicar: passos mostram campanha, conjunto e anúncio criados (pausados)', tem(txtPub, 'Campanha criada (pausada)') && tem(txtPub, 'Conjunto "Conjunto 1" criado (pausado)') && tem(txtPub, 'Anúncio "Criativo Meta Check" criado (pausado)'), txtPub.slice(0, 300));
+  const logPub = await graphLog();
+  check('API: campanha com ids da Meta, PAUSED, job done e auditoria campaign.published', igPsql(`SELECT meta_campaign_id||','||meta_delivery_status||','||(SELECT status FROM publishing_jobs WHERE campaign_id='${campMetaId}' LIMIT 1)||','||(SELECT count(*) FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND metadata->>'campaign_id'='${campMetaId}') FROM campaigns WHERE id='${campMetaId}'`) === '7100001,PAUSED,done,1');
+  check('Graph: tudo criado PAUSADO e a imagem do criativo foi enviada (baixada pela API)', logPub.filter((x) => x.method === 'POST' && /\/(campaigns|adsets|ads)$/.test(x.path)).every((x) => x.params.status === 'PAUSED') && logPub.some((x) => x.path.endsWith('/adimages')));
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent.includes('Ativar na Meta') && !b.disabled));
+  await page.getByRole('button', { name: 'Ativar na Meta' }).dispatchEvent('click');
+  await page.getByText('Campanha ativada na Meta.').waitFor({ timeout: 30000 });
+  check('API: ativada (delivery ACTIVE, status active)', igPsql(`SELECT meta_delivery_status||','||status FROM campaigns WHERE id='${campMetaId}'`) === 'ACTIVE,active');
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent.includes('Pausar na Meta') && !b.disabled));
+  await page.getByRole('button', { name: 'Pausar na Meta' }).dispatchEvent('click');
+  await page.getByText('Campanha pausada na Meta.').waitFor({ timeout: 30000 });
+  check('API: pausada (PAUSED, volta a approved)', igPsql(`SELECT meta_delivery_status||','||status FROM campaigns WHERE id='${campMetaId}'`) === 'PAUSED,approved');
+
+  // ── Aba "Anúncios e regras": sincronizar, configurar, públicos, canais ──
+  await page.getByRole('tab', { name: 'Anúncios e regras' }).click();
+  await page.getByText('Resultados reais por anúncio e ângulo').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Sincronizar agora' }).click();
+  await page.getByText('Resultados da Meta sincronizados (20 linhas de anúncio por dia).').waitFor({ timeout: 60000 });
+  check('API: 20 linhas por anúncio/dia gravadas (source meta)', igPsql(`SELECT count(*) FROM performance_daily WHERE campaign_id='${campMetaId}' AND source='meta'`) === '20');
+  await page.getByText('Anúncio caro').first().waitFor({ timeout: 30000 });
+  check('resultados reais por anúncio mostram os anúncios sincronizados', tem(await corpo(), 'Anúncio caro') && tem(await corpo(), 'Anúncio bom'));
+  const txtCfg = await corpo();
+  for (const t of ['Como os anúncios vão para a Meta', 'Estrutura', 'Botão (CTA)', 'Posicionamentos automáticos (Advantage+)', 'Público Advantage+', 'Juntar as imagens aprovadas num anúncio carrossel', 'Carregar públicos da Meta', 'Criar público com leads do CRM', 'Regras automáticas', 'Ligar regras automáticas nesta campanha', 'Salvar configuração e regras', 'Google Ads e TikTok Ads', 'Criar campanha de Pesquisa (pausada)', 'Criar campanha de vídeo (desativada)']) {
+    check(`anúncios e regras mostra "${t}"`, tem(txtCfg, t));
+  }
+  await page.getByRole('button', { name: 'Carregar públicos da Meta' }).click();
+  await page.getByText('Compradores').first().waitFor({ timeout: 30000 });
+  await page.locator('label', { hasText: 'Incluir' }).first().locator('input').check();
+  await page.locator('div.flex.items-center.gap-2').filter({ hasText: 'Juntar as imagens aprovadas' }).locator('button[role="switch"]').click();
+  await page.locator('div.flex.items-center.gap-2').filter({ hasText: 'Ligar regras automáticas nesta campanha' }).locator('button[role="switch"]').click();
+  await page.locator('label:has-text("Pausar anúncio com CPL acima de")').locator('xpath=following-sibling::input').fill('20');
+  await page.locator('label:has-text("Aumentar verba se CPL")').locator('xpath=following-sibling::input').fill('10');
+  await page.getByRole('button', { name: 'Salvar configuração e regras' }).click();
+  await page.getByText('Configuração salva.').waitFor({ timeout: 30000 });
+  check('API: configuração salva (público 5001, carrossel, regras ligadas, CPL 20)', igPsql(`SELECT (ads_config->'customAudienceIds')::text||','||(ads_config->>'carousel')||','||(automation_rules->>'enabled')||','||(automation_rules->>'maxCpl')||','||(automation_rules->>'scaleBelowCpl') FROM campaigns WHERE id='${campMetaId}'`) === '["5001"],true,true,20,10');
+  // público do CRM
+  igPsql(`INSERT INTO crm_leads(workspace_id,name,email) VALUES ('${wsId}','Lead Meta Check','meta-check@teste.com')`);
+  await page.getByRole('button', { name: 'Criar público com leads do CRM' }).click();
+  await page.getByText(/Público atualizado na Meta com \d+ contatos do CRM\./).waitFor({ timeout: 30000 });
+  ok('público do CRM enviado à Meta (toast com o total de contatos)');
+  // canais: ligar campanha existente do Google; ativar sem conta → erro da API no toast; TikTok sem vídeo
+  await page.getByPlaceholder('ou ID existente').first().fill('123456');
+  await page.getByRole('button', { name: 'Ligar', exact: true }).first().click();
+  await page.getByText('Campanha ligada. Os resultados chegam na próxima sincronização.').waitFor({ timeout: 30000 });
+  await page.getByText('Pausada · 123456').waitFor({ timeout: 15000 });
+  check('API: campanha do Google ligada (só dígitos)', igPsql(`SELECT google_campaign_id FROM campaigns WHERE id='${campMetaId}'`) === '123456');
+  await page.getByRole('button', { name: 'Ativar (gasta verba)' }).click();
+  await page.getByText('Conta do Google Ads não escolhida.').waitFor({ timeout: 30000 });
+  ok('Google: ativar sem conta escolhida mostra o erro da API no toast');
+  await page.getByRole('button', { name: 'Criar campanha de vídeo (desativada)' }).click();
+  await page.getByText('O TikTok só aceita vídeo: aprove pelo menos um criativo em vídeo desta campanha.').waitFor({ timeout: 30000 });
+  ok('TikTok: criar sem vídeo aprovado mostra o aviso');
+  esperado(/\/v1\/ads\/(set-external-campaign-status|create-external-campaign)/);
+  esperado(/400 \(Bad Request\)/);
+  // cron de regras (token 'ads' do banco): pausa o anúncio caro e escala o conjunto
+  const cron = await fetch(`${API}/api/public/cron/ads`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': cronTok }, body: JSON.stringify({ task: 'rules' }) });
+  const cronBody = await cron.json();
+  check('cron ads (task=rules): 200 e a pausa do anúncio caro registrada como "Regra automática" (CPL R$ 14 não está abaixo da meta de R$ 10: sem escala)', cron.status === 200 && Array.isArray(cronBody.rules) && igPsql(`SELECT action||','||status FROM ai_recommendations WHERE campaign_id='${campMetaId}' AND source='rule'`) === 'pause_ad,applied', JSON.stringify(cronBody).slice(0, 300));
+
+  // ── Recomendações da IA pela campanha ──
+  await page.getByRole('button', { name: 'Recomendações da IA' }).click();
+  await page.getByText('2 recomendações da IA em AI Insights.').waitFor({ timeout: 60000 });
+  check('API: 2 recomendações pendentes da IA (a que mexe na Meta é executável)', igPsql(`SELECT count(*) FROM ai_recommendations WHERE campaign_id='${campMetaId}' AND source='ai' AND status='pending'`) === '2' && igPsql(`SELECT (payload->>'executable') FROM ai_recommendations WHERE campaign_id='${campMetaId}' AND action='pause_ad' AND source='ai'`) === 'true');
+
+  // ── Performance ──
+  igPsql(`INSERT INTO campaign_costs(workspace_id,campaign_id,kind,description,amount) VALUES ('${wsId}','${campMetaId}','ai','Custo extra check',12.5)`);
+  await page.goto(`${BASE}/performance`);
+  await page.getByRole('heading', { name: 'Performance e ROI' }).waitFor({ timeout: 30000 });
+  check('performance: título da aba', (await page.title()) === 'Performance e ROI · Meu Funil', await page.title());
+  const selCamp = page.locator('select').filter({ has: page.locator('option', { hasText: 'Todas as campanhas' }) });
+  const selDias = page.locator('select').filter({ has: page.locator('option', { hasText: 'Últimos 30 dias' }) });
+  await selDias.selectOption('90');
+  await page.getByText('Evolução diária').waitFor({ timeout: 30000 });
+  const txtPerf = norm(await corpo());
+  for (const t of ['Performance e ROI', 'Todas as campanhas', 'Atualizar da Meta', 'Investimento', 'Receita', 'ROAS', 'ROI', 'CPL', 'CAC', 'CPM', 'CTR', 'CPC', 'Alcance', 'Evolução diária', 'ROAS por campanha', 'Ranking de criativos (menor CPL primeiro)', 'Por conjunto de anúncios / público', 'Custos extras considerados no ROI']) {
+    check(`performance mostra "${t}"`, tem(txtPerf, t));
+  }
+  check('performance: investimento (R$ 1.960,00 sincronizados + R$ 12,50 extras)', txtPerf.includes('R$ 1.960,00') && txtPerf.includes('+ R$ 12,50 extras'), txtPerf.slice(0, 500));
+  check('performance: receita R$ 3.500,00 e ROAS 1,79x (3.500 / 1.960)', txtPerf.includes('R$ 3.500,00') && txtPerf.includes('1,79x'));
+  check('performance: leads 140 / CPL R$ 14,00 e vendas 14 / CAC R$ 140,00', txtPerf.includes('140 leads') && txtPerf.includes('R$ 14,00') && txtPerf.includes('14 vendas') && txtPerf.includes('R$ 140,00'));
+  check('performance: conjunto "Conjunto Smoke" na tabela e custo extra listado', tem(txtPerf, 'Conjunto Smoke') && tem(txtPerf, 'Custo extra check'));
+  check('performance: os dois gráficos renderizam (recharts)', (await page.locator('.recharts-surface').count()) >= 2);
+  await selCamp.selectOption({ label: 'Campanha Meta Check' });
+  await page.waitForTimeout(300);
+  check('performance: filtro por campanha mantém os números', norm(await corpo()).includes('R$ 1.960,00'));
+  await selDias.selectOption('7');
+  await page.waitForTimeout(300);
+  check('performance: período de 7 dias só pega os 4 dias do cron (R$ 560,00)', norm(await corpo()).includes('R$ 560,00'));
+  await page.getByRole('button', { name: 'Atualizar da Meta' }).click();
+  await page.getByText('Resultados da Meta atualizados (1 campanha(s)).').waitFor({ timeout: 60000 });
+  ok('performance: "Atualizar da Meta" sincroniza e avisa');
+
+  // ── AI Insights ──
+  await page.goto(`${BASE}/insights`);
+  await page.getByRole('heading', { name: 'AI Insights' }).waitFor({ timeout: 30000 });
+  check('insights: título da aba', (await page.title()) === 'AI Insights · Meu Funil', await page.title());
+  await page.getByText(/Recomendações pendentes \(2\)/).waitFor({ timeout: 30000 });
+  const txtIns = await corpo();
+  for (const t of ['Rodar AI Optimizer', 'Pausar o anúncio mais caro', 'Criar variação do melhor criativo', 'Aplicar executa esta ação direto na Meta.', 'Ação manual: aplicar só registra a decisão.', 'Impacto estimado: -20% de CPL', 'Histórico de decisões', 'Regra automática', 'Como o ROI é calculado', 'Campanha Meta Check']) {
+    check(`insights mostra "${t}"`, tem(txtIns, t));
+  }
+  const cartaoPausa = page.locator('div.rounded-lg.border').filter({ hasText: 'Pausar o anúncio mais caro' }).filter({ has: page.getByRole('button', { name: 'Aplicar' }) }).first();
+  await cartaoPausa.getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByText('Anúncio pausado na Meta.').first().waitFor({ timeout: 30000 });
+  check('API: recomendação aplicada (quem aplicou e resultado) e a Graph recebeu PAUSED', igPsql(`SELECT status||','||(applied_by IS NOT NULL)::int||','||result FROM ai_recommendations WHERE campaign_id='${campMetaId}' AND action='pause_ad' AND source='ai'`) === 'applied,1,Anúncio pausado na Meta.' && (await graphLog()).some((x) => x.method === 'POST' && /^\/\d+$/.test(x.path) && x.params.status === 'PAUSED'));
+  const cartaoManual = page.locator('div.rounded-lg.border').filter({ hasText: 'Criar variação do melhor criativo' }).filter({ has: page.getByRole('button', { name: 'Descartar' }) }).first();
+  await cartaoManual.getByRole('button', { name: 'Descartar' }).click();
+  await page.getByText('Descartada.').first().waitFor({ timeout: 30000 });
+  await page.getByText(/Recomendações pendentes \(0\)/).waitFor({ timeout: 30000 });
+  const txtHist = await corpo();
+  check('insights: histórico mostra "Aplicada", "Descartada" e a regra automática', tem(txtHist, 'Aplicada') && tem(txtHist, 'Descartada') && tem(txtHist, 'Regra automática') && tem(txtHist, 'Anúncio pausado na Meta.'));
+  check('insights: sem pendentes mostra o estado vazio', tem(txtHist, 'Nenhuma recomendação pendente'));
+  await page.getByRole('button', { name: 'Rodar AI Optimizer' }).click();
+  await page.getByText('2 recomendações geradas com os resultados reais da Meta.').waitFor({ timeout: 60000 });
+  await page.getByText(/Recomendações pendentes \(2\)/).waitFor({ timeout: 30000 });
+  ok('insights: "Rodar AI Optimizer" gera novas recomendações com os resultados reais');
+
+  // ── limpeza do que este trecho criou (workspace demo é permanente) ──
+  igPsql(`DELETE FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND metadata->>'campaign_id'='${campMetaId}'`);
+  igPsql(`DELETE FROM campaigns WHERE id='${campMetaId}'`);   // creatives, performance_daily, publishing_jobs, ai_recommendations, campaign_costs em cascata
+  igPsql(`DELETE FROM crm_leads WHERE workspace_id='${wsId}' AND email='meta-check@teste.com'`);
+  igPsql(`DELETE FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`);
+  igPsql(`DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '${mT0}'`);
+  const metaPrev = new Set((metaAntes ? metaAntes.split(',') : []));
+  for (const k of ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID', 'META_TOKEN_SOURCE', 'META_TOKEN_EXPIRES_AT', 'META_AUDIENCE_CRM_ALL', 'META_AUDIENCE_CRM_WON']) {
+    if (!metaPrev.has(k)) igPsql(`DELETE FROM app_credentials WHERE workspace_id='${wsId}' AND key='${k}'`);
+  }
+  await page.goto(`${BASE}/overview`);   // sai da tela antes de apagar a marca (senão o react-query refaz o GET e dá 404)
+  await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaMeta.id}`);
+  check('limpeza da Meta: nada sobrou (campanha, cron, credenciais, atividade)', igPsql(`SELECT count(*) FROM campaigns WHERE id='${campMetaId}'`) === '0' && igPsql(`SELECT count(*) FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`) === '0' && igPsql(`SELECT count(*) FROM performance_daily WHERE workspace_id='${wsId}' AND ad_name IN ('Anúncio caro','Anúncio bom')`) === '0' && igPsql(`SELECT count(*) FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND created_at >= '${mT0}'`) === '0');
+
+  page.setDefaultTimeout(30000);
+
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');
   for (const [label, path] of [['CRM', '/crm'], ['Campaigns', '/campaigns'], ['Settings', '/settings']]) {
@@ -1115,7 +1294,7 @@ try {
   await page.goto(`${BASE}/`);
   await page.waitForURL('**/overview', { timeout: 30000 });
   check('/ com sessão vai para /overview', rel() === '/overview');
-  await page.getByRole('button', { name: /Sair/ }).first().click({ timeout: 8000 });
+  await page.getByRole('button', { name: /Sair/ }).first().click({ timeout: 30000 });
   await page.waitForURL('**/auth', { timeout: 30000 });
   check('Sair volta para /auth e limpa a sessão', rel() === '/auth' && !(await sessaoGuardada()));
 } catch (e) {
@@ -1124,6 +1303,7 @@ try {
 
 await browser.close();
 gateway.close();
+fakeGraph?.kill();
 console.log(`\n${passou} ok, ${erros.length} falha(s)`);
 if (erros.length) {
   for (const e of erros) console.log(`  - ${e}`);
