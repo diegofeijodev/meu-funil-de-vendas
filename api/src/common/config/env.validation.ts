@@ -64,6 +64,8 @@ const envSchema = z
     META_APP_SECRET: opt(),
     META_SYSTEM_USER_TOKEN: opt(),
     META_GRAPH_TOKEN: opt(),
+    /** Só testes (smoke/browser-check): Graph falsa. Ignorada em NODE_ENV=production. */
+    META_GRAPH_BASE_URL: opt(),
     META_AD_ACCOUNT_ID: opt(),
     META_PAGE_ID: opt(),
     META_INSTAGRAM_ACCOUNT_ID: opt(),

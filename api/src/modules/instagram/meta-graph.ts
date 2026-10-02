@@ -3,7 +3,7 @@
  * nos testes entra um fake). Todas as chamadas levam `access_token` + `appsecret_proof`. As credenciais vêm do cofre
  * (empresa → global) com as variáveis de ambiente como reserva, como `metaConfig` do protótipo.
  */
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
@@ -90,7 +90,14 @@ export class MetaGraphClient {
   constructor(
     private readonly cfg: MetaConfigService,
     @Inject(META_FETCH) private readonly http: MetaFetch,
+    @Optional() @Inject(ENV) private readonly env?: Pick<Env, 'NODE_ENV' | 'META_GRAPH_BASE_URL'>,
   ) {}
+
+  /** Base da Graph API. `META_GRAPH_BASE_URL` (Graph falsa de smoke/browser-check) só vale fora de produção. */
+  get base(): string {
+    const o = this.env?.META_GRAPH_BASE_URL;
+    return o && this.env?.NODE_ENV !== 'production' ? o.replace(/\/$/, '') : GRAPH_BASE;
+  }
 
   config(workspaceId: string | null) {
     return this.cfg.config(workspaceId);
@@ -112,7 +119,7 @@ export class MetaGraphClient {
       if (v === undefined || v === null) continue;
       form.set(k, typeof v === 'string' ? v : JSON.stringify(v));
     }
-    const url = `${GRAPH_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+    const url = `${this.base}${path.startsWith('/') ? path : `/${path}`}`;
     let res: Response;
     try {
       res =

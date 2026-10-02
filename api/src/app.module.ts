@@ -9,6 +9,7 @@ import { HealthModule } from './common/health/health.module';
 import { WireInterceptor } from './common/http/wire.interceptor';
 import { AccessModule } from './modules/access/access.module';
 import { ActivityModule } from './modules/activity/activity.module';
+import { AdsModule } from './modules/ads/ads.module';
 import { AgencyModule } from './modules/agency/agency.module';
 import { AiModule } from './modules/ai/ai.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
@@ -60,6 +61,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     CanvaModule,
     CreativeModule,
     InstagramModule,
+    AdsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

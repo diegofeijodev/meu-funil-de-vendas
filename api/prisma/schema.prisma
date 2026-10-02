@@ -1319,3 +1319,15 @@ model cron_heartbeats {
   last_status String   @default("ok")
   last_detail String?
 }
+
+/// OAuth `state` de uso único dos logins de anúncios (meta|google|tiktok); só o hash fica no banco.
+model oauth_states {
+  state_hash   String   @id
+  channel      String
+  workspace_id String   @db.Uuid
+  user_id      String   @db.Uuid
+  expires_at   DateTime @db.Timestamptz(6)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([expires_at], map: "oauth_states_expires_idx")
+}

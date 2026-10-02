@@ -45,6 +45,8 @@ services:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Só testes (Graph falsa); ignorada em produção.
+      META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-}
     volumes:
       - meufunil_uploads:/data/uploads
     ports:
