@@ -1,4 +1,4 @@
-import { Controller, Get, Logger, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { Controller, Get, HttpCode, Logger, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Public } from '../../common/decorators/public.decorator';
@@ -70,7 +70,7 @@ export class InstagramWebhookController {
     return String(q['hub.challenge'] ?? '');
   }
 
-  @Post(':token')
+  @Post(':token') @HttpCode(200)
   async receive(@Param('token') token: string, @Req() req: FastifyRequest & { rawBody?: Buffer }, @Res({ passthrough: true }) reply: FastifyReply) {
     const raw = req.rawBody ? req.rawBody.toString('utf8') : '';
     const integration = await this.ledger.integrationByToken(token, 'instagram');

@@ -187,7 +187,7 @@ describe('ProviderResolverService', () => {
       getLiveConnection: jest.fn(async () => (opts.higgs ? { status: 'connected', server_url: 'https://mcp.higgsfield.ai/mcp', access_token: 't' } : null)),
       callTool: jest.fn(),
     };
-    const prisma = { creative_generation_jobs: { count: jest.fn(async () => (opts.ownsJob ? 1 : 0)) } };
+    const prisma = { creative_generation_jobs: { count: jest.fn(async () => (opts.ownsJob ? 1 : 0)) }, ig_posts: { count: jest.fn(async () => 0) } };
     return { ai, keys, mcp, prisma, svc: new ProviderResolverService(prisma as any, ai as any, keys as any, mcp as any) };
   }
 
