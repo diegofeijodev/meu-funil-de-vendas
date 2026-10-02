@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Bot, CalendarRange, Loader2, Plus, Sparkles, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  approveAutoStrategy,
+  redoAutoStrategy,
   cancelAutoCalendar,
   createAutoCalendar,
   fillAutoCalendar,
