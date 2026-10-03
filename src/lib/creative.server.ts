@@ -111,28 +111,27 @@ export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
 const CREDIT_ERR = /\b(402|429)\b|cr[ée]dito|saldo|quota|cota|limite|esgotad|rate.?limit|insufficient|billing/i;
 export const isCreditError = (e: unknown) => CREDIT_ERR.test(errMessage(e));
 
-/** Provedor que tenta a lista em ordem, passando ao próximo só em falha de crédito/limite. */
+/** Provedor que tenta a lista em ordem, sem modificar a sequência compartilhada entre variações. */
 function chainProviders(list: ServerCreativeProvider[]): ServerCreativeProvider & { log: string[] } {
   let current = list[0]!;
   const log: string[] = [];
   const run = async (fn: (p: ServerCreativeProvider) => Promise<GenerationResult>) => {
     let lastErr: unknown = null;
-    for (let i = 0; i < list.length; i++) {
-      const p = list[i]!;
+    // Cada variação tem sua própria sequência; não altere a lista compartilhada entre chamadas paralelas.
+    for (const p of list) {
       try {
         const r = await fn(p);
+        if (r.status === "failed" || (r.status === "ready" && !r.assetUrl))
+          throw new Error(r.raw || `${p.label} não devolveu uma imagem pronta.`);
         current = p;
         const msg = `Usado: ${r.note ?? p.label}`;
         if (log[log.length - 1] !== msg) log.push(msg);
         return r;
       } catch (e) {
         lastErr = e;
-        if (i === list.length - 1) throw e;
+        if (p === list[list.length - 1]) throw e;
         console.warn(`[creative-chain] ${p.id} falhou, tentando o próximo:`, errMessage(e));
         log.push(`${p.label}: ${errMessage(e)} → tentando o próximo`);
-        list = list.slice(i); // não volta para quem já falhou
-        list.shift();
-        i = -1;
       }
     }
     throw lastErr;

@@ -79,7 +79,7 @@ export function ArtDirectionPanel({
     <div className="space-y-3 rounded-lg border border-border/70 p-3">
       <p className="text-sm font-semibold">Direção de arte</p>
       <div className="space-y-1.5">
-        <Label className="text-xs">Prompt visual (em inglês, gerado pelo diretor de arte)</Label>
+        <Label className="text-xs">Prompt visual em português (gerado pelo diretor de arte)</Label>
         <Textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Gerado na próxima criação de mídia." />
       </div>
       {showLayout && (
