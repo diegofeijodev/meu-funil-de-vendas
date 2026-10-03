@@ -682,7 +682,7 @@ export async function generatePostAssets(
         aspectRatio: ASPECT[format],
         targetFormat: targetForIgFormat(format),
         refs,
-        variations: Number(brief.variations ?? 3),
+        variations: typeof brief.variations === "number" ? brief.variations : 3,
         layout,
         text: { title: brief.headline ?? post.hook ?? null, price: brief.price ?? null, cta: post.cta ?? null },
         title: post.theme ?? "Post do Instagram",

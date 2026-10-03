@@ -131,7 +131,10 @@ export async function runImagePipeline(inp: PipelineInput): Promise<PipelineResu
     return null;
   };
 
-  const pending = await round(Math.max(1, Math.min(4, inp.variations)));
+  // O post também guarda `variations` como lista de imagens anteriores; esse valor não é uma contagem.
+  // NaN aqui criava zero chamadas ao provedor e o erro enganoso "não devolveu imagens".
+  const count = Number.isFinite(inp.variations) ? Math.max(1, Math.min(4, inp.variations)) : 3;
+  const pending = await round(count);
   if (pending) return { pending, ad };
 
   const best = () => [...pool].sort((a, b) => (b.score?.total ?? -1) - (a.score?.total ?? -1))[0]!;
