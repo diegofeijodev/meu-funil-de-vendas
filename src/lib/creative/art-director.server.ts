@@ -53,14 +53,14 @@ const SCHEMA = {
 };
 
 const BASE_NEGATIVE =
-  "deformed anatomy, extra fingers, extra hands, distorted faces, illegible text, gibberish letters, watermark, third-party logos, low resolution, blurry, oversaturated, plastic look";
+  "anatomia deformada, dedos ou mãos extras, rostos distorcidos, texto ilegível, letras sem sentido, marca-d'água, logotipos de terceiros, baixa resolução, desfoque, saturação excessiva, aparência artificial";
 
 const COMPOSITION: Record<string, string> = {
-  "1:1": "centered subject, balanced square composition",
-  "4:5": "subject in lower two thirds, clean breathing room in the top area for a headline",
+  "1:1": "assunto centralizado, composição quadrada equilibrada",
+  "4:5": "assunto nos dois terços inferiores, espaço livre na parte superior para o título",
   "9:16":
-    "vertical frame, subject in the middle third, top third and bottom third kept clean and uncluttered for text and Instagram UI",
-  "16:9": "wide landscape frame, subject on one third, negative space on the other side",
+    "enquadramento vertical, assunto no terço central, terços superior e inferior livres para texto e interface do Instagram",
+  "16:9": "enquadramento horizontal amplo, assunto em um dos terços e espaço livre no outro lado",
 };
 
 export type ArtBrief = {
@@ -92,12 +92,13 @@ export async function buildVisualPrompt(b: ArtBrief): Promise<ArtDirection> {
     "REGRAS:",
     "- Descreva APENAS o que se vê. Nunca coloque tom de voz, público, objetivo, dores ou jargão de marketing no prompt.",
     "- O produto é sempre o protagonista; se for comida/bebida, em ângulo apetitoso (close, textura, frescor).",
-    "- Nunca peça texto longo na imagem. text_in_image = \"none\" ou no máximo 4 palavras. Prefira \"none\" (o texto é aplicado depois pelo app).",
+    "- Nunca peça texto na imagem: todo título, preço e logotipo é aplicado depois pelo aplicativo. Preencha text_in_image com 'none' (valor técnico do formato JSON).",
     `- negative deve incluir sempre: ${BASE_NEGATIVE}, mais os elementos proibidos da marca.`,
     `- Composição para ${aspect}: ${COMPOSITION[aspect]}.`,
-    "- prompt_final em inglês, 60 a 120 palavras, descritivo e concreto (sujeito, cena, luz, câmera/lente, estilo, paleta).",
+    "- Escreva TODOS os campos descritivos, inclusive prompt_final, negative, cenas e tomadas, somente em português do Brasil. Não traduza nomes próprios da marca ou dos produtos.",
+    "- prompt_final em português do Brasil, 60 a 120 palavras, descritivo e concreto (sujeito, cena, luz, câmera/lente, estilo, paleta).",
     b.hasProductRef
-      ? '- Há fotos de referência do produto: o prompt_final DEVE conter "use the product exactly as in the reference images".'
+      ? '- Há fotos de referência do produto: o prompt_final DEVE conter "Use o produto exatamente como nas imagens de referência".'
       : "",
     b.kind === "video"
       ? "- É vídeo: preencha video_shots com 2 a 4 tomadas (duracao em segundos, descricao, movimento_camera) e descreva o movimento no prompt_final."
@@ -142,8 +143,8 @@ export async function buildVisualPrompt(b: ArtBrief): Promise<ArtDirection> {
   const negative = [json.negative || BASE_NEGATIVE, forb].filter(Boolean).join(", ");
   let final = String(json.prompt_final || "").trim();
   if (!final) throw new Error("O diretor de arte não devolveu o prompt.");
-  if (b.hasProductRef && !/exactly as in the reference/i.test(final))
-    final += " Use the product exactly as in the reference images.";
+  if (b.hasProductRef && !/produto exatamente como nas imagens de referência/i.test(final))
+    final += " Use o produto exatamente como nas imagens de referência.";
   return {
     ...json,
     negative,
@@ -156,9 +157,8 @@ export async function buildVisualPrompt(b: ArtBrief): Promise<ArtDirection> {
 
 /** Texto enviado ao modelo: prompt + o que evitar. */
 export function providerPrompt(ad: Pick<ArtDirection, "prompt_final" | "negative" | "text_in_image">) {
-  const noText =
-    !ad.text_in_image || ad.text_in_image === "none"
-      ? " No text, letters or logos anywhere in the image."
-      : ` The only text allowed is "${ad.text_in_image}".`;
-  return `${ad.prompt_final}${noText} Avoid: ${ad.negative}.`;
+  const noText = !ad.text_in_image || ad.text_in_image === "none"
+    ? " Não inclua texto, letras nem logotipos na imagem."
+    : ` O único texto permitido é "${ad.text_in_image}".`;
+  return `${ad.prompt_final}${noText} Evite: ${ad.negative}.`;
 }
