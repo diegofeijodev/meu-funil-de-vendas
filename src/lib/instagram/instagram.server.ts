@@ -650,7 +650,9 @@ export async function generatePostAssets(
       slide: format === "feed_carousel" ? { index: i, total: briefs.length } : null,
     });
     // Prompt editado pelo usuário (sem novo ajuste) vale para o post de mídia única.
-    const override = !instructions && format !== "feed_carousel" && brief.visual_prompt_override;
+    // Prompts antigos em inglês não devem continuar sendo enviados ao gerador.
+    const legacyEnglish = (value: unknown) => typeof value === "string" && /\b(photorealistic|still frame|no text|use the product|commercial photograph|natural lighting|frozen layers)\b/i.test(value);
+    const override = !instructions && format !== "feed_carousel" && brief.visual_prompt_override && !legacyEnglish(brief.visual_prompt_override);
     const ads = await Promise.all(
       briefs.map(async (p, i) =>
         override && brief.art_direction
@@ -680,7 +682,7 @@ export async function generatePostAssets(
         aspectRatio: ASPECT[format],
         targetFormat: targetForIgFormat(format),
         refs,
-        variations: Number(brief.variations ?? 3),
+        variations: typeof brief.variations === "number" ? brief.variations : 3,
         layout,
         text: { title: brief.headline ?? post.hook ?? null, price: brief.price ?? null, cta: post.cta ?? null },
         title: post.theme ?? "Post do Instagram",
