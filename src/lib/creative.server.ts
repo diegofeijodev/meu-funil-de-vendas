@@ -121,7 +121,7 @@ function chainProviders(list: ServerCreativeProvider[]): ServerCreativeProvider 
     for (const p of list) {
       try {
         const r = await fn(p);
-        if (r.status === "failed" || (r.status === "ready" && !r.assetUrl))
+        if (r.status === "failed" || (r.status === "ready" && !r.assetUrl) || (r.status === "generating" && !r.externalJobId))
           throw new Error(r.raw || `${p.label} não devolveu uma imagem pronta.`);
         current = p;
         const msg = `Usado: ${r.note ?? p.label}`;

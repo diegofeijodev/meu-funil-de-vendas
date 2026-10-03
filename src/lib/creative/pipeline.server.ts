@@ -89,7 +89,8 @@ export async function runImagePipeline(inp: PipelineInput): Promise<PipelineResu
     if (!ready.length) {
       const err = settled.find((s) => s.status === "rejected") as PromiseRejectedResult | undefined;
       const failed = ok.find((r) => r.status === "failed");
-      throw err?.reason instanceof Error ? err.reason : new Error(failed?.raw || "O provedor não devolveu imagens.");
+      const reason = err?.reason instanceof Error ? err.reason.message : err?.reason ? String(err.reason) : null;
+      throw new Error(reason || failed?.raw || `O provedor não devolveu uma imagem pronta (${ok.map((r) => r.status).join(", ") || "sem resposta"}).`);
     }
     await Promise.all(
       ready.map(async (r) => {
