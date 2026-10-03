@@ -476,7 +476,7 @@ async function continueAssets(
   for (let i = start; i < prompts.length; i++) {
     const req = {
       finalPrompt:
-        `${prompts[i]} ${format === "feed_carousel" ? `(slide ${i + 1} de ${prompts.length})` : ""}`.trim(),
+        `${prompts[i]} ${format === "feed_carousel" ? `(imagem ${i + 1} de ${prompts.length} do carrossel)` : ""}`.trim(),
       aspectRatio: ASPECT[format],
       kind: (isVideo(format) ? "video" : "image") as "image" | "video",
       ...(isVideo(format) ? {} : extra),

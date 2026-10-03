@@ -111,7 +111,7 @@ export type ProviderChoice = "auto" | "higgsfield" | "chatgpt" | "gemini";
 const CREDIT_ERR = /\b(402|429)\b|cr[ée]dito|saldo|quota|cota|limite|esgotad|rate.?limit|insufficient|billing/i;
 export const isCreditError = (e: unknown) => CREDIT_ERR.test(errMessage(e));
 
-/** Provedor que tenta a lista em ordem, passando ao próximo só em falha de crédito/limite. */
+/** Provedor que tenta a lista em ordem, sem modificar a sequência compartilhada entre variações. */
 function chainProviders(list: ServerCreativeProvider[]): ServerCreativeProvider & { log: string[] } {
   let current = list[0]!;
   const log: string[] = [];
