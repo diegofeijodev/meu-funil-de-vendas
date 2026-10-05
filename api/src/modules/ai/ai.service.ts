@@ -20,6 +20,10 @@ export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_VIDEO_HOPS = 4;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const isVertical = (ar: string) => ar === '9:16' || ar === '4:5';
+/** Duração dos vídeos do Veo (o roteiro é escrito para 8 s). */
+const VEO_SECONDS = 8;
+/** Modelo de reserva quando a chave própria não tem acesso ao `AI_MODEL_VIDEO`. */
+export const VEO_FALLBACK_MODEL = 'veo-3.0-fast-generate-preview';
 
 /** Custos estimados (créditos do app); 0 quando é a chave do cliente. */
 export const AI_COST = { chatgptImage: 1.5, geminiImage: 1.0, video: 6.0 } as const;
@@ -392,13 +396,23 @@ export class AiService {
     return { prompt: req.prompt.slice(0, 3000), ...(ref ? { image: { bytesBase64Encoded: b64(ref.bytes), mimeType: ref.mime } } : {}) };
   }
 
+  /** Parâmetros do Veo: 9:16/16:9, resolução, 8 s e o áudio do modo (`audio:false` = sem áudio). */
+  private veoParams(req: AiVideoRequest, resolution: string, withAudioFlag = true): Record<string, unknown> {
+    return {
+      aspectRatio: isVertical(req.aspectRatio) ? '9:16' : '16:9',
+      resolution,
+      durationSeconds: VEO_SECONDS,
+      ...(withAudioFlag ? { generateAudio: req.audio !== false } : {}),
+    };
+  }
+
   private async gatewayVideo(req: AiVideoRequest, deadline: number) {
     const create = (resolution: string) =>
       this.gw('/videos', {
         json: {
           model: this.model('google/veo-3.1-fast'),
           instances: [this.veoInstance(req)],
-          parameters: { durationSeconds: 8, resolution, aspectRatio: isVertical(req.aspectRatio) ? '9:16' : '16:9', sampleCount: 1, generateAudio: true },
+          parameters: { ...this.veoParams(req, resolution), sampleCount: 1 },
         },
       });
     let res = await create('1080p');
@@ -425,17 +439,20 @@ export class AiService {
 
   private async geminiDirectVideo(key: string, req: AiVideoRequest, deadline: number) {
     let lastErr: unknown = null;
-    for (const model of [this.env.AI_MODEL_VIDEO, 'veo-3.0-fast-generate-preview']) {
+    // Veo 3.1 fast (padrão de AI_MODEL_VIDEO) e, se a chave não tiver acesso, o 3.0 fast.
+    for (const model of [...new Set([this.env.AI_MODEL_VIDEO, VEO_FALLBACK_MODEL])]) {
       try {
-        const create = (resolution: string) =>
+        const create = (resolution: string, audioFlag: boolean) =>
           this.http(`${GEMINI}/models/${model}:predictLongRunning`, {
             method: 'POST',
             headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instances: [this.veoInstance(req)], parameters: { aspectRatio: isVertical(req.aspectRatio) ? '9:16' : '16:9', resolution } }),
+            body: JSON.stringify({ instances: [this.veoInstance(req)], parameters: this.veoParams(req, resolution, audioFlag) }),
             signal: AbortSignal.timeout(120_000),
           });
-        let res = await create('1080p');
-        if (res.status === 400 || res.status === 422) res = await create('720p');
+        let res = await create('1080p', true);
+        if (res.status === 400 || res.status === 422) res = await create('720p', true);
+        // Modelo que não aceita o flag de áudio: repete sem ele (vídeo "sem áudio" é silenciado depois, na conversão).
+        if (res.status === 400 || res.status === 422) res = await create('720p', false);
         if (!res.ok) throw await this.vendorError('gemini', res);
         const op = (await res.json()) as { name: string };
         return await this.geminiVideoWait(key, op.name, deadline);

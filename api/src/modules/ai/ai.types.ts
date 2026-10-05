@@ -54,6 +54,8 @@ export interface AiVideoRequest {
   strict?: boolean;
   /** Ignora a chave própria do workspace e usa direto o gateway do app. */
   appOnly?: boolean;
+  /** Áudio do vídeo: `false` = sem áudio (modo "sem áudio"); ausente = com áudio. */
+  audio?: boolean;
 }
 
 export type AiVideoResult =

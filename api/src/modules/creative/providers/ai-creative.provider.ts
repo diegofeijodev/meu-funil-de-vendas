@@ -36,7 +36,7 @@ export function createAiProvider(
     async generateVideo(req) {
       if (chat) throw new AiError('O ChatGPT não gera vídeos. Escolha Gemini ou Higgsfield para vídeo.');
       const r = await ai.video(workspaceId, {
-        prompt: req.finalPrompt, aspectRatio: req.aspectRatio, referenceImages: req.referenceImages, maxWaitMs: req.maxWaitMs, strict: opts.strict, appOnly: opts.appOnly,
+        prompt: req.finalPrompt, aspectRatio: req.aspectRatio, referenceImages: req.referenceImages, maxWaitMs: req.maxWaitMs, strict: opts.strict, appOnly: opts.appOnly, audio: req.audio,
       });
       if (r.status === 'pending') {
         return { status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: r.jobId, cost: r.cost, note: r.note };

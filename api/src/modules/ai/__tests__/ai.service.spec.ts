@@ -304,3 +304,64 @@ describe('AiService.image — fotos de referência também pelo gateway (B2)', (
     expect(r.note).toBe('Gateway sem suporte a referência; gerado sem foto da marca.');
   });
 });
+
+describe('AiService.video — Veo 3.1 fast, 8 s e o áudio do modo (C1)', () => {
+  const op = { done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri: 'https://files.googleapis.com/v.mp4' } }] } } };
+
+  it('AI_MODEL_VIDEO padrão é o Veo 3.1 fast', () => {
+    expect(validateEnv(baseEnv).AI_MODEL_VIDEO).toBe('veo-3.1-fast-generate-preview');
+  });
+
+  it('gateway: 8 s, generateAudio segue o modo (false = sem áudio) e a foto do primeiro quadro vai em instances[0].image', async () => {
+    const f = fakeFetch([
+      ['/videos/job1/content', () => new Response(Buffer.from('MP4'))],
+      ['/videos/job1', () => json({ id: 'job1', status: 'completed' })],
+      ['/videos', () => json({ id: 'job1', status: 'queued' })],
+    ]);
+    const ai = setup(gwEnv, {}, f.fn);
+    await ai.video(WS, { prompt: 'roteiro', aspectRatio: '9:16', audio: false, referenceImages: [{ bytes: new Uint8Array([7]), mime: 'image/jpeg' }] });
+    const creates = () => f.calls.filter((c) => c.url.endsWith('/videos'));
+    const body = JSON.parse(String(creates()[0]!.init!.body));
+    expect(body.model).toBe('veo-3.1-fast-generate-preview');
+    expect(body.parameters).toEqual({ aspectRatio: '9:16', resolution: '1080p', durationSeconds: 8, generateAudio: false, sampleCount: 1 });
+    expect(body.instances[0]).toEqual({ prompt: 'roteiro', image: { bytesBase64Encoded: Buffer.from([7]).toString('base64'), mimeType: 'image/jpeg' } });
+    await ai.video(WS, { prompt: 'p', aspectRatio: '9:16' });
+    expect(JSON.parse(String(creates()[1]!.init!.body)).parameters.generateAudio).toBe(true);
+  });
+
+  it('chave própria: o 3.1 fast primeiro, com 8 s e o flag de áudio; sem acesso a ele cai no 3.0 fast', async () => {
+    const calls: Call[] = [];
+    const fn: AiFetch = async (url, init) => {
+      calls.push({ url, init });
+      if (url.includes('veo-3.1-fast-generate-preview:predictLongRunning')) return new Response('sem acesso', { status: 403 });
+      if (url.includes('veo-3.0-fast-generate-preview:predictLongRunning')) return json({ name: 'operations/op1' });
+      if (url.endsWith('operations/op1')) return json(op);
+      return new Response(Buffer.from('MP4'));
+    };
+    const r = await setup(gwEnv, { gemini: 'gk' }, fn).video(WS, { prompt: 'p', aspectRatio: '9:16', audio: true, strict: true });
+    expect(r.status).toBe('ready');
+    const creates = calls.filter((c) => c.url.includes(':predictLongRunning'));
+    expect(creates.map((c) => /models\/([^:]+):/.exec(c.url)![1])).toEqual(['veo-3.1-fast-generate-preview', 'veo-3.0-fast-generate-preview']);
+    expect(JSON.parse(String(creates[0]!.init!.body)).parameters).toEqual({ aspectRatio: '9:16', resolution: '1080p', durationSeconds: 8, generateAudio: true });
+  });
+
+  it('chave própria que recusa o flag de áudio (400 em 1080p e 720p): repete sem ele', async () => {
+    const bodies: unknown[] = [];
+    const fn: AiFetch = async (url, init) => {
+      if (url.includes(':predictLongRunning')) {
+        const b = JSON.parse(String(init!.body));
+        bodies.push(b.parameters);
+        return 'generateAudio' in b.parameters ? new Response('Invalid JSON payload: generateAudio', { status: 400 }) : json({ name: 'operations/op1' });
+      }
+      if (url.endsWith('operations/op1')) return json(op);
+      return new Response(Buffer.from('MP4'));
+    };
+    const r = await setup(gwEnv, { gemini: 'gk' }, fn).video(WS, { prompt: 'p', aspectRatio: '9:16', audio: false, strict: true });
+    expect(r.status).toBe('ready');
+    expect(bodies).toEqual([
+      { aspectRatio: '9:16', resolution: '1080p', durationSeconds: 8, generateAudio: false },
+      { aspectRatio: '9:16', resolution: '720p', durationSeconds: 8, generateAudio: false },
+      { aspectRatio: '9:16', resolution: '720p', durationSeconds: 8 },
+    ]);
+  });
+});

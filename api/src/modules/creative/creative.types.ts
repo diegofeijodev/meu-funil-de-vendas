@@ -16,6 +16,8 @@ export type GenerationRequest = {
   referenceUrls?: string[];
   /** Quanto esperar na própria requisição; depois disso devolve "generating" e o poller conclui. */
   maxWaitMs?: number;
+  /** Vídeo: `false` = sem áudio (Veo `generateAudio:false`, Higgsfield `sound:false`); ausente = com áudio. */
+  audio?: boolean;
 };
 
 export type GenerationResult = {

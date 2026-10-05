@@ -36,7 +36,7 @@ export function createHiggsfieldProvider(mcp: Pick<McpService, 'callTool'>, conn
   const generate = async (req: GenerationRequest, video: boolean): Promise<GenerationResult> => {
     const aspect = video && !VIDEO_RATIOS.has(req.aspectRatio) ? '9:16' : req.aspectRatio;
     const params: Record<string, unknown> = { model: video ? VIDEO_MODEL : IMAGE_MODEL, prompt: req.finalPrompt, aspect_ratio: aspect, use_unlim: false };
-    if (video) Object.assign(params, { duration: 10, sound: true });
+    if (video) Object.assign(params, { duration: 10, sound: req.audio !== false });
     // Pede a maior resolução disponível; se o modelo recusar o parâmetro, repete sem ele.
     const tool = video ? 'generate_video' : 'generate_image';
     let out;

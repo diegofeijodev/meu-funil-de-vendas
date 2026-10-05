@@ -278,3 +278,22 @@ describe('ProviderResolverService', () => {
     expect(mine.prisma.creative_generation_jobs.count).toHaveBeenCalledWith({ where: { workspace_id: 'ws', external_job_id: JOB } });
   });
 });
+
+describe('áudio do vídeo nos provedores (C4)', () => {
+  it('Gemini/Veo recebe `audio`; Higgsfield manda `sound` conforme o modo', async () => {
+    const ai = { video: jest.fn(async () => ({ status: 'pending' as const, jobId: 'veo:j', cost: 6, note: null })) };
+    const gem = createAiProvider(ai as any, 'ws', 'gemini', { hasOwnKey: false, owns: async () => true });
+    await gem.generateVideo({ ...req, kind: 'video', aspectRatio: '9:16', audio: false });
+    expect((ai.video.mock.calls[0] as any)[1].audio).toBe(false);
+    const mcp = {
+      callTool: jest.fn(async (_c: any, name: string) =>
+        name === 'generate_video' ? { text: JOB, structured: null, mediaUrl: null } : { text: '{"status":"success"}', structured: null, mediaUrl: 'https://cdn.h.ai/v.mp4' },
+      ),
+    };
+    const h = createHiggsfieldProvider(mcp as any, { server_url: 'https://mcp.higgsfield.ai/mcp', access_token: 'tok' }, async () => undefined);
+    await h.generateVideo({ ...req, kind: 'video', aspectRatio: '9:16', audio: false });
+    await h.generateVideo({ ...req, kind: 'video', aspectRatio: '9:16' });
+    const gens = mcp.callTool.mock.calls.filter((c) => c[1] === 'generate_video');
+    expect(gens.map((c) => (c[2] as any).params.sound)).toEqual([false, true]);
+  });
+});

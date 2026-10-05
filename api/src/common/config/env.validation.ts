@@ -103,7 +103,7 @@ const envSchema = z
     AI_MODEL_TEXT_FAST: z.string().default('gpt-4o-mini'),
     AI_MODEL_IMAGE_OPENAI: z.string().default('gpt-image-1'),
     AI_MODEL_IMAGE_GEMINI: z.string().default('gemini-2.5-flash-image'),
-    AI_MODEL_VIDEO: z.string().default('veo-3.0-fast-generate-preview'),
+    AI_MODEL_VIDEO: z.string().default('veo-3.1-fast-generate-preview'),
     AI_MODEL_GEMINI_FLASH: z.string().default('gemini-2.5-flash'),
     AI_MODEL_GEMINI_PRO: z.string().default('gemini-2.5-pro'),
     /** Modelos usados com as chaves BYO (OpenAI/Gemini direto). */
