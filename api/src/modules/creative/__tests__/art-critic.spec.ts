@@ -57,6 +57,21 @@ describe('diretor de arte', () => {
     expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: '' })).toContain('Não inclua texto, letras nem logotipos');
     expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: 'Promo' })).toBe('X. O único texto permitido é "Promo". Evite: n.');
   });
+
+  it('contexto do post entra no briefing (sem virar texto na imagem); as proibições da estratégia vão para o prompt e para o negativo', async () => {
+    const ai = { json: jest.fn(async () => ART) };
+    const context = {
+      product: { name: 'Chope Pilsen', description: 'gelado', price: 12.9 }, pillar: 'Bastidores', persona: null, funnelStage: 'atracao', objective: 'Lotar',
+      strategy: { mensagem_central: 'M', publico_foco: 'P', proibicoes: ['preço baixo', 'concorrente'] }, campaign: { offer: 'Chope em dobro', promise: null, brief: null }, scheduledAt: null,
+    };
+    const ad = await buildVisualPrompt(ai as any, brief({ context }));
+    const prompt = (ai.json.mock.calls[0] as any)[1].prompt as string;
+    expect(prompt).toContain('CONTEXTO DO POST (traduza em cena visual concreta — produto, público, momento do funil, data e estação; nunca escreva estes textos na imagem):');
+    expect(prompt).toContain('"oferta":"Chope em dobro"');
+    expect(prompt).toContain('"produtos":[{"nome":"Chope Pilsen","descricao":"gelado"}]');
+    expect(prompt).toContain('PROIBIDO NA CENA (estratégia do período): preço baixo; concorrente.');
+    expect(ad.negative).toBe('blurry, logos de concorrentes, texto, preço baixo, concorrente');
+  });
 });
 
 describe('crítico visual', () => {

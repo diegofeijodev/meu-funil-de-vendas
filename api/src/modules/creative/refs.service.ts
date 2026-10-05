@@ -8,7 +8,7 @@ import { AssetsService } from '../media/assets.service';
 import { ImageService } from '../media/image.service';
 import { parseFont } from './compose';
 
-export type BrandRef = AiImageInput & { id: string; tag: string | null; url: string; mime: string };
+export type BrandRef = AiImageInput & { id: string; tag: string | null; url: string; mime: string; name?: string | null };
 
 const REF_KINDS = ['reference', 'photo'];
 const DEFAULT_FONT_FILE = 'ArchivoBlack-Regular.ttf';
@@ -76,7 +76,7 @@ export class RefsService {
     for (const r of usable.slice(0, opts.max ?? 4)) {
       try {
         const small = await this.images.shrink(await this.bytesOf(workspaceId, r), 1024);
-        out.push({ ...small, id: r.id, tag: r.tag ?? null, url: r.url ?? '' });
+        out.push({ ...small, id: r.id, tag: r.tag ?? null, url: r.url ?? '', name: r.name ?? null });
       } catch (e) {
         this.logger.warn(`[refs] referência ignorada ${r.id}: ${e instanceof Error ? e.message : e}`);
       }

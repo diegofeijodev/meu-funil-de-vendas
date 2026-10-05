@@ -366,3 +366,60 @@ describe('ProviderResolverService.owns (id de job só chega ao provedor se estiv
     expect(await resolver.owns(WS_A, 'veo:done')).toBe(false);
   });
 });
+
+describe('B — contexto completo na direção de arte, foto do produto primeiro e headline na arte', () => {
+  const ctxWorld = () => {
+    const { w, s, gen } = setup();
+    const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé', visual_style: {} };
+    w.t['brands']!.rows.push(brand);
+    const p = plan(w, { brand_id: brand.id, objective: 'objetivo do plano' });
+    const prod = { id: uuid(), workspace_id: WS_A, brand_id: brand.id, name: 'Chope Pilsen', description: 'claro e gelado', price: '12.90' };
+    w.t['products']!.rows.push(prod);
+    w.t['personas']!.rows.push({ id: uuid(), workspace_id: WS_A, brand_id: brand.id, name: 'Ana', pains: 'sem tempo', desires: 'relaxar' });
+    const r = { id: uuid(), workspace_id: WS_A, plan_id: p.id, focus: 'Lotar o happy hour de sexta', campaign_id: null, strategy: { mensagem_central: 'O melhor chope da cidade', publico_foco: 'adultos de Valinhos', proibicoes: ['falar de preço baixo'] } };
+    w.t['ig_auto_runs']!.rows.push(r);
+    return { w, s, gen, p, prod, r };
+  };
+
+  it('a direção de arte recebe produto, pilar, persona, funil, objetivo/mensagem/público da estratégia e as proibições (também no negativo)', async () => {
+    const { w, s, gen, p, prod, r } = ctxWorld();
+    const post = idea(w, { plan_id: p.id, run_id: r.id, product_id: prod.id, persona: 'Ana', pillar: 'Bastidores', funnel_stage: 'conversao', scheduled_at: new Date('2099-01-02T21:00:00Z') });
+    await gen.generatePostAssets(WS_A, post.id);
+    const prompt = s.ai.json.mock.calls[0][1].prompt as string;
+    expect(prompt).toContain('CONTEXTO DO POST (traduza em cena visual concreta');
+    for (const t of ['"nome":"Chope Pilsen"', '"preco":12.9', '"pilar":"Bastidores"', '"dores":"sem tempo"', 'conversão — produto em destaque', '"objetivo_do_periodo":"Lotar o happy hour de sexta"', '"mensagem_central":"O melhor chope da cidade"', 'sexta-feira, 02/01/2099 (verão)']) {
+      expect(prompt).toContain(t);
+    }
+    expect(prompt).toContain('PROIBIDO NA CENA (estratégia do período): falar de preço baixo.');
+    expect(prompt).toContain('"produtos":[{"nome":"Chope Pilsen","descricao":"claro e gelado"}]');
+    expect(s.pipeline.run.mock.calls[0][0].ad.negative).toContain('falar de preço baixo');
+  });
+
+  it('produto de OUTRA empresa não entra no contexto (nem na arte)', async () => {
+    const { w, s, gen, p } = ctxWorld();
+    const alien = { id: uuid(), workspace_id: WS_B, brand_id: uuid(), name: 'Produto Alheio', description: null, price: 1 };
+    w.t['products']!.rows.push(alien);
+    const post = idea(w, { plan_id: p.id, product_id: alien.id });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.ai.json.mock.calls[0][1].prompt).not.toContain('Produto Alheio');
+  });
+
+  it('fotos de referência: a do produto do post vai primeiro (nome do arquivo), depois as demais na ordem da marca', async () => {
+    const { w, s, gen, p, prod } = ctxWorld();
+    const ref = (id: string, tag: string, name: string) => ({ id, tag, name, url: `https://cdn.test/${name}`, bytes: new Uint8Array([1]), mime: 'image/jpeg' });
+    s.refs.loadBrandRefs.mockResolvedValueOnce([ref('a', 'produto', 'outro-produto.jpg'), ref('b', 'ambiente', 'bar.jpg'), ref('c', 'produto', 'Chope-Pilsen.png')]);
+    const post = idea(w, { plan_id: p.id, product_id: prod.id });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.pipeline.run.mock.calls[0][0].refs.map((r: any) => r.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('headline na arte: feed e story de imagem com headline usam "titulo_topo" (título = headline); sem headline, "limpo"; o layout do editor vale', async () => {
+    const { w, s, gen } = setup();
+    const withHead = idea(w, { creative_brief: { prompt: 'x', headline: 'Chope em dobro' } });
+    const story = idea(w, { format: 'story_image', creative_brief: { prompt: 'x', headline: 'Hoje tem' } });
+    const noHead = idea(w, { creative_brief: { prompt: 'x' } });
+    const chosen = idea(w, { creative_brief: { prompt: 'x', headline: 'H', layout: 'cta_rodape' } });
+    for (const p of [withHead, story, noHead, chosen]) await gen.generatePostAssets(WS_A, p.id);
+    expect(s.pipeline.run.mock.calls.map((c: any) => [c[0].layout, c[0].text.title])).toEqual([['titulo_topo', 'Chope em dobro'], ['titulo_topo', 'Hoje tem'], ['limpo', null], ['cta_rodape', 'H']]);
+  });
+});

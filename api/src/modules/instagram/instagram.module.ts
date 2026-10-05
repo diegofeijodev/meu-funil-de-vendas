@@ -23,6 +23,7 @@ import { MediaGenerationService } from './media-generation.service';
 import { META_FETCH, MetaConfigService, MetaFetch, MetaGraphClient } from './meta-graph';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
+import { PostContextService } from './post-context.service';
 
 @Module({
   imports: [AccessModule, MediaModule, CreativeModule, StrategistModule, WebhooksModule],
@@ -35,6 +36,7 @@ import { PublishingService } from './publishing.service';
     IgStore,
     ContentService,
     ContentStrategyService,
+    PostContextService,
     PublishingService,
     MediaGenerationService,
     MetricsService,

@@ -17,6 +17,8 @@ import { ContentService } from './content.service';
 import { ASPECT, IgFormat, isVideoFormat, PostRow } from './ig-types';
 import { IgStore, PostLease, PublishClaimLost, errText, leaseFree } from './ig-store.service';
 import { PublishingService } from './publishing.service';
+import { orderRefsForProduct } from '../creative/creative-context';
+import { PostContextService } from './post-context.service';
 
 const MAX_UPLOAD = 100 * 1024 * 1024;
 const PENDING_TIMEOUT_MS = 60 * 60e3;
@@ -62,6 +64,7 @@ export class MediaGenerationService {
     private readonly content: ContentService,
     private readonly publishing: PublishingService,
     private readonly images: ImageService,
+    private readonly postContext: PostContextService,
   ) {}
 
   private get prisma() {
@@ -257,7 +260,12 @@ export class MediaGenerationService {
       used = provider;
       const brief = post.creative_brief ?? {};
       const vs = (brand?.visual_style ?? {}) as VisualStyle;
-      const refs = isVideoFormat(format) ? [] : await this.refs.loadBrandRefs(workspaceId, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined });
+      // Contexto completo do post (produto, pilar, persona, funil, estratégia da execução, campanha) — montado num lugar só.
+      const ctx = await this.postContext.build(post, brand?.id ?? null);
+      // Fotos de referência com a do produto do post em primeiro lugar.
+      const refs = isVideoFormat(format)
+        ? []
+        : orderRefsForProduct(await this.refs.loadBrandRefs(workspaceId, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined }), ctx.product?.name ?? null);
       const base = brief.prompt || post.theme || 'Post de Instagram';
       const briefs: string[] = format === 'feed_carousel' ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
       const artBrief = (userPrompt: string, i: number) => ({
@@ -266,6 +274,8 @@ export class MediaGenerationService {
         theme: post.theme,
         hook: post.hook,
         offer: post.cta,
+        context: ctx,
+        products: ctx.product ? [ctx.product] : undefined,
         userPrompt,
         aspectRatio: ASPECT[format],
         kind: (isVideoFormat(format) ? 'video' : 'image') as 'image' | 'video',
@@ -294,7 +304,8 @@ export class MediaGenerationService {
 
       // Imagem única: variações + crítico + composição.
       if (!isVideoFormat(format) && format !== 'feed_carousel' && !provider.sandbox) {
-        const layout = (brief.layout ?? 'limpo') as TextLayout;
+        // Headline na arte: com headline o padrão é o título no topo; sem headline, limpo. O editor pode trocar o layout.
+        const layout = (brief.layout ?? (brief.headline ? 'titulo_topo' : 'limpo')) as TextLayout;
         const res = await this.pipeline.run({
           workspaceId,
           brand,

@@ -5,6 +5,7 @@
 import { AiService } from '../ai/ai.service';
 import { UserError } from '../media/user-error';
 import { ArtDirection, listField, VisualStyle } from './visual-style';
+import { contextForPrompt, contextProhibitions, PostCreativeContext } from './creative-context';
 
 export const ART_SCHEMA = {
   type: 'object',
@@ -65,6 +66,8 @@ export type ArtBrief = {
   slide?: { index: number; total: number } | null;
   /** Resumo da estratégia aprovada (big idea, ângulo, direção visual, roteiro de vídeo). */
   strategy?: unknown;
+  /** Contexto completo do post (produto, pilar, persona, funil, estratégia da execução, campanha, data) — nunca vira texto na imagem. */
+  context?: PostCreativeContext | null;
 };
 
 export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<ArtDirection> {
@@ -104,12 +107,16 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
     JSON.stringify({
       tema: b.theme,
       hook: b.hook,
-      oferta: b.offer ?? b.campaign?.offer_product ?? null,
+      oferta: b.offer ?? b.campaign?.offer_product ?? b.context?.campaign?.offer ?? null,
       pedido: b.userPrompt,
-      produtos: (b.products ?? []).map((p) => ({ nome: p.name, descricao: p.description })).slice(0, 3),
+      produtos: (b.products ?? (b.context?.product ? [b.context.product] : [])).map((p) => ({ nome: p.name, descricao: p.description })).slice(0, 3),
       slide: b.slide ? `${b.slide.index + 1} de ${b.slide.total} de um carrossel (varie o enquadramento)` : null,
     }),
     b.strategy ? `CONCEITO DA ESTRATÉGIA (traduza em cena visual concreta; nunca escreva estes textos na imagem): ${JSON.stringify(b.strategy)}` : '',
+    b.context
+      ? `CONTEXTO DO POST (traduza em cena visual concreta — produto, público, momento do funil, data e estação; nunca escreva estes textos na imagem): ${JSON.stringify(contextForPrompt(b.context))}`
+      : '',
+    contextProhibitions(b.context).length ? `PROIBIDO NA CENA (estratégia do período): ${contextProhibitions(b.context).join('; ')}.` : '',
     b.previousPrompt ? `PROMPT ANTERIOR: ${b.previousPrompt}` : '',
     b.adjust ? `AJUSTE PEDIDO (aplique com prioridade): ${b.adjust}` : '',
   ]
@@ -117,7 +124,7 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
     .join('\n');
 
   const json = await ai.json<ArtDirection>(b.workspaceId, { prompt, schema: ART_SCHEMA, name: 'art_direction' });
-  const forb = listField(vs.elementos_proibidos).join(', ');
+  const forb = [...listField(vs.elementos_proibidos), ...contextProhibitions(b.context)].join(', ');
   const negative = [json.negative || BASE_NEGATIVE, forb].filter(Boolean).join(', ');
   let final = String(json.prompt_final || '').trim();
   if (!final) throw new UserError('O diretor de arte não devolveu o prompt.');

@@ -252,6 +252,7 @@ import { InstagramResourcesService } from '../instagram-resources.service';
 import { MediaGenerationService } from '../media-generation.service';
 import { MetricsService } from '../metrics.service';
 import { PublishingService } from '../publishing.service';
+import { PostContextService } from '../post-context.service';
 import { ProductionService, rankProductionCandidates } from '../production.service';
 import { OVERDUE_MS } from '../ig-types';
 
@@ -301,7 +302,8 @@ export function igServices(w: IgWorld) {
   const content = new ContentService(w.prisma, ai, w.store);
   const publishing = new PublishingService(w.store, w.graph, http as any);
   useVirtualClock(publishing);
-  const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images);
+  const postContext = new PostContextService(w.store, strategist);
+  const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images, postContext);
   const metrics = new MetricsService(w.store, w.graph);
   const account = new AccountService(w.store, w.graph, metrics, assets);
   const contentStrategy = new ContentStrategyService(content);
@@ -324,5 +326,5 @@ export function igServices(w: IgWorld) {
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
-  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production };
+  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext };
 }
