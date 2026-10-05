@@ -6,7 +6,7 @@ import { AccountService } from './account.service';
 import { AutoCalendarService } from './auto-calendar.service';
 import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
-import { CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
+import { ApproveAutoStrategyDto, CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
 import { Engine } from './ig-types';
 import { IgStore, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
@@ -169,6 +169,18 @@ export class InstagramActionsService {
   async fillAutoCalendar(userId: string, runId: string) {
     const run = await this.ownedRun(userId, runId);
     return this.auto.fillAutoRun(run.id);
+  }
+
+  /** Aprova (e opcionalmente ajusta em texto) a estratégia do período: libera a geração dos posts. */
+  async approveAutoStrategy(userId: string, d: ApproveAutoStrategyDto) {
+    const run = await this.ownedRun(userId, d.runId);
+    return this.auto.approveRunStrategy(run.workspace_id, run.id, d.editedText ?? null);
+  }
+
+  /** Descarta a estratégia atual e pede outra à IA. */
+  async redoAutoStrategy(userId: string, runId: string) {
+    const run = await this.ownedRun(userId, runId);
+    return this.auto.redoRunStrategy(run.workspace_id, run.id);
   }
 
   async generateNextAutoMedia(userId: string, d: GenerateNextAutoMediaDto) {

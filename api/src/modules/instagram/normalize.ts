@@ -10,7 +10,7 @@ export function normalizeHashtags(value: unknown, max = 15): string[] {
   const out: string[] = [];
   for (const v of raw) {
     if (v == null || typeof v === "object") continue;
-    const tag = String(v).replace(/#/g, "").trim();
+    const tag = String(v).replace(/[^\p{Script=Latin}\p{N}_]/gu, "").trim();
     if (!tag || seen.has(tag.toLowerCase())) continue;
     seen.add(tag.toLowerCase());
     out.push(tag);

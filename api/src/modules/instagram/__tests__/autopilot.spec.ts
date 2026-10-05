@@ -8,7 +8,9 @@ function setup() {
   return { w, s, ap: s.autopilot };
 }
 const plan = (w: IgWorld, over: Record<string, unknown> = {}): any => {
-  const p = { id: uuid(), workspace_id: WS_A, name: 'P', status: 'active', auto_publish: true, requires_approval: false, content_pillars: [], posting_days: [0, 1, 2, 3, 4, 5, 6], preferred_times: [], ai_notes: [], pillar_weights: {}, hashtag_strategy: {}, posting_frequency: {}, brand_id: null, cta_default: null, ...over };
+  // O calendário do plano exige marca vinculada (protótipo 05/10/2026): cada plano ganha a sua, salvo `brand_id` explícito.
+  const brandId = 'brand_id' in over ? over['brand_id'] : (() => { const b = { id: uuid(), workspace_id: WS_A, name: 'Marca' }; w.t['brands']!.rows.push(b); return b.id; })();
+  const p = { id: uuid(), workspace_id: WS_A, name: 'P', status: 'active', auto_publish: true, requires_approval: false, content_pillars: [], posting_days: [0, 1, 2, 3, 4, 5, 6], preferred_times: [], ai_notes: [], pillar_weights: {}, hashtag_strategy: {}, posting_frequency: {}, cta_default: null, ...over, brand_id: brandId };
   w.t['ig_content_plans']!.rows.push(p);
   return p;
 };

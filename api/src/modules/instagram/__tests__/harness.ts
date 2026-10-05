@@ -123,7 +123,7 @@ export class IgTable {
   private apply(r: Row, data: Row) {
     for (const [k, v] of Object.entries(data)) {
       if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v) && 'increment' in v) r[k] = (r[k] ?? 0) + (v as any).increment;
-      else r[k] = v;
+      else r[k] = v === Prisma.DbNull || v === Prisma.JsonNull ? null : v;
     }
     r.updated_at = new Date();
   }
@@ -156,9 +156,9 @@ const now = () => new Date();
 /** Mundo em memória do Instagram: tabelas + Graph falso (nenhuma rede). */
 export function igWorld() {
   const t: Record<string, IgTable> = {
-    ig_posts: new IgTable(() => ({ status: 'idea', hashtags: [], creative_brief: {}, media: [], ai_generation_log: [], metrics_collected: [], retry_count: 0, source: 'app', plan_id: null, run_id: null, automation: null, approved_at: null, scheduled_at: null, published_at: null, ig_media_id: null, ig_creation_id: null, last_error: null, rejection_reason: null, caption: null, cta: null, theme: null, hook: null })),
+    ig_posts: new IgTable(() => ({ status: 'idea', hashtags: [], creative_brief: {}, media: [], ai_generation_log: [], metrics_collected: [], retry_count: 0, source: 'app', plan_id: null, run_id: null, automation: null, approved_at: null, scheduled_at: null, published_at: null, ig_media_id: null, ig_creation_id: null, last_error: null, rejection_reason: null, caption: null, cta: null, theme: null, hook: null, objective_link: null, pillar: null, persona: null, product_id: null, funnel_stage: null, review_reason: null, review_score: null })),
     ig_content_plans: new IgTable(() => ({ status: 'draft', auto_publish: false, requires_approval: true, content_pillars: [], posting_frequency: { feed: 3 }, preferred_times: [], hashtag_strategy: {}, ai_notes: [], pillar_weights: {}, posting_days: [0, 1, 2, 3, 4, 5, 6], brand_id: null, cta_default: null, objective: null, tone_of_voice: null })),
-    ig_auto_runs: new IgTable(() => ({ status: 'planning', filled: 0, slots: [], recurring: false, locked_until: null, parent_id: null, campaign_id: null, last_error: null, focus: null, mode: 'publish' })),
+    ig_auto_runs: new IgTable(() => ({ status: 'planning', filled: 0, slots: [], recurring: false, locked_until: null, parent_id: null, campaign_id: null, last_error: null, focus: null, mode: 'publish', strategy: null, strategy_status: 'pending', paused_reason: null })),
     ig_autopilot_events: new IgTable(() => ({ level: 'info' })),
     ig_autopilot_weeks: new IgTable(() => ({}), ['plan_id', 'week_start']),
     publishing_jobs: new IgTable(() => ({ status: 'queued', attempts: 0, locked_at: null, log: null, mode: 'mock', channel: 'meta_ads', ig_post_id: null })),
@@ -167,6 +167,8 @@ export function igWorld() {
     ig_account_insights: new IgTable(),
     media_assets: new IgTable(() => ({ ig_ready: true, quality_report: {}, provider: 'gemini', source: 'gemini', url: 'https://cdn.test/a.jpg' })),
     brands: new IgTable(),
+    products: new IgTable(),
+    personas: new IgTable(),
     campaigns: new IgTable(),
     cron_tokens: new IgTable(),
     cron_heartbeats: new IgTable(),
@@ -243,6 +245,7 @@ import { AccountService } from '../account.service';
 import { AutoCalendarService } from '../auto-calendar.service';
 import { AutopilotService } from '../autopilot.service';
 import { ContentService } from '../content.service';
+import { ContentStrategyService } from '../content-strategy.service';
 import { InboundService } from '../inbound.service';
 import { InstagramActionsService } from '../instagram-actions.service';
 import { InstagramResourcesService } from '../instagram-resources.service';
@@ -299,11 +302,12 @@ export function igServices(w: IgWorld) {
   const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images);
   const metrics = new MetricsService(w.store, w.graph);
   const account = new AccountService(w.store, w.graph, metrics, assets);
-  const auto = new AutoCalendarService(w.store, content, strategist, mediaGen, publishing);
+  const contentStrategy = new ContentStrategyService(content);
+  const auto = new AutoCalendarService(w.store, content, contentStrategy, strategist, mediaGen, publishing);
   const autopilot = new AutopilotService(w.store, content, mediaGen, publishing, auto);
   const actions = new InstagramActionsService(w.access, w.store, account, content, mediaGen, publishing, metrics, autopilot, auto);
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
-  return { ai, aiJson, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks };
+  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks };
 }

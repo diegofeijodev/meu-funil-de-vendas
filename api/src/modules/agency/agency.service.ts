@@ -83,7 +83,7 @@ export class AgencyService {
         _count: { _all: true },
       }),
       this.prisma.approval_requests.groupBy({ by: ['workspace_id'], where: { workspace_id: { in: ids }, status: 'pending' }, _count: { _all: true } }),
-      this.prisma.ig_posts.groupBy({ by: ['workspace_id'], where: { workspace_id: { in: ids }, status: 'pending_approval' }, _count: { _all: true } }),
+      this.prisma.ig_posts.groupBy({ by: ['workspace_id'], where: { workspace_id: { in: ids }, status: { in: ['pending_approval', 'needs_review'] } }, _count: { _all: true } }),
       this.prisma.campaigns.groupBy({ by: ['workspace_id'], where: { workspace_id: { in: ids }, meta_delivery_status: 'ACTIVE' }, _count: { _all: true } }),
     ]);
     const counts = (rows: { workspace_id: string; _count: { _all: number } }[]) => new Map(rows.map((r) => [r.workspace_id, r._count._all]));

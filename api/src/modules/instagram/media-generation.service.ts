@@ -187,7 +187,7 @@ export class MediaGenerationService {
     for (let i = start; i < prompts.length; i++) {
       await lease?.renew();
       const req = {
-        finalPrompt: `${prompts[i]} ${format === 'feed_carousel' ? `(slide ${i + 1} de ${prompts.length})` : ''}`.trim(),
+        finalPrompt: `${prompts[i]} ${format === 'feed_carousel' ? `(imagem ${i + 1} de ${prompts.length} do carrossel)` : ''}`.trim(),
         aspectRatio: ASPECT[format],
         kind: (isVideoFormat(format) ? 'video' : 'image') as 'image' | 'video',
         ...(isVideoFormat(format) ? {} : extra),
@@ -215,6 +215,7 @@ export class MediaGenerationService {
       media,
       creative_brief: brief,
       status: requires === false ? 'ready' : 'pending_approval',
+      review_reason: null, // gerar a mídia tira o post da revisão (o motivo vale só enquanto está em "needs_review")
       last_error: null,
       ai_provider: provider.id,
       ai_generation_log: this.store.appendLog(post, { step: 'media', provider: provider.id, provider_log: providerLog(provider), items: media.length, cost, instructions }),
@@ -237,7 +238,7 @@ export class MediaGenerationService {
     const lease = await this.store.claimLease(
       postId,
       workspaceId,
-      { status: { in: ['idea', 'failed', 'pending_approval', 'ready', 'approved', 'scheduled', 'cancelled'] } },
+      { status: { in: ['idea', 'failed', 'needs_review', 'pending_approval', 'ready', 'approved', 'scheduled', 'cancelled'] } },
       { status: 'generating', last_error: null },
       MEDIA_LEASE_MS,
     );
@@ -268,7 +269,9 @@ export class MediaGenerationService {
         slide: format === 'feed_carousel' ? { index: i, total: briefs.length } : null,
       });
       // Prompt editado pelo usuário (sem novo ajuste) vale para o post de mídia única.
-      const override = !instructions && format !== 'feed_carousel' && brief.visual_prompt_override;
+      // Prompts antigos em inglês não devem continuar sendo enviados ao gerador.
+      const legacyEnglish = (value: unknown) => typeof value === 'string' && /\b(photorealistic|still frame|no text|use the product|commercial photograph|natural lighting|frozen layers)\b/i.test(value);
+      const override = !instructions && format !== 'feed_carousel' && brief.visual_prompt_override && !legacyEnglish(brief.visual_prompt_override);
       const ads = await Promise.all(
         briefs.map(async (p, i) => (override && brief.art_direction ? { ...brief.art_direction, prompt_final: String(brief.visual_prompt_override) } : buildVisualPrompt(this.ai, artBrief(p, i)))),
       );
@@ -293,7 +296,7 @@ export class MediaGenerationService {
           aspectRatio: ASPECT[format],
           targetFormat: targetForIgFormat(format),
           refs,
-          variations: Number(brief.variations ?? 3),
+          variations: typeof brief.variations === 'number' ? brief.variations : 3,
           layout,
           text: { title: brief.headline ?? post.hook ?? null, price: brief.price ?? null, cta: post.cta ?? null },
           title: post.theme ?? 'Post do Instagram',
@@ -308,6 +311,7 @@ export class MediaGenerationService {
             media,
             creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
             status: requires === false ? 'ready' : 'pending_approval',
+            review_reason: null,
             last_error: null,
             ai_provider: provider.id,
             ai_generation_log: this.store.appendLog(post, {

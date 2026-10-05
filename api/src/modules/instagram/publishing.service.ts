@@ -4,6 +4,7 @@ import { fmtDate, IgFormat, PostRow } from './ig-types';
 import { ContainerPending, Guardrail, IgStore, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
+import { dateIssues } from './content-strategy';
 import { normalizeHashtags } from './normalize';
 
 const MAX_ATTEMPTS = 3;
@@ -63,6 +64,18 @@ export class PublishingService {
     if (!['approved', 'ready', 'scheduled', 'failed'].includes(post.status)) throw new UserError('O post precisa estar aprovado para ser agendado.');
     if ((await this.store.approvalRequired(post)) && !post.approved_at && post.status !== 'approved') throw new UserError('Este post exige aprovação antes de agendar.');
     const when = new Date(scheduledAt);
+    // Checagem final de alinhamento com a estratégia (posts da programação com IA): reprovado vai para revisão e NÃO é agendado.
+    if (post.run_id) {
+      const problems = await this.alignmentProblems(post, when);
+      if (problems.length) {
+        const reason = `Checagem final: ${problems.join('; ')}.`;
+        // Condicional ao status: um post que já virou publishing/generating no meio do caminho não é sobrescrito.
+        const flagged = await this.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: workspaceId, status: { in: ['approved', 'ready', 'scheduled', 'failed'] } }, data: { status: 'needs_review', review_reason: reason } });
+        // O job de um agendamento anterior sai da fila junto (senão a fila o tentaria e o guardrail o reprovaria).
+        if (flagged.count) await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+        throw new UserError(`Post enviado para revisão: ${problems.join('; ')}.`);
+      }
+    }
     const acc = await this.store.liveAccount(workspaceId);
     await this.prisma.$transaction([
       this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } }),
@@ -72,6 +85,30 @@ export class PublishingService {
       this.prisma.ig_posts.update({ where: { id: postId }, data: { status: 'scheduled', scheduled_at: when, last_error: null } }),
     ]);
     return { ok: true, sandbox: !acc };
+  }
+
+  /**
+   * Problemas que impedem agendar um post da programação: sem ligação com objetivo/pilar/persona (só quando a programação tem
+   * estratégia — posts de programações antigas não têm esses campos), expressão incoerente com a data, CTA fora dos CTAs da
+   * estratégia e preço fora do cadastro de produtos da marca.
+   */
+  private async alignmentProblems(post: PostRow, when: Date): Promise<string[]> {
+    const ws: string = post.workspace_id;
+    const run = await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: ws }, select: { strategy: true } });
+    const problems: string[] = [];
+    if (run?.strategy && (!post.objective_link || !post.pillar || !post.persona)) problems.push('faltam ligação com o objetivo, pilar ou persona');
+    problems.push(...dateIssues([post.theme, post.hook, post.caption, post.cta].filter(Boolean).join(' '), when.toISOString()));
+    const ctas: string[] = (((run?.strategy as { ctas?: string[] } | null)?.ctas ?? []) as string[]).map((c) => c.toLowerCase().trim());
+    const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').trim();
+    if (ctas.length && post.cta && !ctas.some((c) => norm(c) === norm(post.cta) || norm(post.cta).includes(norm(c)) || norm(c).includes(norm(post.cta)))) problems.push('CTA fora dos CTAs da estratégia');
+    const plan = post.plan_id ? await this.prisma.ig_content_plans.findFirst({ where: { id: post.plan_id, workspace_id: ws }, select: { brand_id: true } }) : null;
+    if (plan?.brand_id) {
+      const prods = await this.prisma.products.findMany({ where: { brand_id: plan.brand_id, workspace_id: ws }, select: { price: true } });
+      const valid = new Set(prods.map((p) => Number(p.price)).filter((n) => n > 0).map((n) => n.toFixed(2)));
+      const prices = [...`${post.caption ?? ''} ${post.creative_brief?.headline ?? ''}`.matchAll(/R\$\s?(\d{1,5}(?:[.,]\d{2})?)/g)].map((m) => Number(m[1]!.replace(',', '.')).toFixed(2));
+      if (prices.some((p) => !valid.has(p))) problems.push('preço fora do cadastro de produtos');
+    }
+    return problems;
   }
 
   /**

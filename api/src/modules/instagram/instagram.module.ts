@@ -8,6 +8,7 @@ import { AccountService } from './account.service';
 import { AutoCalendarService } from './auto-calendar.service';
 import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
+import { ContentStrategyService } from './content-strategy.service';
 import { IgStore } from './ig-store.service';
 import { InboundService } from './inbound.service';
 import { InstagramActionsService } from './instagram-actions.service';
@@ -32,6 +33,7 @@ import { PublishingService } from './publishing.service';
     MetaGraphClient,
     IgStore,
     ContentService,
+    ContentStrategyService,
     PublishingService,
     MediaGenerationService,
     MetricsService,

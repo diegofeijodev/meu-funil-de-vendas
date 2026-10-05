@@ -45,7 +45,7 @@ describe('autorização (substitui o RLS: viewer só lê, empresa alheia não va
     const post = seedPost(w, { status: 'pending_approval', approved_at: null });
     expect(await status(a.approvePost(MARKETING, WS_A, post.id))).toBe('ok');
     expect(await status(a.connect(MARKETING, WS_A))).toBe('403:Seu perfil não tem permissão para esta ação.');
-    const auto = (mode: string) => ({ workspaceId: WS_A, startDate: '2030-01-01', endDate: '2030-01-02', weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['10:00'], storyTimes: [], formats: ['feed_image'], mode, planId: uuid() }) as any;
+    const auto = (mode: string) => ({ workspaceId: WS_A, startDate: '2030-01-01', endDate: '2030-01-02', weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['10:00'], storyTimes: [], formats: ['feed_image'], mode, planId: uuid(), focus: 'Levar o público de Valinhos para almoçar o prato executivo durante a semana' }) as any;
     expect(await status(a.createAutoCalendar(MARKETING, auto('publish')))).toBe('403:Seu perfil não tem permissão para esta ação.');
     // com aprovação o marketing passa da autorização (e cai na checagem do plano, que não existe: 404)
     expect(await status(a.createAutoCalendar(MARKETING, auto('approval')))).toBe('404:Plano de conteúdo não encontrado.');
@@ -161,7 +161,9 @@ describe('conta do Instagram', () => {
 describe('conteúdo (IA)', () => {
   it('generateContentCalendar: cria ideias com brief, filtra dias do plano e nomeia o provedor', async () => {
     const { w, s, a } = setup();
-    const plan = { id: uuid(), workspace_id: WS_A, posting_days: [1], cta_default: 'Peça já', content_pillars: ['A'], posting_frequency: {}, preferred_times: [], hashtag_strategy: {}, pillar_weights: {}, status: 'active', brand_id: null };
+    const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé' };
+    w.t['brands']!.rows.push(brand);
+    const plan = { id: uuid(), workspace_id: WS_A, posting_days: [1], cta_default: 'Peça já', content_pillars: ['A'], posting_frequency: {}, preferred_times: [], hashtag_strategy: {}, pillar_weights: {}, status: 'active', brand_id: brand.id };
     w.t['ig_content_plans']!.rows.push(plan);
     s.aiJson['ig_calendar'] = () => ({
       posts: [
@@ -180,8 +182,10 @@ describe('conteúdo (IA)', () => {
 
   it('generateContentCalendar: plano de outra empresa = 404; IA sem posts = 502', async () => {
     const { w, s, a } = setup();
+    const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé' };
+    w.t['brands']!.rows.push(brand);
     const other = { id: uuid(), workspace_id: WS_B, posting_days: [0, 1, 2, 3, 4, 5, 6], content_pillars: [], posting_frequency: {}, preferred_times: [], hashtag_strategy: {}, pillar_weights: {} };
-    const mine = { ...other, id: uuid(), workspace_id: WS_A };
+    const mine = { ...other, id: uuid(), workspace_id: WS_A, brand_id: brand.id };
     w.t['ig_content_plans']!.rows.push(other, mine);
     expect(await status(a.generateContentCalendar(OWNER, WS_A, other.id))).toBe('404:Plano de conteúdo não encontrado.');
     s.aiJson['ig_calendar'] = () => ({ posts: [] });

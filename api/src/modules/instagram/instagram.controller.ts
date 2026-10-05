@@ -7,7 +7,7 @@ import { isUuid } from '../../common/ids/uuid';
 import { bad, UserError } from '../media/user-error';
 import { InstagramActionsService } from './instagram-actions.service';
 import {
-  ConnectInstagramDto, CreateAutoCalendarDto, GenerateContentCalendarDto, GenerateNextAutoMediaDto, GeneratePostAssetsDto, PostRefDto,
+  ApproveAutoStrategyDto, ConnectInstagramDto, CreateAutoCalendarDto, GenerateContentCalendarDto, GenerateNextAutoMediaDto, GeneratePostAssetsDto, PostRefDto,
   PreviewAutoCalendarDto, RegenerateCaptionDto, RegenerateMediaDto, RejectPostDto, RunRefDto, SchedulePostDto, SuggestPillarsDto, WorkspaceDto,
 } from './instagram.dto';
 
@@ -138,6 +138,16 @@ export class InstagramController {
   @Post('fill-auto-calendar') @HttpCode(200)
   fillAuto(@CurrentUser() u: AuthUser, @Body() d: RunRefDto) {
     return this.svc.fillAutoCalendar(u.id, d.runId);
+  }
+
+  @Post('approve-auto-strategy') @HttpCode(200)
+  approveStrategy(@CurrentUser() u: AuthUser, @Body() d: ApproveAutoStrategyDto) {
+    return this.svc.approveAutoStrategy(u.id, d);
+  }
+
+  @Post('redo-auto-strategy') @HttpCode(200)
+  redoStrategy(@CurrentUser() u: AuthUser, @Body() d: RunRefDto) {
+    return this.svc.redoAutoStrategy(u.id, d.runId);
   }
 
   @Post('generate-next-auto-media') @HttpCode(200)

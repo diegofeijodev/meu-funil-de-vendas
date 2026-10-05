@@ -47,7 +47,7 @@ export class InstagramResourcesService {
   }
 
   async pendingCount(workspaceId: string) {
-    return { count: await this.prisma.ig_posts.count({ where: { workspace_id: workspaceId, status: 'pending_approval' } }) };
+    return { count: await this.prisma.ig_posts.count({ where: { workspace_id: workspaceId, status: { in: ['pending_approval', 'needs_review'] } } }) };
   }
 
   /** `update({caption, hashtags, cta, scheduled_at})` e `update({creative_brief})` do editor do post. */

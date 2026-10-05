@@ -7,28 +7,44 @@ function setup() {
   const s = igServices(w);
   return { w, s, a: s.actions, auto: s.auto };
 }
+const brandOf = (w: IgWorld, workspaceId: string = WS_A, over: Record<string, unknown> = {}): any => {
+  const b = { id: uuid(), workspace_id: workspaceId, name: 'Bar do Zé', segment: 'bar', tone_of_voice: 'descontraído', banned_words: ['barato'], region: 'Valinhos', ...over };
+  w.t['brands']!.rows.push(b);
+  return b;
+};
+/** Plano com marca própria (a programação exige marca); `brand_id: null` simula plano sem marca. */
 const plan = (w: IgWorld, over: Record<string, unknown> = {}): any => {
-  const p = { id: uuid(), workspace_id: WS_A, name: 'Plano', status: 'active', requires_approval: false, auto_publish: false, content_pillars: ['A'], hashtag_strategy: {}, ai_notes: [], pillar_weights: {}, cta_default: 'Peça já', objective: 'x', tone_of_voice: 't', posting_days: [0, 1, 2, 3, 4, 5, 6], ...over };
+  const ws = (over['workspace_id'] as string) ?? WS_A;
+  const brand_id = 'brand_id' in over ? over['brand_id'] : brandOf(w, ws).id;
+  const p = { id: uuid(), workspace_id: ws, name: 'Plano', status: 'active', requires_approval: false, auto_publish: false, content_pillars: ['A'], hashtag_strategy: {}, ai_notes: [], pillar_weights: {}, cta_default: 'Peça já', objective: 'x', tone_of_voice: 't', posting_days: [0, 1, 2, 3, 4, 5, 6], ...over, brand_id };
   w.t['ig_content_plans']!.rows.push(p);
   return p;
 };
+const OBJECTIVE = 'Levar o público de Valinhos para almoçar o prato executivo durante a semana';
+const STRATEGY = {
+  objetivo_resumido: 'Almoço executivo', kpi_principal: 'Reservas', publico_foco: 'Adultos', mensagem_central: 'Almoço rápido e gostoso',
+  pilares: [{ nome: 'A', peso_percentual: 100, por_que_serve_ao_objetivo: 'serve' }], distribuicao_por_dia: [], ctas: ['CTA', 'Peça já'], proibicoes: ['barato'],
+};
+/** Post da programação já ligado ao objetivo/pilar/persona (a checagem final de agendamento exige). */
+const ALIGNED = { objective_link: 'Serve ao objetivo', pillar: 'A', persona: 'Ana' };
 const DATE = (s: string) => new Date(`${s}T12:00:00Z`);
 const slotAt = (minutes: number, i: number, format = 'feed_image') => ({ index: i, at: new Date(Date.now() + minutes * 60e3).toISOString(), format, kind: 'main' });
+/** Programação com estratégia JÁ aprovada (o passo da estratégia tem os testes próprios abaixo); `strategy_status: 'pending'` para testá-lo. */
 const run = (w: IgWorld, p: any, over: Record<string, unknown> = {}): any => {
-  const r = { id: uuid(), workspace_id: WS_A, plan_id: p.id, created_by: OWNER, start_date: DATE('2099-01-01'), end_date: DATE('2099-01-07'), weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['09:00'], story_times: [], formats: ['feed_image'], status: 'planning', filled: 0, slots: [], mode: 'publish', recurring: false, parent_id: null, campaign_id: null, locked_until: null, ...over };
+  const r = { id: uuid(), workspace_id: WS_A, plan_id: p.id, created_by: OWNER, start_date: DATE('2099-01-01'), end_date: DATE('2099-01-07'), weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['09:00'], story_times: [], formats: ['feed_image'], status: 'planning', filled: 0, slots: [], mode: 'publish', recurring: false, parent_id: null, campaign_id: null, locked_until: null, focus: OBJECTIVE, strategy: STRATEGY, strategy_status: 'approved', paused_reason: null, last_error: null, ...over };
   w.t['ig_auto_runs']!.rows.push(r);
   return r;
 };
-const input = (over: Record<string, unknown> = {}): any => ({ workspaceId: WS_A, startDate: '2099-01-01', endDate: '2099-01-03', weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['09:00', '18:00'], storyTimes: [], formats: ['feed_image'], mode: 'approval', ...over });
+const input = (over: Record<string, unknown> = {}): any => ({ workspaceId: WS_A, startDate: '2099-01-01', endDate: '2099-01-03', weekdays: [0, 1, 2, 3, 4, 5, 6], times: ['09:00', '18:00'], storyTimes: [], formats: ['feed_image'], mode: 'approval', focus: OBJECTIVE, ...over });
 
 describe('createAutoCalendar', () => {
   it('cria a programação com os horários exatos, normaliza horários e registra o evento', async () => {
     const { w, a } = setup();
     const p = plan(w);
-    const r = await a.createAutoCalendar(OWNER, input({ planId: p.id, times: ['9:00', '09:00', '18:00'], focus: '  Dia dos Pais  ' }));
+    const r = await a.createAutoCalendar(OWNER, input({ planId: p.id, times: ['9:00', '09:00', '18:00'], focus: `  ${OBJECTIVE}  ` }));
     expect(r).toMatchObject({ planId: p.id, total: 6, skipped: 0 });
     const row = w.t['ig_auto_runs']!.rows[0];
-    expect(row).toMatchObject({ id: r.runId, workspace_id: WS_A, plan_id: p.id, created_by: OWNER, mode: 'approval', recurring: false, focus: 'Dia dos Pais', times: ['09:00', '18:00'], story_times: [] });
+    expect(row).toMatchObject({ id: r.runId, workspace_id: WS_A, plan_id: p.id, created_by: OWNER, mode: 'approval', recurring: false, focus: OBJECTIVE, times: ['09:00', '18:00'], story_times: [] });
     expect(row.slots).toHaveLength(6);
     expect(row.slots[0]).toMatchObject({ index: 0, at: '2099-01-01T12:00:00.000Z', format: 'feed_image', kind: 'main' });
     expect(w.t['ig_autopilot_events']!.rows[0]).toMatchObject({ kind: 'generation', plan_id: p.id });
@@ -37,7 +53,7 @@ describe('createAutoCalendar', () => {
 
   it('sem plano cria um a partir da marca (pilares sugeridos pela IA); exige plano ou marca; ids de outra empresa = 404', async () => {
     const { w, s, a } = setup();
-    expect(await status(a.createAutoCalendar(OWNER, input()))).toBe('400:Escolha um plano de conteúdo ou uma marca.');
+    expect(await status(a.createAutoCalendar(OWNER, input()))).toBe('400:Cadastre a marca em Brands antes.');
     const brand = { id: uuid(), workspace_id: WS_A, name: 'Chopp do Zé', tone_of_voice: 'descontraído', target_audience: 'adultos' };
     const alien = { id: uuid(), workspace_id: WS_B, name: 'Alheia' };
     w.t['brands']!.rows.push(brand, alien);
@@ -61,7 +77,8 @@ describe('createAutoCalendar', () => {
 });
 
 describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
-  const posts = (n: number) => ({ posts: Array.from({ length: n }, (_, i) => ({ index: i, theme: `T${i}`, pillar: 'A', funnel_stage: 'atracao', hook: 'H', headline: 'Manchete', caption: 'Legenda', hashtags: ['a', 'b'], cta: 'CTA', image_prompt: 'cena', slides: ['s1'] })) });
+  const posts = (n: number) => ({ posts: Array.from({ length: n }, (_, i) => ({ index: i, theme: `T${i}`, pillar: 'A', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'Serve ao objetivo', hook: 'H', headline: 'Manchete', caption: 'Legenda', hashtags: ['a', 'b'], cta: 'CTA', image_prompt: 'cena', slides: ['s1'] })) });
+  const aiPosts = (s: ReturnType<typeof setup>['s']) => s.ai.jsonWithEngine.mock.calls.filter((c: any[]) => c[1].name === 'ig_auto_calendar');
 
   it('preenche 8 horários por chamada, avança "filled" e conclui em "active"', async () => {
     const { w, s, a } = setup();
@@ -69,20 +86,20 @@ describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
     const slots = Array.from({ length: 10 }, (_, i) => slotAt(600 + i * 60, i, i === 3 ? 'feed_carousel' : 'feed_image'));
     const r = run(w, p, { slots, mode: 'approval' });
     s.aiJson['ig_auto_calendar'] = () => posts(10);
-    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 8, total: 10, done: false, busy: false });
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 8, total: 10, done: false, busy: false, strategyReview: false });
     expect(r).toMatchObject({ filled: 8, status: 'planning', locked_until: null });
     const created = w.t['ig_posts']!.rows;
     expect(created).toHaveLength(8);
-    expect(created[0]).toMatchObject({ workspace_id: WS_A, plan_id: p.id, run_id: r.id, automation: 'approval', status: 'idea', theme: 'T0', hook: 'H', caption: 'Legenda', cta: 'CTA', hashtags: ['a', 'b'], ai_provider: 'lovable_ai' });
+    expect(created[0]).toMatchObject({ workspace_id: WS_A, plan_id: p.id, run_id: r.id, automation: 'approval', status: 'idea', theme: 'T0', hook: 'H', caption: 'Legenda', cta: 'CTA', hashtags: ['a', 'b'], ai_provider: 'lovable_ai', objective_link: 'Serve ao objetivo', pillar: 'A', persona: 'Ana', product_id: null, funnel_stage: 'atracao', review_reason: null, review_score: null });
     expect(created[0].scheduled_at).toEqual(new Date(slots[0]!.at));
     expect(created[0].creative_brief).toMatchObject({ prompt: 'cena', slides: [], aspect_ratio: '1:1', headline: 'Manchete', pillar: 'A', funnel_stage: 'atracao', variations: 3 });
     expect(created[3].creative_brief).toMatchObject({ slides: ['s1'], aspect_ratio: '4:5' });
-    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 10, total: 10, done: true, busy: false });
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 10, total: 10, done: true, busy: false, strategyReview: false });
     expect(r.status).toBe('active');
     expect(created).toHaveLength(10);
     expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'generation' });
     // programação concluída: chamada extra não gera nada
-    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 10, total: 10, done: true, busy: false });
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 10, total: 10, done: true, busy: false, strategyReview: false });
     expect(w.t['ig_posts']!.rows).toHaveLength(10);
   });
 
@@ -92,7 +109,7 @@ describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
     s.aiJson['ig_auto_calendar'] = () => posts(1);
     const [x, y] = await Promise.all([auto.fillAutoRun(r.id), auto.fillAutoRun(r.id)]);
     expect([x, y].filter((o) => o.busy)).toHaveLength(1);
-    expect(s.ai.jsonWithEngine).toHaveBeenCalledTimes(1);
+    expect(aiPosts(s)).toHaveLength(1);
     const r2 = run(w, plan(w), { slots: [slotAt(600, 0)], locked_until: new Date(Date.now() + 100e3) });
     expect(await auto.fillAutoRun(r2.id)).toMatchObject({ busy: true, filled: 0 });
     r2.locked_until = new Date(Date.now() - 1000);
@@ -128,13 +145,14 @@ describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
     expect(r).toMatchObject({ locked_until: null, last_error: 'IA fora do ar', filled: 0 });
     expect(w.t['ig_autopilot_events']!.rows[0]).toMatchObject({ kind: 'failure', level: 'error' });
     expect(w.t['ig_autopilot_events']!.rows[0].message).toMatch(/tenta de novo em 5 min\): IA fora do ar/);
-    // só o índice 0 volta; o 1 ganha um post simples com aviso no log
+    // só o índice 0 volta; o 1 (ausente nas 3 tentativas) ganha um post simples em revisão, com aviso no log
     s.aiJson['ig_auto_calendar'] = () => ({ posts: [{ index: 0, theme: 'Só este', hashtags: 'x y' }] });
     await auto.fillAutoRun(r.id);
     const rows = w.t['ig_posts']!.rows;
-    expect(rows[0]).toMatchObject({ theme: 'Só este', hashtags: ['x', 'y'], cta: 'Peça já' });
+    expect(rows[0]).toMatchObject({ theme: 'Só este', hashtags: ['x', 'y'], cta: 'Peça já', status: 'idea' });
     expect(rows[0].ai_generation_log[0].warnings).toEqual(['hashtags vieram como texto e foram normalizadas']);
     expect(rows[1].ai_generation_log[0].warnings).toEqual(['a IA não devolveu conteúdo para este horário']);
+    expect(rows[1]).toMatchObject({ status: 'needs_review', review_reason: 'A IA não devolveu conteúdo para este horário.' });
     expect(rows[1].theme).toMatch(/^Post de /);
   });
 
@@ -150,18 +168,17 @@ describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
     expect(s.ai.jsonWithEngine.mock.calls[0][1].prompt).not.toMatch(/index 0:/);
   });
 
-  it('usa a estratégia da campanha e o aprendizado do plano no prompt', async () => {
+  it('usa a estratégia da campanha e o objetivo do período (prioridade 1) no prompt', async () => {
     const { w, s, auto } = setup();
     s.strategist.currentStrategy.mockResolvedValue({ big_idea: 'Chopp gelado de verdade', mensagem_principal: 'm', angulos_detalhados: [], objecoes: [], briefing_criativo: {} });
-    const p = plan(w, { ai_notes: [{ summary: 'Reels às 19h rendem mais' }], pillar_weights: { A: 1 } });
+    const p = plan(w);
     const camp = uuid();
-    const r = run(w, p, { slots: [slotAt(600, 0)], campaign_id: camp, focus: 'Black Friday' });
+    const r = run(w, p, { slots: [slotAt(600, 0)], campaign_id: camp, focus: 'Black Friday com chopp em dobro para quem chegar cedo' });
     s.aiJson['ig_auto_calendar'] = () => posts(1);
     await auto.fillAutoRun(r.id);
     const prompt = s.ai.jsonWithEngine.mock.calls[0][1].prompt as string;
-    expect(prompt).toMatch(/FOCO DESTE PERÍODO \(prioridade máxima\): Black Friday/);
-    expect(prompt).toMatch(/Chopp gelado de verdade/);
-    expect(prompt).toMatch(/Aprendizados dos resultados: Reels às 19h rendem mais/);
+    expect(prompt).toMatch(/1\. OBJETIVO DO PERÍODO \(fonte principal, cada post precisa servir a ele\): Black Friday com chopp em dobro/);
+    expect(prompt).toMatch(/CAMPANHA LIGADA: .*Chopp gelado de verdade/);
     expect(s.strategist.currentStrategy).toHaveBeenCalledWith(WS_A, camp);
   });
 
@@ -183,9 +200,9 @@ describe('generateNextAutoMedia (laço do navegador)', () => {
     connected(w);
     const p = plan(w);
     const r = run(w, p, { status: 'active', mode: 'publish' });
-    const soon1 = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, automation: 'publish', scheduled_at: new Date(Date.now() + 2 * 3600e3) });
-    const soon2 = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, automation: 'publish', scheduled_at: new Date(Date.now() + 3 * 3600e3) });
-    const far = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, automation: 'publish', scheduled_at: new Date(Date.now() + 30 * 3600e3) });
+    const soon1 = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, ...ALIGNED, automation: 'publish', scheduled_at: new Date(Date.now() + 2 * 3600e3) });
+    const soon2 = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, ...ALIGNED, automation: 'publish', scheduled_at: new Date(Date.now() + 3 * 3600e3) });
+    const far = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, ...ALIGNED, automation: 'publish', scheduled_at: new Date(Date.now() + 30 * 3600e3) });
     const other = seedPost(w, { status: 'idea', media: [], run_id: uuid(), automation: 'publish', scheduled_at: new Date(Date.now() + 3600e3) });
     const res = await a.generateNextAutoMedia(OWNER, { runId: r.id, withinHours: 6 });
     expect(res).toEqual({ done: false, ok: true, error: null, remaining: 1 });
@@ -204,7 +221,7 @@ describe('generateNextAutoMedia (laço do navegador)', () => {
     const { w, s, a } = setup();
     const p = plan(w);
     const r = run(w, p, { status: 'active' });
-    const post = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, automation: 'publish', scheduled_at: new Date(Date.now() + 3600e3) });
+    const post = seedPost(w, { status: 'idea', media: [], run_id: r.id, plan_id: p.id, ...ALIGNED, automation: 'publish', scheduled_at: new Date(Date.now() + 3600e3) });
     s.pipeline.run.mockRejectedValueOnce(new Error('Sem créditos de IA'));
     const res = await a.generateNextAutoMedia(OWNER, { runId: r.id, withinHours: 6 });
     expect(res).toEqual({ done: true, ok: false, error: 'Sem créditos de IA', remaining: 0 });
@@ -241,7 +258,7 @@ describe('autoCalendarTick (a cada 5 min)', () => {
     connected(w);
     const p = plan(w);
     const r = run(w, p, { status: 'active' });
-    const ready = seedPost(w, { automation: 'publish', status: 'ready', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3) });
+    const ready = seedPost(w, { automation: 'publish', status: 'ready', plan_id: p.id, run_id: r.id, ...ALIGNED, scheduled_at: new Date(Date.now() + 3600e3) });
     const waitApproval = seedPost(w, { automation: 'approval', status: 'ready', approved_at: null, plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3 * 3600e3) });
     const failed = seedPost(w, { automation: 'publish', status: 'failed', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { prompt: 'x', variations: 3 } });
     const failedTwice = seedPost(w, { automation: 'publish', status: 'failed', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { auto_retried: true } });
@@ -330,5 +347,533 @@ describe('summary (tela "Programar com IA")', () => {
     expect(out[0]).toMatchObject({ id: root.id, weeks: 2, counts: { total: 5, media: 3, waiting: 1, scheduled: 1, published: 1, failed: 1 } });
     expect(await auto.summary(uuid())).toEqual([]);
     void ADMIN;
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Atualização do protótipo (05/10/2026): estratégia do período, validador de posts e needs_review.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('createAutoCalendar — objetivo obrigatório e marca obrigatória', () => {
+  it('objetivo com menos de 30 caracteres (depois do trim) ou ausente: mensagem do protótipo; nada é criado', async () => {
+    const { w, a } = setup();
+    const p = plan(w);
+    const MSG = '400:Descreva o objetivo deste período (mínimo de 30 caracteres).';
+    expect(await status(a.createAutoCalendar(OWNER, input({ planId: p.id, focus: 'Black Friday' })))).toBe(MSG);
+    expect(await status(a.createAutoCalendar(OWNER, input({ planId: p.id, focus: `   ${'x'.repeat(29)}   ` })))).toBe(MSG);
+    expect(await status(a.createAutoCalendar(OWNER, input({ planId: p.id, focus: undefined })))).toBe(MSG);
+    expect(await status(a.createAutoCalendar(OWNER, input({ planId: p.id, focus: 'x'.repeat(30) })))).toBe('ok');
+    expect(w.t['ig_auto_runs']!.rows).toHaveLength(1);
+    expect(w.t['ig_auto_runs']!.rows[0]).toMatchObject({ strategy: null, strategy_status: 'pending', paused_reason: null });
+  });
+
+  it('plano sem marca vinculada: "Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo)."', async () => {
+    const { w, a } = setup();
+    const p = plan(w, { brand_id: null });
+    expect(await status(a.createAutoCalendar(OWNER, input({ planId: p.id })))).toBe('400:Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).');
+    expect(w.t['ig_auto_runs']!.rows).toHaveLength(0);
+  });
+});
+
+describe('estratégia do período (passo 1 do fillAutoRun)', () => {
+  const STRAT_JSON = {
+    objetivo_resumido: 'Almoço executivo', kpi_principal: 'Reservas', publico_foco: 'Adultos de Valinhos', mensagem_central: 'Almoço rápido',
+    pilares: [{ nome: 'Almoço', peso_percentual: 70, por_que_serve_ao_objetivo: 'serve' }, { nome: 'Bastidores', peso_percentual: 30, por_que_serve_ao_objetivo: 'conexão' }],
+    distribuicao_por_dia: [], ctas: ['Reserve pelo WhatsApp'], proibicoes: ['barato'],
+  };
+  const pendingRun = (w: IgWorld, over: Record<string, unknown> = {}) => run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)], strategy: null, strategy_status: 'pending', ...over });
+  const setPosts = (s: ReturnType<typeof setup>['s'], n = 2) => {
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: Array.from({ length: n }, (_, i) => ({ index: i, theme: `T${i}`, pillar: 'Almoço', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve', hook: 'H', headline: 'M', caption: 'L', hashtags: ['a'], cta: 'Reserve pelo WhatsApp', image_prompt: 'x', slides: [] })) });
+  };
+
+  it('pending → gera a estratégia do objetivo digitado, grava em "review", solta o lease, NÃO gera posts e avisa strategyReview', async () => {
+    const { w, s, a } = setup();
+    const r = pendingRun(w);
+    s.aiJson['ig_run_strategy'] = () => STRAT_JSON;
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 0, total: 2, done: false, busy: false, strategyReview: true });
+    expect(r).toMatchObject({ strategy_status: 'review', locked_until: null, last_error: null, paused_reason: null, status: 'planning', filled: 0 });
+    expect(r.strategy).toMatchObject({ kpi_principal: 'Reservas', ctas: ['Reserve pelo WhatsApp'] });
+    expect(r.strategy.pilares).toHaveLength(2);
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'generation', message: 'Estratégia do período pronta: revise e aprove para gerar os posts.' });
+    const call = s.ai.jsonWithEngine.mock.calls.find((c: any[]) => c[1].name === 'ig_run_strategy')!;
+    expect(call[1].prompt).toContain(`1. OBJETIVO DIGITADO PELO CLIENTE (fonte principal, nunca ignore): ${OBJECTIVE}`);
+    expect(call[1].prompt).toMatch(/2\. DNA DA MARCA: .*"nome":"Bar do Zé"/);
+  });
+
+  it('aguardando aprovação ("review"): fill não gasta IA, não gera posts e continua devolvendo strategyReview; o tick pula a programação', async () => {
+    const { w, s, a, auto } = setup();
+    const r = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'review' });
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 0, total: 2, done: false, busy: false, strategyReview: true });
+    expect(s.ai.jsonWithEngine).not.toHaveBeenCalled();
+    expect(r.locked_until).toBeNull();
+    expect((await auto.autoCalendarTick())['filled']).toBe(0);
+    expect(s.ai.jsonWithEngine).not.toHaveBeenCalled();
+    // lease vivo + review: quem não pegou o lease também vê strategyReview e busy:false
+    r.locked_until = new Date(Date.now() + 100e3);
+    expect(await auto.fillAutoRun(r.id)).toMatchObject({ busy: false, strategyReview: true });
+  });
+
+  it('aprovar libera os posts: o texto dos ajustes do cliente vai ao prompt; só programação em andamento; sem estratégia = erro', async () => {
+    const { w, s, a, auto } = setup();
+    const r = pendingRun(w);
+    expect(await status(a.approveAutoStrategy(OWNER, { runId: r.id }))).toBe('400:A estratégia ainda não foi gerada.');
+    s.aiJson['ig_run_strategy'] = () => STRAT_JSON;
+    await a.fillAutoCalendar(OWNER, r.id);
+    expect(await a.approveAutoStrategy(OWNER, { runId: r.id, editedText: '  foque no prato executivo; nada de promoção  ' })).toEqual({ ok: true });
+    expect(r).toMatchObject({ strategy_status: 'approved', locked_until: null });
+    expect(r.strategy.texto_editado).toBe('foque no prato executivo; nada de promoção');
+    setPosts(s);
+    expect(await a.fillAutoCalendar(OWNER, r.id)).toEqual({ filled: 2, total: 2, done: true, busy: false, strategyReview: false });
+    expect(w.t['ig_posts']!.rows).toHaveLength(2);
+    const prompt = s.ai.jsonWithEngine.mock.calls.find((c: any[]) => c[1].name === 'ig_auto_calendar')![1].prompt as string;
+    expect(prompt).toContain('"ajustes_do_cliente":"foque no prato executivo; nada de promoção"');
+    expect(prompt).toMatch(/2\. ESTRATÉGIA APROVADA: .*"mensagem_central":"Almoço rápido"/);
+    // reaprovar sem texto mantém o ajuste anterior
+    await auto.approveRunStrategy(WS_A, r.id, null);
+    expect(r.strategy.texto_editado).toBe('foque no prato executivo; nada de promoção');
+    // programação cancelada/concluída não volta a ser "approved"
+    const done = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'review', status: 'cancelled' });
+    await auto.approveRunStrategy(WS_A, done.id, 'x');
+    expect(done.strategy_status).toBe('review');
+  });
+
+  it('refazer descarta a estratégia e volta a "pending"; o próximo fill gera outra; recusado com lote da IA rodando', async () => {
+    const { w, s, a } = setup();
+    const r = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'review', paused_reason: 'x' });
+    expect(await a.redoAutoStrategy(OWNER, r.id)).toEqual({ ok: true });
+    expect(r).toMatchObject({ strategy: null, strategy_status: 'pending', paused_reason: null });
+    s.aiJson['ig_run_strategy'] = () => ({ ...STRAT_JSON, mensagem_central: 'Nova mensagem' });
+    await a.fillAutoCalendar(OWNER, r.id);
+    expect(r.strategy.mensagem_central).toBe('Nova mensagem');
+    // lease vivo (alguém está gerando): não descarta
+    const busy = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'approved', locked_until: new Date(Date.now() + 100e3) });
+    expect(await status(a.redoAutoStrategy(OWNER, busy.id))).toMatch(/^400:A estratégia está sendo gerada ou os posts estão em criação agora/);
+    expect(busy).toMatchObject({ strategy_status: 'approved' });
+    // programação concluída: no-op (não é "planning")
+    const finished = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'approved', status: 'active' });
+    expect(await a.redoAutoStrategy(OWNER, finished.id)).toEqual({ ok: true });
+    expect(finished.strategy_status).toBe('approved');
+  });
+
+  it('autorização: viewer 403, estranho/inexistente 404, marketing ok (aprovar e refazer)', async () => {
+    const { w, s, a } = setup();
+    const r = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'review' });
+    s.aiJson['ig_run_strategy'] = () => STRAT_JSON;
+    for (const fn of [(u: string) => a.approveAutoStrategy(u, { runId: r.id }), (u: string) => a.redoAutoStrategy(u, r.id)]) {
+      expect(await status(fn(VIEWER))).toBe('403:Seu perfil não tem permissão para esta ação.');
+      expect(await status(fn(STRANGER))).toBe('404:Programação não encontrada.');
+    }
+    expect(await status(a.approveAutoStrategy(OWNER, { runId: uuid() }))).toBe('404:Programação não encontrada.');
+    expect(r.strategy_status).toBe('review');
+    expect(await status(a.approveAutoStrategy(MARKETING, { runId: r.id }))).toBe('ok');
+    expect(await status(a.redoAutoStrategy(MARKETING, r.id))).toBe('ok');
+  });
+
+  it('chamadas simultâneas na estratégia: só uma gasta IA; a outra recebe busy:true', async () => {
+    const { w, s, auto } = setup();
+    const r = pendingRun(w);
+    s.aiJson['ig_run_strategy'] = () => STRAT_JSON;
+    const [x, y] = await Promise.all([auto.fillAutoRun(r.id), auto.fillAutoRun(r.id)]);
+    expect([x, y].filter((o) => o.busy)).toHaveLength(1);
+    expect(s.ai.jsonWithEngine.mock.calls.filter((c: any[]) => c[1].name === 'ig_run_strategy')).toHaveLength(1);
+    expect(r.strategy_status).toBe('review');
+  });
+
+  it('estratégia incompleta (sem pilares): erro, last_error guardado, lease solto, nada vai para "review"', async () => {
+    const { w, s, auto } = setup();
+    const r = pendingRun(w);
+    s.aiJson['ig_run_strategy'] = () => ({ ...STRAT_JSON, pilares: [] });
+    await expect(auto.fillAutoRun(r.id)).rejects.toThrow('A IA não devolveu a estratégia completa');
+    expect(r).toMatchObject({ strategy: null, strategy_status: 'pending', locked_until: null, paused_reason: null });
+    expect(r.last_error).toMatch(/estratégia completa/);
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'failure', level: 'error' });
+  });
+
+  it('sem marca/objetivo/plano o fill falha com a mensagem certa e solta o lease', async () => {
+    const { w, auto } = setup();
+    const noBrand = run(w, plan(w, { brand_id: null }), { slots: [slotAt(600, 0)] });
+    await expect(auto.fillAutoRun(noBrand.id)).rejects.toThrow('Cadastre a marca em Brands antes.');
+    expect(noBrand).toMatchObject({ locked_until: null, last_error: 'Cadastre a marca em Brands antes.' });
+    const noGoal = run(w, plan(w, { objective: null }), { slots: [slotAt(600, 0)], focus: null });
+    await expect(auto.fillAutoRun(noGoal.id)).rejects.toThrow('Informe o objetivo deste período na programação.');
+    const orphan = run(w, { id: uuid() }, { slots: [slotAt(600, 0)] });
+    await expect(auto.fillAutoRun(orphan.id)).rejects.toThrow('Plano de conteúdo não encontrado.');
+  });
+
+  it('crédito de IA esgotado: paused_reason + evento específico; sucesso depois limpa o aviso', async () => {
+    const { w, s, auto } = setup();
+    const r = pendingRun(w);
+    s.aiJson['ig_run_strategy'] = () => { throw new Error('Créditos de IA esgotados. Adicione créditos para continuar.'); };
+    await expect(auto.fillAutoRun(r.id)).rejects.toThrow('Créditos de IA esgotados');
+    expect(r).toMatchObject({ paused_reason: 'Créditos de IA esgotados — programação pausada', locked_until: null });
+    expect(r.last_error).toMatch(/Créditos de IA esgotados/);
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'failure', message: 'Créditos de IA esgotados — programação pausada. Retoma sozinha quando houver crédito.' });
+    // um erro comum NÃO marca pausa
+    s.aiJson['ig_run_strategy'] = () => { throw new Error('IA fora do ar'); };
+    await expect(auto.fillAutoRun(r.id)).rejects.toThrow('IA fora do ar');
+    expect(r.paused_reason).toBeNull();
+    // crédito de novo → pausada; ao voltar, a estratégia sai e o aviso some
+    s.aiJson['ig_run_strategy'] = () => { throw new Error('402 insufficient'); };
+    await expect(auto.fillAutoRun(r.id)).rejects.toThrow();
+    expect(r.paused_reason).toMatch(/Créditos de IA esgotados/);
+    s.aiJson['ig_run_strategy'] = () => STRAT_JSON;
+    await auto.fillAutoRun(r.id);
+    expect(r).toMatchObject({ paused_reason: null, last_error: null, strategy_status: 'review' });
+  });
+
+  it('o aviso de pausa também some quando um lote de posts conclui', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0)], paused_reason: 'Créditos de IA esgotados — programação pausada', last_error: 'x' });
+    setPosts(s, 1);
+    await auto.fillAutoRun(r.id);
+    expect(r).toMatchObject({ paused_reason: null, last_error: null, status: 'active' });
+  });
+
+  it('lease perdido no meio do lote (outro worker assumiu): descarta o resultado, NÃO grava posts nem mexe na programação dele', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)] });
+    s.aiJson['ig_auto_calendar'] = () => {
+      r.locked_until = new Date(Date.now() + 200e3); // outro worker pegou o lease depois que o nosso venceu
+      return { posts: [{ index: 0, theme: 'T', caption: 'L' }, { index: 1, theme: 'T', caption: 'L' }] };
+    };
+    const out = await auto.fillAutoRun(r.id);
+    expect(out).toMatchObject({ busy: true, filled: 0, done: false });
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
+    expect(r.locked_until!.getTime()).toBeGreaterThan(Date.now() + 100e3); // o lease do outro continua intacto
+    expect(r.last_error).toBeNull();
+  });
+
+  it('programação cancelada no meio do lote: o fill não a ressuscita nem grava posts', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0)] });
+    s.aiJson['ig_auto_calendar'] = () => { r.status = 'cancelled'; r.locked_until = null; return { posts: [{ index: 0, theme: 'T', caption: 'L' }] }; };
+    const out = await auto.fillAutoRun(r.id);
+    expect(out).toMatchObject({ busy: true, done: true });
+    expect(r.status).toBe('cancelled');
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
+  });
+
+  it('semana recorrente herda a estratégia aprovada; sem aprovação nasce "pending"', async () => {
+    const { w, auto } = setup();
+    const p = plan(w);
+    const t = todaySP();
+    const root = run(w, p, { recurring: true, status: 'active', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'] });
+    expect(await auto.renewRecurring()).toEqual({ created: 1 });
+    const kid = w.t['ig_auto_runs']!.rows[1];
+    expect(kid).toMatchObject({ strategy_status: 'approved', focus: OBJECTIVE });
+    expect(kid.strategy).toEqual(STRATEGY);
+    const p2 = plan(w);
+    run(w, p2, { recurring: true, status: 'active', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'], strategy: null, strategy_status: 'pending' });
+    expect(await auto.renewRecurring()).toEqual({ created: 1 });
+    expect(w.t['ig_auto_runs']!.rows.at(-1)).toMatchObject({ strategy_status: 'pending' });
+    void root;
+  });
+});
+
+describe('validador de posts no lote (reprovação → regera → needs_review)', () => {
+  const full = (i: number, over: Record<string, unknown> = {}) => ({ index: i, theme: `T${i}`, pillar: 'A', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve', hook: 'H', headline: 'M', caption: 'Legenda', hashtags: ['a'], cta: 'CTA', image_prompt: 'x', slides: [], ...over });
+
+  it('reprovado pela IA é refeito com o motivo no prompt (até 2 novas tentativas); aprovado na 2ª entra como "idea" com attempts=2 e nota', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)] });
+    const askPrompts: string[] = [];
+    s.aiJson['ig_auto_calendar'] = (req: any) => { askPrompts.push(req.prompt); return { posts: [full(0), full(1)] }; };
+    let reviews = 0;
+    s.aiJson['ig_post_review'] = () => {
+      reviews++;
+      return { results: reviews === 1 ? [{ index: 0, aprovado: true, nota_0_10: 9, motivo: 'ok' }, { index: 1, aprovado: false, nota_0_10: 3, motivo: 'fala de outro negócio' }] : [{ index: 1, aprovado: true, nota_0_10: 7, motivo: 'agora sim' }] };
+    };
+    await auto.fillAutoRun(r.id);
+    expect(askPrompts).toHaveLength(2);
+    expect(askPrompts[0]).not.toContain('REFAÇA');
+    expect(askPrompts[1]).toContain('REFAÇA, reprovado antes por: fala de outro negócio');
+    expect(askPrompts[1]).not.toMatch(/index 0:/); // só o reprovado volta
+    const rows = w.t['ig_posts']!.rows;
+    expect(rows.map((x) => x.status)).toEqual(['idea', 'idea']);
+    expect(rows[0]).toMatchObject({ review_score: 9, review_reason: null });
+    expect(rows[1]).toMatchObject({ review_score: 7, review_reason: null });
+    expect(rows[0].ai_generation_log[0]).toMatchObject({ attempts: 1, review: { aprovado: true, nota: 9 } });
+    expect(rows[1].ai_generation_log[0]).toMatchObject({ attempts: 2, review: { aprovado: true, nota: 7, motivo: 'agora sim' } });
+    expect(rows[1].ai_generation_log[0].status).toBeUndefined();
+  });
+
+  it('reprovado nas 3 tentativas vira "needs_review" com motivo, nota e log; os aprovados seguem normais', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)] });
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: [full(0), full(1)] });
+    s.aiJson['ig_post_review'] = (req: any) => ({ results: [{ index: 0, aprovado: true, nota_0_10: 8, motivo: 'ok' }, ...(/index 1 ·/.test(req.prompt) ? [{ index: 1, aprovado: false, nota_0_10: 2, motivo: 'preço inventado' }] : [])] });
+    await auto.fillAutoRun(r.id);
+    expect(s.ai.jsonWithEngine.mock.calls.filter((c: any[]) => c[1].name === 'ig_auto_calendar')).toHaveLength(3); // 1 + 2 novas tentativas
+    const rows = w.t['ig_posts']!.rows;
+    expect(rows[0].status).toBe('idea');
+    expect(rows[1]).toMatchObject({ status: 'needs_review', review_reason: 'preço inventado', review_score: 2 });
+    expect(rows[1].ai_generation_log[0]).toMatchObject({ attempts: 3, status: 'needs_review', review: { aprovado: false, nota: 2, motivo: 'preço inventado' } });
+    expect(r).toMatchObject({ filled: 2, status: 'active' });
+  });
+
+  it('regras de data (código): "sextou" numa segunda reprova SEM a IA revisora ver o post; refeito e ainda errado vira needs_review com o motivo da data', async () => {
+    const { w, s, auto } = setup();
+    // slot numa segunda-feira de 2099 (01/01/2099 é quinta; 05/01/2099 é segunda) às 10:00 SP
+    const monday = { index: 0, at: new Date('2099-01-05T10:00:00-03:00').toISOString(), format: 'feed_image', kind: 'main' };
+    const r = run(w, plan(w), { slots: [monday] });
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: [full(0, { caption: 'Sextou! Chopp em dobro' })] });
+    const seen: string[] = [];
+    s.aiJson['ig_post_review'] = (req: any) => { seen.push(req.prompt); return { results: [] }; };
+    await auto.fillAutoRun(r.id);
+    expect(seen).toHaveLength(0); // as 3 tentativas reprovaram por código; a IA nunca foi consultada
+    expect(w.t['ig_posts']!.rows[0]).toMatchObject({ status: 'needs_review', review_score: 0, review_reason: 'Incoerência de data: "sextou" fora de sexta-feira.' });
+    // o prompt de refação leva o motivo e o dia real
+    const prompts = s.ai.jsonWithEngine.mock.calls.filter((c: any[]) => c[1].name === 'ig_auto_calendar').map((c: any[]) => c[1].prompt as string);
+    expect(prompts[1]).toContain('segunda-feira, 05/01/2099, 10:00');
+    expect(prompts[1]).toContain('REFAÇA, reprovado antes por: Incoerência de data: "sextou" fora de sexta-feira.');
+  });
+
+  it('IA que devolve conteúdo vazio vira needs_review com o motivo padrão; revisor fora do ar não bloqueia', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)] });
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: [full(0), { index: 1 }] });
+    s.aiJson['ig_post_review'] = () => { throw new Error('revisor caiu'); };
+    await auto.fillAutoRun(r.id);
+    const rows = w.t['ig_posts']!.rows;
+    expect(rows[0]).toMatchObject({ status: 'idea', review_score: null });
+    expect(rows[1]).toMatchObject({ status: 'needs_review', review_reason: 'A IA não devolveu conteúdo para este horário.' });
+  });
+
+  it('grava objetivo/pilar/persona/produto/etapa do funil; produto casa pelo nome (sem caixa) só dentro da MARCA do plano; etapa é normalizada', async () => {
+    const { w, s, auto } = setup();
+    const p = plan(w);
+    const prato = { id: uuid(), workspace_id: WS_A, brand_id: p.brand_id, name: 'Prato Executivo', description: 'almoço', price: 29.9 };
+    w.t['products']!.rows.push(prato, { id: uuid(), workspace_id: WS_A, brand_id: uuid(), name: 'Outra marca', description: null, price: 5 }, { id: uuid(), workspace_id: WS_B, brand_id: p.brand_id, name: 'Alheio', description: null, price: 1 });
+    w.t['personas']!.rows.push({ id: uuid(), workspace_id: WS_A, brand_id: p.brand_id, name: 'Ana', pains: 'sem tempo' });
+    const r = run(w, p, { slots: [slotAt(600, 0), slotAt(660, 1), slotAt(720, 2), slotAt(780, 3)] });
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: [
+      full(0, { product_name: 'prato executivo', funnel_stage: 'Conversão' }),
+      full(1, { product_name: 'Combo com Prato Executivo e suco', funnel_stage: 'consideração' }),
+      full(2, { product_name: 'Produto que não existe', funnel_stage: 'conexao' }),
+      full(3, { product_name: '', funnel_stage: 'qualquer coisa' }),
+    ] });
+    await auto.fillAutoRun(r.id);
+    const rows = w.t['ig_posts']!.rows;
+    expect(rows.map((x) => x.product_id)).toEqual([prato.id, prato.id, null, null]);
+    expect(rows.map((x) => x.funnel_stage)).toEqual(['conversao', 'consideracao', 'consideracao', 'atracao']);
+    expect(rows[0]).toMatchObject({ objective_link: 'serve', pillar: 'A', persona: 'Ana' });
+    expect(rows[0].creative_brief).toMatchObject({ funnel_stage: 'conversao', product_name: 'prato executivo' });
+    const prompt = s.ai.jsonWithEngine.mock.calls.find((c: any[]) => c[1].name === 'ig_auto_calendar')![1].prompt as string;
+    expect(prompt).toContain('"nome":"Prato Executivo","descricao":"almoço","preco":29.9');
+    expect(prompt).toContain('PERSONAS: ["Ana"]');
+    expect(prompt).not.toContain('Outra marca');
+    expect(prompt).not.toContain('Alheio');
+  });
+});
+
+describe('needs_review no restante do fluxo', () => {
+  const needsReview = (w: IgWorld, over: Record<string, unknown> = {}) => seedPost(w, { status: 'needs_review', approved_at: null, review_reason: 'preço inventado', review_score: 2, ...over });
+
+  it('summary: conta "review" à parte (não entra em media/waiting)', async () => {
+    const { w, auto } = setup();
+    const p = plan(w);
+    const root = run(w, p, { status: 'active' });
+    for (const st of ['needs_review', 'needs_review', 'pending_approval', 'idea']) seedPost(w, { run_id: root.id, status: st });
+    const out = await auto.summary(WS_A);
+    expect(out[0]).toMatchObject({ id: root.id, strategy_status: 'approved', counts: { total: 4, media: 1, waiting: 1, review: 2, failed: 0 } });
+    expect(out[0].strategy).toEqual(STRATEGY); // a tela mostra o resumo da estratégia
+  });
+
+  it('contagem do selo (pending-count) soma pending_approval + needs_review, só da empresa; agência também', async () => {
+    const { w, s } = setup();
+    seedPost(w, { status: 'pending_approval' });
+    needsReview(w);
+    needsReview(w, { workspace_id: WS_B });
+    seedPost(w, { status: 'idea' });
+    expect(await s.resources.pendingCount(WS_A)).toEqual({ count: 2 });
+    expect(await s.resources.pendingCount(WS_B)).toEqual({ count: 1 });
+  });
+
+  it('tick 3: needs_review (modo aprovação) que passa do horário é reagendado como os demais; modo publish não', async () => {
+    const { w, auto } = setup();
+    const p = plan(w);
+    const t0 = Date.now() + 5 * 60e3;
+    const late = needsReview(w, { automation: 'approval', plan_id: p.id, scheduled_at: new Date(t0) });
+    const pub = needsReview(w, { automation: 'publish', plan_id: p.id, scheduled_at: new Date(t0) });
+    const out = await auto.autoCalendarTick();
+    expect(out['rescheduled']).toBe(1);
+    expect(late.scheduled_at.getTime()).toBe(t0 + 86400e3);
+    expect(pub.scheduled_at.getTime()).toBe(t0);
+  });
+
+  it('a programação só conclui ("done") quando não resta post em revisão', async () => {
+    const { w, auto } = setup();
+    const p = plan(w);
+    const r = run(w, p, { status: 'active' });
+    seedPost(w, { run_id: r.id, status: 'published', plan_id: p.id });
+    const rev = needsReview(w, { run_id: r.id, plan_id: p.id });
+    await auto.autoCalendarTick();
+    expect(r.status).toBe('active');
+    rev.status = 'cancelled';
+    await auto.autoCalendarTick();
+    expect(r.status).toBe('done');
+  });
+
+  it('cancelar a programação cancela os posts em revisão', async () => {
+    const { w, a } = setup();
+    const p = plan(w);
+    const r = run(w, p, { status: 'active' });
+    const rev = needsReview(w, { run_id: r.id, plan_id: p.id });
+    expect(await a.cancelAutoCalendar(OWNER, r.id)).toEqual({ cancelled: 1 });
+    expect(rev.status).toBe('cancelled');
+  });
+
+  it('aprovar post em revisão com mídia: segue o fluxo normal (approved); sem mídia: "Gere a mídia antes de aprovar."; reprovar cancela', async () => {
+    const { w, a } = setup();
+    const withMedia = needsReview(w);
+    expect(await a.approvePost(OWNER, WS_A, withMedia.id)).toEqual({ ok: true });
+    expect(withMedia.status).toBe('approved');
+    const none = needsReview(w, { media: [] });
+    expect(await status(a.approvePost(OWNER, WS_A, none.id))).toBe('400:Gere a mídia antes de aprovar.');
+    expect(await a.rejectPost(OWNER, WS_A, none.id, 'não serve')).toEqual({ ok: true });
+    expect(none).toMatchObject({ status: 'cancelled', rejection_reason: 'não serve' });
+  });
+
+  it('post em revisão nunca é publicado nem agendado direto', async () => {
+    const { w, s, a } = setup();
+    const post = needsReview(w);
+    expect(await status(a.schedulePost(OWNER, WS_A, post.id, new Date(Date.now() + 3600e3).toISOString()))).toBe('400:O post precisa estar aprovado para ser agendado.');
+    const r = await a.publishInstagramPost(OWNER, WS_A, post.id);
+    expect(r).toMatchObject({ ok: false, error: 'Post não aprovado — publicação bloqueada.' });
+    void s;
+  });
+});
+
+describe('checagem final no agendamento (posts da programação com IA)', () => {
+  const aligned = { objective_link: 'serve ao objetivo', pillar: 'A', persona: 'Ana' };
+  const when = () => new Date(Date.now() + 5 * 3600e3).toISOString();
+  const setupRun = (strategy: Record<string, unknown> | null = STRATEGY) => {
+    const ctx = setup();
+    connected(ctx.w);
+    const p = plan(ctx.w);
+    const r = run(ctx.w, p, { status: 'active', strategy, strategy_status: strategy ? 'approved' : 'pending' });
+    const post = (over: Record<string, unknown> = {}) => seedPost(ctx.w, { plan_id: p.id, run_id: r.id, status: 'approved', ...aligned, cta: 'CTA', caption: 'Legenda boa', ...over });
+    return { ...ctx, p, r, post };
+  };
+
+  it('post alinhado agenda normalmente (status scheduled, job criado)', async () => {
+    const { w, a, post } = setupRun();
+    const x = post();
+    expect(await a.schedulePost(OWNER, WS_A, x.id, when())).toMatchObject({ ok: true });
+    expect(x.status).toBe('scheduled');
+    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === x.id && j.status === 'pending')).toHaveLength(1);
+  });
+
+  it.each([
+    ['sem ligação com objetivo/pilar/persona', { persona: null }, /faltam ligação com o objetivo, pilar ou persona/],
+    ['"sextou" fora de sexta (horário real do agendamento)', { caption: 'Sextou com chopp!' }, /"sextou" fora de sexta-feira|ok-friday/],
+    ['CTA fora da lista da estratégia', { cta: 'Clique no link da bio' }, /CTA fora dos CTAs da estratégia/],
+  ])('%s → needs_review com o motivo, NÃO agenda, e o erro volta ao chamador', async (_n, over, msg) => {
+    const { w, a, post } = setupRun();
+    const x = post(over);
+    // 'sextou' só reprova fora de sexta: escolhe um horário de segunda
+    const at = (over as any).caption ? new Date('2099-01-05T10:00:00-03:00').toISOString() : when();
+    const res = await status(a.schedulePost(OWNER, WS_A, x.id, at));
+    if (!msg.test(res) && (over as any).caption) throw new Error(res);
+    expect(res).toMatch(/^400:Post enviado para revisão: /);
+    expect(x.status).toBe('needs_review');
+    expect(x.review_reason).toMatch(/^Checagem final: /);
+    expect(x.review_reason).toMatch(msg);
+    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === x.id)).toHaveLength(0);
+  });
+
+  it('preço fora do cadastro de produtos da marca reprova; preço cadastrado (R$ 29,90) passa; sem preço na legenda passa', async () => {
+    const { w, a, p, post } = setupRun();
+    w.t['products']!.rows.push({ id: uuid(), workspace_id: WS_A, brand_id: p.brand_id, name: 'Prato', price: 29.9 }, { id: uuid(), workspace_id: WS_B, brand_id: p.brand_id, name: 'x', price: 99 });
+    const ok = post({ caption: 'Prato executivo por R$ 29,90 hoje' });
+    expect(await a.schedulePost(OWNER, WS_A, ok.id, when())).toMatchObject({ ok: true });
+    const bad = post({ caption: 'Prato por R$ 19,90', creative_brief: {} });
+    expect(await status(a.schedulePost(OWNER, WS_A, bad.id, when()))).toMatch(/^400:Post enviado para revisão: preço fora do cadastro de produtos\.$/);
+    expect(bad.review_reason).toBe('Checagem final: preço fora do cadastro de produtos.');
+    // preço só na headline também conta
+    const head = post({ caption: 'Sem preço aqui', creative_brief: { headline: 'Só R$ 99' } });
+    expect(await status(a.schedulePost(OWNER, WS_A, head.id, when()))).toMatch(/preço fora do cadastro/);
+    // o preço do produto de OUTRA empresa (R$ 99, WS_B) não vale
+  });
+
+  it('programação ANTIGA (sem estratégia): campos novos ausentes não reprovam; as regras de data continuam valendo', async () => {
+    const { a, post } = setupRun(null);
+    const legacy = post({ objective_link: null, pillar: null, persona: null });
+    expect(await a.schedulePost(OWNER, WS_A, legacy.id, when())).toMatchObject({ ok: true });
+    const bad = post({ objective_link: null, pillar: null, persona: null, hook: 'Bom dia!' });
+    const noon = new Date('2099-01-05T15:00:00-03:00').toISOString();
+    expect(await status(a.schedulePost(OWNER, WS_A, bad.id, noon))).toMatch(/"bom dia" depois das 12h/);
+  });
+
+  it('post SEM run (calendário do plano / manual) não passa pela checagem final', async () => {
+    const { w, a } = setup();
+    connected(w);
+    const p = plan(w);
+    const x = seedPost(w, { plan_id: p.id, run_id: null, status: 'approved', caption: 'Sextou!', persona: null });
+    expect(await a.schedulePost(OWNER, WS_A, x.id, new Date('2099-01-05T10:00:00-03:00').toISOString())).toMatchObject({ ok: true });
+  });
+
+  it('reprovar um post que já estava agendado cancela o job pendente anterior (a fila não o tenta)', async () => {
+    const { w, a, post } = setupRun();
+    const x = post();
+    await a.schedulePost(OWNER, WS_A, x.id, when());
+    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === x.id && j.status === 'pending')).toHaveLength(1);
+    x.persona = null;
+    await expect(a.schedulePost(OWNER, WS_A, x.id, when())).rejects.toThrow(/Post enviado para revisão/);
+    expect(x.status).toBe('needs_review');
+    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === x.id && j.status === 'pending')).toHaveLength(0);
+  });
+
+  it('o status só vira needs_review se o post ainda estava em estado agendável (publishing no meio do caminho não é sobrescrito)', async () => {
+    const { w, s, post } = setupRun();
+    const x = post({ persona: null });
+    const orig = w.store.getPost.bind(w.store);
+    // o post "vira publishing" logo depois que o agendamento leu o status
+    jest.spyOn(w.store, 'getPost').mockImplementationOnce(async (...args: any[]) => { const r = await (orig as any)(...args); x.status = 'publishing'; return r; });
+    await expect(s.publishing.schedulePost(WS_A, x.id, when())).rejects.toThrow(/Post enviado para revisão/);
+    expect(x.status).toBe('publishing');
+    expect(x.review_reason ?? null).toBeNull();
+  });
+
+  it('tick: post automático que reprova na checagem final sai da fila de agendamento (status needs_review) e guarda o erro', async () => {
+    const { w, auto, post } = setupRun();
+    const x = post({ automation: 'publish', status: 'ready', persona: null, scheduled_at: new Date(Date.now() + 3600e3) });
+    const out = await auto.autoCalendarTick();
+    expect(out['scheduled']).toBe(0);
+    expect(x.status).toBe('needs_review');
+    expect(x.last_error).toMatch(/Post enviado para revisão/);
+    expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
+  });
+});
+
+describe('Calendário de conteúdo do plano (generateContentCalendar) — marca, objetivo e datas', () => {
+  const calPost = (over: Record<string, unknown>) => ({ format: 'feed_image', scheduled_at: '2099-01-05T10:00:00-03:00', theme: 'T', hook: 'H', caption: 'C', hashtags: ['a'], cta: 'CTA', image_prompt: 'x', slides: [], ...over });
+
+  it('sem marca no plano: "Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo)."', async () => {
+    const { w, a } = setup();
+    const p = plan(w, { brand_id: null });
+    expect(await status(a.generateContentCalendar(OWNER, WS_A, p.id, 1))).toBe('400:Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).');
+  });
+
+  it('o prompt leva objetivo + DNA da marca + regras de data; post com incoerência de data entra como needs_review com o motivo', async () => {
+    const { w, s, a } = setup();
+    const p = plan(w, { objective: 'Lotar o happy hour' });
+    s.aiJson['ig_calendar'] = () => ({ posts: [
+      calPost({ caption: 'Sextou!' }), // 05/01/2099 é segunda
+      calPost({ caption: 'Bom dia, Valinhos!' }), // segunda às 10h: ok
+      calPost({ scheduled_at: '2099-01-05T15:00:00-03:00', hook: 'Bom dia!' }),
+      calPost({ scheduled_at: 'lixo', caption: 'Sextou' }), // sem data válida: não há como checar
+    ] });
+    await a.generateContentCalendar(OWNER, WS_A, p.id, 1);
+    const rows = w.t['ig_posts']!.rows;
+    expect(rows.map((x) => x.status)).toEqual(['needs_review', 'idea', 'needs_review', 'idea']);
+    expect(rows[0].review_reason).toBe('Incoerência de data: "sextou" fora de sexta-feira.');
+    expect(rows[2].review_reason).toBe('Incoerência de data: "bom dia" depois das 12h.');
+    expect(rows[1].review_reason).toBeNull();
+    const prompt = s.ai.jsonWithEngine.mock.calls[0][1].prompt as string;
+    expect(prompt).toContain('OBJETIVO (fonte principal): Lotar o happy hour. MARCA: {"nome":"Bar do Zé"');
+    expect(prompt).toContain('Nunca fale de outro negócio nem invente preço ou promoção.');
+    expect(prompt).toContain('Coerência com a data:');
   });
 });

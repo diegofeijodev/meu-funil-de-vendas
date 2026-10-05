@@ -59,6 +59,32 @@ describe('generatePostAssets — imagem única (pipeline)', () => {
     expect(post.ai_generation_log.at(-1).instructions).toBe('mais luz');
   });
 
+  it('prompt editado em INGLÊS (legado) não é reenviado ao gerador: o diretor de arte escreve de novo em português', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, { creative_brief: { prompt: 'x', art_direction: { ...ART }, visual_prompt_override: 'A photorealistic glass of beer, natural lighting' } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.ai.json).toHaveBeenCalledTimes(1);
+    expect(s.pipeline.run.mock.calls[0][0].ad.prompt_final).toBe(ART.prompt_final);
+  });
+
+  it('`variations` do post pode ser a LISTA de imagens anteriores (regeneração): vira o padrão 3, nunca NaN', async () => {
+    const { w, s, gen } = setup();
+    const post = idea(w, { creative_brief: { prompt: 'x', variations: [{ url: 'https://x/a.png', winner: true }] } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.pipeline.run.mock.calls[0][0].variations).toBe(3);
+    const ok = idea(w, { creative_brief: { prompt: 'x', variations: 1 } });
+    await gen.generatePostAssets(WS_A, ok.id);
+    expect(s.pipeline.run.mock.calls[1][0].variations).toBe(1);
+  });
+
+  it('post em "needs_review" pode ter a mídia gerada (o claim aceita o status) e sai da revisão para a aprovação normal', async () => {
+    const { w, gen } = setup();
+    const post = idea(w, { status: 'needs_review', review_reason: 'Incoerência de data: "sextou" fora de sexta-feira.', review_score: 0 });
+    const r = await gen.generatePostAssets(WS_A, post.id);
+    expect(r.ok).toBe(true);
+    expect(post.status).toBe('pending_approval');
+  });
+
   it('erro do provedor: post failed com a mensagem, log do passo e { ok:false, error }', async () => {
     const { w, s, gen } = setup();
     s.providers.resolve.mockRejectedValueOnce(Object.assign(new Error('x'), {}));
@@ -86,7 +112,7 @@ describe('generatePostAssets — carrossel e vídeo', () => {
     expect(r).toEqual({ ok: true, items: 3, provider: 'gemini' });
     expect(s.pipeline.run).not.toHaveBeenCalled();
     expect(s.provider.generateImage).toHaveBeenCalledTimes(3);
-    expect(s.provider.generateImage.mock.calls.map((c: any) => c[0].finalPrompt.match(/slide \d de 3/)?.[0])).toEqual(['slide 1 de 3', 'slide 2 de 3', 'slide 3 de 3']);
+    expect(s.provider.generateImage.mock.calls.map((c: any) => c[0].finalPrompt.match(/imagem \d de 3 do carrossel/)?.[0])).toEqual(['imagem 1 de 3 do carrossel', 'imagem 2 de 3 do carrossel', 'imagem 3 de 3 do carrossel']);
     expect(s.provider.generateImage.mock.calls[0][0].aspectRatio).toBe('4:5');
     expect(post.media.map((m: any) => m.order)).toEqual([0, 1, 2]);
     expect(post.creative_brief.art_directions).toHaveLength(3);

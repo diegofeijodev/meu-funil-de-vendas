@@ -4,6 +4,8 @@ import { notFound, UserError } from '../media/user-error';
 import { strategyBrief } from '../strategist/strategist.prompt';
 import { StrategistService } from '../strategist/strategist.service';
 import { ContentService } from './content.service';
+import { ContentStrategyService } from './content-strategy.service';
+import { brandContext, DATE_RULES, fullDate, isCreditFailure, RunStrategy, Verdict } from './content-strategy';
 import { ASPECT, fmtDate, IgFormat } from './ig-types';
 import { IgStore, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
@@ -14,12 +16,16 @@ import { AutoConfig, AutoMode, CHUNK, computeSlots, MIN, plusDays, Slot, todaySP
 const ITEM = {
   type: 'object',
   additionalProperties: false,
-  required: ['index', 'theme', 'pillar', 'funnel_stage', 'hook', 'headline', 'caption', 'hashtags', 'cta', 'image_prompt', 'slides'],
+  required: ['index', 'theme', 'pillar', 'persona', 'product_name', 'funnel_stage', 'objective_link', 'hook', 'headline', 'caption', 'hashtags', 'cta', 'image_prompt', 'slides'],
   properties: {
     index: { type: 'integer' },
     theme: { type: 'string' },
     pillar: { type: 'string' },
-    funnel_stage: { type: 'string', enum: ['atracao', 'conexao', 'conversao'] },
+    // Campos novos da estratégia: o protótipo os pedia só no texto do prompt; aqui entram no esquema para o gateway devolvê-los.
+    persona: { type: 'string' },
+    product_name: { type: 'string' },
+    objective_link: { type: 'string' },
+    funnel_stage: { type: 'string', enum: ['atracao', 'conexao', 'consideracao', 'conversao'] },
     hook: { type: 'string' },
     headline: { type: 'string' },
     caption: { type: 'string' },
@@ -39,16 +45,29 @@ const FORMAT_GUIDE: Record<IgFormat, string> = {
   story_video: 'story em vídeo curto: cena simples de 5 s; headline curta; CTA de interação',
 };
 
+/** Quem perdeu o lease da programação (venceu e outro worker assumiu) para de escrever: o resultado dele é descartado. */
+class LeaseLost extends Error {}
+
 /** Trava do lote: MAIOR que o timeout da IA (`AiService.gw`: 180 s) com folga para gravar; senão outro tick pegaria o mesmo lote no meio da chamada. */
 export const LOCK_MS = 240_000;
 const weekdayName = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' });
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const dateCol = (s: string) => new Date(`${s}T12:00:00Z`);
 
+type RunCtx = {
+  plan: Prisma.ig_content_plansGetPayload<object>;
+  brand: NonNullable<Awaited<ReturnType<ContentService['brandFor']>>>;
+  products: { id: string; name: string; description: string | null; price: number | null }[];
+  personas: { name: string; age_range: string | null; pains: string | null; desires: string | null; interests: string | null }[];
+  objective: string;
+  campaign: unknown;
+};
+
 export type CreateAutoInput = AutoConfig & {
   planId?: string | null;
   brandId?: string | null;
   campaignId?: string | null;
+  /** Objetivo do período (obrigatório, ≥ 30 caracteres): a estratégia e todos os posts partem dele. */
   focus?: string;
   mode: AutoMode;
   recurring?: boolean;
@@ -65,6 +84,7 @@ export class AutoCalendarService {
   constructor(
     private readonly store: IgStore,
     private readonly content: ContentService,
+    private readonly contentStrategy: ContentStrategyService,
     private readonly strategist: StrategistService,
     private readonly mediaGen: MediaGenerationService,
     private readonly publishing: PublishingService,
@@ -88,7 +108,7 @@ export class AutoCalendarService {
       if (!plan) throw notFound('Plano de conteúdo não encontrado.');
       return planId;
     }
-    if (!brandId) throw new UserError('Escolha um plano de conteúdo ou uma marca.');
+    if (!brandId) throw new UserError('Cadastre a marca em Brands antes.');
     const brand = await this.content.brandFor(workspaceId, brandId);
     if (!brand) throw notFound('Marca não encontrada.');
     const { pillars } = await this.content.suggestPillars(workspaceId, { brandId, tone: brand.tone_of_voice ?? undefined, audience: brand.target_audience ?? undefined });
@@ -121,7 +141,10 @@ export class AutoCalendarService {
       const camp = await this.prisma.campaigns.findFirst({ where: { id: input.campaignId, workspace_id: workspaceId }, select: { id: true } });
       if (!camp) throw notFound('Campanha não encontrada.');
     }
+    if (!input.focus || input.focus.trim().length < 30) throw new UserError('Descreva o objetivo deste período (mínimo de 30 caracteres).');
     const planId = await this.ensurePlan(workspaceId, input.planId, input.brandId, input.mode);
+    const planRow = await this.prisma.ig_content_plans.findFirst({ where: { id: planId, workspace_id: workspaceId }, select: { brand_id: true } });
+    if (!planRow?.brand_id) throw new UserError('Cadastre a marca em Brands antes (e vincule-a ao plano de conteúdo).');
     const start = input.startDate < todaySP() ? todaySP() : input.startDate;
     const run = await this.prisma.ig_auto_runs.create({
       data: {
@@ -151,34 +174,72 @@ export class AutoCalendarService {
     return { runId: run.id, planId, total: slots.length, skipped };
   }
 
-  /** Preenche o próximo lote de horários com conteúdo da IA estrategista. Seguro para chamadas concorrentes. */
+  /** Estado da programação para quem não pegou a trava (ou perdeu o lease no meio do lote). */
+  private async snapshot(runId: string, forceBusy = false) {
+    const r = await this.prisma.ig_auto_runs.findUnique({ where: { id: runId }, select: { status: true, filled: true, slots: true, strategy_status: true } });
+    return {
+      filled: r?.filled ?? 0,
+      total: ((r?.slots as unknown[]) ?? []).length,
+      done: r?.status !== 'planning',
+      busy: forceBusy || (r?.status === 'planning' && r?.strategy_status !== 'review'),
+      strategyReview: r?.strategy_status === 'review',
+    };
+  }
+
+  /**
+   * Preenche a programação: 1) estratégia do período (revisada e aprovada pelo usuário); 2) posts em lotes, cada um validado
+   * (data + IA) e regerado até 2 vezes; o reprovado entra como `needs_review`. Seguro para chamadas concorrentes: o lote é pego por
+   * UPDATE condicional (lease de 240 s), o lease é renovado antes de cada chamada de IA e o resultado só vale se o lease ainda é nosso.
+   */
   async fillAutoRun(runId: string) {
+    const lock = { until: new Date(Date.now() + LOCK_MS) };
     const claimed = await this.prisma.ig_auto_runs.updateMany({
       where: { id: runId, status: 'planning', OR: [{ locked_until: null }, { locked_until: { lt: new Date() } }] },
-      data: { locked_until: new Date(Date.now() + LOCK_MS) },
+      data: { locked_until: lock.until },
     });
-    if (!claimed.count) {
-      const r = await this.prisma.ig_auto_runs.findUnique({ where: { id: runId }, select: { status: true, filled: true, slots: true } });
-      return { filled: r?.filled ?? 0, total: ((r?.slots as unknown[]) ?? []).length, done: r?.status !== 'planning', busy: r?.status === 'planning' };
-    }
+    if (!claimed.count) return this.snapshot(runId);
     const run = (await this.prisma.ig_auto_runs.findUnique({ where: { id: runId } }))!;
     const all = (run.slots ?? []) as unknown as Slot[];
-    // Horários que já passaram enquanto a programação esperava são descartados.
-    const chunk = all.slice(run.filled, run.filled + CHUNK);
-    const usable = chunk.filter((sl) => new Date(sl.at).getTime() > Date.now() + 10 * MIN);
+    /** Renova o lease; se outro worker o assumiu (venceu) ou a programação mudou, abandona sem escrever. */
+    const keep = async () => {
+      const next = new Date(Date.now() + LOCK_MS);
+      const got = await this.prisma.ig_auto_runs.updateMany({ where: { id: runId, status: 'planning', locked_until: lock.until }, data: { locked_until: next } });
+      if (!got.count) throw new LeaseLost();
+      lock.until = next;
+    };
+    const release = (extra: Prisma.ig_auto_runsUpdateManyMutationInput = {}) =>
+      this.prisma.ig_auto_runs.updateMany({ where: { id: runId, locked_until: lock.until }, data: { locked_until: null, ...extra } });
     try {
-      if (usable.length) await this.writeChunk(run, usable);
+      const ctx = await this.runContext(run);
+      // Passo "Estratégia": criada antes dos posts e revisada pelo usuário.
+      if (!run.strategy || run.strategy_status === 'pending') {
+        const { strategy } = await this.contentStrategy.buildRunStrategy({
+          workspaceId: run.workspace_id, objective: ctx.objective, brand: ctx.brand, products: ctx.products, personas: ctx.personas, plan: ctx.plan, slots: all,
+        });
+        const saved = await this.prisma.ig_auto_runs.updateMany({
+          where: { id: runId, locked_until: lock.until, strategy_status: run.strategy_status, filled: run.filled },
+          data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: 'review', locked_until: null, last_error: null, paused_reason: null },
+        });
+        if (!saved.count) throw new LeaseLost();
+        await this.store.logEvent({ workspace_id: run.workspace_id, plan_id: run.plan_id, kind: 'generation', message: 'Estratégia do período pronta: revise e aprove para gerar os posts.' });
+        return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: true };
+      }
+      if (run.strategy_status !== 'approved') {
+        await release();
+        return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: true };
+      }
+      // Horários que já passaram enquanto a programação esperava são descartados.
+      const chunk = all.slice(run.filled, run.filled + CHUNK);
+      const usable = chunk.filter((sl) => new Date(sl.at).getTime() > Date.now() + 10 * MIN);
+      if (usable.length) await this.writeChunk(run, usable, ctx, keep);
       const filled = run.filled + chunk.length;
       const done = filled >= all.length;
-      // Condicional ao `filled` lido: se a trava venceu e outro lote já avançou a programação, este resultado não a sobrescreve.
+      // Condicional ao `filled` lido E ao lease: se a trava venceu e outro lote já avançou a programação (ou ela foi cancelada), este resultado não a sobrescreve.
       const advanced = await this.prisma.ig_auto_runs.updateMany({
-        where: { id: runId, filled: run.filled },
-        data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null },
+        where: { id: runId, filled: run.filled, locked_until: lock.until },
+        data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null, paused_reason: null },
       });
-      if (!advanced.count) {
-        const cur = await this.prisma.ig_auto_runs.findUnique({ where: { id: runId }, select: { status: true, filled: true, slots: true } });
-        return { filled: cur?.filled ?? 0, total: ((cur?.slots as unknown[]) ?? []).length, done: cur?.status !== 'planning', busy: true };
-      }
+      if (!advanced.count) return this.snapshot(runId, true);
       if (done)
         await this.store.logEvent({
           workspace_id: run.workspace_id,
@@ -186,129 +247,206 @@ export class AutoCalendarService {
           kind: 'generation',
           message: `Estrategista concluiu os conteúdos da programação (${all.length} posts). Criativos sendo gerados, começando pelos mais próximos.`,
         });
-      return { filled, total: all.length, done, busy: false };
+      return { filled, total: all.length, done, busy: false, strategyReview: false };
     } catch (e) {
-      await this.prisma.ig_auto_runs.update({ where: { id: runId }, data: { locked_until: null, last_error: errText(e) } });
+      if (e instanceof LeaseLost) return this.snapshot(runId, true);
+      const credit = isCreditFailure(errText(e));
+      await release({ last_error: errText(e), paused_reason: credit ? 'Créditos de IA esgotados — programação pausada' : null });
       await this.store.logEvent({
         workspace_id: run.workspace_id,
         plan_id: run.plan_id,
         kind: 'failure',
         level: 'error',
-        message: `Estrategista falhou num lote da programação (tenta de novo em 5 min): ${errText(e)}`,
+        message: credit
+          ? 'Créditos de IA esgotados — programação pausada. Retoma sozinha quando houver crédito.'
+          : `Estrategista falhou num lote da programação (tenta de novo em 5 min): ${errText(e)}`,
       });
       throw e;
     }
   }
 
-  private async writeChunk(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[]) {
+  /** Marca, produtos, personas, plano e objetivo da programação (tudo DENTRO do workspace). Sem marca, nada roda. */
+  private async runContext(run: Prisma.ig_auto_runsGetPayload<object>) {
     const plan = await this.prisma.ig_content_plans.findFirst({ where: { id: run.plan_id, workspace_id: run.workspace_id } });
     if (!plan) throw notFound('Plano de conteúdo não encontrado.');
+    if (!plan.brand_id) throw new UserError('Cadastre a marca em Brands antes.');
     const brand = await this.content.brandFor(run.workspace_id, plan.brand_id);
-    let strategy: unknown = null;
-    if (run.campaign_id) strategy = strategyBrief(await this.strategist.currentStrategy(run.workspace_id, run.campaign_id));
+    if (!brand) throw new UserError('Cadastre a marca em Brands antes.');
+    const [prods, personas] = await Promise.all([
+      this.prisma.products.findMany({ where: { brand_id: brand.id, workspace_id: run.workspace_id }, select: { id: true, name: true, description: true, price: true }, take: 20 }),
+      this.prisma.personas.findMany({ where: { brand_id: brand.id, workspace_id: run.workspace_id }, select: { name: true, age_range: true, pains: true, desires: true, interests: true }, take: 6 }),
+    ]);
+    // Preço como número (Decimal serializaria como texto no prompt).
+    const products = prods.map((p) => ({ ...p, price: p.price == null ? null : Number(p.price) }));
+    const objective = (run.focus || plan.objective || '').trim();
+    if (!objective) throw new UserError('Informe o objetivo deste período na programação.');
+    let campaign: unknown = null;
+    if (run.campaign_id) campaign = strategyBrief(await this.strategist.currentStrategy(run.workspace_id, run.campaign_id));
+    return { plan, brand, products, personas, objective, campaign };
+  }
+
+  private async askPosts(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, fixes: Map<number, string>) {
+    const { plan, brand, products, personas, objective, campaign } = ctx;
+    const strategy = run.strategy as unknown as RunStrategy;
     // Evita repetir temas: últimos posts da empresa + os já criados nesta programação.
     const recent = await this.prisma.ig_posts.findMany({ where: { workspace_id: run.workspace_id, theme: { not: null } }, orderBy: { created_at: 'desc' }, take: 40, select: { theme: true } });
     const used = [...new Set(recent.map((r) => r.theme as string))];
-    const aiNotes = (Array.isArray(plan.ai_notes) ? plan.ai_notes : []) as { summary?: string }[];
-    const notes = aiNotes.length ? aiNotes[aiNotes.length - 1]?.summary : null;
-    const brandInfo = brand
-      ? {
-          nome: brand.name,
-          descricao: brand.description,
-          publico: brand.target_audience,
-          diferenciais: brand.differentials,
-          tom: brand.tone_of_voice,
-          palavras_preferidas: brand.preferred_words,
-          palavras_proibidas: brand.banned_words,
-          segmento: brand.segment,
-          regiao: brand.region,
-        }
-      : null;
-    const weights = (plan.pillar_weights ?? {}) as Record<string, unknown>;
-    const startDate = dayOf(run.start_date);
-    const endDate = dayOf(run.end_date);
     const prompt = [
       'Você é a estrategista de conteúdo sênior de uma agência de marketing no Brasil. Escreva em português do Brasil.',
-      'Planeje o conteúdo de Instagram de CADA horário abaixo. Data, horário e formato já estão definidos: não mude.',
-      `Período completo da programação: ${startDate} a ${endDate}. Considere datas comemorativas, feriados e sazonalidade do Brasil que caiam nesses dias quando fizer sentido para a marca.`,
-      run.focus ? `FOCO DESTE PERÍODO (prioridade máxima): ${run.focus}` : '',
-      `Objetivo do plano: ${plan.objective ?? '-'}. Tom de voz: ${plan.tone_of_voice ?? brand?.tone_of_voice ?? '-'}.`,
-      `Pilares: ${JSON.stringify(plan.content_pillars)}.`,
-      Object.keys(weights).length ? `Pesos dos pilares (pelo desempenho real): ${JSON.stringify(weights)}.` : '',
-      notes ? `Aprendizados dos resultados: ${notes}` : '',
-      `Hashtags: ${JSON.stringify(plan.hashtag_strategy)}. CTA padrão: ${plan.cta_default ?? '-'}.`,
-      brandInfo ? `MARCA: ${JSON.stringify(brandInfo)}` : '',
-      strategy ? `ESTRATÉGIA DA CAMPANHA (siga a big idea, os ângulos e o CTA): ${JSON.stringify(strategy)}` : '',
-      'Equilíbrio do funil no período: ~50% atração (alcance: dicas, tendências, educativo), ~30% conexão (bastidores, prova social, autoridade), ~20% conversão (oferta e CTA direto). Varie pilares e ganchos; nada genérico.',
+      'Escreva o conteúdo de Instagram de CADA horário abaixo. Data, horário e formato já estão definidos: não mude.',
+      'ORDEM DE PRIORIDADE (nunca inverta):',
+      `1. OBJETIVO DO PERÍODO (fonte principal, cada post precisa servir a ele): ${objective}`,
+      `2. ESTRATÉGIA APROVADA: ${JSON.stringify(strategy.texto_editado ? { ...strategy, ajustes_do_cliente: strategy.texto_editado } : strategy)}`,
+      `3. DNA DA MARCA: ${JSON.stringify(brandContext(brand))}`,
+      `4. PRODUTOS (únicos preços válidos; cite pelo nome exato): ${JSON.stringify(products.map((p) => ({ nome: p.name, descricao: p.description, preco: p.price })))}`,
+      `   PERSONAS: ${JSON.stringify(personas.map((p) => p.name))}`,
+      `5. PLANO: tom ${plan.tone_of_voice ?? brand.tone_of_voice ?? '-'}; hashtags ${JSON.stringify(plan.hashtag_strategy)}; CTA padrão ${plan.cta_default ?? '-'}.`,
+      campaign ? `CAMPANHA LIGADA: ${JSON.stringify(campaign)}` : '',
+      'PROIBIDO: falar de outro negócio ou de temas fora do segmento da marca; inventar preço, promoção ou número fora dos produtos/DNA; usar palavras proibidas da marca; CTA fora da lista de CTAs da estratégia.',
+      DATE_RULES,
       used.length ? `Temas já usados (não repita): ${JSON.stringify(used.slice(0, 40))}.` : '',
       'Guia por formato:',
       ...Object.entries(FORMAT_GUIDE).map(([k, v]) => `- ${k}: ${v}.`),
-      'Campos: index (o mesmo do horário), theme, pillar, funnel_stage, hook (primeira linha da legenda), headline (texto curto aplicado por cima da arte, até 7 palavras, sem hashtags),',
-      "caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta, image_prompt (briefing visual em português do que aparece, SEM texto escrito na imagem — o texto é aplicado depois), slides (só carrossel, senão vazio).",
-      'HORÁRIOS:',
-      ...slots.map((sl) => `- index ${sl.index}: ${weekdayName(sl.at)} ${fmtDate(sl.at)} · ${sl.format}`),
+      "Campos: index, theme, pillar (um dos pilares da estratégia), persona, product_name (nome exato do produto citado ou vazio), funnel_stage (atracao|consideracao|conversao), objective_link (uma frase ligando o post ao objetivo), hook, headline (até 7 palavras, sem hashtags), caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta (um dos CTAs da estratégia), image_prompt (briefing visual em português do que aparece, SEM texto na imagem), slides (só carrossel, senão vazio).",
+      'HORÁRIOS (data real, fuso America/Sao_Paulo):',
+      ...slots.map((sl) => `- index ${sl.index}: ${fullDate(sl.at)} · ${sl.format}${fixes.get(sl.index) ? ` · REFAÇA, reprovado antes por: ${fixes.get(sl.index)}` : ''}`),
       'Devolva SOMENTE JSON estrito {"posts":[...]} com um item por horário.',
     ]
       .filter(Boolean)
       .join('\n');
     const { json, provider } = await this.content.aiJson(run.workspace_id, 'auto', prompt, SCHEMA, 'ig_auto_calendar');
     const list = Array.isArray(json?.posts) ? (json.posts as any[]) : [];
-    const items = new Map<number, any>(list.filter((p) => p && typeof p === 'object').map((p) => [Number(p.index), p]));
-    if (!items.size) throw new UserError('A IA não devolveu conteúdos.');
+    return { items: new Map<number, any>(list.filter((p) => p && typeof p === 'object').map((p) => [Number(p.index), p])), provider };
+  }
+
+  private async writeChunk(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, keep: () => Promise<void>) {
+    const { plan, products } = ctx;
+    const strategy = run.strategy as unknown as RunStrategy;
+    const final = new Map<number, { p: any; verdict: Verdict | null; attempts: number; provider: string; issues: string[] }>();
+    let pending = slots;
+    const fixes = new Map<number, string>();
+    // Gera, valida e regera só os reprovados (até 2 novas tentativas).
+    for (let attempt = 0; attempt < 3 && pending.length; attempt++) {
+      await keep();
+      const r = await this.askPosts(run, pending, ctx, fixes);
+      if (!r.items.size && attempt === 0) throw new UserError('A IA não devolveu conteúdos.');
+      await keep();
+      const verdicts = await this.contentStrategy.validatePosts({
+        workspaceId: run.workspace_id,
+        brand: ctx.brand,
+        objective: ctx.objective,
+        strategy,
+        products,
+        posts: pending.map((sl) => {
+          const p = r.items.get(sl.index) ?? {};
+          return { index: sl.index, at: sl.at, theme: asText(p.theme), hook: asText(p.hook), caption: asText(p.caption), headline: asText(p.headline), cta: asText(p.cta) };
+        }),
+      });
+      const next: Slot[] = [];
+      for (const sl of pending) {
+        const p = r.items.get(sl.index);
+        const v = verdicts.get(sl.index) ?? null;
+        const issues = p ? [] : ['a IA não devolveu conteúdo para este horário'];
+        if (p && p.hashtags != null && !Array.isArray(p.hashtags)) issues.push('hashtags vieram como texto e foram normalizadas');
+        const prev = final.get(sl.index);
+        final.set(sl.index, { p: p ?? prev?.p ?? {}, verdict: v, attempts: attempt + 1, provider: r.provider, issues });
+        if (!p || (v && !v.aprovado)) {
+          fixes.set(sl.index, v?.motivo || 'conteúdo ausente');
+          next.push(sl);
+        }
+      }
+      pending = next;
+    }
+    const productId = (name: unknown) => {
+      const n = (asText(name) ?? '').toLowerCase();
+      return n ? (products.find((x) => x.name && (x.name.toLowerCase() === n || n.includes(x.name.toLowerCase())))?.id ?? null) : null;
+    };
+    const stage = (v: unknown) => {
+      const t = (asText(v) ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      return t.startsWith('conv') ? 'conversao' : t.startsWith('cons') || t.startsWith('cone') ? 'consideracao' : 'atracao';
+    };
     const rows: Prisma.ig_postsCreateManyInput[] = slots.map((sl) => {
-      const raw = items.get(sl.index);
-      const at = new Date().toISOString();
+      const f = final.get(sl.index)!;
+      const p = f.p ?? {};
       const soon = new Date(sl.at).getTime() - Date.now() < 90 * MIN;
-      const base = {
+      const rejected = !!f.verdict && !f.verdict.aprovado;
+      const empty = !asText(p.caption) && !asText(p.theme);
+      const needsReview = rejected || empty;
+      const at = new Date().toISOString();
+      return {
         workspace_id: run.workspace_id,
         plan_id: run.plan_id,
         run_id: run.id,
         automation: run.mode,
         format: sl.format,
-        status: 'idea',
+        status: needsReview ? 'needs_review' : 'idea',
+        review_reason: needsReview ? f.verdict?.motivo || 'A IA não devolveu conteúdo para este horário.' : null,
+        review_score: f.verdict?.nota ?? null,
         scheduled_at: new Date(sl.at),
-        ai_provider: provider,
-      };
-      try {
-        const p = raw ?? {};
-        const issues: string[] = [];
-        if (!raw) issues.push('a IA não devolveu conteúdo para este horário');
-        if (p.hashtags != null && !Array.isArray(p.hashtags)) issues.push('hashtags vieram como texto e foram normalizadas');
-        return {
-          ...base,
-          theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
-          hook: asText(p.hook),
-          caption: asText(p.caption),
-          hashtags: normalizeHashtags(p.hashtags),
-          cta: asText(p.cta) || plan.cta_default || null,
-          creative_brief: {
-            prompt: asText(p.image_prompt) || asText(p.theme) || '',
-            slides: sl.format === 'feed_carousel' ? (asList(p.slides).slice(0, 10) as string[]) : [],
-            aspect_ratio: ASPECT[sl.format],
-            headline: asText(p.headline),
-            pillar: asText(p.pillar),
-            funnel_stage: asText(p.funnel_stage),
-            campaign_id: run.campaign_id ?? null,
-            // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
-            variations: soon ? 1 : 3,
+        theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
+        hook: asText(p.hook),
+        caption: asText(p.caption),
+        hashtags: normalizeHashtags(p.hashtags),
+        cta: asText(p.cta) || plan.cta_default || null,
+        objective_link: asText(p.objective_link),
+        pillar: asText(p.pillar),
+        persona: asText(p.persona),
+        product_id: productId(p.product_name),
+        funnel_stage: stage(p.funnel_stage),
+        creative_brief: {
+          prompt: asText(p.image_prompt) || asText(p.theme) || '',
+          slides: sl.format === 'feed_carousel' ? (asList(p.slides).slice(0, 10) as string[]) : [],
+          aspect_ratio: ASPECT[sl.format],
+          headline: asText(p.headline),
+          pillar: asText(p.pillar),
+          funnel_stage: stage(p.funnel_stage),
+          product_name: asText(p.product_name),
+          campaign_id: run.campaign_id ?? null,
+          // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
+          variations: soon ? 1 : 3,
+        },
+        ai_provider: f.provider,
+        ai_generation_log: [
+          {
+            at,
+            step: 'auto_calendar',
+            provider: f.provider,
+            run_id: run.id,
+            attempts: f.attempts,
+            review: f.verdict,
+            ...(f.issues.length ? { warnings: f.issues } : {}),
+            ...(needsReview ? { status: 'needs_review' } : {}),
           },
-          ai_generation_log: [{ at, step: 'auto_calendar', provider, run_id: run.id, ...(issues.length ? { warnings: issues } : {}) }],
-        };
-      } catch (e) {
-        // Um item malformado não derruba a programação: vira um post simples com o aviso no log.
-        return {
-          ...base,
-          theme: `Post de ${weekdayName(sl.at)}`,
-          hook: null,
-          caption: null,
-          hashtags: [],
-          cta: plan.cta_default || null,
-          creative_brief: { prompt: '', slides: [], aspect_ratio: ASPECT[sl.format], campaign_id: run.campaign_id ?? null, variations: 1 },
-          ai_generation_log: [{ at, step: 'auto_calendar', provider, run_id: run.id, status: 'failed', error: `Item malformado da IA: ${errText(e)}` }],
-        };
-      }
+        ],
+      };
     });
+    // Última conferência do lease: só grava os posts se este lote ainda é o dono da programação.
+    await keep();
     await this.prisma.ig_posts.createMany({ data: rows });
+  }
+
+  /** Usuário aprova (e opcionalmente ajusta em texto) a estratégia: libera a geração dos posts. */
+  async approveRunStrategy(workspaceId: string, runId: string, editedText?: string | null) {
+    const run = await this.prisma.ig_auto_runs.findFirst({ where: { id: runId, workspace_id: workspaceId }, select: { id: true, strategy: true } });
+    if (!run?.strategy) throw new UserError('A estratégia ainda não foi gerada.');
+    const prev = run.strategy as unknown as RunStrategy;
+    const strategy = { ...prev, texto_editado: editedText?.trim() || prev.texto_editado || null };
+    // Só programação em andamento ("planning"): uma cancelada/concluída não volta a ser aprovada.
+    await this.prisma.ig_auto_runs.updateMany({ where: { id: runId, workspace_id: workspaceId, status: 'planning' }, data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: 'approved' } });
+    return { ok: true };
+  }
+
+  /** Pede uma nova estratégia (descarta a atual). Recusado enquanto um lote da IA está rodando (o lease está vivo). */
+  async redoRunStrategy(workspaceId: string, runId: string) {
+    const got = await this.prisma.ig_auto_runs.updateMany({
+      where: { id: runId, workspace_id: workspaceId, status: 'planning', OR: [{ locked_until: null }, { locked_until: { lt: new Date() } }] },
+      data: { strategy: Prisma.DbNull, strategy_status: 'pending', paused_reason: null },
+    });
+    if (!got.count) {
+      const cur = await this.prisma.ig_auto_runs.findFirst({ where: { id: runId, workspace_id: workspaceId }, select: { status: true } });
+      if (cur?.status === 'planning') throw new UserError('A estratégia está sendo gerada ou os posts estão em criação agora. Tente de novo em instantes.');
+    }
+    return { ok: true };
   }
 
   /** Gera agora o criativo do próximo post da programação que acontece nas próximas horas (laço do navegador). */
@@ -331,7 +469,7 @@ export class AutoCalendarService {
     const out: Record<string, unknown> = {};
 
     // 1) Lotes pendentes da estrategista (o usuário pode ter fechado a página).
-    const planning = await this.prisma.ig_auto_runs.findMany({ where: { status: 'planning' }, orderBy: { created_at: 'asc' }, take: 1, select: { id: true } });
+    const planning = await this.prisma.ig_auto_runs.findMany({ where: { status: 'planning', strategy_status: { not: 'review' } }, orderBy: { created_at: 'asc' }, take: 1, select: { id: true } });
     let filled = 0;
     for (const r of planning) await this.fillAutoRun(r.id).then(() => filled++).catch(() => null);
     out['filled'] = filled;
@@ -374,7 +512,7 @@ export class AutoCalendarService {
 
     // 3) Modo com aprovação: sem aprovação até 10 min antes → mesmo horário do dia seguinte.
     const late = await this.prisma.ig_posts.findMany({
-      where: { automation: 'approval', status: { in: ['idea', 'generating', 'pending_approval', 'ready'] }, approved_at: null, scheduled_at: { lt: new Date(Date.now() + 10 * MIN) } },
+      where: { automation: 'approval', status: { in: ['idea', 'generating', 'needs_review', 'pending_approval', 'ready'] }, approved_at: null, scheduled_at: { lt: new Date(Date.now() + 10 * MIN) } },
       take: 50,
       select: { id: true, workspace_id: true, plan_id: true, scheduled_at: true },
     });
@@ -434,6 +572,8 @@ export class AutoCalendarService {
               story_times: root.story_times,
               formats: root.formats,
               focus: root.focus,
+              // Semana repetida herda a estratégia aprovada (só redistribui os dias).
+              ...(root.strategy_status === 'approved' && root.strategy ? { strategy: root.strategy as Prisma.InputJsonObject, strategy_status: 'approved' } : { strategy_status: 'pending' }),
               mode: root.mode,
               recurring: false,
               slots: slots as unknown as Prisma.InputJsonArray,
@@ -495,6 +635,7 @@ export class AutoCalendarService {
           scheduled: c(['scheduled', 'publishing']),
           published: c(['published']),
           failed: c(['failed']),
+          review: c(['needs_review']),
         },
       };
     });

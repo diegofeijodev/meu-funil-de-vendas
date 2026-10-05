@@ -1,6 +1,9 @@
+import { Transform } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { IG_FORMATS } from './ig-types';
 
+const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+const FOCUS_MSG = 'Descreva o objetivo deste período (mínimo de 30 caracteres).';
 const ENGINES = ['auto', 'chatgpt', 'gemini'] as const;
 const PROVIDERS = ['auto', 'higgsfield', 'chatgpt', 'gemini'] as const;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -89,7 +92,8 @@ export class CreateAutoCalendarDto extends AutoScheduleBase {
   @IsOptional() @IsUUID() planId?: string | null;
   @IsOptional() @IsUUID() brandId?: string | null;
   @IsOptional() @IsUUID() campaignId?: string | null;
-  @IsOptional() @IsString() @MaxLength(1000) focus?: string;
+  /** Objetivo do período: obrigatório (≥ 30 caracteres, depois do trim); a estratégia e todos os posts partem dele. */
+  @Transform(trim) @IsString({ message: FOCUS_MSG }) @MinLength(30, { message: FOCUS_MSG }) @MaxLength(1000) focus!: string;
   @IsIn(['publish', 'approval']) mode!: 'publish' | 'approval';
   @IsOptional() @IsBoolean() recurring?: boolean;
 }
@@ -98,6 +102,11 @@ export class PreviewAutoCalendarDto extends AutoScheduleBase {}
 
 export class RunRefDto {
   @IsUUID() runId!: string;
+}
+
+export class ApproveAutoStrategyDto {
+  @IsUUID() runId!: string;
+  @IsOptional() @IsString() @MaxLength(4000) editedText?: string | null;
 }
 
 export class GenerateNextAutoMediaDto {

@@ -7,7 +7,7 @@ import { ADMIN, MARKETING, OWNER, STRANGER, VIEWER, WS_A, WS_B, status } from '.
 import { InstagramResourcesController } from '../instagram-resources.controller';
 import { InstagramController } from '../instagram.controller';
 import {
-  CreateAutoCalendarDto, CreateIgPlanDto, GenerateNextAutoMediaDto, PatchIgPostDto, PreviewAutoCalendarDto, RejectPostDto, SchedulePostDto, GenerateContentCalendarDto, GeneratePostAssetsDto,
+  ApproveAutoStrategyDto, CreateAutoCalendarDto, CreateIgPlanDto, GenerateNextAutoMediaDto, PatchIgPostDto, PreviewAutoCalendarDto, RejectPostDto, SchedulePostDto, GenerateContentCalendarDto, GeneratePostAssetsDto,
 } from '../instagram.dto';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 
@@ -116,8 +116,9 @@ describe('leituras (todas escopadas no workspace)', () => {
     seedPost(w, { scheduled_at: null, theme: 'sem data', status: 'pending_approval' });
     seedPost(w, { scheduled_at: t(1), theme: 'a' });
     seedPost(w, { workspace_id: WS_B, theme: 'alheio', status: 'pending_approval' });
-    expect((await r.listPosts(WS_A)).map((p) => p.theme)).toEqual(['a', 'c', 'sem data']);
-    expect(await r.pendingCount(WS_A)).toEqual({ count: 2 });
+    seedPost(w, { scheduled_at: t(2), theme: 'revisão', status: 'needs_review' }); // posts em revisão também aparecem no selo
+    expect((await r.listPosts(WS_A)).map((p) => p.theme)).toEqual(['a', 'revisão', 'c', 'sem data']);
+    expect(await r.pendingCount(WS_A)).toEqual({ count: 3 });
     expect(await r.pendingCount(uuid())).toEqual({ count: 0 });
     for (let i = 0; i < 25; i++) w.t['ig_autopilot_events']!.rows.push({ id: uuid(), workspace_id: WS_A, kind: 'media', message: `e${i}`, created_at: new Date(2030, 0, 1, 0, i) });
     w.t['ig_autopilot_events']!.rows.push({ id: uuid(), workspace_id: WS_B, kind: 'media', message: 'alheio', created_at: new Date(2031, 0, 1) });
@@ -161,11 +162,19 @@ describe('WorkspaceAccessGuard nas rotas de recurso (GET = read, escrita = write
 });
 
 describe('DTOs das ações (todo campo aceito tem validação)', () => {
-  const auto = (over: Record<string, unknown> = {}) => ({ workspaceId: uuid(), startDate: '2030-01-01', endDate: '2030-01-07', weekdays: [1, 2], times: ['09:00'], storyTimes: [], formats: ['feed_image'], mode: 'approval', ...over });
+  const auto = (over: Record<string, unknown> = {}) => ({ workspaceId: uuid(), startDate: '2030-01-01', endDate: '2030-01-07', weekdays: [1, 2], times: ['09:00'], storyTimes: [], formats: ['feed_image'], mode: 'approval', focus: 'Levar o público de Valinhos para almoçar o prato executivo durante a semana', ...over });
 
   it('createAutoCalendar', async () => {
+    const FOCUS = 'Levar o público de Valinhos para almoçar o prato executivo durante a semana';
     expect(await errs(CreateAutoCalendarDto, auto())).toEqual([]);
-    expect(await errs(CreateAutoCalendarDto, auto({ planId: null, brandId: null, campaignId: null, focus: 'x', recurring: true, asap: true }))).toEqual([]);
+    expect(await errs(CreateAutoCalendarDto, auto({ planId: null, brandId: null, campaignId: null, focus: FOCUS, recurring: true, asap: true }))).toEqual([]);
+    // o objetivo do período é obrigatório (≥ 30 caracteres depois do trim, ≤ 1000) com a mensagem do protótipo
+    const msg = async (over: Record<string, unknown>) => (await validate(plainToInstance(CreateAutoCalendarDto, auto(over)) as object)).flatMap((e) => Object.values(e.constraints ?? {}));
+    expect(await errs(CreateAutoCalendarDto, auto({ focus: undefined }))).toEqual(['focus']);
+    expect(await errs(CreateAutoCalendarDto, auto({ focus: 'curto demais' }))).toEqual(['focus']);
+    expect(await errs(CreateAutoCalendarDto, auto({ focus: `  ${'x'.repeat(29)}  ` }))).toEqual(['focus']);
+    expect(await errs(CreateAutoCalendarDto, auto({ focus: `  ${'x'.repeat(30)}  ` }))).toEqual([]);
+    expect(await msg({ focus: 'curto' })).toContain('Descreva o objetivo deste período (mínimo de 30 caracteres).');
     expect(await errs(CreateAutoCalendarDto, auto({ weekdays: [] }))).toEqual(['weekdays']); // criar exige ao menos um dia (min 1 do protótipo)
     expect(await errs(CreateAutoCalendarDto, auto({ weekdays: [7] }))).toEqual(['weekdays']);
     expect(await errs(CreateAutoCalendarDto, auto({ times: Array.from({ length: 9 }, () => '09:00') }))).toEqual(['times']);
@@ -181,10 +190,16 @@ describe('DTOs das ações (todo campo aceito tem validação)', () => {
   });
 
   it('previewAutoCalendar (sem workspace) / generateNextAutoMedia / schedulePost / rejectPost / generateContentCalendar / generatePostAssets', async () => {
-    const { workspaceId: _w, mode: _m, ...pv } = auto();
+    const { workspaceId: _w, mode: _m, focus: _f, ...pv } = auto(); // a prévia não tem objetivo
     expect(await errs(PreviewAutoCalendarDto, pv)).toEqual([]);
     expect(await errs(PreviewAutoCalendarDto, { ...pv, weekdays: [] })).toEqual([]); // a prévia aceita vazio (0 horários)
     expect(await errs(PreviewAutoCalendarDto, { ...pv, mode: 'publish' })).toEqual(['mode']);
+    expect(await errs(ApproveAutoStrategyDto, { runId: uuid() })).toEqual([]);
+    expect(await errs(ApproveAutoStrategyDto, { runId: uuid(), editedText: null })).toEqual([]);
+    expect(await errs(ApproveAutoStrategyDto, { runId: uuid(), editedText: 'x'.repeat(4000) })).toEqual([]);
+    expect(await errs(ApproveAutoStrategyDto, { runId: uuid(), editedText: 'x'.repeat(4001) })).toEqual(['editedText']);
+    expect(await errs(ApproveAutoStrategyDto, { runId: 'x' })).toEqual(['runId']);
+    expect(await errs(ApproveAutoStrategyDto, { runId: uuid(), extra: 1 })).toEqual(['extra']);
     expect(await errs(GenerateNextAutoMediaDto, { runId: uuid(), withinHours: 72 })).toEqual([]);
     expect(await errs(GenerateNextAutoMediaDto, { runId: uuid(), withinHours: 0 })).toEqual(['withinHours']);
     expect(await errs(GenerateNextAutoMediaDto, { runId: uuid(), withinHours: 73 })).toEqual(['withinHours']);
@@ -201,12 +216,12 @@ describe('DTOs das ações (todo campo aceito tem validação)', () => {
     expect(await errs(GeneratePostAssetsDto, { ...ids, provider: 'midjourney' })).toEqual(['provider']);
   });
 
-  it('as 21 ações do protótipo viram rotas POST /v1/instagram/<kebab>', () => {
+  it('as 23 ações (21 do protótipo + aprovar/refazer a estratégia) viram rotas POST /v1/instagram/<kebab>', () => {
     const paths = Reflect.ownKeys(InstagramController.prototype).filter((k) => k !== 'constructor').map((k) => Reflect.getMetadata('path', (InstagramController.prototype as any)[k]));
     expect(paths.sort()).toEqual([
-      'approve-post', 'cancel-auto-calendar', 'collect-account-insights-now', 'collect-post-metrics', 'connect-instagram-account', 'create-auto-calendar', 'disconnect-instagram-account',
+      'approve-auto-strategy', 'approve-post', 'cancel-auto-calendar', 'collect-account-insights-now', 'collect-post-metrics', 'connect-instagram-account', 'create-auto-calendar', 'disconnect-instagram-account',
       'fill-auto-calendar', 'generate-content-calendar', 'generate-next-auto-media', 'generate-post-assets', 'list-instagram-options', 'preview-auto-calendar', 'publish-instagram-post',
-      'regenerate-caption', 'regenerate-media', 'reject-post', 'schedule-post', 'suggest-pillars', 'sync-instagram-history', 'upload-post-media',
+      'redo-auto-strategy', 'regenerate-caption', 'regenerate-media', 'reject-post', 'schedule-post', 'suggest-pillars', 'sync-instagram-history', 'upload-post-media',
     ]);
   });
 });

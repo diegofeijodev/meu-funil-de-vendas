@@ -124,7 +124,7 @@ export class AutopilotService {
     if (approvalPlanIds.length) {
       const limit = new Date(Date.now() + 2 * 3600e3);
       const late = await this.prisma.ig_posts.findMany({
-        where: { plan_id: { in: approvalPlanIds }, automation: null, status: { in: ['idea', 'generating', 'pending_approval', 'ready'] }, approved_at: null, scheduled_at: { lt: limit } },
+        where: { plan_id: { in: approvalPlanIds }, automation: null, status: { in: ['idea', 'generating', 'needs_review', 'pending_approval', 'ready'] }, approved_at: null, scheduled_at: { lt: limit } },
         take: 50,
         select: { id: true, workspace_id: true, plan_id: true, scheduled_at: true },
       });
