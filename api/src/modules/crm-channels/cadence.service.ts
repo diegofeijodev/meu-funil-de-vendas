@@ -377,10 +377,20 @@ export class CadenceService {
 
   // ------------------------------------------------------------------ SLA
 
-  /** Tarefa para os leads parados além do SLA da etapa (dedupe pelo título). */
+  /**
+   * Tarefa para os leads parados além do SLA da etapa (dedupe pelo título, seguro para execuções concorrentes: cron + HTTP + botão do painel).
+   * A janela de `limit` leads só tem quem pode precisar de alerta (etapa com SLA, não ganha/perdida, sem tarefa SLA aberta) e vai dos mais antigos
+   * aos mais novos na etapa — sem isso os mesmos 500 leads sem SLA estourado ocupavam a janela e o resto nunca era examinado.
+   */
   async createSlaAlerts(limit = 500, workspaceId?: string): Promise<number> {
     const leads = await this.prisma.crm_leads.findMany({
-      where: { stage_id: { not: null }, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
+      where: {
+        stage_id: { not: null },
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
+        stage: { is_won: false, is_lost: false, sla_hours: { gt: 0 } },
+        crm_tasks: { none: { status: 'open', title: { startsWith: 'SLA estourado em' } } },
+      },
+      orderBy: [{ stage_entered_at: 'asc' }, { id: 'asc' }],
       select: { id: true, name: true, owner_id: true, workspace_id: true, stage_entered_at: true, stage: { select: { name: true, sla_hours: true, is_won: true, is_lost: true } } },
       take: limit,
     });
@@ -390,9 +400,15 @@ export class CadenceService {
       if (!stage || stage.is_won || stage.is_lost || !stage.sla_hours) continue;
       if (Date.now() - lead.stage_entered_at.getTime() < stage.sla_hours * 3_600_000) continue;
       const title = `SLA estourado em ${stage.name} — ${lead.name}`;
-      const existing = await this.prisma.crm_tasks.findFirst({ where: { lead_id: lead.id, title }, select: { id: true } });
-      if (existing) continue;
-      await this.prisma.crm_tasks.create({ data: { workspace_id: lead.workspace_id, lead_id: lead.id, title, assignee_id: lead.owner_id ?? null, due_at: new Date(), status: 'open' } });
+      // Confere e cria sob um lock por lead: duas execuções simultâneas não criam a tarefa (nem a interação) duas vezes.
+      const made = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'crm-sla:' + lead.id}))`;
+        const existing = await tx.crm_tasks.findFirst({ where: { lead_id: lead.id, title }, select: { id: true } });
+        if (existing) return false;
+        await tx.crm_tasks.create({ data: { workspace_id: lead.workspace_id, lead_id: lead.id, title, assignee_id: lead.owner_id ?? null, due_at: new Date(), status: 'open' } });
+        return true;
+      });
+      if (!made) continue;
       await this.core.addInteraction({ workspaceId: lead.workspace_id, leadId: lead.id, kind: 'ai_action', authorType: 'system', content: `Lead parado além do SLA da etapa ${stage.name}. Tarefa criada para o responsável.` });
       created += 1;
     }
