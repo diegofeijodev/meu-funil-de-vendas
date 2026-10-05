@@ -78,6 +78,8 @@ Detalhes e rotas HTTP equivalentes: `docs/api-contract.md` §7.
 JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... UNSUBSCRIBE_SECRET=... PUBLIC_URL=https://api.exemplo.com APP_URL=https://app.exemplo.com docker compose --profile full up --build
 ```
 
+Para rodar o perfil `full` localmente (URLs `localhost`), use `NODE_ENV=development` (e `CORS_ORIGINS` se mudar a porta do web): `NODE_ENV=development docker compose --profile full up --build`.
+
 ## Rodar o web
 
 ```bash

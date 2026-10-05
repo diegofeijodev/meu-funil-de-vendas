@@ -30,9 +30,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:-}
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3015
-      CORS_ORIGINS: http://localhost:3025
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3025}
       # Em produção as duas são OBRIGATÓRIAS e não podem apontar para localhost (a API não sobe): defina no .env do compose.
       PUBLIC_URL: ${PUBLIC_URL:-}
       APP_URL: ${APP_URL:-}
