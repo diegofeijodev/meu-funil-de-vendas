@@ -190,6 +190,7 @@ model products {
   created_at     DateTime   @default(now()) @db.Timestamptz(6)
   workspace      workspaces @relation("products_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   brand          brands     @relation("products_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  ig_posts       ig_posts[] @relation("ig_posts_product_id")
 
   @@index([workspace_id])
 }
@@ -582,9 +583,17 @@ model ig_posts {
   automation          String?
   run_id              String?               @db.Uuid
   lease_until         DateTime?             @db.Timestamptz(6)
+  objective_link      String?
+  pillar              String?
+  persona             String?
+  product_id          String?               @db.Uuid
+  funnel_stage        String?
+  review_reason       String?
+  review_score        Decimal?              @db.Decimal
   workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
   run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)
+  product             products?             @relation("ig_posts_product_id", fields: [product_id], references: [id], onDelete: SetNull)
   publishing_jobs     publishing_jobs[]     @relation("publishing_jobs_ig_post_id")
   ig_post_metrics     ig_post_metrics[]     @relation("ig_post_metrics_post_id")
   ig_autopilot_events ig_autopilot_events[] @relation("ig_autopilot_events_post_id")
@@ -678,6 +687,9 @@ model ig_auto_runs {
   filled                 Int              @default(0)
   last_error             String?
   locked_until           DateTime?        @db.Timestamptz(6)
+  strategy               Json?            @db.JsonB
+  strategy_status        String           @default("pending")
+  paused_reason          String?
   created_at             DateTime         @default(now()) @db.Timestamptz(6)
   updated_at             DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
   workspace              workspaces       @relation("ig_auto_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
