@@ -141,7 +141,14 @@ export class InboundService {
     });
     try {
       const externalId = await this.sendInstagramDm(args.workspaceId, { id: lead.instagram_id }, args.text);
-      await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent', external_id: externalId } });
+      try {
+        await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent', external_id: externalId } });
+      } catch (e) {
+        // A DM JÁ foi entregue: um id repetido (índice único) não pode virar "failed" nem reenvio — fica "sent" sem o id.
+        if ((e as { code?: string }).code !== 'P2002') throw e;
+        this.logger.warn(`[instagram] id repetido (${externalId}); mensagem ${row.id} fica "sent" sem external_id`);
+        await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent' } });
+      }
       await this.prisma.crm_conversations.update({ where: { id: conv.id }, data: { last_message_at: new Date(), last_message_preview: args.text.slice(0, 120) } });
       return { id: row.id, externalId };
     } catch (e) {
@@ -185,9 +192,15 @@ export class InboundService {
           return null;
         });
         const conv = await this.ensureIgConversation(ws, msg.igsid, leadId);
-        await this.prisma.crm_messages.create({
-          data: { workspace_id: ws, conversation_id: conv.id, lead_id: leadId, direction: 'out', message_type: 'text', body: dm, status: externalId ? 'sent' : 'failed', external_id: externalId, author_type: rule ? 'system' : 'ai' },
-        });
+        const outData = { workspace_id: ws, conversation_id: conv.id, lead_id: leadId, direction: 'out', message_type: 'text', body: dm, status: externalId ? 'sent' : 'failed', author_type: rule ? 'system' : 'ai' };
+        try {
+          await this.prisma.crm_messages.create({ data: { ...outData, external_id: externalId } });
+        } catch (e) {
+          // A resposta privada JÁ foi entregue: id repetido (índice único) grava a mensagem como "sent" sem o id, sem lançar.
+          if ((e as { code?: string }).code !== 'P2002') throw e;
+          this.logger.warn(`[instagram] id repetido (${externalId}) na resposta privada; gravada sem external_id`);
+          await this.prisma.crm_messages.create({ data: { ...outData, external_id: null } });
+        }
         if (rule?.publicReply) await this.replyToComment(ws, msg.commentId, rule.publicReply).catch(() => null);
       }
       return { leadId };

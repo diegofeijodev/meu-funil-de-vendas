@@ -240,3 +240,50 @@ describe('handleInstagramInbound — idempotência por external_id (índice úni
     expect(w.t['crm_messages']!.rows.filter((m) => m.direction === 'in')).toHaveLength(0);
   });
 });
+
+describe('envio do Instagram — id do provedor repetido (P2002 do índice único)', () => {
+  it('DM do SDR: a mensagem já entregue fica "sent" sem external_id, sem lançar nem marcar "failed"', async () => {
+    const { w, s, integ } = setup();
+    w.respond((path, opts) => (path === '/page1' && opts.params?.fields === 'access_token' ? { access_token: 'page-tok' } : path === '/page1/messages' ? { message_id: 'dup-1' } : undefined));
+    await s.inbound.handleInstagramInbound(integ as any, { kind: 'dm', igsid: 'u9', mid: 'mid-a', text: 'Oi', attachmentType: null, attachmentUrl: null } as any);
+    const lead = w.t['crm_leads']!.rows[0]!;
+    w.t['crm_messages']!.rows.push({ id: uuid(), workspace_id: WS_A, direction: 'in', external_id: 'dup-1' });
+    const update = w.prisma.crm_messages.update.bind(w.prisma.crm_messages);
+    w.prisma.crm_messages.update = async (a: any) => {
+      if (a.data.external_id === 'dup-1') throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      return update(a);
+    };
+    const r = await s.inbound.sendInstagramAndStore({ workspaceId: WS_A, leadId: lead.id, text: 'Claro!' });
+    const out = w.t['crm_messages']!.rows.find((m) => m.id === r.id)!;
+    expect(out).toMatchObject({ direction: 'out', status: 'sent' });
+    expect(out.external_id ?? null).toBeNull();
+    expect(out.error_message ?? null).toBeNull();
+  });
+
+  it('DM: erro que não é P2002 continua marcando "failed" e lançando', async () => {
+    const { w, s, integ } = setup();
+    w.respond((path, opts) => (path === '/page1' && opts.params?.fields === 'access_token' ? { access_token: 'page-tok' } : path === '/page1/messages' ? { message_id: 'ok-1' } : undefined));
+    await s.inbound.handleInstagramInbound(integ as any, { kind: 'dm', igsid: 'u8', mid: 'mid-b', text: 'Oi', attachmentType: null, attachmentUrl: null } as any);
+    const lead = w.t['crm_leads']!.rows[0]!;
+    const update = w.prisma.crm_messages.update.bind(w.prisma.crm_messages);
+    w.prisma.crm_messages.update = async (a: any) => {
+      if (a.data.external_id === 'ok-1') throw new Error('banco caiu');
+      return update(a);
+    };
+    await expect(s.inbound.sendInstagramAndStore({ workspaceId: WS_A, leadId: lead.id, text: 'Claro!' })).rejects.toThrow('Não foi possível enviar no Instagram');
+    expect(w.t['crm_messages']!.rows.find((m) => m.direction === 'out')).toMatchObject({ status: 'failed' });
+  });
+
+  it('resposta privada a comentário: id repetido grava a mensagem sem external_id e não lança', async () => {
+    const { w, integ, post } = setup();
+    integ.config = { keywords: [{ word: 'QUERO', dm: 'Aqui está o link' }] };
+    w.t['crm_messages']!.rows.push({ id: uuid(), workspace_id: WS_A, direction: 'in', external_id: 'dup-2' });
+    w.respond((path) => (path === '/page1' ? { access_token: 'page-tok' } : path === '/page1/messages' ? { message_id: 'dup-2' } : undefined));
+    const change = { field: 'comments', value: { id: 'c9', text: 'eu quero', from: { id: 'u7', username: 'ana' }, media: { id: 'm1' } } };
+    expect(await post(body([{ id: OWN, changes: [change] }]))).toBe('ok');
+    const out = w.t['crm_messages']!.rows.filter((m) => m.direction === 'out');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ status: 'sent', author_type: 'system', body: 'Aqui está o link' });
+    expect(out[0]!.external_id ?? null).toBeNull();
+  });
+});
