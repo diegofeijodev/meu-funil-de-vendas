@@ -68,7 +68,14 @@ export class WhatsAppService {
     });
     try {
       const { externalId } = await this.providers.send(args.integration, args.message);
-      await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent', external_id: externalId } });
+      try {
+        await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent', external_id: externalId } });
+      } catch (e) {
+        // A mensagem JÁ foi enviada: um id do provedor repetido (índice único) não pode virar "failed" nem reenvio — fica "sent" sem o id.
+        if ((e as { code?: string }).code !== 'P2002') throw e;
+        this.logger.warn(`id do provedor repetido (${externalId}); mensagem ${row.id} fica "sent" sem external_id`);
+        await this.prisma.crm_messages.update({ where: { id: row.id }, data: { status: 'sent' } });
+      }
       await this.prisma.crm_conversations.update({ where: { id: args.conversationId }, data: { last_message_at: new Date(), last_message_preview: args.message.body ?? args.message.templateName ?? 'Mídia' } });
       return { id: row.id, externalId };
     } catch (err) {

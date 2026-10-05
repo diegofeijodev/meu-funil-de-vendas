@@ -37,6 +37,22 @@ describe('WhatsApp — envio (opt-out e janela de 24 h)', () => {
     expect(w.t.crm_messages.rows[0]).toMatchObject({ status: 'sent', external_id: 'Z-1' });
   });
 
+  it('envio já feito + id do provedor repetido (P2002): a mensagem fica "sent" (não "failed") e nada é reenviado', async () => {
+    const w = channelsWorld({ provider: 'zapi' });
+    const integ = await w.integration();
+    const lead = await w.addLead(w.WS_A, { phone: '+5511988887777' });
+    const conv = await w.whatsapp.ensureConversation({ integration: integ as never, phone: '+5511988887777', leadId: lead.id });
+    const upd = w.t.crm_messages.update.bind(w.t.crm_messages);
+    (w.t.crm_messages as any).update = async (a: any) => {
+      if (a.data?.external_id) throw Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+      return upd(a);
+    };
+    expect(await status(w.whatsapp.sendAndStore({ integration: integ as never, conversationId: conv.id, leadId: lead.id, message: { to: '+5511988887777', kind: 'text', body: 'oi' } }))).toBe('ok');
+    expect(w.sent).toHaveLength(1);
+    expect(w.t.crm_messages.rows[0]).toMatchObject({ status: 'sent' });
+    expect(w.t.crm_messages.rows[0].external_id ?? null).toBeNull();
+  });
+
   it('mensagem do usuário: valida antes (lead de outro workspace = 404), pausa a IA e encerra cadências', async () => {
     const w = channelsWorld();
     await w.integration();

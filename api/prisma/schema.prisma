@@ -7,6 +7,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Índices que existem SÓ no SQL das migrações (o Prisma não os expressa; `prisma migrate dev` não os remove, mas não os conhece):
+//  - ig_posts_ws_media_uidx            UNIQUE ig_posts(workspace_id, ig_media_id) WHERE ig_media_id IS NOT NULL
+//  - ig_posts_automation_idx           ig_posts(status, scheduled_at) WHERE automation IS NOT NULL
+//  - ig_auto_runs_recurring_uidx       UNIQUE ig_auto_runs(parent_id, start_date) WHERE parent_id IS NOT NULL
+//  - crm_messages_external_idx         UNIQUE crm_messages(workspace_id, external_id) WHERE external_id IS NOT NULL (único índice de idempotência;
+//                                      o `crm_messages_ws_external_in_uidx` da migração 20261005120000 foi removido em 20261005130000 por ser redundante)
+//  - crm_webhook_events_dedup_idx      UNIQUE crm_webhook_events(source, external_id) WHERE external_id IS NOT NULL
+//  - crm_leads_instagram_key           UNIQUE crm_leads(workspace_id, instagram_id) WHERE instagram_id IS NOT NULL
+//  - app_credentials_workspace_key     UNIQUE app_credentials(workspace_id, key) NULLS NOT DISTINCT (PG15+)
+
 enum workspace_role {
   owner
   admin
