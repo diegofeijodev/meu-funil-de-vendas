@@ -1,6 +1,7 @@
 import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited } from '../ig-store.service';
 import { MetaError } from '../meta-graph';
 import { fullCaption, PublishingService } from '../publishing.service';
+import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { igWorld, IgWorld, seedPost, uuid } from './harness';
 import { WS_B } from '../../media/__tests__/mem';
 
@@ -14,7 +15,7 @@ function setup(over: { head?: (url: string, init?: RequestInit) => Promise<Respo
   w.t['instagram_accounts']!.rows.push({ id: uuid(), workspace_id: WS, ig_user_id: IG, status: 'connected', username: 'loja' });
   const head = jest.fn(over.head ?? (async () => new Response(null, { status: 200 })));
   const svc = new PublishingService(w.store, w.graph, head as any);
-  svc.sleep = async () => undefined;
+  useVirtualClock(svc);
   let n = 0;
   w.respond((path, opts) => {
     if (path === `/${IG}/content_publishing_limit`) return { data: [{ quota_usage: 1 }] };

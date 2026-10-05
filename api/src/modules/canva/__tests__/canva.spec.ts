@@ -1,3 +1,4 @@
+import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 jest.mock('node:crypto', () => {
@@ -47,7 +48,7 @@ async function setup(inherit: Record<string, string> = {}) {
   const env = { PUBLIC_URL: 'http://api.test', APP_URL: 'http://web.test', NODE_ENV: 'test' } as any;
   const assets = new AssetsService(w.prisma, w.files, w.images, http as any, env);
   const svc = new CanvaService(w.prisma, new WorkspaceAccessService({ workspace_members: memMembers } as any), vault, keys, assets, http as any, env);
-  svc.sleep = async () => undefined;
+  useVirtualClock(svc);
   const route = (match: (c: Call) => boolean, reply: (c: Call) => Response | Promise<Response>) => routes.unshift({ match, reply });
   const tokens = (over: Record<string, unknown> = {}) => JSON.stringify({ access_token: 'AT', refresh_token: 'RT', expires_at: Date.now() + 3_600_000, name: 'Ana', email: 'ana@x.com', ...over });
   const connect = async (ws = WS_A, over: Record<string, unknown> = {}) => {

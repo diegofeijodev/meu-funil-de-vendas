@@ -38,6 +38,8 @@ export class CanvaService {
   private readonly logger = new Logger(CanvaService.name);
   /** Espera entre consultas de tarefa (sobrescrito nos testes). */
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** Relógio do prazo de polling; substituível nos testes junto com `sleep`. */
+  now: () => number = () => Date.now();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -217,8 +219,8 @@ export class CanvaService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async poll(ws: string, path: string, pick: (j: any) => any) {
-    const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) {
+    const deadline = this.now() + 90_000;
+    while (this.now() < deadline) {
       const j = pick(await this.api(ws, path));
       if (j?.status === 'success') return j;
       if (j?.status === 'failed') throw new UserError(`Canva: ${j.error?.message ?? 'a tarefa falhou'}`);

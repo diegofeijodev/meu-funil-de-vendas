@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { WorkspaceAccessService } from '../../access/access.service';
 import { memMembers, OWNER, VIEWER, WS_A } from '../../media/__tests__/mem';
+import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { IgStore } from '../ig-store.service';
 
 type Row = Record<string, any>;
@@ -281,7 +282,7 @@ export function igServices(w: IgWorld) {
 
   const content = new ContentService(w.prisma, ai, w.store);
   const publishing = new PublishingService(w.store, w.graph, http as any);
-  publishing.sleep = async () => undefined;
+  useVirtualClock(publishing);
   const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images);
   const metrics = new MetricsService(w.store, w.graph);
   const account = new AccountService(w.store, w.graph, metrics, assets);

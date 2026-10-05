@@ -42,6 +42,8 @@ export class PublishingService {
   private readonly logger = new Logger(PublishingService.name);
   /** Substituível nos testes. */
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** Relógio dos prazos de polling; substituível nos testes junto com `sleep`. */
+  now: () => number = () => Date.now();
 
   constructor(
     private readonly store: IgStore,
@@ -103,12 +105,12 @@ export class PublishingService {
   // ------------------------------------------------------------------ publicação
 
   private async waitContainer(workspaceId: string, containerId: string, deadline: number, lease?: PostLease) {
-    while (Date.now() < deadline) {
+    while (this.now() < deadline) {
       await lease?.renew();
       const r = await this.graph.graph<{ status_code?: string; status?: string }>(workspaceId, `/${containerId}`, { params: { fields: 'status_code,status' } });
       if (r.status_code === 'FINISHED') return;
       if (r.status_code === 'ERROR' || r.status_code === 'EXPIRED') throw new Error(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ''}`);
-      await this.sleep(Math.min(r.status_code === 'IN_PROGRESS' ? 5_000 : 3_000, Math.max(0, deadline - Date.now())));
+      await this.sleep(Math.min(r.status_code === 'IN_PROGRESS' ? 5_000 : 3_000, Math.max(0, deadline - this.now())));
     }
     throw new ContainerPending('A Meta ainda está processando a mídia; nova verificação em 2 minutos.');
   }
@@ -241,7 +243,7 @@ export class PublishingService {
     for (const m of media) await this.assertPublicUrl(m.url, lease);
 
     const acc = await this.store.liveAccount(ws);
-    const deadline = Date.now() + POLL_BUDGET_MS;
+    const deadline = this.now() + POLL_BUDGET_MS;
 
     // Retomada: container já criado numa execução anterior → só polling + media_publish.
     if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline, lease);
