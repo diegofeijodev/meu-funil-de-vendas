@@ -956,7 +956,9 @@ fcount(){ PSQL "SELECT count(*) FROM crm_leads WHERE workspace_id='$NID' AND sou
 OLDT=$(( $(date +%s) * 1000 - 60000 ))
 check "POST isca preenchida: 200 e nada gravado" "200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"Robô","email":"r@x.co","website":"http://spam","_t":'$OLDT'}'),$(fcount)"
 check "POST em menos de 2,5 s: 200 e nada gravado" "200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"Rápido","email":"r@x.co","_t":'$(( $(date +%s) * 1000 ))'}'),$(fcount)"
-check "POST sem _t, com _t=0 ou no futuro: 200 (igual à isca) e nada gravado" "200,200,200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"SemT","email":"r@x.co"}'),$(cc POST $FORM/$TOK "$J" '{"name":"ZeroT","email":"r@x.co","_t":0}'),$(cc POST $FORM/$TOK "$J" '{"name":"FuturoT","email":"r@x.co","_t":'$(( $(date +%s) * 1000 + 600000 ))'}'),$(fcount)"
+check "_t inválido (ausente COM isca website, 0 ou no futuro): 200 (igual à isca) e nada gravado" "200,200,200,0" "$(cc POST $FORM/$TOK "$J" '{"name":"SemT","email":"r@x.co","website":""}'),$(cc POST $FORM/$TOK "$J" '{"name":"ZeroT","email":"r@x.co","_t":0}'),$(cc POST $FORM/$TOK "$J" '{"name":"FuturoT","email":"r@x.co","_t":'$(( $(date +%s) * 1000 + 600000 ))'}'),$(fcount)"
+check "sem website e sem _t (webhook externo): aceito e gravado (e removido em seguida)" "200,1" "$(cc POST $FORM/$TOK "$J" '{"name":"Webhook Externo","email":"webhook-ext@x.co"}'),$(fcount)"
+PSQL "DELETE FROM crm_leads WHERE workspace_id='$NID' AND email='webhook-ext@x.co'" >/dev/null
 check "GET: o HTML leva o _t do servidor num campo oculto (envio sem JS)" "1" "$(grep -c '<input type=\"hidden\" name=\"_t\" value=\"[0-9]*\">' /tmp/mf-form.html)"
 check "POST sem e-mail/telefone válidos → 400" "Informe um e-mail válido ou um telefone." "$(cs POST $FORM/$TOK "$J" '{"name":"Sem","email":"x","_t":'$OLDT'}' | jq -r .error)"
 FR=$(cs POST $FORM/$TOK "$J" '{"name":"Ana Site","email":"ANA@site.co","phone":"(11) 98888-7777","message":"quero","page":"https://s.test/","utm_source":"google","_t":'$OLDT'}')
@@ -1197,6 +1199,45 @@ PSQL "DELETE FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T
 PSQL "DELETE FROM oauth_states WHERE workspace_id IN ('$WID','$NID')" >/dev/null
 [ -n "$FGPID" ] && kill "$FGPID" 2>/dev/null
 check "limpeza Task 6: sem tokens de cron, heartbeats nem states pendentes" "0,0,0" "$(PSQL "SELECT count(*) FROM cron_tokens WHERE name='ads'"),$(PSQL "SELECT count(*) FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'"),$(PSQL "SELECT count(*) FROM oauth_states WHERE workspace_id IN ('$WID','$NID')")"
+
+echo "── Task 9a: Integrações (chaves de IA, diagnóstico, histórico de publicações) ──"
+AK=$API/v1/ai-keys
+OKEY="sk-fake-good-0123456789abcdefWXYZ"
+GKEY="AIzaFakeGood0123456789abcdefQRST"
+if [ -z "${AI_OPENAI_BASE_URL:-}" ]; then
+  echo "  (pulado: suba a API com AI_OPENAI_BASE_URL=http://127.0.0.1:3099/v1 e AI_GEMINI_BASE_URL=http://127.0.0.1:3099/v1beta para testar as chaves de IA)"
+else
+  FAPID=""
+  if ! curl -s -o /dev/null http://127.0.0.1:3099/v1/models; then node "$(dirname "$0")/fake-ai.mjs" >/dev/null 2>&1 & FAPID=$!; sleep 1; fi
+  W9="{\"workspaceId\":\"$WID\"}"
+  check "chaves: estranho não vê (403, mensagem do protótipo)" "403,Você não tem acesso a esta área de trabalho." "$(cc POST $AK/ai-keys-status "$HD" "$W9"),$(cs POST $AK/ai-keys-status "$HD" "$W9" | jq -r .error.message)"
+  check "chaves: viewer lê o status (nada conectado)" "false,false" "$(cs POST $AK/ai-keys-status "$HV" "$W9" | jq -r '[.openai.connected,.gemini.connected]|join(",")')"
+  check "chaves: viewer e marketing NÃO salvam nem removem (403)" "Só o dono ou um administrador altera as chaves de IA.,403,403" "$(cs POST $AK/ai-keys-save "$HV" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"$OKEY\"}" | jq -r .error.message),$(cc POST $AK/ai-keys-save "$HM" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"$OKEY\"}"),$(cc POST $AK/ai-keys-remove "$HM" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\"}")"
+  check "chaves: validação (curta, vendor inválido, campo extra) → 400" "400,400,400" "$(cc POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"curta\"}"),$(cc POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"claude\",\"apiKey\":\"$OKEY\"}"),$(cc POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"$OKEY\",\"x\":1}")"
+  check "chaves: recusada pelo provedor → { ok:false, error } e nada guardado" "false,Chave inválida ou sem permissão.,0" "$(cs POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"sk-ruim-0123456789abcdefghij\"}" | jq -r '[.ok,.error]|join(",")'),$(PSQL "SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:$WID'")"
+  check "chaves: sem saldo (429) → mensagem de cota" "Conta sem saldo/cota ou limite atingido." "$(cs POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"sk-quota-0123456789abcdefghij\"}" | jq -r .error)"
+  check "chaves: salvar boa (OpenAI e Gemini) → ok" "true,true" "$(cs POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\",\"apiKey\":\"$OKEY\"}" | jq -r .ok),$(cs POST $AK/ai-keys-save "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"gemini\",\"apiKey\":\"$GKEY\"}" | jq -r .ok)"
+  ST9=$(cs POST $AK/ai-keys-status "$HV" "$W9")
+  check "chaves: status devolve só a dica (••••últimos4), nunca a chave" "true,••••WXYZ,••••QRST,0" "$(echo "$ST9" | jq -r '[.openai.connected,.openai.hint,.gemini.hint]|join(",")'),$(echo "$ST9" | grep -c 'sk-fake-good')"
+  check "chaves: no cofre fica cifrada (enc:v2), sem o texto da chave" "2,0" "$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id IS NULL AND key IN ('AI_OPENAI_KEY:$WID','AI_GEMINI_KEY:$WID') AND value LIKE 'enc:v2:%'"),$(PSQL "SELECT count(*) FROM app_credentials WHERE value LIKE '%fake-good%' OR value LIKE '%AIzaFakeGood%'")"
+  check "chaves: testar (viewer pode) → ok; vendor sem chave → 'Nenhuma chave salva.' em outra empresa" "true,Nenhuma chave salva." "$(cs POST $AK/ai-keys-test "$HV" "$W9" >/dev/null; cs POST $AK/ai-keys-test "$HV" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\"}" | jq -r .ok),$(cs POST $AK/ai-keys-test "$H" "{\"workspaceId\":\"$NID\",\"vendor\":\"openai\"}" | jq -r .error)"
+  check "chaves: a chave de uma empresa não aparece na outra" "false" "$(cs POST $AK/ai-keys-status "$H" "{\"workspaceId\":\"$NID\"}" | jq -r .openai.connected)"
+  echo "  diagnóstico das IAs"
+  DG=$(cs POST $API/v1/ai-diagnostics/diagnose-ai "$HV" "$W9")
+  check "diagnóstico: viewer roda; forma { checks[{name,ok,detail}], at }" "true,true,true" "$(echo "$DG" | jq -r '(.checks|length>=5)'),$(echo "$DG" | jq -r '(.checks|all(has("name") and has("ok") and has("detail")))'),$(echo "$DG" | jq -r '(.at|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))')"
+  check "diagnóstico: chaves válidas OK; Canva e Higgsfield opcionais (null)" "true,true,null,null" "$(echo "$DG" | jq -r '[.checks[]|select(.name=="Chave OpenAI")|.ok][0]'),$(echo "$DG" | jq -r '[.checks[]|select(.name=="Chave Gemini")|.ok][0]'),$(echo "$DG" | jq -r '[.checks[]|select(.name=="Canva")|.ok][0]'),$(echo "$DG" | jq -r '[.checks[]|select(.name=="Higgsfield")|.ok][0]')"
+  check "diagnóstico: estranho → 403 'Você não tem acesso a esta empresa.'; withImage não-booleano → 400" "403,Você não tem acesso a esta empresa.,400" "$(cc POST $API/v1/ai-diagnostics/diagnose-ai "$HD" "$W9"),$(cs POST $API/v1/ai-diagnostics/diagnose-ai "$HD" "$W9" | jq -r .error.message),$(cc POST $API/v1/ai-diagnostics/diagnose-ai "$H" "{\"workspaceId\":\"$WID\",\"withImage\":\"sim\"}")"
+  check "chaves: remover (owner) → status volta a desconectado e o cofre fica vazio" "true,false,false,0" "$(cs POST $AK/ai-keys-remove "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"openai\"}" | jq -r .ok),$(cs POST $AK/ai-keys-remove "$H" "{\"workspaceId\":\"$WID\",\"vendor\":\"gemini\"}" >/dev/null; cs POST $AK/ai-keys-status "$HV" "$W9" | jq -r .openai.connected),$(cs POST $AK/ai-keys-status "$HV" "$W9" | jq -r .gemini.connected),$(PSQL "SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:$WID'")"
+  [ -n "$FAPID" ] && kill "$FAPID" 2>/dev/null
+fi
+echo "  histórico de publicações"
+PJ=$API/v1/workspaces/$WID/publishing-jobs
+for i in 1 2 3; do PSQL "INSERT INTO publishing_jobs(workspace_id,target,status,mode,log) VALUES ('$WID','smoke9a$i','done','live','log $i')" >/dev/null; done
+check "publicações: membro lê (viewer), mais novas primeiro; limit respeitado" "200,3,smoke9a3,2" "$(curl -s -o /dev/null -w '%{http_code}' $PJ -H "$HV"),$(curl -s "$PJ" -H "$HV" | jq '[.[]|select(.target|startswith("smoke9a"))]|length'),$(curl -s "$PJ?limit=1" -H "$HV" | jq -r '.[0].target'),$(curl -s "$PJ?limit=2" -H "$HV" | jq length)"
+check "publicações: estranho → 403; limit inválido → 400; id malformado → 404" "403,400,404" "$(curl -s -o /dev/null -w '%{http_code}' $PJ -H "$HD"),$(curl -s -o /dev/null -w '%{http_code}' "$PJ?limit=0" -H "$H"),$(curl -s -o /dev/null -w '%{http_code}' $API/v1/workspaces/xxx/publishing-jobs -H "$H")"
+check "publicações: só as do workspace (a outra empresa não vê)" "0" "$(curl -s $API/v1/workspaces/$NID/publishing-jobs -H "$H" | jq '[.[]|select(.target|startswith("smoke9a"))]|length')"
+PSQL "DELETE FROM publishing_jobs WHERE target LIKE 'smoke9a%'" >/dev/null
+check "limpeza Task 9a: sem chaves de IA nem publicações de teste" "0,0" "$(PSQL "SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:$WID'"),$(PSQL "SELECT count(*) FROM publishing_jobs WHERE target LIKE 'smoke9a%'")"
 
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")

@@ -92,6 +92,15 @@ const gateway = createServer((req, res) => {
       /* multipart (images/edits) */
     }
     res.setHeader('Content-Type', 'application/json');
+    // Task 9a: listagem de modelos dos provedores das chaves próprias (AI_OPENAI_BASE_URL=…/v1, AI_GEMINI_BASE_URL=…/v1beta).
+    if (req.method === 'GET' && (req.url?.startsWith('/v1/models') || req.url?.startsWith('/v1beta/models'))) {
+      const bearer = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+      const goog = String(req.headers['x-goog-api-key'] ?? '');
+      if (req.url.startsWith('/v1/models') && bearer.startsWith('sk-fake-good')) res.end(JSON.stringify({ data: ['gpt-image-1', 'gpt-4o-mini', 'whisper-1'].map((id) => ({ id })) }));
+      else if (req.url.startsWith('/v1beta/models') && goog.startsWith('AIzaFakeGood')) res.end(JSON.stringify({ models: ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest'].map((name) => ({ name: `models/${name}` })) }));
+      else { res.statusCode = 401; res.end('{}'); }
+      return;
+    }
     if (req.url?.endsWith('/images/generations') || req.url?.endsWith('/images/edits')) {
       fakeAi.images = (fakeAi.images ?? 0) + 1;
       res.end(JSON.stringify({ data: [{ b64_json: PNG_1X1 }] }));
@@ -1668,6 +1677,82 @@ try {
   check('limpeza dos canais: nada sobrou (integrações, agente, conversas, cadências, segredos)', sql8(`SELECT (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind IN ('whatsapp','email','calendar','meta_lead_ads')) + (SELECT count(*) FROM crm_sdr_agents WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_conversations WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_cadences WHERE workspace_id='${wsId}' AND (name LIKE '%${t8}%' OR template_key IS NOT NULL)) + (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND name LIKE '%${t8}%') + (SELECT count(*) FROM app_credentials WHERE workspace_id='${wsId}' AND key='ZAPI_TOKEN')`) === '0');
 
   page.setDefaultTimeout(30000);
+
+  // ── Integrações (Task 9a): cartões, chaves de IA, diagnóstico, histórico e retornos de OAuth pela URL ──────────
+  // A API precisa ter subido com AI_OPENAI_BASE_URL=http://127.0.0.1:3099/v1 AI_GEMINI_BASE_URL=http://127.0.0.1:3099/v1beta (o gateway falso responde).
+  console.log('-- Integrações --');
+  const t9 = `B9x${Date.now() % 100000}`;
+  const sql9 = (q) => igPsql(q);
+  const limpa9 = () => {
+    sql9(`DELETE FROM publishing_jobs WHERE workspace_id='${wsId}' AND target LIKE 'B9x%'`);
+    sql9(`DELETE FROM app_credentials WHERE workspace_id IS NULL AND key IN ('AI_OPENAI_KEY:${wsId}','AI_GEMINI_KEY:${wsId}')`);
+  };
+  limpa9();
+  limpezas.push(limpa9);
+  sql9(`INSERT INTO publishing_jobs(workspace_id,target,status,mode,log) VALUES ('${wsId}','${t9}-a','done','live','log do job a'),('${wsId}','${t9}-b','failed','mock','falhou b')`);
+  await page.goto(`${BASE}/integrations`);
+  await page.getByText('Histórico de publicações').first().waitFor({ timeout: 60000 });
+  const c9 = await corpo();
+  const titulos9 = ['Meta Ads (API oficial)', 'Google Ads e TikTok Ads', 'Conexões de IA da agência', 'IAs com a sua conta (ChatGPT e Gemini)', 'Conexões MCP', 'Canva', 'Diagnóstico das IAs', 'Histórico de publicações'];
+  for (const t of titulos9) check(`integrações: cartão "${t}"`, tem(c9, t));
+  const h2s9 = (await page.locator('section h2').allInnerTexts()).map((t) => t.trim().toLowerCase());
+  const pos9 = titulos9.map((t) => h2s9.indexOf(t.toLowerCase()));
+  check('integrações: cartões na ordem do protótipo', pos9.every((n, i) => n >= 0 && (i === 0 || n > pos9[i - 1])), JSON.stringify(h2s9));
+  check('integrações: histórico mostra os jobs (alvo, "real", "simulado (antigo)" e o log)', tem(c9, `${t9}-a`) && tem(c9, `${t9}-b`) && tem(c9, 'real') && tem(c9, 'simulado (antigo)') && tem(c9, 'log do job a'));
+  check('integrações: dono vê os formulários (credenciais da Meta, herança da agência)', tem(c9, 'Credenciais da Meta') && tem(c9, 'Esta empresa usa as IAs de'));
+
+  // Canva: a URL de retorno vem da origem do app, não de um domínio fixo.
+  const secCanva = page.locator('section').filter({ hasText: 'Envie criativos para o Canva' });
+  await secCanva.getByRole('button', { name: /Passo a passo/ }).click();
+  check('canva: o passo a passo mostra a URL de retorno desta origem', tem(await secCanva.innerText(), `${BASE}/api/public/canva/oauth/callback`) && !tem(await secCanva.innerText(), 'meufunildevendas'));
+
+  // Chaves de IA: salvar (provedor falso) → dica → diagnóstico → testar → remover.
+  const boxOpenai = page.locator('div.rounded-lg.border').filter({ hasText: 'ChatGPT (sua conta OpenAI)' }).last();
+  const saiu9 = async (texto) => page.getByText(texto, { exact: false }).first().waitFor({ timeout: 20000 });
+  await boxOpenai.getByPlaceholder('sk-...').fill('sk-ruim-0123456789abcdefghij');
+  await boxOpenai.getByRole('button', { name: 'Salvar' }).click();
+  await saiu9('Chave inválida ou sem permissão.');
+  check('chaves: chave recusada pelo provedor → aviso e nada guardado', sql9(`SELECT count(*) FROM app_credentials WHERE key='AI_OPENAI_KEY:${wsId}'`) === '0');
+  await boxOpenai.getByPlaceholder('sk-...').fill('sk-fake-good-0123456789abcdef9Z8Y');
+  await boxOpenai.getByRole('button', { name: 'Salvar' }).click();
+  await saiu9('Chave testada e salva.');
+  await boxOpenai.getByText('Chave salva: ••••9Z8Y').waitFor({ timeout: 20000 });
+  check('chaves: salva cifrada no cofre; a tela mostra só a dica ••••9Z8Y', sql9(`SELECT count(*) FROM app_credentials WHERE key='AI_OPENAI_KEY:${wsId}' AND value LIKE 'enc:v2:%' AND value NOT LIKE '%fake-good%'`) === '1' && !tem(await corpo(), 'sk-fake-good'));
+  check('chaves: o campo da chave é limpo depois de salvar', (await boxOpenai.getByPlaceholder('sk-...').inputValue()) === '');
+  await page.getByRole('button', { name: 'Rodar diagnóstico' }).click();
+  await page.getByText('Testado em').first().waitFor({ timeout: 60000 });
+  const diag = await corpo();
+  check('diagnóstico: lista as verificações e a chave OpenAI como válida', tem(diag, 'Chave OpenAI') && tem(diag, 'Válida, com gpt-image-1, gpt-4o-mini e whisper-1.') && tem(diag, 'Higgsfield') && tem(diag, 'Canva') && tem(diag, 'Opcional'));
+  await boxOpenai.getByRole('button', { name: 'Testar' }).click();
+  await saiu9('Chave funcionando.');
+  await boxOpenai.getByRole('button', { name: 'Remover' }).click();
+  await saiu9('Chave removida.');
+  await boxOpenai.getByText('Chave salva:').waitFor({ state: 'detached', timeout: 20000 });
+  check('chaves: remover apaga do cofre e a tela volta a Desconectado', sql9(`SELECT count(*) FROM app_credentials WHERE key='AI_OPENAI_KEY:${wsId}'`) === '0' && tem(await boxOpenai.innerText(), 'Desconectado'));
+
+  // Retornos de OAuth pela query string.
+  await page.goto(`${BASE}/integrations?meta=conectado`);
+  await page.getByText('Escolher conta, Página e Instagram').first().waitFor({ timeout: 60000 });
+  check('query ?meta=conectado: o botão vira "Escolher conta, Página e Instagram"', true);
+  await page.goto(`${BASE}/integrations?meta_erro=token%20vencido`);
+  await saiu9('O login não foi concluído: token vencido');
+  check('query ?meta_erro=…: mostra o erro do login do Facebook', true);
+  await page.goto(`${BASE}/integrations?ads=google`);
+  await saiu9('Login no Google Ads concluído.');
+  check('query ?ads=google: aviso de login concluído', true);
+  await page.goto(`${BASE}/integrations?ads_erro=negado`);
+  await saiu9('O login não foi concluído: negado');
+  check('query ?ads_erro=…: mostra o erro do canal de mídia', true);
+  await page.goto(`${BASE}/integrations?canva=ok`);
+  await saiu9('Canva conectado.');
+  check('query ?canva=ok: toast e a URL é limpa (history.replaceState)', !page.url().includes('canva='), page.url());
+  await page.goto(`${BASE}/integrations?canva=error&msg=Falhou%20mesmo`);
+  await saiu9('Falhou mesmo');
+  check('query ?canva=error&msg=…: toast com a mensagem e URL limpa', !page.url().includes('canva=') && !page.url().includes('msg='), page.url());
+
+  // ── limpeza ──
+  limpa9();
+  check('limpeza das integrações: sem jobs de teste nem chaves de IA', sql9(`SELECT (SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND target LIKE 'B9x%') + (SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:${wsId}')`) === '0');
 
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');

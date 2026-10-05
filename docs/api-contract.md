@@ -669,3 +669,24 @@ Autenticação: o token da URL é o `webhook_token` da integração (tipo certo)
 ### 25.7 Provedores externos e variáveis
 
 Toda saída passa por `EXTERNAL_FETCH` (DNS verificado e fixado; rede interna recusada; redirecionamento **nunca** seguido). Z-API/Evolution usam o `base_url` da empresa (validado ao salvar e a cada envio). Hosts oficiais: Cloud API `graph.facebook.com/v21.0`, Resend `api.resend.com`, Cal.com `api.cal.com/v2`; só fora de produção podem ser trocados por `META_GRAPH_BASE_URL`, `RESEND_API_URL` e `CALCOM_API_URL` (provedores falsos de smoke/browser-check: `api/scripts/fake-providers.mjs` e `fake-graph.mjs`). Segredos (`WHATSAPP_CLOUD_TOKEN`, `ZAPI_TOKEN`, `EVOLUTION_API_KEY`, `RESEND_API_KEY`, `CALCOM_API_KEY`, `WHATSAPP_WEBHOOK_SECRET`) ficam no cofre (empresa → global → ambiente) e nunca saem do servidor.
+
+## 26. Integrações — chaves de IA, diagnóstico, histórico de publicações e limpeza dos exports (Task 9a)
+
+Módulo `api/src/modules/integrations`. Cartões Meta/Google/TikTok/agência/MCP/Canva já estão nas §§ 11, 20, 23; aqui ficam as ações de `ai-keys.functions.ts` e `ai-diagnostics.functions.ts`, a leitura do histórico e o job de limpeza.
+
+**Chaves de IA próprias (BYO)** — `POST /v1/ai-keys/ai-keys-{status,save,test,remove}` (a `ai-keys-health` continua no módulo do Studio, §19). Cofre global, slot `AI_OPENAI_KEY:<wsId>` / `AI_GEMINI_KEY:<wsId>` (cifrado `enc:v2`). Só sai a dica `••••` + 4 últimos caracteres. Falha de autorização usa as mensagens do protótipo (`403`).
+
+| Rota | Acesso | Corpo → resposta |
+|---|---|---|
+| `ai-keys-status` | membro (`403 "Você não tem acesso a esta área de trabalho."`) | `{ workspaceId }` → `{ openai:{connected,hint}, gemini:{…} }` (inclui a chave herdada da agência) |
+| `ai-keys-save` | owner\|admin (`403 "Só o dono ou um administrador altera as chaves de IA."`) | `{ workspaceId, vendor: openai\|gemini, apiKey (trim, 20–500; `400 "Chave muito curta."`) }` → `{ ok:true, error:null }` ou `{ ok:false, error }` com HTTP 200 (testa no provedor antes de gravar: "Chave inválida ou sem permissão." · "Conta sem saldo/cota ou limite atingido." · "O provedor respondeu N." · "Não foi possível falar com o provedor agora.") |
+| `ai-keys-test` | membro | `{ workspaceId, vendor }` → `{ ok, error? }` ("Nenhuma chave salva.") |
+| `ai-keys-remove` | owner\|admin | `{ workspaceId, vendor }` → `{ ok:true }` (remove só a chave própria) |
+
+`AI_OPENAI_BASE_URL` / `AI_GEMINI_BASE_URL` (opcionais) trocam a base do provedor nos testes de chave e no diagnóstico (provedor falso de smoke/browser-check; **ignoradas em produção**).
+
+**Diagnóstico** — `POST /v1/ai-diagnostics/diagnose-ai` (qualquer membro; `403 "Você não tem acesso a esta empresa."`): `{ workspaceId, withImage?: boolean=false }` → `{ checks:[{ name, ok: boolean|null, detail }], at }`. Verificações, em ordem: IA do app (texto) (gateway `AI_GATEWAY_URL`/`AI_GATEWAY_API_KEY`, nome mostra o modelo configurado; no protótipo era `LOVABLE_API_KEY` + `openai/gpt-6-astra`) · Chave OpenAI (lista modelos; exige o modelo de imagem, o de texto BYO e `whisper-1` configurados em `AI_MODEL_*`/`AI_BYO_*`) · Chave Gemini (imagem, vídeo Veo e texto configurados; ok se tiver ao menos um) · Canva (status + teste) · Higgsfield (ferramentas `generate_image`, `generate_video`, `job_status`) · se `withImage`, uma imagem de teste pelo gateway do app (consome crédito). `ok:null` = opcional/não conectado. Cada verificação captura o próprio erro (máx. 300 caracteres).
+
+**Histórico de publicações** — `GET /v1/workspaces/:workspaceId/publishing-jobs?limit=` (read): linhas de `publishing_jobs` (snake_case, todas as colunas) por `created_at` desc; `limit` 1–50 (padrão 15, o da tela de Integrações); `limit` inválido → `400`.
+
+**Limpeza dos exports** — job `exports-cleanup-hourly` (`17 * * * *`, heartbeat `exports_cleanup`, só com `SCHEDULER_ENABLED=true`): apaga arquivos de `<UPLOADS_DIR>/creative-assets/exports/<workspaceId>/` mais velhos que `EXPORTS_TTL_HOURS` (padrão **24 h**; o link de download vale 10 min). Só mexe dentro de `exports/` (raiz validada por `FilesService.resolvePath`, links simbólicos ignorados, `realpath` conferido antes de cada `rm`); pasta de workspace vazia é removida.
