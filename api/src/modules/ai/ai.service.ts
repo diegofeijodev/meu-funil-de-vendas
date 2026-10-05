@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl } from '../media/external-fetch';
-import { AiError } from './ai-error';
+import { AiDownloadBlockedError, AiError } from './ai-error';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
@@ -52,7 +52,10 @@ export class AiService {
     @Inject(ENV) private readonly env: Env,
     /** Fetch com DNS verificado (SSRF) para baixar URLs devolvidas pelo provedor; sem ele (testes) usa a porta comum. */
     @Optional() @Inject(AI_GUARDED_FETCH) private readonly guarded?: AiFetch,
-  ) {}
+  ) {
+    // Fail-closed: em produção o download de URLs do provedor SEMPRE passa pelo fetch com DNS verificado (SSRF).
+    if (env.NODE_ENV === 'production' && !guarded) throw new Error('AI_GUARDED_FETCH ausente em produção: o download de vídeo exige o fetch guardado (SSRF).');
+  }
 
   model(id?: string): string {
     return resolveModel(this.env, id);
@@ -335,7 +338,7 @@ export class AiService {
         if ('pending' in r) return { status: 'pending', jobId: `gveo:${r.pending}`, cost: 0, note: 'Vídeo pela chave Gemini, ainda gerando' };
         return { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId: r.id, cost: 0, note: 'Vídeo pela chave Gemini' };
       } catch (e) {
-        if (req.strict) throw e;
+        if (req.strict || e instanceof AiDownloadBlockedError) throw e; // bloqueio (SSRF/teto): nunca cai em silêncio no gateway pago
         this.warn('vídeo pela chave Gemini (usando o gateway do app)', e);
       }
     }
@@ -415,6 +418,7 @@ export class AiService {
         const op = (await res.json()) as { name: string };
         return await this.geminiVideoWait(key, op.name, deadline);
       } catch (e) {
+        if (e instanceof AiDownloadBlockedError) throw e; // bloqueio de segurança/tamanho: não tenta outro modelo
         lastErr = e;
         this.warn(`vídeo com ${model}`, e);
       }
@@ -445,27 +449,44 @@ export class AiService {
   private async downloadGeminiVideo(uri: string, key: string): Promise<Buffer> {
     const allowLocal = this.env.NODE_ENV !== 'production';
     const fetcher = this.guarded ?? this.http;
-    let url = assertExternalUrl(uri, allowLocal, 'endereço do vídeo');
+    let url = this.blockedIfUnsafe(uri, allowLocal);
     const originHost = new URL(url).host;
     for (let hop = 0; hop <= MAX_VIDEO_HOPS; hop++) {
       const headers: Record<string, string> = new URL(url).host === originHost ? { 'x-goog-api-key': key } : {};
-      const dl = await fetcher(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(120_000) });
+      let dl: Response;
+      try {
+        dl = await fetcher(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(120_000) });
+      } catch (e) {
+        // O guarda de DNS (SSRF) recusa a conexão com EBLOCKED: bloqueio, não falha de rede.
+        const code = (e as { code?: string; cause?: { code?: string } } | null);
+        if (code?.code === 'EBLOCKED' || code?.cause?.code === 'EBLOCKED') throw new AiDownloadBlockedError('O endereço do vídeo aponta para a rede interna e não é permitido.');
+        throw e;
+      }
       if (REDIRECTS.has(dl.status)) {
         const loc = dl.headers.get('location');
         await dl.body?.cancel().catch(() => undefined);
         if (!loc) throw new AiError('O Gemini devolveu um redirecionamento sem destino ao baixar o vídeo.');
-        url = assertExternalUrl(new URL(loc, url).toString(), allowLocal, 'endereço do vídeo');
+        url = this.blockedIfUnsafe(new URL(loc, url).toString(), allowLocal);
         continue;
       }
       if (!dl.ok) throw await this.vendorError('gemini', dl);
       return this.readVideoCapped(dl);
     }
-    throw new AiError('O Gemini redirecionou o download do vídeo vezes demais.');
+    throw new AiDownloadBlockedError('O Gemini redirecionou o download do vídeo vezes demais.');
+  }
+
+  /** `assertExternalUrl` com o erro marcado como bloqueio (não cai no gateway pago). */
+  private blockedIfUnsafe(raw: string, allowLocal: boolean): string {
+    try {
+      return assertExternalUrl(raw, allowLocal, 'endereço do vídeo');
+    } catch (e) {
+      throw new AiDownloadBlockedError(e instanceof Error ? e.message : 'Endereço do vídeo não permitido.');
+    }
   }
 
   /** Lê o corpo aos pedaços e aborta ao passar do teto (não confia em content-length). */
   private async readVideoCapped(res: Response): Promise<Buffer> {
-    const tooBig = () => new AiError('O vídeo devolvido pelo Gemini é grande demais.');
+    const tooBig = () => new AiDownloadBlockedError('O vídeo devolvido pelo Gemini é grande demais.');
     if (Number(res.headers.get('content-length') ?? 0) > MAX_VIDEO_BYTES) {
       await res.body?.cancel().catch(() => undefined);
       throw tooBig();

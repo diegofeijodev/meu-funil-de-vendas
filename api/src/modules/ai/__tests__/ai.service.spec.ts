@@ -230,4 +230,30 @@ describe('AiService.video — download do Gemini (SSRF / chave / teto)', () => {
     expect(cancelled).toBe(true);
     expect(sent).toBeLessThan(5);
   });
+  it('bloqueio (SSRF) sem strict NÃO cai em silêncio no gateway pago; falha comum cai', async () => {
+    const mk = (uri: string, download: () => Response) => {
+      const calls: string[] = [];
+      const fn: AiFetch = async (url) => {
+        calls.push(url);
+        if (url.includes('predictLongRunning')) return json({ name: 'operations/op1' });
+        if (url.endsWith('operations/op1')) return op(uri);
+        if (url.includes('gw.test')) return json({ id: 'job1', status: 'completed' });
+        return download();
+      };
+      return { calls, ai: setup(gwEnv, { gemini: 'gk' }, fn) };
+    };
+    const blocked = mk('http://10.0.0.5/v.mp4', () => new Response('x'));
+    await expect(blocked.ai.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toThrow(/https|rede interna/);
+    expect(blocked.calls.some((u) => u.includes('gw.test'))).toBe(false);
+    const common = mk('https://files.googleapis.com/v.mp4', () => new Response('x', { status: 500 }));
+    await common.ai.video(WS, { prompt: 'p', aspectRatio: '9:16' }).catch(() => undefined);
+    expect(common.calls.some((u) => u.includes('gw.test'))).toBe(true);
+  });
+
+  it('em produção sem o fetch guardado o serviço nem sobe (fail-closed)', () => {
+    const env = validateEnv({ ...gwEnv, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64), UNSUBSCRIBE_SECRET: 'u'.repeat(16) });
+    const keys = { get: async () => null } as unknown as AiKeysService;
+    expect(() => new AiService(keys, async () => json({}), env)).toThrow(/AI_GUARDED_FETCH/);
+    expect(() => new AiService(keys, async () => json({}), env, async () => json({}))).not.toThrow();
+  });
 });

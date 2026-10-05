@@ -9,3 +9,9 @@ export class AiError extends HttpException {
     super({ code, message }, 502);
   }
 }
+
+/**
+ * Bloqueio de segurança/tamanho ao baixar uma URL devolvida pelo provedor (SSRF, vídeo acima do teto, redirecionamentos demais).
+ * Não é "falha do provedor": NÃO deve cair em silêncio para o gateway pago — quem tem fallback precisa repassar este erro.
+ */
+export class AiDownloadBlockedError extends AiError {}
