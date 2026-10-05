@@ -14,7 +14,6 @@ import { useWorkspace } from "@/lib/workspace";
 import { canvaDisconnect, canvaGetStatus, canvaOAuthStart, canvaSaveApp, canvaTest } from "@/lib/creative/canva.functions";
 
 /** Caminho (na origem do app) que o Canva chama ao voltar do login; o web repassa para a API. */
-const REDIRECT_PATH = "/api/public/canva/oauth/callback";
 
 export function CanvaCard() {
   const { workspaceId, workspaceName, canEdit } = useWorkspace();
@@ -27,10 +26,6 @@ export function CanvaCard() {
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  // Lido só no navegador (evita diferença entre a renderização do servidor e a do cliente).
-  const [origin, setOrigin] = useState("");
-  useEffect(() => setOrigin(window.location.origin), []);
-
   const { data: st } = useQuery({
     queryKey: ["canva", workspaceId],
     enabled: !!workspaceId,
@@ -87,7 +82,7 @@ export function CanvaCard() {
             steps={[
               { text: "Crie um app em Canva Developers com a integração REST (Connect API):", link: { label: "canva.com/developers", url: "https://www.canva.com/developers/integrations" } },
               "Ative os escopos: asset:read, asset:write, design:content:read, design:content:write, design:meta:read e profile:read.",
-              `Em "Authentication", cadastre a URL de retorno: ${origin}${REDIRECT_PATH}`,
+              `Em "Authentication", cadastre a URL de retorno: ${st?.redirectUri ?? "…"}`,
               "Copie o Client ID e gere um Client secret. Cole abaixo e clique em Salvar app.",
               "Clique em Entrar com Canva. Você vai para o Canva, autoriza e volta para esta tela já conectado.",
               "O login só funciona no endereço cadastrado no passo 3 (o do site publicado), porque é para lá que o Canva devolve.",

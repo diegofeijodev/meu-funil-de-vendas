@@ -21,7 +21,6 @@ const CFG: Record<
     accountKey: string;
     steps: Parameters<typeof HowTo>[0]["steps"];
     refs: { label: string; url: string }[];
-    redirect: string;
   }
 > = {
   google: {
@@ -45,7 +44,6 @@ const CFG: Record<
       { label: "Google Ads API", url: "https://developers.google.com/google-ads/api/docs/start" },
       { label: "Token de desenvolvedor", url: "https://developers.google.com/google-ads/api/docs/api-policy/developer-token" },
     ],
-    redirect: "/api/public/ads/oauth/google",
   },
   tiktok: {
     title: "TikTok Ads",
@@ -62,7 +60,6 @@ const CFG: Record<
       "Na campanha, crie a campanha de vídeo desativada (usa os vídeos aprovados) ou ligue uma existente.",
     ],
     refs: [{ label: "Documentação da API for Business", url: "https://business-api.tiktok.com/portal/docs" }],
-    redirect: "/api/public/ads/oauth/tiktok",
   },
 };
 
@@ -91,14 +88,14 @@ export function AdsChannelsCard() {
       )}
       <div className="grid gap-4 xl:grid-cols-2">
         {(["google", "tiktok"] as Channel[]).map((ch) => (
-          <ChannelBox key={ch} channel={ch} missing={data?.[ch] ?? null} canManage={canManage} workspaceId={workspaceId} />
+          <ChannelBox key={ch} channel={ch} missing={data?.[ch] ?? null} redirectUri={data?.redirectUris?.[ch]} canManage={canManage} workspaceId={workspaceId} />
         ))}
       </div>
     </Section>
   );
 }
 
-function ChannelBox({ channel, missing, canManage, workspaceId }: { channel: Channel; missing: string[] | null; canManage: boolean; workspaceId: string | null }) {
+function ChannelBox({ channel, missing, redirectUri, canManage, workspaceId }: { channel: Channel; missing: string[] | null; redirectUri?: string; canManage: boolean; workspaceId: string | null }) {
   const cfg = CFG[channel];
   const qc = useQueryClient();
   const save = useServerFn(saveAdsChannelApp);
@@ -108,8 +105,6 @@ function ChannelBox({ channel, missing, canManage, workspaceId }: { channel: Cha
   const [accounts, setAccounts] = useState<{ id: string; name: string }[] | null>(null);
   const [account, setAccount] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [origin, setOrigin] = useState("");
-  useEffect(() => setOrigin(window.location.origin), []);
   const refresh = () => qc.invalidateQueries({ queryKey: ["ads-channels", workspaceId] });
   const act = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -131,7 +126,7 @@ function ChannelBox({ channel, missing, canManage, workspaceId }: { channel: Cha
       {missing && missing.length > 0 && <p className="mb-3 text-xs text-muted-foreground">Falta: {missing.join(", ")}.</p>}
       <HowTo steps={cfg.steps} references={cfg.refs} />
       <p className="mt-2 text-xs text-muted-foreground">
-        URL de redirecionamento: <code>{origin}{cfg.redirect}</code>
+        URL de redirecionamento: <code>{redirectUri ?? "…"}</code>
       </p>
       {canManage && workspaceId && (
         <div className="mt-3 space-y-2">
@@ -165,7 +160,7 @@ function ChannelBox({ channel, missing, canManage, workspaceId }: { channel: Cha
               disabled={!!busy}
               onClick={() =>
                 act("login", async () => {
-                  const { url } = await login({ data: { workspaceId, channel, origin } });
+                  const { url } = await login({ data: { workspaceId, channel, origin: window.location.origin } });
                   window.location.href = url;
                 })
               }

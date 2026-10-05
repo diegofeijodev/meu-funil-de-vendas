@@ -56,7 +56,7 @@ describe('MetaAdsService — credenciais e status', () => {
     expect(await w.vault.get(WS_A, 'META_TOKEN_SOURCE')).toBe('system_user');
     expect(await w.vault.get(WS_A, 'META_INSTAGRAM_ACCOUNT_ID')).toBe('3003');
     const s = await w.meta.status(VIEWER, WS_A);
-    expect(s).toEqual({ configured: true, missing: [], tokenExpiresAt: null, tokenSource: 'system_user' });
+    expect(s).toEqual({ configured: true, missing: [], tokenExpiresAt: null, tokenSource: 'system_user', redirectUri: 'http://api.test/api/public/meta/oauth/callback' });
   });
 
   it('DTO: mensagens do protótipo e ids só com dígitos (entram em caminho da Graph)', async () => {
@@ -280,5 +280,17 @@ describe('MetaAdsService.insights', () => {
     await w.meta.insights(VIEWER, { workspaceId: WS_A, since: '2026-09-01', until: '2026-09-30', campaignId: c.id });
     expect(w.calls[1]!.path).toBe('/9001/insights');
     expect(w.calls[1]!.opts.params.level).toBe('campaign');
+  });
+});
+
+describe('status da Meta — redirectUri', () => {
+  it('devolve o MESMO redirect_uri que o login envia à Meta (PUBLIC_URL), para qualquer membro', async () => {
+    const w = adsWorld();
+    const st = await w.meta.status(VIEWER, WS_A);
+    expect(st.redirectUri).toBe('http://api.test/api/public/meta/oauth/callback');
+    await w.meta.saveApp(OWNER, WS_A, 'app123', 'segredo-12345');
+    const sent = new URL((await w.meta.loginUrl(OWNER, WS_A) as any).url).searchParams.get('redirect_uri');
+    expect(sent).toBe(st.redirectUri);
+    expect(await status(w.meta.status(STRANGER, WS_A))).toBe('403:Você não tem acesso a esta área de trabalho.');
   });
 });

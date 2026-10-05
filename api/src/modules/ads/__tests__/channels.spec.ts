@@ -22,6 +22,8 @@ describe('canais — credenciais e login', () => {
     expect(await w.channels.status(VIEWER, WS_A)).toEqual({
       google: ['ID do cliente OAuth', 'Chave secreta do cliente OAuth', 'Token de desenvolvedor', 'Login com Google', 'Conta do Google Ads'],
       tiktok: ['App ID', 'Secret do app', 'Login com TikTok', 'Conta de anúncios'],
+      // os cartões mostram exatamente o redirect_uri que o login envia
+      redirectUris: { google: 'http://api.test/api/public/ads/oauth/google', tiktok: 'http://api.test/api/public/ads/oauth/tiktok' },
     });
     expect(await status(w.channels.status(STRANGER, WS_A))).toBe('403:Você não tem acesso a esta empresa.');
   });

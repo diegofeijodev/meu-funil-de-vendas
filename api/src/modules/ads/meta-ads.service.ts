@@ -66,7 +66,7 @@ export class MetaAdsService {
   async status(userId: string, ws: string) {
     await this.member(userId, ws);
     const [missing, token] = await Promise.all([this.ops.missing(ws), this.oauth.tokenInfo(ws)]);
-    return { configured: missing.length === 0, missing, tokenExpiresAt: token.expiresAt, tokenSource: token.source };
+    return { configured: missing.length === 0, missing, tokenExpiresAt: token.expiresAt, tokenSource: token.source, redirectUri: this.oauth.redirectUri };
   }
 
   async test(userId: string, ws: string) {

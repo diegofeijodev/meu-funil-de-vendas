@@ -8,6 +8,8 @@ export type CanvaStatus = {
   inherited: boolean;
   name: string | null;
   email: string | null;
+  /** URL de retorno exata que o app do Canva deve ter cadastrada (vem da API). */
+  redirectUri: string;
 };
 
 /** `POST /v1/creative/canva-get-status` */

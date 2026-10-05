@@ -5,7 +5,7 @@ export type AdsChannel = "google" | "tiktok";
 export type ChannelStep = { label: string; status: string; detail: string };
 
 /** O que falta em cada canal (nomes dos itens ainda não configurados). Qualquer membro. */
-export const adsChannelsStatus = serverFnPost<{ workspaceId: string }, { google: string[]; tiktok: string[] }>("/v1/ads/ads-channels-status");
+export const adsChannelsStatus = serverFnPost<{ workspaceId: string }, { google: string[]; tiktok: string[]; redirectUris?: { google: string; tiktok: string } }>("/v1/ads/ads-channels-status");
 
 /** Salva as credenciais do app do canal no cofre. Só dono/admin. */
 export const saveAdsChannelApp = serverFnPost<{ workspaceId: string; channel: AdsChannel; values: Record<string, string> }, { ok: true }>(

@@ -11,7 +11,7 @@ export const metaAdsSaveCredentials = serverFnPost<
 /** Status leve: só diz se os segredos existem (sem chamar a Meta). */
 export const metaAdsStatus = serverFnPost<
   { workspaceId: string },
-  { configured: boolean; missing?: string[]; tokenExpiresAt?: string | null; tokenSource?: string }
+  { configured: boolean; missing?: string[]; tokenExpiresAt?: string | null; tokenSource?: string; redirectUri?: string }
 >("/v1/meta/meta-ads-status");
 
 export type MetaTestResult = {

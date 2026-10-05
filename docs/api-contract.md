@@ -54,6 +54,9 @@ contra o workspace** (sem vazamento entre workspaces).
   todo campo aceito tem decorator no DTO; mandar a linha inteira de um GET num PATCH dá 400.
 - Rotas estáticas antes das `:id` no controller.
 
+### 1.6a Base pública dos retornos de OAuth (`PUBLIC_URL`)
+Todo `redirect_uri` de OAuth/registro que a API envia a um provedor (Meta, Google/TikTok Ads, Canva, MCP, login Google) sai de **`PUBLIC_URL`** + caminho. `PUBLIC_URL` é a origem pública da PRÓPRIA API, alcançável pelo navegador/provedor tanto em `/v1/files/**` (links assinados) quanto em `/api/public/**` (a API serve esse caminho direto; o rewrite do Next é só uma via alternativa). Um único valor atende os dois; em dev, `http://localhost:3015`. `APP_URL` fica só para onde o navegador VOLTA (`/integrations?…`) e para links que o usuário abre (descadastro, embed). Os cartões da tela Integrações NÃO calculam a URL no navegador: mostram o `redirectUri` devolvido pelas rotas de status (`meta-ads-status`, `ads-channels-status`, `canva-get-status`), idêntico ao enviado no login. Overrides de provedor falso (`AI_OPENAI_BASE_URL`, `AI_GEMINI_BASE_URL`, `META_GRAPH_BASE_URL`, `RESEND_API_URL`, `CALCOM_API_URL`) só valem com `NODE_ENV=development|test` (lista de permissão: ausente ou outro valor = ignorados).
+
 ### 1.6 Rotas públicas
 `/api/public/**` do protótipo vivem **na API com o mesmo caminho** (o Next faz `rewrites`). Marcadas com `@Public()`.
 Nesta tarefa só existem `GET /health`, o download de arquivo assinado e o início/callback do Google.
@@ -347,7 +350,7 @@ recebe `404` (`"Job de geração não encontrado."` / `"Criativo não encontrado
 ## 20. Canva — `POST /v1/creative/canva-*` e `GET /api/public/canva/oauth/callback`
 
 Credenciais por empresa no **cofre** (`app_credentials`, AES-256-GCM): `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET` (também valem os globais), `CANVA_TOKENS` (JSON), `CANVA_OAUTH` (state + verifier PKCE, vale 20 min, uso único). Empresas com `ai_inherit_from` usam a conexão da agência.
-O redirect cadastrado no app Canva é `<PUBLIC_URL>/api/public/canva/oauth/callback` (o protótipo usava o domínio do site); a volta é `302 <APP_URL>/integrations?canva=ok|error[&msg=]`.
+O redirect cadastrado no app Canva é `<PUBLIC_URL>/api/public/canva/oauth/callback` (o protótipo usava o domínio do site); `canva-get-status` devolve esse valor exato em `redirectUri` e o cartão o exibe; a volta é `302 <APP_URL>/integrations?canva=ok|error[&msg=]`.
 
 | rota | nível | corpo → resposta |
 |---|---|---|
@@ -487,7 +490,7 @@ Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem
 | rota (`server fn`) | acesso | corpo → resposta |
 |---|---|---|
 | `meta-ads-save-credentials` | **owner\|admin** (o protótipo deixava marketing: corrigido) | `{ workspaceId, appId≥4, appSecret≥8, systemUserToken≥20, adAccountId (act_?dígitos), pageId (dígitos), instagramId? }` → `{ ok, configured, missing[] }`; grava no cofre (cifrado), `META_TOKEN_SOURCE=system_user`, expiração vazia |
-| `meta-ads-status` | membro | `{ workspaceId }` → `{ configured, missing[], tokenExpiresAt, tokenSource }` (sem chamar a Meta) |
+| `meta-ads-status` | membro | `{ workspaceId }` → `{ configured, missing[], tokenExpiresAt, tokenSource, redirectUri }` (sem chamar a Meta; `redirectUri` = o `redirect_uri` exato do login) |
 | `meta-ads-test` | membro | → `{ ok, missing[], user, account{id,name,status,currency,timezone}, page, instagram, error }` (`ok:false` com HTTP 200) |
 | `meta-ads-list` | membro | → `{ campaigns[], adsets[], ads[] }` (limite 50) |
 | `meta-ads-insights` | membro | `{ workspaceId, since, until (YYYY-MM-DD), campaignId? }` → `{ spend, impressions, clicks, ctr, cpc, leads, cpl }`; campanha sem `meta_campaign_id` (ou de outro workspace) `400 "Esta campanha ainda não foi publicada na Meta."` |
@@ -513,7 +516,7 @@ Portões locais com as mensagens do protótipo: não-membro `403 "Você não tem
 
 | rota | acesso | corpo → resposta |
 |---|---|---|
-| `ads-channels-status` | membro | → `{ google: string[], tiktok: string[] }` (o que falta) |
+| `ads-channels-status` | membro | → `{ google: string[], tiktok: string[], redirectUris: { google, tiktok } }` (o que falta + o `redirect_uri` exato de cada login) |
 | `save-ads-channel-app` | owner\|admin | `{ workspaceId, channel, values{} }` → `{ ok }`; só as chaves do canal; ids de conta numéricos; `400 "Nada para salvar."` |
 | `ads-channel-login-url` | owner\|admin | `{ workspaceId, channel, origin }` → `{ url }` (retorno = `PUBLIC_URL/api/public/ads/oauth/<canal>`; `origin` ignorado) |
 | `list-ads-channel-accounts` | owner\|admin | → `[{ id, name }]` |
@@ -689,4 +692,4 @@ Módulo `api/src/modules/integrations`. Cartões Meta/Google/TikTok/agência/MCP
 
 **Histórico de publicações** — `GET /v1/workspaces/:workspaceId/publishing-jobs?limit=` (read): linhas de `publishing_jobs` (snake_case, todas as colunas) por `created_at` desc; `limit` 1–50 (padrão 15, o da tela de Integrações); `limit` inválido → `400`.
 
-**Limpeza dos exports** — job `exports-cleanup-hourly` (`17 * * * *`, heartbeat `exports_cleanup`, só com `SCHEDULER_ENABLED=true`): apaga arquivos de `<UPLOADS_DIR>/creative-assets/exports/<workspaceId>/` mais velhos que `EXPORTS_TTL_HOURS` (padrão **24 h**; o link de download vale 10 min). Só mexe dentro de `exports/` (raiz validada por `FilesService.resolvePath`, links simbólicos ignorados, `realpath` conferido antes de cada `rm`); pasta de workspace vazia é removida.
+**Limpeza dos exports** — job `exports-cleanup-hourly` (`47 * * * *` — fora do minuto 17 do `ads-insights-3h`; heartbeat `exports_cleanup`, só com `SCHEDULER_ENABLED=true`): apaga arquivos de `<UPLOADS_DIR>/creative-assets/exports/<workspaceId>/` mais velhos que `EXPORTS_TTL_HOURS` (padrão **24 h**; o link de download vale 10 min). Só mexe dentro de `exports/` (raiz validada por `FilesService.resolvePath`, links simbólicos ignorados, a própria raiz precisa resolver para dentro de `realpath(bucket)` e não ser link — senão a limpeza é ignorada —, `realpath` conferido antes de cada `rm`); pasta de workspace vazia é removida.

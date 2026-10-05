@@ -103,6 +103,8 @@ export class CanvaService {
       inherited: !!owner && owner !== ws,
       name: t?.name ?? null,
       email: t?.email ?? null,
+      /** URL exata que o app do Canva precisa ter cadastrada (a mesma enviada no login). */
+      redirectUri: this.redirectUri,
     };
   }
 

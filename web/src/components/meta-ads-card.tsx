@@ -151,7 +151,7 @@ export function MetaAdsCard() {
           />
         </div>
 
-        {canEdit && workspaceId && <FacebookLogin workspaceId={workspaceId} onDone={() => qc.invalidateQueries({ queryKey: ["meta-ads-status", workspaceId] })} />}
+        {canEdit && workspaceId && <FacebookLogin workspaceId={workspaceId} redirectUri={data?.redirectUri} onDone={() => qc.invalidateQueries({ queryKey: ["meta-ads-status", workspaceId] })} />}
 
         {canEdit && (
           <div className="mt-4 rounded-lg border border-border/60 bg-background/40 p-4">
@@ -191,7 +191,7 @@ function TokenExpiry({ expiresAt }: { expiresAt: string }) {
 }
 
 /** 5.4 Entrar com Facebook: salva o app, faz o login e escolhe conta de anúncios, Página e Instagram. */
-function FacebookLogin({ workspaceId, onDone }: { workspaceId: string; onDone: () => void }) {
+function FacebookLogin({ workspaceId, redirectUri, onDone }: { workspaceId: string; redirectUri?: string; onDone: () => void }) {
   const saveApp = useServerFn(metaSaveApp);
   const loginUrl = useServerFn(metaLoginUrl);
   const listAssets = useServerFn(metaListAssets);
@@ -230,7 +230,7 @@ function FacebookLogin({ workspaceId, onDone }: { workspaceId: string; onDone: (
     <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
       <p className="text-sm font-medium">Entrar com Facebook (recomendado)</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        URL de redirecionamento para cadastrar no app: <code>{origin}/api/public/meta/oauth/callback</code>
+        URL de redirecionamento para cadastrar no app: <code>{redirectUri ?? "…"}</code>
       </p>
       {loginError && <p className="mt-2 text-sm text-destructive">O login não foi concluído: {loginError}</p>}
       <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">

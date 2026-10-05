@@ -58,6 +58,16 @@ async function setup(inherit: Record<string, string> = {}) {
 }
 
 describe('CanvaService — app, status e autorização', () => {
+  it('status devolve o redirectUri exato que o login envia ao Canva', async () => {
+    const { svc } = await setup();
+    await svc.saveApp(OWNER, WS_A, 'abcd1234', 'segredo');
+    const st = await svc.status(VIEWER, WS_A);
+    expect(st.redirectUri).toBe('http://api.test/api/public/canva/oauth/callback');
+    const { authUrl } = await svc.oauthStart(OWNER, WS_A);
+    expect(new URL(authUrl).searchParams.get('redirect_uri')).toBe(st.redirectUri);
+    expect(await status(svc.status(STRANGER, WS_A))).toBe('403:Você não tem acesso a esta empresa.');
+  });
+
   it('só dono/admin salva o app e conecta/desconecta; credenciais ficam CIFRADAS no cofre', async () => {
     const { svc, store, vault } = await setup();
     expect(await status(svc.saveApp(MARKETING, WS_A, 'abcd1234', 'segredo'))).toBe('403:Seu perfil não tem permissão para esta ação.');
@@ -76,7 +86,7 @@ describe('CanvaService — app, status e autorização', () => {
 
   it('status: sem app; app salvo (dica do id); conectado; herdado da agência; credenciais globais valem como padrão', async () => {
     const s = await setup({ [WS_B]: WS_A });
-    expect(await s.svc.status(VIEWER, WS_A)).toEqual({ appSaved: false, clientIdHint: null, connected: false, inherited: false, name: null, email: null });
+    expect(await s.svc.status(VIEWER, WS_A)).toEqual({ appSaved: false, clientIdHint: null, connected: false, inherited: false, name: null, email: null, redirectUri: 'http://api.test/api/public/canva/oauth/callback' });
     await s.svc.saveApp(OWNER, WS_A, 'abcd1234', 'sec');
     expect(await s.svc.status(VIEWER, WS_A)).toMatchObject({ appSaved: true, clientIdHint: 'abcd••••', connected: false });
     await s.vault.set(WS_A, { CANVA_TOKENS: s.tokens() });

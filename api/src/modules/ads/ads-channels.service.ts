@@ -70,7 +70,7 @@ export class AdsChannelsService {
   async status(userId: string, ws: string) {
     await this.access.require(userId, ws, 'read');
     const [google, tiktok] = await Promise.all([this.google.missing(ws), this.tiktok.missing(ws)]);
-    return { google, tiktok };
+    return { google, tiktok, redirectUris: { google: this.redirectUri('google'), tiktok: this.redirectUri('tiktok') } };
   }
 
   async saveApp(userId: string, ws: string, channel: AdsChannel, values: Record<string, string>) {
