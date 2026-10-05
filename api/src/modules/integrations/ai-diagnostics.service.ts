@@ -24,6 +24,16 @@ type EnvSlice = Pick<
 const HIGGSFIELD_TOOLS = ['generate_image', 'generate_video', 'job_status'];
 const TIMEOUT_MS = 20_000;
 
+/** Tira chaves (a inteira, a versão codificada e qualquer coisa com cara de chave) de textos vindos do provedor. */
+export function redactSecrets(text: string, secrets: (string | null | undefined)[]): string {
+  let out = text;
+  for (const s of secrets) {
+    if (!s || s.length < 6) continue;
+    for (const v of new Set([s, encodeURIComponent(s), JSON.stringify(s).slice(1, -1)])) out = out.replaceAll(v, '••••');
+  }
+  return out.replace(/\b(?:sk-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{10,})/g, '••••').replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1••••');
+}
+
 const msg = (e: unknown) => (e instanceof HttpException ? errMessage(e) : e instanceof Error ? e.message : String(e)).slice(0, 300);
 
 /**
@@ -141,6 +151,9 @@ export class AiDiagnosticsService {
         return { name: label, ok: r.bytes.length > 0, detail: r.bytes.length > 0 ? 'Imagem gerada.' : 'Sem imagem.' };
       });
     }
+    // O corpo de erro de um provedor pode ecoar a chave (ou parte dela): nada disso sai daqui.
+    const secrets = [openai, gemini, this.env.AI_GATEWAY_API_KEY];
+    for (const c of checks) c.detail = redactSecrets(c.detail, secrets);
     return { checks, at: new Date().toISOString() };
   }
 }

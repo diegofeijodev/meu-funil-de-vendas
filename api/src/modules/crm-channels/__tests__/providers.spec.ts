@@ -70,5 +70,10 @@ describe('envio pelos provedores', () => {
     expect(prod.waCloudBase).toBe('https://graph.facebook.com/v21.0');
     const dev = new ChannelHttp(async () => new Response(''), env({ NODE_ENV: 'development', RESEND_API_URL: 'http://127.0.0.1:1/' }));
     expect(dev.resendBase).toBe('http://127.0.0.1:1');
+    // lista de permissão: NODE_ENV ausente ou desconhecido também ignora o override
+    for (const NODE_ENV of [undefined, 'staging']) {
+      expect(new ChannelHttp(async () => new Response(''), env({ NODE_ENV, RESEND_API_URL: 'http://127.0.0.1:1', CALCOM_API_URL: 'http://127.0.0.1:3' })).resendBase).toBe('https://api.resend.com');
+    }
+    expect(new ChannelHttp(async () => new Response(''), env({ NODE_ENV: 'test', CALCOM_API_URL: 'http://127.0.0.1:3/' })).calBase).toBe('http://127.0.0.1:3');
   });
 });

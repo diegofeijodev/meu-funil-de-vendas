@@ -405,6 +405,7 @@ check "canva: client id curto → 400" "400" "$(curl -s -o /dev/null -w '%{http_
 check "canva: login exige o app salvo" "Salve o Client ID e o Client secret do app Canva antes de entrar." "$(curl -s -X POST $CRV/canva-o-auth-start -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .error.message)"
 check "canva: dono salva o app (cifrado no cofre)" "true,1,0" "$(curl -s -X POST $CRV/canva-save-app -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\",\"clientId\":\"abcd1234\",\"clientSecret\":\"segredo-canva-smoke\"}" | jq -r .ok | tr '\n' ','; PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id='$WID' AND key='CANVA_CLIENT_SECRET' AND value LIKE 'enc:v2:%'" | tr '\n' ','; PSQL "SELECT count(*) FROM app_credentials WHERE value LIKE '%segredo-canva-smoke%'")"
 check "canva: status mostra a dica do id" "true,abcd••••" "$(curl -s -X POST $CRV/canva-get-status -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r '"\(.appSaved),\(.clientIdHint)"')"
+check "canva: status devolve o redirectUri exato do login (o que o cartão mostra)" "$API/api/public/canva/oauth/callback" "$(curl -s -X POST $CRV/canva-get-status -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .redirectUri)"
 check "canva: login devolve a URL de autorização (PKCE S256)" "1,1" "$(AU=$(curl -s -X POST $CRV/canva-o-auth-start -H "$H" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .authUrl); echo "$AU" | grep -c '^https://www.canva.com/api/oauth/authorize?' | tr '\n' ','; echo "$AU" | grep -c 'code_challenge_method=S256')"
 check "canva: marketing não inicia login" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/canva-o-auth-start -H "$HM" -H "$J" -d "{\"workspaceId\":\"$WID\"}")"
 check "canva: testar sem conexão" "Canva não está conectado nesta empresa. Entre com Canva em Integrações." "$(curl -s -X POST $CRV/canva-test -H "$HV" -H "$J" -d "{\"workspaceId\":\"$WID\"}" | jq -r .error.message)"
@@ -654,6 +655,7 @@ WSB="{\"workspaceId\":\"$WID\"}"
 
 echo "  Meta: autorização e validação"
 check "meta: viewer lê o status (configured é booleano)" "boolean" "$(post $MET/meta-ads-status "$HV" "$WSB" | jq -r '.configured|type')"
+check "meta: status devolve o redirectUri exato do login" "$API/api/public/meta/oauth/callback" "$(post $MET/meta-ads-status "$HV" "$WSB" | jq -r .redirectUri)"
 check "meta: estranho não lê o status" "403,Você não tem acesso a esta área de trabalho." "$(code $MET/meta-ads-status "$HD" "$WSB"),$(post $MET/meta-ads-status "$HD" "$WSB" | jq -r .error.message)"
 SAVEB='{"workspaceId":"'$WID'","appId":"app-smoke-1","appSecret":"smoke-meta-secret","systemUserToken":"SMOKE-SYSTEM-USER-TOKEN-0123456789","adAccountId":"act_1001","pageId":"2002","instagramId":"3003"}'
 check "meta: marketing NÃO salva credenciais (só owner|admin)" "403,Só o dono ou um administrador conecta a Meta." "$(code $MET/meta-ads-save-credentials "$HM" "$SAVEB"),$(post $MET/meta-ads-save-credentials "$HM" "$SAVEB" | jq -r .error.message)"
@@ -703,6 +705,7 @@ check "recomendação: descartar" "Descartada.,dismissed" "$(post $DEC "$H" "{\"
 
 echo "  Google Ads / TikTok Ads (canais)"
 check "canais: status lista o que falta" "5,4" "$(post $ADSR/ads-channels-status "$HV" "$WSB" | jq -r '[(.google|length),(.tiktok|length)]|join(",")')"
+check "canais: status devolve o redirect_uri exato de cada login" "$API/api/public/ads/oauth/google,$API/api/public/ads/oauth/tiktok" "$(post $ADSR/ads-channels-status "$HV" "$WSB" | jq -r '[.redirectUris.google,.redirectUris.tiktok]|join(",")')"
 check "canais: estranho não vê o status" "403" "$(code $ADSR/ads-channels-status "$HD" "$WSB")"
 check "canais: marketing não salva o app" "403" "$(code $ADSR/save-ads-channel-app "$HM" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"GOOGLE_ADS_CLIENT_ID\":\"x\"}}")"
 check "canais: só chaves do canal (resto vira 'Nada para salvar.')" "Nada para salvar." "$(post $ADSR/save-ads-channel-app "$H" "{\"workspaceId\":\"$WID\",\"channel\":\"google\",\"values\":{\"TIKTOK_APP_ID\":\"x\",\"GOOGLE_ADS_CLIENT_ID\":\"  \"}}" | jq -r .error.message)"
@@ -1209,7 +1212,8 @@ AK=$API/v1/ai-keys
 OKEY="sk-fake-good-0123456789abcdefWXYZ"
 GKEY="AIzaFakeGood0123456789abcdefQRST"
 if [ -z "${AI_OPENAI_BASE_URL:-}" ]; then
-  echo "  (pulado: suba a API com AI_OPENAI_BASE_URL=http://127.0.0.1:3099/v1 e AI_GEMINI_BASE_URL=http://127.0.0.1:3099/v1beta para testar as chaves de IA)"
+  # Falha contada (não pula em silêncio): sem o provedor falso as chaves de IA ficam sem cobertura.
+  check "chaves de IA: provedor falso configurado (exporte AI_OPENAI_BASE_URL=http://127.0.0.1:3099/v1 e AI_GEMINI_BASE_URL=http://127.0.0.1:3099/v1beta ao subir a API e ao rodar o smoke)" "definida" "ausente"
 else
   FAPID=""
   if ! curl -s -o /dev/null http://127.0.0.1:3099/v1/models; then node "$(dirname "$0")/fake-ai.mjs" >/dev/null 2>&1 & FAPID=$!; sleep 1; fi

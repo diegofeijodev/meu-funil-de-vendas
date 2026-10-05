@@ -73,6 +73,17 @@ describe('ExportsCleanupService', () => {
     w.done();
   });
 
+  it('raiz `exports` que é link simbólico (ou resolve para fora do bucket) → limpeza ignorada, nada apagado', async () => {
+    const w = setup();
+    const fora = w.put('exports/ws1/velho.zip', 900, path.join(w.dir, 'fora'));
+    mkdirSync(w.bucket, { recursive: true });
+    symlinkSync(path.join(w.dir, 'fora', 'exports'), path.join(w.bucket, 'exports'));
+    const r = await w.svc.cleanup(NOW);
+    expect(r).toEqual({ deleted: 0, kept: 0, skipped: 1 });
+    expect(existsSync(fora)).toBe(true);
+    w.done();
+  });
+
   it('sem pasta exports ainda → nada a fazer; a raiz é validada pelo FilesService (chave com .. é recusada)', async () => {
     const w = setup();
     expect(await w.svc.cleanup(NOW)).toEqual({ deleted: 0, kept: 0, skipped: 0 });
@@ -85,7 +96,7 @@ describe('ExportsCleanupService', () => {
     const w = setup();
     w.svc.onModuleInit();
     expect(w.registered).toHaveLength(1);
-    expect(w.registered[0]).toMatchObject({ name: EXPORTS_CLEANUP_JOB, cron: '17 * * * *', heartbeat: 'exports_cleanup' });
+    expect(w.registered[0]).toMatchObject({ name: EXPORTS_CLEANUP_JOB, cron: '47 * * * *', heartbeat: 'exports_cleanup' });
     w.put('exports/ws1/a.zip', 48);
     expect(await w.registered[0].handler()).toMatch(/1 arquivo/);
     w.done();

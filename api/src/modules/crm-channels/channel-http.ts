@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
+import { overrideBase } from '../../common/config/test-overrides';
 import { assertExternalUrl, EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { VaultService } from '../vault/vault.service';
 
@@ -10,7 +11,7 @@ export type ChannelResponse = { status: number; ok: boolean; text: string };
  * Única porta de rede dos canais do CRM (WhatsApp, Resend, Cal.com, mídia recebida). Tudo passa por `EXTERNAL_FETCH` (DNS
  * verificado e fixado: rede interna recusada). Endereços digitados pelo usuário (Z-API/Evolution `base_url`) ainda são validados
  * antes (https; localhost só fora de produção) e redirecionamentos NUNCA são seguidos (3xx vira erro).
- * Hosts oficiais (Resend, Cal.com, Cloud API) têm substituto só fora de produção (`RESEND_API_URL`, `CALCOM_API_URL`,
+ * Hosts oficiais (Resend, Cal.com, Cloud API) têm substituto só com NODE_ENV=development|test (`RESEND_API_URL`, `CALCOM_API_URL`,
  * `META_GRAPH_BASE_URL`) para o smoke/browser-check usarem provedores falsos.
  */
 @Injectable()
@@ -25,7 +26,7 @@ export class ChannelHttp {
   }
 
   private override(value: string | undefined, fallback: string): string {
-    return (value && this.allowLocal ? value : fallback).replace(/\/$/, '');
+    return overrideBase(this.env, value, fallback);
   }
 
   get resendBase() {

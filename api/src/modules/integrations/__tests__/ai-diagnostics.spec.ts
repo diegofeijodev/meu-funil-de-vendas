@@ -11,7 +11,7 @@ const ENV = {
 
 interface World {
   openai?: string | null; gemini?: string | null;
-  openaiModels?: string[]; geminiModels?: string[]; openaiStatus?: number;
+  openaiModels?: string[]; geminiModels?: string[]; openaiStatus?: number; openaiBody?: string;
   canva?: { connected: boolean; name?: string | null } | 'erro'; mcp?: any; ping?: 'ok' | 'bad' | 'erro'; image?: 'ok' | 'erro';
   env?: any;
 }
@@ -21,7 +21,7 @@ function setup(w: World = {}) {
   (keys as any).get = async (_ws: string, v: string) => (v === 'openai' ? w.openai ?? null : w.gemini ?? null);
   const http = async (url: string) => {
     if (url.includes('api.openai.com')) {
-      if (w.openaiStatus) return new Response('nope', { status: w.openaiStatus });
+      if (w.openaiStatus) return new Response(w.openaiBody ?? 'nope', { status: w.openaiStatus });
       return new Response(JSON.stringify({ data: (w.openaiModels ?? ['gpt-image-1', 'gpt-4o-mini', 'whisper-1']).map((id) => ({ id })) }));
     }
     return new Response(JSON.stringify({ models: (w.geminiModels ?? ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest']).map((name) => ({ name: `models/${name}` })) }));
@@ -98,5 +98,18 @@ describe('AiDiagnosticsService — cada verificação', () => {
     expect(com.checks.length).toBe(sem.checks.length + 1);
     expect(com.checks.at(-1)).toMatchObject({ name: 'Imagem com créditos do app (m(google/gemini-3.1-flash-image))', ok: true, detail: 'Imagem gerada.' });
     expect((await setup({ image: 'erro' }).diagnose(OWNER, WS_A, true)).checks.at(-1)).toMatchObject({ ok: false, detail: 'sem crédito' });
+  });
+});
+
+describe('AiDiagnosticsService — chaves nunca vazam', () => {
+  it('corpo de erro do provedor que ecoa a chave sai com ••••', async () => {
+    const key = 'sk-proj-ABCDEF0123456789zzzz';
+    const r = await setup({ openai: key, openaiStatus: 401, openaiBody: `Incorrect API key provided: ${key}. Bearer ${key} tried; enc=${encodeURIComponent(key)} sk-other-1234567890abcdef` }).diagnose(OWNER, WS_A, false);
+    const d = by(r, 'Chave OpenAI').detail;
+    expect(d).toContain('OpenAI respondeu 401');
+    expect(d).not.toContain(key);
+    expect(d).not.toContain('ABCDEF0123456789');
+    expect(d).not.toContain('sk-other');
+    expect(d).toContain('••••');
   });
 });

@@ -115,5 +115,8 @@ describe('AiKeysService.baseUrl — provedor falso só fora de produção', () =
     expect(setup().keys.baseUrl('gemini')).toBe('https://generativelanguage.googleapis.com/v1beta');
     expect(setup({ env: { AI_OPENAI_BASE_URL: 'http://127.0.0.1:3099/v1/' } }).keys.baseUrl('openai')).toBe('http://127.0.0.1:3099/v1');
     expect(setup({ env: { NODE_ENV: 'production', AI_OPENAI_BASE_URL: 'http://x/v1' } }).keys.baseUrl('openai')).toBe('https://api.openai.com/v1');
+    // lista de permissão: NODE_ENV ausente/desconhecido também ignora o override
+    expect(setup({ env: { NODE_ENV: undefined, AI_OPENAI_BASE_URL: 'http://x/v1' } }).keys.baseUrl('openai')).toBe('https://api.openai.com/v1');
+    expect(setup({ env: { NODE_ENV: 'staging', AI_GEMINI_BASE_URL: 'http://x/v1beta' } }).keys.baseUrl('gemini')).toBe('https://generativelanguage.googleapis.com/v1beta');
   });
 });

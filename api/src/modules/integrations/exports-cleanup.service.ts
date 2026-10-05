@@ -37,7 +37,7 @@ export class ExportsCleanupService implements OnModuleInit {
   onModuleInit() {
     this.scheduler.register({
       name: EXPORTS_CLEANUP_JOB,
-      cron: '17 * * * *',
+      cron: '47 * * * *',
       heartbeat: 'exports_cleanup',
       handler: async () => {
         const r = await this.cleanup();
@@ -58,6 +58,14 @@ export class ExportsCleanupService implements OnModuleInit {
       realRoot = await fs.realpath(root);
     } catch {
       return out; // ainda não houve nenhum export
+    }
+    // A própria raiz precisa ser uma pasta real DENTRO do bucket: link simbólico em `exports` (ou bucket trocado) = não mexe em nada.
+    const realBucket = await fs.realpath(path.dirname(root)).catch(() => null);
+    const rootIsLink = (await fs.lstat(root).catch(() => null))?.isSymbolicLink() ?? true;
+    if (rootIsLink || !realBucket || !realRoot.startsWith(realBucket + path.sep)) {
+      this.logger.warn('exports: a raiz não está dentro do bucket (link simbólico?); limpeza ignorada');
+      out.skipped++;
+      return out;
     }
     await this.walk(root, realRoot, now - ttlMs, out, true);
     return out;

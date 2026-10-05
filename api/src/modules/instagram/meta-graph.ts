@@ -7,6 +7,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
+import { overrideBase } from '../../common/config/test-overrides';
 import { VaultService } from '../vault/vault.service';
 
 export const GRAPH_VERSION = 'v24.0';
@@ -93,10 +94,10 @@ export class MetaGraphClient {
     @Optional() @Inject(ENV) private readonly env?: Pick<Env, 'NODE_ENV' | 'META_GRAPH_BASE_URL'>,
   ) {}
 
-  /** Base da Graph API. `META_GRAPH_BASE_URL` (Graph falsa de smoke/browser-check) só vale fora de produção. */
+  /** Base da Graph API. `META_GRAPH_BASE_URL` (Graph falsa de smoke/browser-check) só vale com NODE_ENV=development|test. */
   get base(): string {
     const o = this.env?.META_GRAPH_BASE_URL;
-    return o && this.env?.NODE_ENV !== 'production' ? o.replace(/\/$/, '') : GRAPH_BASE;
+    return overrideBase(this.env, o, GRAPH_BASE);
   }
 
   config(workspaceId: string | null) {
