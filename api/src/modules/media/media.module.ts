@@ -5,6 +5,7 @@ import { Env } from '../../common/config/env.validation';
 import { createGuardedFetch, EXTERNAL_FETCH } from './external-fetch';
 import { createFfmpegRunner, FFMPEG_RUNNER } from './ffmpeg';
 import { FfmpegService } from './ffmpeg.service';
+import { VideoConformService } from './video-conform.service';
 import { ImageService } from './image.service';
 import { LibraryService } from './library.service';
 import { MediaActionsController, MediaResourceController } from './media.controller';
@@ -20,11 +21,12 @@ import { testOverridesAllowed } from '../../common/config/test-overrides';
     // Única porta do ffmpeg (processo filho) — nos testes entra um runner falso.
     { provide: FFMPEG_RUNNER, inject: [ENV], useFactory: (env: Env) => createFfmpegRunner(env) },
     FfmpegService,
+    VideoConformService,
     ImageService,
     AssetsService,
     LibraryService,
     MediaQueryService,
   ],
-  exports: [EXTERNAL_FETCH, ImageService, AssetsService, FfmpegService],
+  exports: [EXTERNAL_FETCH, ImageService, AssetsService, FfmpegService, VideoConformService],
 })
 export class MediaModule {}

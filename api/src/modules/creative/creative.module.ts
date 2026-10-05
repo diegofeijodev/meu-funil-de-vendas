@@ -8,11 +8,12 @@ import { PipelineService } from './pipeline.service';
 import { ProviderResolverService } from './provider-resolver.service';
 import { RefsService } from './refs.service';
 import { VideoExtrasService } from './video-extras.service';
+import { VideoQualityService } from './video-quality.service';
 
 @Module({
   imports: [MediaModule, McpModule, StrategistModule],
   controllers: [CreativeController, CreativeResourceController, AiKeysHealthController],
-  providers: [CreativeService, CreativeResourcesService, PipelineService, ProviderResolverService, RefsService, VideoExtrasService, CreativePollJob],
-  exports: [CreativeService, ProviderResolverService, RefsService, PipelineService, VideoExtrasService],
+  providers: [CreativeService, CreativeResourcesService, PipelineService, ProviderResolverService, RefsService, VideoExtrasService, CreativePollJob, VideoQualityService],
+  exports: [CreativeService, ProviderResolverService, RefsService, PipelineService, VideoExtrasService, VideoQualityService],
 })
 export class CreativeModule {}
