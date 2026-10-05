@@ -166,6 +166,17 @@ export class AiService {
     return { content: await this.gatewayJson<T>(req), engine: fails.length ? 'IA do app (sua chave falhou)' : 'IA do app' };
   }
 
+  /** Diagnóstico: um JSON mínimo pelo gateway do app (NUNCA pelas chaves próprias). */
+  async pingGateway(): Promise<{ model: string; ok: boolean }> {
+    const model = this.model();
+    const r = await this.gatewayJson<{ ok?: boolean }>({
+      prompt: 'Responda exatamente com o JSON {"ok": true}.',
+      name: 'ping',
+      schema: { type: 'object', additionalProperties: false, required: ['ok'], properties: { ok: { type: 'boolean' } } },
+    });
+    return { model, ok: r.ok === true };
+  }
+
   /** Atalho de visão: JSON a partir de imagens + prompt. */
   vision<T = any>(workspaceId: string, req: AiJsonRequest & { images: AiImageInput[] }): Promise<T> {
     return this.json<T>(workspaceId, req);

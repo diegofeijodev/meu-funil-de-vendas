@@ -22,6 +22,7 @@ import { CreativeModule } from './modules/creative/creative.module';
 import { CrmDefaultsModule } from './modules/crm-defaults/crm-defaults.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { CrmChannelsCoreModule, CrmChannelsModule } from './modules/crm-channels/crm-channels.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { InstagramModule } from './modules/instagram/instagram.module';
 import { FilesModule } from './modules/files/files.module';
 import { McpModule } from './modules/mcp/mcp.module';
@@ -67,6 +68,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     CrmModule,
     CrmChannelsCoreModule,
     CrmChannelsModule,
+    IntegrationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

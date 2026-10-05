@@ -85,6 +85,9 @@ const envSchema = z
     /** Gateway de IA compatível com OpenAI (era o Lovable AI gateway). */
     AI_GATEWAY_URL: opt(),
     AI_GATEWAY_API_KEY: opt(),
+    /** Bases das chaves BYO (só para smoke/browser-check com um provedor falso; ignoradas em produção). */
+    AI_OPENAI_BASE_URL: opt(),
+    AI_GEMINI_BASE_URL: opt(),
     /** Mapa dos ids de modelo do protótipo para modelos reais. */
     AI_MODEL_TEXT: z.string().default('gpt-4o'),
     AI_MODEL_TEXT_FAST: z.string().default('gpt-4o-mini'),
@@ -103,6 +106,8 @@ const envSchema = z
 
     /** Agendador (substitui pg_cron + pg_net). Ligue em UMA instância só. */
     SCHEDULER_ENABLED: bool('false'),
+    /** Horas até a limpeza apagar os arquivos de `exports/<workspace>/` (o link de download vale 10 min). */
+    EXPORTS_TTL_HOURS: z.coerce.number().positive().default(24),
 
     // --- Variáveis que tarefas posteriores leem (todas opcionais) ---
     CRM_CRON_SECRET: opt(),
