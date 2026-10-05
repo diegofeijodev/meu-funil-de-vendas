@@ -9,6 +9,7 @@ import { WorkspaceAccessService } from '../access/access.service';
 import { ActivityService } from '../activity/activity.service';
 import { AiKeysService } from '../ai/ai-keys.service';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
+import { JOB_SCHEDULES } from '../scheduler/job-schedules';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { notFound } from '../media/user-error';
 import { CreativeIdDto, GenerateCreativeDto, JobsQueryDto, RetryCreativeJobDto, SetCreativeStatusDto, WorkspaceIdDto } from './creative.dto';
@@ -152,9 +153,7 @@ export class CreativePollJob implements OnModuleInit {
 
   onModuleInit() {
     this.scheduler.register({
-      name: 'creative-poll-5min',
-      cron: '*/5 * * * *',
-      heartbeat: 'creative',
+      ...JOB_SCHEDULES['creative-poll-5min'],
       handler: async () => {
         const r = await this.creative.pollPendingCreatives();
         return `${r.length} job(s) de criativo verificados`;

@@ -23,7 +23,7 @@ export class AdsCronService implements OnModuleInit {
 
   /** Jobs do `pg_cron` (db.md §6): `ads-insights-3h` e `ads-rules-daily`, com os heartbeats que "o que falta configurar" lê. */
   onModuleInit() {
-    this.scheduler.register({ ...JOB_SCHEDULES['ads-insights-3h'], heartbeat: 'ads-sync', handler: async () => JSON.stringify(await this.run('sync')).slice(0, 300) });
-    this.scheduler.register({ ...JOB_SCHEDULES['ads-rules-daily'], heartbeat: 'ads-rules', handler: async () => JSON.stringify(await this.run('rules')).slice(0, 300) });
+    this.scheduler.register({ ...JOB_SCHEDULES['ads-insights-3h'], handler: async () => JSON.stringify(await this.run('sync')).slice(0, 300) });
+    this.scheduler.register({ ...JOB_SCHEDULES['ads-rules-daily'], handler: async () => JSON.stringify(await this.run('rules')).slice(0, 300) });
   }
 }

@@ -5,6 +5,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { FilesService } from '../files/files.service';
 import { MEDIA_BUCKET } from '../media/assets.service';
+import { JOB_SCHEDULES } from '../scheduler/job-schedules';
 import { SchedulerService } from '../scheduler/scheduler.service';
 
 /** Pasta (dentro do bucket de mídia) onde os exports da biblioteca/CapCut são gravados: `exports/<workspaceId>/...`. */
@@ -36,9 +37,7 @@ export class ExportsCleanupService implements OnModuleInit {
 
   onModuleInit() {
     this.scheduler.register({
-      name: EXPORTS_CLEANUP_JOB,
-      cron: '47 * * * *',
-      heartbeat: 'exports_cleanup',
+      ...JOB_SCHEDULES['exports-cleanup-hourly'],
       handler: async () => {
         const r = await this.cleanup();
         return `${r.deleted} arquivo(s) de export apagado(s), ${r.kept} dentro do prazo`;

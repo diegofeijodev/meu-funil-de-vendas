@@ -65,13 +65,13 @@ export class InstagramCronService implements OnModuleInit {
 
   /** Jobs do `pg_cron` (db.md §6), mesmos horários UTC; heartbeats com as chaves que "o que falta configurar" lê. */
   onModuleInit() {
-    const job = (key: keyof typeof JOB_SCHEDULES, heartbeat: string, task: CronTask) =>
-      this.scheduler.register({ ...JOB_SCHEDULES[key], heartbeat, handler: async () => JSON.stringify(await this.run(task)).slice(0, 300) });
-    job('instagram-queue-5min', 'instagram-queue', 'queue');
-    job('instagram-media-5min', 'instagram-media', 'media');
-    job('instagram-metrics-5min', 'instagram-metrics', 'metrics');
-    job('instagram-autopilot-weekly', 'instagram-weekly', 'weekly');
-    job('instagram-optimizer-monday', 'instagram-optimize', 'optimize');
-    job('instagram-account-daily', 'instagram-account', 'account');
+    const job = (key: keyof typeof JOB_SCHEDULES, task: CronTask) =>
+      this.scheduler.register({ ...JOB_SCHEDULES[key], handler: async () => JSON.stringify(await this.run(task)).slice(0, 300) });
+    job('instagram-queue-5min', 'queue');
+    job('instagram-media-5min', 'media');
+    job('instagram-metrics-5min', 'metrics');
+    job('instagram-autopilot-weekly', 'weekly');
+    job('instagram-optimizer-monday', 'optimize');
+    job('instagram-account-daily', 'account');
   }
 }

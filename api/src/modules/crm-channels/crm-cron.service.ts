@@ -41,9 +41,9 @@ export class CrmCronService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.scheduler.register({ ...JOB_SCHEDULES['crm-cadences-5min'], heartbeat: 'crm-cadences', handler: async () => JSON.stringify(await this.runCadences()).slice(0, 300) });
+    this.scheduler.register({ ...JOB_SCHEDULES['crm-cadences-5min'], handler: async () => JSON.stringify(await this.runCadences()).slice(0, 300) });
     this.scheduler.register({
-      ...JOB_SCHEDULES['crm-daily'], heartbeat: 'crm-daily',
+      ...JOB_SCHEDULES['crm-daily'],
       handler: async () => {
         const r = await this.runDaily();
         const bad = r.costs.find((c) => c.error);
