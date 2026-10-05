@@ -141,11 +141,23 @@ const gateway = createServer((req, res) => {
           format, scheduled_at: `${inicio}T1${i}:00:00-03:00`, theme: `Tema IA ${i + 1}`, hook: 'Gancho', caption: `Legenda ${i + 1}`, hashtags: ['a', 'b'], cta: 'Fale', image_prompt: 'copo de chopp', slides: [],
         })),
       };
+    } else if (name === 'ig_run_strategy') {
+      // Estratégia do período (passo 1 da programação): o prompt leva o objetivo digitado e os dias reais.
+      fakeAi.strategyRuns = (fakeAi.strategyRuns ?? 0) + 1;
+      out = {
+        objetivo_resumido: 'Lotar o almoço executivo', kpi_principal: `Reservas pelo WhatsApp v${fakeAi.strategyRuns}`, publico_foco: 'Adultos de Valinhos', mensagem_central: 'Almoço rápido e gostoso na semana',
+        pilares: [{ nome: 'Bastidores', peso_percentual: 60, por_que_serve_ao_objetivo: 'mostra o preparo' }, { nome: 'Promoções', peso_percentual: 40, por_que_serve_ao_objetivo: 'puxa a reserva' }],
+        distribuicao_por_dia: [], ctas: ['Venha', 'Reserve pelo WhatsApp'], proibicoes: ['barato'],
+      };
+    } else if (name === 'ig_post_review') {
+      // Revisor de posts: aprova tudo com nota 8 (o fluxo de reprovação/needs_review é coberto pelo jest e semeado por SQL abaixo).
+      const indices = [...prompt.matchAll(/- index (\d+) ·/g)].map((m) => Number(m[1]));
+      out = { results: indices.map((index) => ({ index, aprovado: true, nota_0_10: 8, motivo: 'Alinhado ao objetivo' })) };
     } else if (name === 'ig_auto_calendar') {
       const indices = [...prompt.matchAll(/- index (\d+):/g)].map((m) => Number(m[1]));
       out = {
         posts: indices.map((index) => ({
-          index, theme: `Auto ${index}`, pillar: 'Bastidores', funnel_stage: 'atracao', hook: 'Gancho', headline: 'Manchete', caption: 'Legenda automática', hashtags: ['chopp'], cta: 'Venha', image_prompt: 'copo de chopp', slides: [],
+          index, theme: `Auto ${index}`, pillar: 'Bastidores', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'Serve ao objetivo do almoço', hook: 'Gancho', headline: 'Manchete', caption: 'Legenda automática', hashtags: ['chopp'], cta: 'Venha', image_prompt: 'copo de chopp', slides: [],
         })),
       };
     }
@@ -282,6 +294,8 @@ const varre = () => {
   const planos = `name LIKE 'Instagram · Campanha Check %' OR name LIKE 'Plano IG Check %'`;
   igPsql(`DELETE FROM ig_posts WHERE plan_id IN (SELECT id FROM ig_content_plans WHERE ${planos})`);
   igPsql(`DELETE FROM ig_content_plans WHERE ${planos}`);
+  // mídia de teste da Biblioteca (uma rodada abortada/morta pelo teto deixava `upload-check` e quebrava o "1 de 1 mídia" da seguinte)
+  igPsql(`DELETE FROM media_assets WHERE workspace_id='${wsId}' AND title IN ('upload-check')`);
   igPsql(`DELETE FROM brands WHERE workspace_id='${wsId}' AND (name LIKE 'Marca Check %' OR name LIKE 'Marca Camp %' OR name LIKE 'Marca Studio %' OR name LIKE 'Marca IG Check %' OR name LIKE 'Marca Meta %')`);
 };
 
@@ -823,6 +837,9 @@ try {
 
   // ── 2d. Task 4: Creative Studio, Biblioteca de mídia, Canva ──────
   console.log('-- Creative Studio --');
+  // pré-limpeza pela API (apaga também os arquivos do disco) do resíduo de rodadas abortadas
+  const velhas = (await apiCall('GET', `/v1/workspaces/${wsId}/media-assets?search=upload-check&limit=1000`)).body?.rows?.map((r) => r.id) ?? [];
+  if (velhas.length) await apiCall('POST', '/v1/media/delete-media-assets', { workspaceId: wsId, assetIds: velhas.slice(0, 200) });
   const t4 = Date.now();
   const marcaS = `Marca Studio ${t4}`;
   const campS = `Campanha Studio ${t4}`;
@@ -861,7 +878,7 @@ try {
     const direcao = fakeAi.prompts.find((p) => p.name === 'art_direction');
     check('studio: o prompt do diretor leva marca/briefing/Provedor', direcao && direcao.prompt.includes('Provedor de destino: gemini') && direcao.prompt.includes('Prompt check copo suado'));
     check('studio: "Prompt visual" preenchido com o prompt do diretor de arte', (await page.inputValue('#vp')).startsWith('A frosty glass of draft beer'));
-    check('studio: "Gerações recentes" mostra o job como Pronto', (await page.locator('div.rounded-lg', { hasText: 'No text, letters or logos' }).first().innerText()).includes('Pronto'));
+    check('studio: "Gerações recentes" mostra o job como Pronto', (await page.locator('div.rounded-lg', { hasText: 'Não inclua texto, letras nem logotipos' }).first().innerText()).includes('Pronto'));
     const card = page.locator('div.overflow-hidden.rounded-lg', { hasText: 'Criativo Check' }).first();
     await card.waitFor({ timeout: 15000 });
     check('studio: criativo na grade com formato, versão, campanha e status', tem(await card.innerText(), `v1 · ${campS}`) && tem(await card.innerText(), 'Pronto'));
@@ -1119,8 +1136,16 @@ try {
   }
 
   // ── Aprovações ──
+  // Post reprovado pela revisão (needs_review) semeado por SQL: entra na fila de aprovações com o selo "Precisa de revisão" e o motivo.
+  const postRevisao = igPsql(`INSERT INTO ig_posts(workspace_id,plan_id,format,status,theme,caption,scheduled_at,review_reason,review_score,media) VALUES ('${wsId}','${planoIg.id}','feed_image','needs_review','Revisão IA check','Sextou com chopp em dobro!', '2099-06-01T12:00:00Z','Incoerência de data: "sextou" fora de sexta-feira.',0,'[{"url":"data:image/png;base64,${PNG_1X1}","type":"image","order":0}]') RETURNING id`).split('\n')[0];
   await page.goto(`${BASE}/instagram?tab=approvals`);
   await page.getByText('Posts aguardando aprovação').first().waitFor({ timeout: 30000 });
+  await page.getByText('Revisão IA check').first().waitFor({ timeout: 30000 });
+  const txtRev = await corpo();
+  check('aprovações: post em revisão mostra o selo "Precisa de revisão · Feed" e o motivo', tem(txtRev, 'Precisa de revisão · Feed') && tem(txtRev, 'Motivo: Incoerência de data: "sextou" fora de sexta-feira.'));
+  check('API: GET ig-posts devolve status needs_review + review_reason/review_score', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.some((x) => x.id === postRevisao && x.status === 'needs_review' && x.review_score === 0 && /sextou/.test(x.review_reason)));
+  check('API: pending-count inclui o post em revisão', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts/pending-count`)).body.count >= 1);
+  check('menu: o selo do Instagram conta o post em revisão (>= 1)', Number((await page.locator('aside span[title="Posts aguardando aprovação"]').first().innerText()) || 0) >= 1);
   if (igAi) {
     await page.getByText('Selecionar todos').waitFor({ timeout: 15000 });
     check('menu: selo do Instagram mostra posts aguardando (>= 3)', Number((await page.locator('aside span[title="Posts aguardando aprovação"]').first().innerText()) || 0) >= 3);
@@ -1178,7 +1203,7 @@ try {
   await page.getByRole('button', { name: 'Nova programação' }).click();
   const dlg = page.getByRole('dialog');
   await dlg.getByText('Nova programação com IA').waitFor({ timeout: 15000 });
-  for (const t of ['Estratégia', 'Período', 'Dias da semana', 'Horários dos posts', 'Horários dos stories', 'Foco do período', 'Modo', 'Totalmente automático', 'Com minha aprovação', 'Só hoje', 'Próximos 7 dias']) check(`programação: diálogo mostra "${t}"`, tem(await dlg.innerText(), t));
+  for (const t of ['Estratégia', 'Período', 'Dias da semana', 'Horários dos posts', 'Horários dos stories', 'Objetivo deste período (obrigatório)', 'Modo', 'Totalmente automático', 'Com minha aprovação', 'Só hoje', 'Próximos 7 dias']) check(`programação: diálogo mostra "${t}"`, tem(await dlg.innerText(), t));
   await dlg.locator('select').first().selectOption({ label: `Plano: ${igSobras.plano}` });
   await dlg.getByRole('button', { name: 'Só hoje' }).click();
   for (const h of ['09:00', '12:00', '19:00']) await dlg.getByLabel(`Remover ${h}`).click();
@@ -1186,16 +1211,45 @@ try {
   await dlg.locator('label', { hasText: 'Publicar um post hoje o quanto antes' }).locator('button[role="switch"]').click();
   await dlg.getByText(/1 post\(s\)/).waitFor({ timeout: 20000 });
   ok('programação: prévia ao vivo ("o quanto antes" = 1 post)');
-  check('programação: botão "Criar e publicar automaticamente" (dono)', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isEnabled()));
+  // objetivo obrigatório: sem ≥ 30 caracteres o botão fica desligado e a dica fica vermelha
+  const OBJETIVO = 'Levar o público de Valinhos para almoçar o prato executivo durante a semana';
+  check('programação: sem objetivo o botão "Criar e publicar automaticamente" fica desligado e a dica pede 30 caracteres', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isDisabled()) && tem(await dlg.innerText(), 'Escreva pelo menos 30 caracteres (0/30). A estratégia e todos os posts partem daqui.'));
+  await dlg.getByPlaceholder(/Ex\.: Levar público de Valinhos/).fill('Black Friday');
+  check('programação: objetivo curto (12/30) segue desligado', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isDisabled()) && tem(await dlg.innerText(), '(12/30)'));
+  await dlg.getByPlaceholder(/Ex\.: Levar público de Valinhos/).fill(OBJETIVO);
+  await dlg.getByText('A estratégia e todos os posts partem deste objetivo.').waitFor({ timeout: 10000 });
+  check('programação: botão "Criar e publicar automaticamente" (dono) com o objetivo preenchido', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isEnabled()));
   if (igAi) {
     await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).click();
     await page.getByText(/Programação criada: 1 posts\./).waitFor({ timeout: 30000 });
+    // Passo 1: a estratégia do período sai primeiro e espera a aprovação (nenhum post é gerado ainda)
+    await page.getByText('Estratégia do período pronta: revise no card da programação e clique em Aprovar e gerar posts.').waitFor({ timeout: 120000 });
+    await page.getByText('Estratégia · aguardando sua aprovação').waitFor({ timeout: 30000 });
+    const txtEstr = await corpo();
+    for (const t of ['Mensagem: Almoço rápido e gostoso na semana', 'KPI: Reservas pelo WhatsApp v1', 'Público: Adultos de Valinhos', 'Pilares: Bastidores (60%) · Promoções (40%)', 'CTAs: Venha · Reserve pelo WhatsApp', 'Proibido: barato', `Objetivo: ${OBJETIVO}`, 'Aprovar e gerar posts', 'Editar estratégia', 'Refazer estratégia']) check(`programação: cartão da estratégia mostra "${t}"`, tem(txtEstr, t));
+    const estr1 = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-auto-runs`)).body[0];
+    check('API: estratégia em "review", objetivo guardado em focus e nenhum post gerado ainda', estr1.strategy_status === 'review' && estr1.focus === OBJETIVO && estr1.status === 'planning' && estr1.filled === 0 && estr1.counts.total === 0 && estr1.strategy?.kpi_principal === 'Reservas pelo WhatsApp v1', JSON.stringify([estr1.strategy_status, estr1.filled, estr1.counts]));
+    check('API: o prompt da estratégia partiu do objetivo digitado, da marca e dos dias reais', fakeAi.prompts.some((x) => x.name === 'ig_run_strategy' && x.prompt.includes(OBJETIVO) && x.prompt.includes('DNA DA MARCA') && /- \w+-feira, \d{2}\/\d{2}\/\d{4}|- (sábado|domingo), \d{2}\/\d{2}\/\d{4}/.test(x.prompt) && x.prompt.includes('Coerência com a data')));
+    // Refazer descarta e gera outra (v2)
+    await page.getByRole('button', { name: 'Refazer estratégia' }).click();
+    await page.getByText('Pedindo uma nova estratégia…').waitFor({ timeout: 15000 });
+    await page.getByText('KPI: Reservas pelo WhatsApp v2').waitFor({ timeout: 120000 });
+    ok('programação: "Refazer estratégia" descarta a anterior e a IA devolve outra (v2)');
+    // Editar + aprovar: libera os posts
+    await page.getByRole('button', { name: 'Editar estratégia' }).click();
+    await page.getByPlaceholder(/foque no prato executivo de segunda a quinta/).fill('foque no prato executivo; nada de promoção');
+    await page.getByRole('button', { name: 'Aprovar e gerar posts' }).click();
+    await page.getByText('Estratégia aprovada. Gerando os posts…').waitFor({ timeout: 15000 });
     await page.getByText('Programação pronta. Os demais criativos são gerados sozinhos antes de cada horário.').waitFor({ timeout: 180000 });
     const rodada = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-auto-runs`)).body[0];
     check('API: programação ativa, 1 conteúdo, 1 criativo (laço do navegador terminou)', rodada.status === 'active' && rodada.counts.total === 1 && rodada.counts.media === 1 && rodada.filled === 1, JSON.stringify(rodada.counts));
+    check('API: estratégia aprovada com o ajuste do cliente, sem pausa nem erro', rodada.strategy_status === 'approved' && rodada.strategy.texto_editado === 'foque no prato executivo; nada de promoção' && rodada.paused_reason === null && rodada.last_error === null, JSON.stringify([rodada.strategy_status, rodada.strategy?.texto_editado, rodada.paused_reason, rodada.last_error]));
+    check('API: o prompt dos posts levou o objetivo, a estratégia aprovada com os ajustes e as regras de data', fakeAi.prompts.some((x) => x.name === 'ig_auto_calendar' && x.prompt.includes(`1. OBJETIVO DO PERÍODO (fonte principal, cada post precisa servir a ele): ${OBJETIVO}`) && x.prompt.includes('"ajustes_do_cliente":"foque no prato executivo; nada de promoção"') && x.prompt.includes('Coerência com a data')));
+    check('API: cada post foi revisado (ig_post_review) com a data real', fakeAi.prompts.some((x) => x.name === 'ig_post_review' && /- index 0 · \S+, \d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}:/.test(x.prompt)));
     const autoPost = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.run_id === rodada.id);
     check('API: post automático "publish" com mídia e agendado na fila (sandbox: sem conta)', autoPost.automation === 'publish' && autoPost.status === 'scheduled' && autoPost.media.length === 1 && autoPost.theme === 'Auto 0', JSON.stringify([autoPost.automation, autoPost.status]));
-    check('programação: cartão da execução (Em andamento, contagem, "publica sozinho")', tem(await corpo(), 'Em andamento') && tem(await corpo(), '1 conteúdos · 1 criativos') && tem(await corpo(), 'publica sozinho'));
+    check('API: post amarrado ao objetivo (objective_link, pillar, persona, funnel_stage) com nota da revisão e sem motivo de revisão', autoPost.objective_link === 'Serve ao objetivo do almoço' && autoPost.pillar === 'Bastidores' && autoPost.persona === 'Ana' && autoPost.funnel_stage === 'atracao' && autoPost.review_score === 8 && autoPost.review_reason === null && autoPost.product_id === null, JSON.stringify([autoPost.objective_link, autoPost.pillar, autoPost.persona, autoPost.funnel_stage, autoPost.review_score, autoPost.review_reason]));
+    check('programação: cartão da execução (Em andamento, contagem, "publica sozinho", estratégia aprovada)', tem(await corpo(), 'Em andamento') && tem(await corpo(), '1 conteúdos · 1 criativos') && tem(await corpo(), 'publica sozinho') && tem(await corpo(), 'Estratégia · aprovada') && tem(await corpo(), 'Seus ajustes: foque no prato executivo; nada de promoção'));
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: 'Cancelar', exact: true }).first().click();
     await page.getByText(/Programação cancelada \(1 posts retirados\)\./).waitFor({ timeout: 30000 });
