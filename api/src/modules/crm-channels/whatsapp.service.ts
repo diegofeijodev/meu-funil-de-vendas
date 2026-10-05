@@ -167,18 +167,22 @@ export class WhatsAppService {
     }
 
     try {
-      await this.prisma.crm_messages.create({
-        data: { workspace_id: ws, conversation_id: conversation.id, lead_id: lead.id, direction: 'in', message_type: msg.type, body: msg.body, media_url: msg.mediaUrl ?? null, status: 'received', external_id: msg.externalId, author_type: 'system' },
+      // Mensagem + contador/janela da conversa juntos: sem a transação, uma queda entre os dois deixaria a mensagem gravada sem contar.
+      // O conflito (P2002) é tratado FORA dela, depois do desfazer.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.crm_messages.create({
+          data: { workspace_id: ws, conversation_id: conversation.id, lead_id: lead.id, direction: 'in', message_type: msg.type, body: msg.body, media_url: msg.mediaUrl ?? null, status: 'received', external_id: msg.externalId, author_type: 'system' },
+        });
+        await tx.crm_conversations.update({
+          where: { id: conversation.id },
+          data: { lead_id: lead.id, unread_count: { increment: 1 }, last_message_at: new Date(), last_message_preview: msg.body ?? 'Mídia recebida', window_expires_at: new Date(Date.now() + WINDOW_MS) },
+        });
       });
     } catch (e) {
       // Índice único parcial (workspace, external_id) das recebidas: outra entrega da mesma mensagem ganhou a corrida.
       if ((e as { code?: string }).code === 'P2002') return { leadId: lead.id, conversationId: conversation.id, ignored: 'mensagem duplicada' };
       throw e;
     }
-    await this.prisma.crm_conversations.update({
-      where: { id: conversation.id },
-      data: { lead_id: lead.id, unread_count: { increment: 1 }, last_message_at: new Date(), last_message_preview: msg.body ?? 'Mídia recebida', window_expires_at: new Date(Date.now() + WINDOW_MS) },
-    });
     await this.core.addInteraction({ workspaceId: ws, leadId: lead.id, kind: 'message_in', authorType: 'system', content: msg.body ?? `Mídia recebida (${msg.type})` });
 
     const patch: Prisma.crm_leadsUpdateInput = {};

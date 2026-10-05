@@ -195,13 +195,24 @@ export class InboundService {
 
     const conv = await this.ensureIgConversation(ws, msg.igsid, leadId);
     const type = msg.attachmentType === 'image' ? 'image' : msg.attachmentType === 'audio' ? 'audio' : msg.attachmentType === 'video' ? 'video' : msg.text ? 'text' : 'other';
-    await this.prisma.crm_messages.create({
-      data: { workspace_id: ws, conversation_id: conv.id, lead_id: leadId, direction: 'in', message_type: type, body: msg.text, media_url: msg.attachmentUrl ?? null, status: 'received', external_id: msg.mid, author_type: 'system' },
-    });
-    await this.prisma.crm_conversations.update({
-      where: { id: conv.id },
-      data: { lead_id: leadId, unread_count: (conv.unread_count ?? 0) + 1, last_message_at: new Date(), last_message_preview: msg.text ?? 'Mídia recebida', window_expires_at: new Date(Date.now() + WINDOW_MS) },
-    });
+    // Reentrega do mesmo evento (mesmo `mid`): já gravada, nenhum efeito colateral (contador, interação, cadência, SDR).
+    if (msg.mid && (await this.prisma.crm_messages.findFirst({ where: { workspace_id: ws, external_id: msg.mid, direction: 'in' }, select: { id: true } }))) return { leadId };
+    try {
+      // Mensagem + contador da conversa na mesma transação; o conflito (P2002) é tratado FORA dela (a transação já foi desfeita).
+      await this.prisma.$transaction(async (tx) => {
+        await tx.crm_messages.create({
+          data: { workspace_id: ws, conversation_id: conv.id, lead_id: leadId, direction: 'in', message_type: type, body: msg.text, media_url: msg.attachmentUrl ?? null, status: 'received', external_id: msg.mid, author_type: 'system' },
+        });
+        await tx.crm_conversations.update({
+          where: { id: conv.id },
+          data: { lead_id: leadId, unread_count: { increment: 1 }, last_message_at: new Date(), last_message_preview: msg.text ?? 'Mídia recebida', window_expires_at: new Date(Date.now() + WINDOW_MS) },
+        });
+      });
+    } catch (e) {
+      // Índice único parcial (workspace, external_id) das recebidas: outra entrega da mesma mensagem ganhou a corrida.
+      if ((e as { code?: string }).code === 'P2002') return { leadId };
+      throw e;
+    }
     await this.addInteraction(ws, leadId, msg.text ?? `Mídia recebida no Direct (${type})`);
     const patch: Prisma.crm_leadsUpdateInput = { last_interaction_at: new Date() };
     if (!lead.first_response_at) patch.first_response_at = new Date();

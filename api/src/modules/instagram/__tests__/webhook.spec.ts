@@ -205,3 +205,38 @@ describe('extractEvents', () => {
     expect(ev[2]!.msg).toMatchObject({ kind: 'comment', igsid: 'e', username: 'e1', commentId: 'k1', text: 'ótimo' });
   });
 });
+
+describe('handleInstagramInbound — idempotência por external_id (índice único parcial)', () => {
+  const inbound = (mid: string) => ({ kind: 'dm', igsid: 'u1', mid, text: 'Quero chopp', attachmentType: null, attachmentUrl: null }) as any;
+
+  it('reentrega (pré-checagem): uma linha, contador 1, SDR uma vez', async () => {
+    const { w, integ, s } = setup();
+    w.respond(() => undefined);
+    await s.inbound.handleInstagramInbound(integ as any, inbound('mid-x'));
+    const interactions = w.t['crm_interactions']!.rows.length;
+    await s.inbound.handleInstagramInbound(integ as any, inbound('mid-x'));
+    expect(w.t['crm_messages']!.rows.filter((m) => m.direction === 'in')).toHaveLength(1);
+    expect(w.t['crm_conversations']!.rows[0]!.unread_count).toBe(1);
+    expect(w.t['crm_interactions']!.rows).toHaveLength(interactions);
+    expect(s.hooks.runSdr).toHaveBeenCalledTimes(1);
+  });
+
+  it('corrida: pré-checagem não viu, o P2002 do índice barra a segunda sem efeitos colaterais', async () => {
+    const { w, integ, s } = setup();
+    await s.inbound.handleInstagramInbound(integ as any, inbound('mid-y'));
+    const find = w.prisma.crm_messages.findFirst.bind(w.prisma.crm_messages);
+    w.prisma.crm_messages.findFirst = async () => null;
+    await s.inbound.handleInstagramInbound(integ as any, inbound('mid-y'));
+    w.prisma.crm_messages.findFirst = find;
+    expect(w.t['crm_messages']!.rows.filter((m) => m.direction === 'in')).toHaveLength(1);
+    expect(w.t['crm_conversations']!.rows[0]!.unread_count).toBe(1);
+    expect(s.hooks.runSdr).toHaveBeenCalledTimes(1);
+  });
+
+  it('mensagem e contador da conversa são atômicos: se o update falha, a mensagem não fica', async () => {
+    const { w, integ, s } = setup();
+    w.prisma.crm_conversations.update = async () => { throw new Error('banco caiu'); };
+    await expect(s.inbound.handleInstagramInbound(integ as any, inbound('mid-z'))).rejects.toThrow('banco caiu');
+    expect(w.t['crm_messages']!.rows.filter((m) => m.direction === 'in')).toHaveLength(0);
+  });
+});

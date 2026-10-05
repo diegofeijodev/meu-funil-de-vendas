@@ -148,4 +148,18 @@ describe('cadências — matrícula escopada', () => {
     expect(await w.cadences.enrollLeads(w.WS_A, cad.id, [mine.id])).toEqual({ enrolled: 1 });
     expect(await w.cadences.enrollLeads(w.WS_A, cad.id, [mine.id])).toEqual({ enrolled: 0 }); // já em andamento
   });
+  it('falha no ÚLTIMO passo (run já avançado para done): vira failed com last_error e libera o lease', async () => {
+    const { w, run } = await setup([STEP()]);
+    w.http.request = (async () => ({ status: 500, ok: false, text: 'boom' })) as never;
+    await w.cadences.runDue();
+    expect(w.t.crm_cadence_runs.rows.find((r) => r.id === run.id)).toMatchObject({ status: 'failed', step_index: 0, lease_token: null, lease_until: null });
+    expect(w.t.crm_cadence_runs.rows[0]!.last_error).toBe('Não foi possível enviar a mensagem.');
+    expect(w.t.crm_cadence_events.rows).toEqual([expect.objectContaining({ event: 'failed', step_index: 0 })]);
+  });
+
+  it('último passo enviado com sucesso: run done, lease liberado, sem erro', async () => {
+    const { w, run } = await setup([STEP()]);
+    await w.cadences.runDue();
+    expect(w.t.crm_cadence_runs.rows.find((r) => r.id === run.id)).toMatchObject({ status: 'done', lease_token: null, lease_until: null, last_error: null });
+  });
 });

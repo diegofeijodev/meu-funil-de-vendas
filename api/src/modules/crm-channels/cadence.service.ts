@@ -155,9 +155,14 @@ export class CadenceService {
       RETURNING r.id, r.lease_token AS token`;
   }
 
-  /** Escrita condicionada ao token do lease; false = o lease foi perdido (outro worker assumiu). */
-  private async guarded(runId: string, token: string, data: Prisma.crm_cadence_runsUncheckedUpdateManyInput, release = true): Promise<boolean> {
-    const r = await this.prisma.crm_cadence_runs.updateMany({ where: { id: runId, lease_token: token, status: 'running' }, data: { ...data, ...(release ? { lease_until: null, lease_token: null } : {}) } });
+  /**
+   * Escrita condicionada ao token do lease; false = o lease foi perdido (outro worker assumiu).
+   * `afterAdvance`: depois do "avanço antes de enviar" o run do ÚLTIMO passo já está `done` (ainda com o lease); a falha do envio e
+   * a liberação do lease precisam aceitar `running` e `done`, senão o erro se perde e o run fica `done` sem `last_error`.
+   */
+  private async guarded(runId: string, token: string, data: Prisma.crm_cadence_runsUncheckedUpdateManyInput, release = true, afterAdvance = false): Promise<boolean> {
+    const status = afterAdvance ? { in: ['running', 'done'] } : 'running';
+    const r = await this.prisma.crm_cadence_runs.updateMany({ where: { id: runId, lease_token: token, status }, data: { ...data, ...(release ? { lease_until: null, lease_token: null } : {}) } });
     return r.count > 0;
   }
 
@@ -271,12 +276,12 @@ export class CadenceService {
     try {
       await this.executeStep(run, step, index, lead as NonNullable<typeof lead>);
       if (needsSend) budgets.set(ws, (budgets.get(ws) ?? 1) - 1);
-      await this.guarded(run.id, token, {});
+      await this.guarded(run.id, token, {}, true, true);
       return 'executed';
     } catch (err) {
       const detail = errText(err);
       this.logger.error(`passo falhou: ${detail}`);
-      await this.guarded(run.id, token, { status: 'failed', step_index: index, last_error: detail.slice(0, 500) });
+      await this.guarded(run.id, token, { status: 'failed', step_index: index, last_error: detail.slice(0, 500) }, true, true);
       await this.logEvent(run, index, 'failed', { channel: step.channel, detail: detail.slice(0, 500) });
       return 'other';
     }

@@ -24,6 +24,18 @@ export function channelsWorld(opts: { provider?: string; secrets?: Record<string
   };
   Object.assign(w.prisma, extra);
   Object.assign(w.t, extra);
+  // o $transaction do crmWorld só desfaz as tabelas dele: estende para as dos canais (mensagens/conversas) também
+  const baseTx = w.prisma.$transaction.bind(w.prisma);
+  w.prisma.$transaction = async (fn: (tx: any) => Promise<unknown>) => {
+    const tabs = Object.values(extra) as IgTable[];
+    const snap = tabs.map((x) => x.rows.map((r) => ({ ...r })));
+    try {
+      return await baseTx(fn);
+    } catch (e) {
+      tabs.forEach((x, i) => (x.rows = snap[i]!));
+      throw e;
+    }
+  };
   w.prisma.crm_leads.upsert = undefined;
   const prisma = w.prisma;
   prisma.$executeRaw = async () => 1;

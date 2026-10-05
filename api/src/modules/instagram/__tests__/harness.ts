@@ -174,7 +174,8 @@ export function igWorld() {
     crm_webhook_events: new IgTable(() => ({ status: 'processed', error_message: null }), ['source', 'external_id']),
     crm_leads: new IgTable(() => ({ unsubscribed: false, ai_active: true, first_response_at: null, source: 'manual' })),
     crm_conversations: new IgTable(() => ({ unread_count: 0, window_expires_at: null })),
-    crm_messages: new IgTable(),
+    // índice único parcial (workspace, external_id) das mensagens recebidas
+    crm_messages: new IgTable(() => ({}), ['workspace_id', 'external_id']),
     crm_interactions: new IgTable(),
     crm_pipelines: new IgTable(),
     crm_stages: new IgTable(),
@@ -183,7 +184,19 @@ export function igWorld() {
     workspace_members: new IgTable(),
   };
   t.ig_posts!.relations['publishing_jobs'] = { table: t.publishing_jobs!, fk: 'ig_post_id' };
-  const prisma: any = { ...t, workspace_members: memMembers, $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops) };
+  const prisma: any = { ...t, workspace_members: memMembers, $transaction: async (ops: Promise<unknown>[] | ((tx: any) => Promise<unknown>)) => {
+      if (typeof ops !== 'function') return Promise.all(ops);
+      // callback: desfaz as escritas se lançar (como o banco)
+      const tables = Object.values(t) as IgTable[];
+      const snap = tables.map((x) => x.rows.map((r) => ({ ...r })));
+      try {
+        return await ops(prisma);
+      } catch (e) {
+        tables.forEach((x, i) => (x.rows = snap[i]!));
+        throw e;
+      }
+    },
+  };
   const access = new WorkspaceAccessService(prisma);
   const store = new IgStore(prisma);
 

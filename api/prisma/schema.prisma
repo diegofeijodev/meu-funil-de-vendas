@@ -1116,6 +1116,9 @@ model crm_conversations {
   @@unique([workspace_id, phone])
 }
 
+// ATENÇÃO: o índice único PARCIAL (workspace_id, external_id) WHERE external_id IS NOT NULL AND direction = 'in' (idempotência do
+// recebimento de WhatsApp/Instagram) existe só no SQL da migração 20261005120000_crm_messages_external_id_uidx — o Prisma não
+// expressa índice parcial. NÃO declare @@unique aqui e, ao rodar `migrate dev`, não aceite a "correção" de drift que o remova.
 model crm_messages {
   id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspace_id       String               @db.Uuid

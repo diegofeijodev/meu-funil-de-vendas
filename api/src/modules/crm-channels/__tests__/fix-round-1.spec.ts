@@ -81,6 +81,14 @@ describe('rodada 1 — mensagem recebida é idempotente', () => {
     expect(w.t.crm_conversations.rows[0]!.unread_count).toBe(1);
   });
 
+  it('mensagem e contador da conversa são atômicos: falha no update desfaz a mensagem', async () => {
+    const w = channelsWorld();
+    const integ = await w.integration();
+    w.prisma.crm_conversations.update = async () => { throw new Error('banco caiu'); };
+    await expect(w.whatsapp.handleInbound(integ as never, INBOUND())).rejects.toThrow('banco caiu');
+    expect(w.t.crm_messages.rows.filter((m) => m.direction === 'in')).toHaveLength(0);
+  });
+
   it('externalId nulo não é deduplicado (sem chave não há o que comparar) e outro workspace pode repetir o id', async () => {
     const w = channelsWorld();
     const integ = await w.integration();
