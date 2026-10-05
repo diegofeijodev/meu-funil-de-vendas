@@ -82,14 +82,16 @@ export class AutopilotService {
     let media = 0;
     let rescheduled = 0;
 
-    // 1) Mídia dos posts "idea" futuros, os mais próximos primeiro (limite baixo para não estourar o tempo da execução).
-    //    Entram os planos no piloto e os posts das programações automáticas.
-    const ideas = await this.prisma.ig_posts.findMany({
-      where: { OR: [{ automation: { not: null } }, ...(ids.length ? [{ plan_id: { in: ids } }] : [])], status: 'idea', scheduled_at: { gt: new Date() } },
-      orderBy: { scheduled_at: 'asc' },
-      take: 2,
-      select: { id: true, workspace_id: true, plan_id: true, scheduled_at: true, automation: true },
-    });
+    // 1) Mídia dos posts "idea" futuros dos planos no piloto, os mais próximos primeiro (limite baixo para não estourar a execução).
+    //    Os posts das programações com IA (`automation`) são da produção antecipada (`ProductionService`), não daqui.
+    const ideas = ids.length
+      ? await this.prisma.ig_posts.findMany({
+          where: { automation: null, plan_id: { in: ids }, status: 'idea', scheduled_at: { gt: new Date() } },
+          orderBy: { scheduled_at: 'asc' },
+          take: 2,
+          select: { id: true, workspace_id: true, plan_id: true, scheduled_at: true },
+        })
+      : [];
     for (const p of ideas) {
       const plan = p.plan_id ? byId.get(p.plan_id) : undefined;
       const r = await this.mediaGen.generatePostAssets(p.workspace_id, p.id, 'auto');
@@ -103,12 +105,6 @@ export class AutopilotService {
         continue;
       }
       await this.store.logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: 'media', message: `Mídia gerada (${r.provider}).` });
-      if (p.automation) {
-        await this.publishing.scheduleAutomated(p.id).catch(async (e) =>
-          this.store.logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: 'failure', level: 'error', message: `Falha ao agendar: ${errText(e)}` }),
-        );
-        continue;
-      }
       if (!plan?.requires_approval) {
         try {
           await this.publishing.schedulePost(p.workspace_id, p.id, p.scheduled_at!);
@@ -118,6 +114,7 @@ export class AutopilotService {
         }
       }
     }
+
 
     // 2) Regra das 2h: posts sem aprovação perto do horário vão para o dia seguinte.
     const approvalPlanIds = plans.filter((p) => p.requires_approval).map((p) => p.id);

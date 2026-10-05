@@ -54,11 +54,12 @@ function cronParts() {
   const autoCalendar = { autoCalendarTick: fn('autoCalendarTick', { filled: 0 }) };
   const autopilot = { autopilotTick: fn('autopilotTick', { media: 0 }), runWeeklyAutopilot: fn('runWeeklyAutopilot'), runOptimizer: fn('runOptimizer') };
   const metrics = { collectDueMetrics: fn('collectDueMetrics', 3), learnFromTopPosts: fn('learnFromTopPosts', { added: 0 }), collectAllAccountInsights: fn('collectAllAccountInsights') };
+  const production = { productionTick: fn('productionTick', { started: 0 }) };
   const w = igWorld();
   const registry = new SchedulerRegistry();
   const scheduler = new SchedulerService(registry, w.prisma, { SCHEDULER_ENABLED: false });
-  const svc = new InstagramCronService(scheduler, mediaGen as any, publishing as any, autoCalendar as any, autopilot as any, metrics as any, {} as any);
-  return { svc, calls, w, scheduler, mediaGen, publishing, autopilot, metrics };
+  const svc = new InstagramCronService(scheduler, mediaGen as any, publishing as any, autoCalendar as any, autopilot as any, metrics as any, {} as any, production as any);
+  return { svc, calls, w, scheduler, mediaGen, publishing, autopilot, metrics, production };
 }
 
 describe('InstagramCronService.run (tarefas do server.md §5.2)', () => {
@@ -73,19 +74,19 @@ describe('InstagramCronService.run (tarefas do server.md §5.2)', () => {
 
   it('media: calendário automático e depois o piloto; metrics; weekly; optimize; account', async () => {
     const { svc, calls } = cronParts();
-    expect(await svc.run('media')).toEqual({ autoCalendar: { filled: 0 }, autopilot: { media: 0 } });
+    expect(await svc.run('media')).toEqual({ autoCalendar: { filled: 0 }, production: { started: 0 }, autopilot: { media: 0 } });
     expect(await svc.run('metrics')).toEqual({ metrics: 3, learning: { added: 0 } });
     expect(await svc.run('weekly')).toEqual({ weekly: [] });
     expect(await svc.run('optimize')).toEqual({ optimize: [] });
     expect(await svc.run('account')).toEqual({ account: [] });
-    expect(calls).toEqual(['autoCalendarTick', 'autopilotTick', 'collectDueMetrics', 'learnFromTopPosts', 'runWeeklyAutopilot', 'runOptimizer', 'collectAllAccountInsights']);
+    expect(calls).toEqual(['autoCalendarTick', 'productionTick', 'autopilotTick', 'collectDueMetrics', 'learnFromTopPosts', 'runWeeklyAutopilot', 'runOptimizer', 'collectAllAccountInsights']);
   });
 
   it('sem tarefa: queue + media + metrics (compatibilidade)', async () => {
     const { svc, calls } = cronParts();
     const out = await svc.run();
-    expect(Object.keys(out)).toEqual(['pendingMedia', 'queue', 'autoCalendar', 'autopilot', 'metrics', 'learning']);
-    expect(calls).toHaveLength(6);
+    expect(Object.keys(out)).toEqual(['pendingMedia', 'queue', 'autoCalendar', 'production', 'autopilot', 'metrics', 'learning']);
+    expect(calls).toHaveLength(7);
   });
 
   it('um passo que quebra não derruba a tarefa (erro vira { error } no resultado)', async () => {

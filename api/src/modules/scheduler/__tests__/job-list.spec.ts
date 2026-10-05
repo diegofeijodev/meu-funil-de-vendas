@@ -9,7 +9,7 @@ import { JobDefinition } from '../scheduler.service';
 const collect = (): JobDefinition[] => {
   const jobs: JobDefinition[] = [];
   const scheduler = { register: (j: JobDefinition) => void jobs.push(j) } as any;
-  new InstagramCronService(scheduler, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any).onModuleInit();
+  new InstagramCronService(scheduler, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any).onModuleInit();
   new AdsCronService(scheduler, {} as any).onModuleInit();
   new CrmCronService(scheduler, {} as any, {} as any, {} as any).onModuleInit();
   new CreativePollJob(scheduler, {} as any).onModuleInit();

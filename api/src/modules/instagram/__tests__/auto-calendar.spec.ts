@@ -274,18 +274,6 @@ describe('autoCalendarTick (a cada 5 min)', () => {
     void s;
   });
 
-  it('2c: automático "publish" vencido há menos de 12 h sem criativo é gerado agora e agendado', async () => {
-    const { w, s, auto } = setup();
-    connected(w);
-    const p = plan(w);
-    const overdue = seedPost(w, { automation: 'publish', status: 'idea', media: [], plan_id: p.id, scheduled_at: new Date(Date.now() - 3600e3) });
-    const tooOld = seedPost(w, { automation: 'publish', status: 'idea', media: [], plan_id: p.id, scheduled_at: new Date(Date.now() - 13 * 3600e3) });
-    await auto.autoCalendarTick();
-    expect(s.pipeline.run).toHaveBeenCalledTimes(1);
-    expect(overdue.status).toBe('scheduled');
-    expect(tooOld.status).toBe('idea');
-  });
-
   it('3: modo com aprovação sem aprovar 10 min antes vai para o mesmo horário do dia seguinte', async () => {
     const { w, auto } = setup();
     const p = plan(w);
@@ -1126,5 +1114,28 @@ describe('A2 — reescrita do post reprovado (modo "publish")', () => {
     seedPost(w, { status: 'needs_review', review_reason: 'x' }); // calendário do plano (automation null)
     seedPost(w, { status: 'pending_approval' });
     expect(await s.resources.pendingCount(WS_A)).toEqual({ count: 3 });
+  });
+});
+
+describe('A3 — painel do período (summary)', () => {
+  it('conta produzidos / produzindo / na fila / agendados / publicados / pulados, separa "em reescrita" de "em revisão" e lista os pulados com o motivo', async () => {
+    const { w, auto } = setup();
+    const p = plan(w);
+    const r = run(w, p, { status: 'active', mode: 'publish' });
+    const mk = (status: string, over: Record<string, unknown> = {}) => seedPost(w, { run_id: r.id, plan_id: p.id, automation: 'publish', status, ...over });
+    mk('ready');
+    mk('pending_approval', { automation: 'approval' });
+    mk('generating');
+    mk('idea');
+    mk('idea');
+    mk('scheduled');
+    mk('published');
+    mk('needs_review');
+    mk('needs_review', { automation: 'approval' });
+    mk('cancelled', { last_error: 'Pulado automaticamente: o horário passou há mais de 12 h sem o criativo pronto.', theme: 'Vencido', scheduled_at: new Date('2099-01-02T12:00:00Z') });
+    mk('cancelled', { rejection_reason: 'não gostei' });
+    const [row] = (await auto.summary(WS_A)) as any[];
+    expect(row.counts).toMatchObject({ total: 11, produced: 2, producing: 1, queued: 2, scheduled: 1, published: 1, rewriting: 1, review: 1, skipped: 1 });
+    expect(row.skipped_posts).toEqual([{ id: expect.any(String), theme: 'Vencido', scheduled_at: new Date('2099-01-02T12:00:00Z'), reason: 'o horário passou há mais de 12 h sem o criativo pronto.' }]);
   });
 });

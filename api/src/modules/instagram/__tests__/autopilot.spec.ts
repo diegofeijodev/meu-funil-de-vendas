@@ -44,12 +44,13 @@ describe('autopilotTick', () => {
     expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
   });
 
-  it('posts de programação automática entram mesmo sem plano no piloto e são agendados pela regra própria', async () => {
-    const { w, ap } = setup();
-    const p = plan(w, { auto_publish: false });
-    const post = idea(w, { plan_id: p.id, automation: 'publish', scheduled_at: inH(3) });
-    await ap.autopilotTick();
-    expect(post.status).toBe('scheduled');
+  it('posts das programações com IA (automation) NÃO são do piloto: ficam para a produção antecipada', async () => {
+    const { w, s, ap } = setup();
+    const p = plan(w); // plano no piloto
+    const runPost = idea(w, { plan_id: p.id, automation: 'publish', run_id: uuid(), scheduled_at: inH(3) });
+    expect((await ap.autopilotTick()).media).toBe(0);
+    expect(runPost.status).toBe('idea');
+    expect(s.pipeline.run).not.toHaveBeenCalled();
   });
 
   it('falha ao gerar a mídia vira evento "failure"; o laço continua', async () => {

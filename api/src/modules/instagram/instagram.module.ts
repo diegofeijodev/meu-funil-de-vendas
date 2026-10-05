@@ -7,6 +7,7 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
 import { AccountService } from './account.service';
 import { AutoCalendarService } from './auto-calendar.service';
 import { AutopilotService } from './autopilot.service';
+import { ProductionService } from './production.service';
 import { ContentService } from './content.service';
 import { ContentStrategyService } from './content-strategy.service';
 import { IgStore } from './ig-store.service';
@@ -40,6 +41,7 @@ import { PublishingService } from './publishing.service';
     AccountService,
     AutoCalendarService,
     AutopilotService,
+    ProductionService,
     InstagramActionsService,
     InstagramResourcesService,
     InboundService,

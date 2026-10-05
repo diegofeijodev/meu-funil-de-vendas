@@ -252,6 +252,8 @@ import { InstagramResourcesService } from '../instagram-resources.service';
 import { MediaGenerationService } from '../media-generation.service';
 import { MetricsService } from '../metrics.service';
 import { PublishingService } from '../publishing.service';
+import { ProductionService, rankProductionCandidates } from '../production.service';
+import { OVERDUE_MS } from '../ig-types';
 
 export const ART = {
   subject: 's', scene: 'c', composition: 'x', lighting: 'l', camera: '50mm', style: 'foto', color_palette: ['#fff'], mood: 'm', text_in_image: 'none', negative: 'blurry',
@@ -305,9 +307,22 @@ export function igServices(w: IgWorld) {
   const contentStrategy = new ContentStrategyService(content);
   const auto = new AutoCalendarService(w.store, content, contentStrategy, strategist, mediaGen, publishing);
   const autopilot = new AutopilotService(w.store, content, mediaGen, publishing, auto);
+  const production = new ProductionService(w.store, mediaGen, publishing, { IG_PRODUCTION_PER_TICK: 4, IG_PRODUCTION_WINDOW_HOURS: 48, IG_PRODUCTION_TARGET_HOURS: 24 } as any);
+  // A consulta real é SQL (ROW_NUMBER por empresa — conferida em production.spec e no smoke); aqui, o mesmo filtro e a mesma ordem em memória.
+  production.candidates = async (now = new Date()) => {
+    const p = production as any;
+    const rows = w.t['ig_posts']!.rows.filter(
+      (r) =>
+        r.run_id && r.status === 'idea' && r.scheduled_at &&
+        r.scheduled_at.getTime() > now.getTime() - OVERDUE_MS &&
+        r.scheduled_at.getTime() <= now.getTime() + p.windowHours * 3600e3 &&
+        (!r.lease_until || r.lease_until.getTime() < now.getTime()),
+    );
+    return rankProductionCandidates(rows as any[], { now, perTick: p.perTick, targetHours: p.targetHours });
+  };
   const actions = new InstagramActionsService(w.access, w.store, account, content, mediaGen, publishing, metrics, autopilot, auto);
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
-  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks };
+  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production };
 }

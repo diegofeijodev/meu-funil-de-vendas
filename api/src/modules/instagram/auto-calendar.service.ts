@@ -6,7 +6,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { ContentService } from './content.service';
 import { ContentStrategyService } from './content-strategy.service';
 import { brandContext, DATE_RULES, fullDate, isCreditFailure, RunStrategy, Verdict } from './content-strategy';
-import { ASPECT, fmtDate, IgFormat, OVERDUE_MS, PostRow, SKIP_PREFIX, STRATEGY_AUTO_APPROVED } from './ig-types';
+import { ASPECT, fmtDate, IgFormat, isSkipped, OVERDUE_MS, PostRow, SKIP_PREFIX, STRATEGY_AUTO_APPROVED } from './ig-types';
 import { IgStore, errText, leaseFree, PublishClaimLost } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { asList, asText, normalizeHashtags } from './normalize';
@@ -700,18 +700,6 @@ export class AutoCalendarService {
       await this.prisma.ig_posts.updateMany({ where: { id: p.id, status: 'failed' }, data: { status: 'idea', creative_brief: { ...brief, auto_retried: true, variations: 1 } as Prisma.InputJsonObject } });
     }
 
-    // 2c) Modo automático cujo criativo não ficou pronto a tempo (até 12 h): gera agora e publica em seguida.
-    const overdue = await this.prisma.ig_posts.findMany({
-      where: { automation: 'publish', status: 'idea', scheduled_at: { lte: new Date(), gt: new Date(Date.now() - 12 * 3600e3) } },
-      orderBy: { scheduled_at: 'asc' },
-      take: 1,
-      select: { id: true, workspace_id: true },
-    });
-    for (const p of overdue) {
-      const r = await this.mediaGen.generatePostAssets(p.workspace_id, p.id, 'auto');
-      if (r.ok && !('pending' in r && r.pending)) await this.publishing.scheduleAutomated(p.id).catch(() => null);
-    }
-
     // 3) Modo com aprovação: sem aprovação até 10 min antes → mesmo horário do dia seguinte.
     const late = await this.prisma.ig_posts.findMany({
       where: { automation: 'approval', status: { in: ['idea', 'generating', 'needs_review', 'pending_approval', 'ready'] }, approved_at: null, scheduled_at: { lt: new Date(Date.now() + 10 * MIN) } },
@@ -816,18 +804,23 @@ export class AutoCalendarService {
     return { cancelled: postIds.length };
   }
 
-  /** Resumo das programações para a tela (`ig_auto_runs` raízes + semanas + contagem por status dos posts). */
+  /** Resumo das programações para a tela (`ig_auto_runs` raízes + semanas + contagem por situação + pulados com o motivo). */
   async summary(workspaceId: string) {
     const roots = await this.prisma.ig_auto_runs.findMany({ where: { workspace_id: workspaceId, parent_id: null }, orderBy: { created_at: 'desc' }, take: 8 });
     if (!roots.length) return [];
     const kids = await this.prisma.ig_auto_runs.findMany({ where: { workspace_id: workspaceId, parent_id: { in: roots.map((r) => r.id) } }, select: { id: true, parent_id: true } });
     const groups = new Map<string, string[]>(roots.map((r) => [r.id, [r.id]]));
     for (const k of kids) groups.get(k.parent_id as string)?.push(k.id);
-    const posts = await this.prisma.ig_posts.findMany({ where: { workspace_id: workspaceId, run_id: { in: [...groups.values()].flat() } }, select: { run_id: true, status: true } });
+    const posts = await this.prisma.ig_posts.findMany({
+      where: { workspace_id: workspaceId, run_id: { in: [...groups.values()].flat() } },
+      select: { id: true, run_id: true, status: true, automation: true, last_error: true, theme: true, scheduled_at: true },
+    });
     return roots.map((r) => {
       const ids = new Set(groups.get(r.id));
-      const st = posts.filter((p) => p.run_id && ids.has(p.run_id)).map((p) => p.status);
+      const mine = posts.filter((p) => p.run_id && ids.has(p.run_id));
+      const st = mine.map((p) => p.status);
       const c = (s: string[]) => st.filter((x) => s.includes(x)).length;
+      const skipped = mine.filter(isSkipped).sort((a, b) => (b.scheduled_at?.getTime() ?? 0) - (a.scheduled_at?.getTime() ?? 0));
       return {
         ...r,
         weeks: ids.size,
@@ -838,8 +831,16 @@ export class AutoCalendarService {
           scheduled: c(['scheduled', 'publishing']),
           published: c(['published']),
           failed: c(['failed']),
-          review: c(['needs_review']),
+          // Revisão HUMANA (modo aprovação/sem programação); o needs_review do modo "publish" é a IA reescrevendo.
+          review: mine.filter((p) => p.status === 'needs_review' && p.automation !== 'publish').length,
+          // Painel do período (produção automática): produzidos / produzindo / na fila / agendados / publicados / pulados.
+          produced: c(['ready', 'approved', 'pending_approval']),
+          producing: c(['generating']),
+          queued: c(['idea']),
+          rewriting: mine.filter((p) => p.status === 'needs_review' && p.automation === 'publish').length,
+          skipped: skipped.length,
         },
+        skipped_posts: skipped.slice(0, 20).map((p) => ({ id: p.id, theme: p.theme, scheduled_at: p.scheduled_at, reason: (p.last_error ?? '').slice(SKIP_PREFIX.length) })),
       };
     });
   }

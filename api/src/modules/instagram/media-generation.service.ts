@@ -26,6 +26,8 @@ const PENDING_TIMEOUT_MS = 60 * 60e3;
  */
 const MEDIA_LEASE_MS = 30 * 60e3;
 export const GENERATION_INTERRUPTED = 'Geração da mídia interrompida — tente gerar de novo.';
+/** Quanto a geração de vídeo espera dentro da requisição/tick (como o Estúdio); depois disso o poller (`instagram-queue`) conclui. */
+export const VIDEO_WAIT_MS = 25_000;
 
 type PendingJob = {
   provider: string;
@@ -193,7 +195,7 @@ export class MediaGenerationService {
         finalPrompt: `${prompts[i]} ${format === 'feed_carousel' ? `(imagem ${i + 1} de ${prompts.length} do carrossel)` : ''}`.trim(),
         aspectRatio: ASPECT[format],
         kind: (isVideoFormat(format) ? 'video' : 'image') as 'image' | 'video',
-        ...(isVideoFormat(format) ? {} : extra),
+        ...(isVideoFormat(format) ? { maxWaitMs: VIDEO_WAIT_MS } : extra),
       };
       const r = isVideoFormat(format) ? await provider.generateVideo(req) : await provider.generateImage(req);
       if (r.status === 'generating' && r.externalJobId) {

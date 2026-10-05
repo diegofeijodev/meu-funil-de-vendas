@@ -8,6 +8,7 @@ import { errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
+import { ProductionService } from './production.service';
 
 export const CRON_TASKS = ['queue', 'publish', 'media', 'metrics', 'weekly', 'optimize', 'account'] as const;
 export type CronTask = (typeof CRON_TASKS)[number];
@@ -27,6 +28,7 @@ export class InstagramCronService implements OnModuleInit {
     private readonly autopilot: AutopilotService,
     private readonly metrics: MetricsService,
     private readonly account: AccountService,
+    private readonly production: ProductionService,
   ) {}
 
   /** `queue`: conclui mídias assíncronas pendentes + fila de publicação. `publish` = alias de `queue`. */
@@ -37,10 +39,11 @@ export class InstagramCronService implements OnModuleInit {
     };
   }
 
-  /** `media`: calendário automático + piloto (gera mídia, agenda, regra das 2h). */
+  /** `media`: calendário automático (lotes, reescrita, agendar, regras) + produção antecipada das programações + piloto dos planos. */
   private async media() {
     return {
       autoCalendar: await this.autoCalendar.autoCalendarTick().catch((e) => ({ error: errText(e) })),
+      production: await this.production.productionTick().catch((e) => ({ error: errText(e) })),
       autopilot: await this.autopilot.autopilotTick().catch((e) => ({ error: errText(e) })),
     };
   }
