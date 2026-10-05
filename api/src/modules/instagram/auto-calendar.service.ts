@@ -25,7 +25,7 @@ const ITEM = {
     persona: { type: 'string' },
     product_name: { type: 'string' },
     objective_link: { type: 'string' },
-    funnel_stage: { type: 'string', enum: ['atracao', 'conexao', 'consideracao', 'conversao'] },
+    funnel_stage: { type: 'string', enum: ['atracao', 'consideracao', 'conversao'] },
     hook: { type: 'string' },
     headline: { type: 'string' },
     caption: { type: 'string' },
@@ -231,15 +231,21 @@ export class AutoCalendarService {
       // Horários que já passaram enquanto a programação esperava são descartados.
       const chunk = all.slice(run.filled, run.filled + CHUNK);
       const usable = chunk.filter((sl) => new Date(sl.at).getTime() > Date.now() + 10 * MIN);
-      if (usable.length) await this.writeChunk(run, usable, ctx, keep);
+      const rows = usable.length ? await this.writeChunk(run, usable, ctx, keep) : [];
       const filled = run.filled + chunk.length;
       const done = filled >= all.length;
       // Condicional ao `filled` lido E ao lease: se a trava venceu e outro lote já avançou a programação (ou ela foi cancelada), este resultado não a sobrescreve.
-      const advanced = await this.prisma.ig_auto_runs.updateMany({
-        where: { id: runId, filled: run.filled, locked_until: lock.until },
-        data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null, paused_reason: null },
+      // Atômico: o avanço (condicionado ao lease) e a inserção dos posts valem juntos — lease perdido não insere o lote duas vezes.
+      const advanced = await this.prisma.$transaction(async (tx) => {
+        const got = await tx.ig_auto_runs.updateMany({
+          where: { id: runId, filled: run.filled, locked_until: lock.until },
+          data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null, paused_reason: null },
+        });
+        if (!got.count) return false;
+        if (rows.length) await tx.ig_posts.createMany({ data: rows });
+        return true;
       });
-      if (!advanced.count) return this.snapshot(runId, true);
+      if (!advanced) return this.snapshot(runId, true);
       if (done)
         await this.store.logEvent({
           workspace_id: run.workspace_id,
@@ -319,7 +325,7 @@ export class AutoCalendarService {
     return { items: new Map<number, any>(list.filter((p) => p && typeof p === 'object').map((p) => [Number(p.index), p])), provider };
   }
 
-  private async writeChunk(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, keep: () => Promise<void>) {
+  private async writeChunk(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, keep: () => Promise<void>): Promise<Prisma.ig_postsCreateManyInput[]> {
     const { plan, products } = ctx;
     const strategy = run.strategy as unknown as RunStrategy;
     const final = new Map<number, { p: any; verdict: Verdict | null; attempts: number; provider: string; issues: string[] }>();
@@ -420,9 +426,9 @@ export class AutoCalendarService {
         ],
       };
     });
-    // Última conferência do lease: só grava os posts se este lote ainda é o dono da programação.
+    // Última conferência do lease; a gravação em si é atômica com o avanço da programação (ver `fill`).
     await keep();
-    await this.prisma.ig_posts.createMany({ data: rows });
+    return rows;
   }
 
   /** Usuário aprova (e opcionalmente ajusta em texto) a estratégia: libera a geração dos posts. */
@@ -432,7 +438,15 @@ export class AutoCalendarService {
     const prev = run.strategy as unknown as RunStrategy;
     const strategy = { ...prev, texto_editado: editedText?.trim() || prev.texto_editado || null };
     // Só programação em andamento ("planning"): uma cancelada/concluída não volta a ser aprovada.
-    await this.prisma.ig_auto_runs.updateMany({ where: { id: runId, workspace_id: workspaceId, status: 'planning' }, data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: 'approved' } });
+    // Condicional ao status da estratégia: um "Refazer" que chegou antes (pending) não é desfeito por uma aprovação velha.
+    const got = await this.prisma.ig_auto_runs.updateMany({
+      where: { id: runId, workspace_id: workspaceId, status: 'planning', strategy_status: { in: ['review', 'approved'] } },
+      data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: 'approved' },
+    });
+    if (!got.count) {
+      const cur = await this.prisma.ig_auto_runs.findFirst({ where: { id: runId, workspace_id: workspaceId }, select: { status: true, strategy_status: true } });
+      if (cur?.status === 'planning' && cur.strategy_status === 'pending') throw new UserError('A estratégia foi refeita enquanto você revisava. Aguarde a nova versão e aprove de novo.');
+    }
     return { ok: true };
   }
 
@@ -445,6 +459,7 @@ export class AutoCalendarService {
     if (!got.count) {
       const cur = await this.prisma.ig_auto_runs.findFirst({ where: { id: runId, workspace_id: workspaceId }, select: { status: true } });
       if (cur?.status === 'planning') throw new UserError('A estratégia está sendo gerada ou os posts estão em criação agora. Tente de novo em instantes.');
+      throw new UserError('Esta programação não está mais em andamento: não dá para refazer a estratégia.');
     }
     return { ok: true };
   }

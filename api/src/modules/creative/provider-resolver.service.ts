@@ -33,7 +33,7 @@ export function chainProviders(list: ServerCreativeProvider[], warn: (m: string)
   };
   const run = async (fn: (p: ServerCreativeProvider) => Promise<GenerationResult>): Promise<GenerationResult> => {
     let lastErr: unknown = null;
-    for (const p of list) {
+    for (const [idx, p] of list.entries()) {
       try {
         const r = await fn(p);
         if (r.status === 'failed' || (r.status === 'ready' && !r.assetUrl && !r.bytes) || (r.status === 'generating' && !r.externalJobId))
@@ -44,7 +44,7 @@ export function chainProviders(list: ServerCreativeProvider[], warn: (m: string)
         return r;
       } catch (e) {
         lastErr = e;
-        if (p === list[list.length - 1]) throw e;
+        if (idx === list.length - 1) throw e; // por índice: a mesma instância repetida na lista não encerra a cadeia antes da hora
         warn(`[creative-chain] ${p.id} falhou, tentando o próximo: ${logMessage(e)}`);
         note(`${p.label}: ${logMessage(e)} → tentando o próximo`);
       }

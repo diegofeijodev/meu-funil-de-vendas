@@ -4,8 +4,8 @@
 # sempre via `scripts/run-capped.sh 2400`, e derruba tudo pelos PIDs (trap EXIT). Os grupos rodam em sequência e os totais são somados.
 #
 #   bash web/scripts/browser-check-sections.sh            # todos os grupos (de qualquer diretório)
-#   bash web/scripts/browser-check-sections.sh 1 4        # só os grupos 1 e 4
-#   BC_NO_AI=1 bash web/scripts/browser-check-sections.sh 2   # API sem gateway de IA (caminho "IA não configurada")
+#   bash web/scripts/browser-check-sections.sh 4 6        # só os grupos 4 (instagram) e 6 (crm)
+#   BC_NO_AI=1 bash web/scripts/browser-check-sections.sh 2 3   # (campanhas e estudio) API sem gateway de IA (caminho "IA não configurada")
 #
 # Se um grupo morrer com 137 (estourou o teto), NÃO aumente o teto: reparta o grupo (GRUPOS abaixo).
 # Requer o Postgres do projeto (`docker compose up -d postgres`; o runner sobe se faltar). Banco local DESCARTÁVEL apenas.
@@ -13,10 +13,11 @@ set -uo pipefail
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
 ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
 
-# Grupos (1–5 seções (instagram e meta ficam sozinhos: juntos o Chrome morria por OOM dentro do cgroup), só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
+# Grupos (1–5 seções (campanhas e estudio também ficam sozinhos: juntos morriam com 137 no teto; instagram e meta ficam sozinhos: juntos o Chrome morria por OOM dentro do cgroup), só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
 GRUPOS=(
   "shell,overview,marcas,config,agencia"
-  "campanhas,estudio"
+  "campanhas"
+  "estudio"
   "instagram"
   "meta"
   "crm"

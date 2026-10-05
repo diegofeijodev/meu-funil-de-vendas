@@ -85,6 +85,18 @@ describe('generatePostAssets — imagem única (pipeline)', () => {
     expect(post.status).toBe('pending_approval');
   });
 
+  it('automation "publish" + needs_review + mídia regenerada termina em pending_approval, mantém review_reason, sem approved_at e NUNCA é agendado', async () => {
+    const { w, gen, s } = setup();
+    const post = idea(w, { status: 'needs_review', automation: 'publish', review_reason: 'Checagem final: preço fora do cadastro.', scheduled_at: new Date(Date.now() + 3600e3) });
+    const r = await gen.generatePostAssets(WS_A, post.id);
+    expect(r.ok).toBe(true);
+    expect(post.status).toBe('pending_approval');
+    expect(post.review_reason).toBe('Checagem final: preço fora do cadastro.');
+    expect(post.approved_at).toBeNull();
+    expect(await s.publishing.scheduleAutomated(post.id)).toEqual({ skipped: 'pending_approval' });
+    expect(w.t['publishing_jobs']!.rows.filter((j: any) => j.ig_post_id === post.id)).toHaveLength(0);
+  });
+
   it('erro do provedor: post failed com a mensagem, log do passo e { ok:false, error }', async () => {
     const { w, s, gen } = setup();
     s.providers.resolve.mockRejectedValueOnce(Object.assign(new Error('x'), {}));

@@ -42,6 +42,9 @@ type Src = { sourceUrl?: string; bytes?: Uint8Array; mime?: string };
 type RefImages = { referenceImages?: { bytes: Uint8Array; mime: string }[]; referenceUrls?: string[] };
 
 /** Geração da mídia dos posts (imagem única com pipeline, carrossel, Reels/Stories em vídeo) e envio da própria mídia. */
+/** Post que o validador mandou para revisão: o claim troca o status para "generating", mas `review_reason` permanece. */
+const wasFlagged = (post: PostRow) => post.status === 'needs_review' || !!post.review_reason;
+
 @Injectable()
 export class MediaGenerationService {
   private readonly logger = new Logger(MediaGenerationService.name);
@@ -214,8 +217,9 @@ export class MediaGenerationService {
     await this.store.patchPost(post.id, {
       media,
       creative_brief: brief,
-      status: requires === false ? 'ready' : 'pending_approval',
-      review_reason: null, // gerar a mídia tira o post da revisão (o motivo vale só enquanto está em "needs_review")
+      // Post reprovado pelo validador (needs_review) NUNCA vai direto para "ready": mesmo no automático ('publish') exige aprovação humana.
+      // O review_reason fica (a pessoa vê o motivo); só approvePost o limpa.
+      status: requires === false && !wasFlagged(post) ? 'ready' : 'pending_approval',
       last_error: null,
       ai_provider: provider.id,
       ai_generation_log: this.store.appendLog(post, { step: 'media', provider: provider.id, provider_log: providerLog(provider), items: media.length, cost, instructions }),
@@ -310,8 +314,7 @@ export class MediaGenerationService {
           await this.store.patchPost(postId, {
             media,
             creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
-            status: requires === false ? 'ready' : 'pending_approval',
-            review_reason: null,
+            status: requires === false && !wasFlagged(post) ? 'ready' : 'pending_approval',
             last_error: null,
             ai_provider: provider.id,
             ai_generation_log: this.store.appendLog(post, {

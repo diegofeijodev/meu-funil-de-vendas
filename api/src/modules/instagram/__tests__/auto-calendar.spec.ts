@@ -438,6 +438,14 @@ describe('estratégia do período (passo 1 do fillAutoRun)', () => {
     expect(done.strategy_status).toBe('review');
   });
 
+  it('aprovar velho depois de "Refazer": não desfaz o refazer (strategy_status segue pending) e avisa em pt-BR', async () => {
+    const { w, a } = setup();
+    // o usuário abriu a revisão (review), mas o refazer chegou antes; a estratégia ainda existe no banco só para a aprovação ler
+    const r = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'pending' });
+    expect(await status(a.approveAutoStrategy(OWNER, { runId: r.id, editedText: 'x' }))).toMatch(/^400:A estratégia foi refeita/);
+    expect(r.strategy_status).toBe('pending');
+  });
+
   it('refazer descarta a estratégia e volta a "pending"; o próximo fill gera outra; recusado com lote da IA rodando', async () => {
     const { w, s, a } = setup();
     const r = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'review', paused_reason: 'x' });
@@ -452,7 +460,7 @@ describe('estratégia do período (passo 1 do fillAutoRun)', () => {
     expect(busy).toMatchObject({ strategy_status: 'approved' });
     // programação concluída: no-op (não é "planning")
     const finished = pendingRun(w, { strategy: STRAT_JSON, strategy_status: 'approved', status: 'active' });
-    expect(await a.redoAutoStrategy(OWNER, finished.id)).toEqual({ ok: true });
+    expect(await status(a.redoAutoStrategy(OWNER, finished.id))).toMatch(/^400:Esta programação não está mais em andamento/);
     expect(finished.strategy_status).toBe('approved');
   });
 
@@ -542,6 +550,21 @@ describe('estratégia do período (passo 1 do fillAutoRun)', () => {
     expect(w.t['ig_posts']!.rows).toHaveLength(0);
     expect(r.locked_until!.getTime()).toBeGreaterThan(Date.now() + 100e3); // o lease do outro continua intacto
     expect(r.last_error).toBeNull();
+  });
+
+  it('lease perdido entre a conferência final e o avanço: posts e avanço são atômicos (nenhum post inserido)', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0)] });
+    s.aiJson['ig_auto_calendar'] = () => ({ posts: [{ index: 0, theme: 'T', caption: 'L' }] });
+    const tbl = w.t['ig_auto_runs']! as any;
+    const orig = tbl.updateMany.bind(tbl);
+    tbl.updateMany = async (args: any) => {
+      if (args.where.filled !== undefined) r.locked_until = new Date(Date.now() + 200e3); // outro worker assume bem antes do avanço
+      return orig(args);
+    };
+    const out = await auto.fillAutoRun(r.id);
+    expect(out).toMatchObject({ busy: true, filled: 0 });
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
   });
 
   it('programação cancelada no meio do lote: o fill não a ressuscita nem grava posts', async () => {

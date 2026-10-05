@@ -101,7 +101,7 @@ export class InstagramActionsService {
     await this.access.require(userId, workspaceId, 'write');
     const post = await this.store.getPost(postId, workspaceId);
     if (!(post.media as unknown[] | null)?.length) throw new UserError('Gere a mídia antes de aprovar.');
-    await this.store.patchPost(postId, { status: 'approved', rejection_reason: null, approved_at: new Date() });
+    await this.store.patchPost(postId, { status: 'approved', rejection_reason: null, review_reason: null, approved_at: new Date() });
     try {
       await this.autopilot.afterApproval(workspaceId, postId);
     } catch (e) {

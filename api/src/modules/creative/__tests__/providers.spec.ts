@@ -178,6 +178,14 @@ describe('cadeia de provedores', () => {
     expect(list.map((p) => p.id)).toEqual(['a', 'b']); // a lista compartilhada nunca é alterada
   });
 
+  it('"último provedor" é por índice: a mesma instância repetida na lista tenta a próxima posição antes de propagar o erro', async () => {
+    let n = 0;
+    const a = mk('a', async () => { if (++n === 1) throw new Error('503'); return ok('A ok'); });
+    const chain = chainProviders([a, a]);
+    expect((await chain.generateImage(req)).note).toBe('A ok');
+    expect(n).toBe(2);
+  });
+
   it('resultado "failed" / sem mídia / job sem id conta como falha e preserva o erro real do provedor no log', async () => {
     const failed = mk('a', async () => ({ status: 'failed', assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0, raw: 'content_policy_violation' }));
     const empty = mk('b', async () => ({ status: 'ready', assetUrl: null, bytes: null, thumbnailUrl: null, externalJobId: null, cost: 0 }));

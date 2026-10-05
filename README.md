@@ -34,7 +34,7 @@ cd api && ../scripts/run-capped.sh 1500 npm run typecheck
 cd web && ../scripts/run-capped.sh 1500 yarn typecheck && ../scripts/run-capped.sh 1500 yarn lint
 scripts/run-capped.sh 1300 bash api/scripts/smoke-capped.sh # fakes + API + `npm run smoke`, derruba tudo pelos PIDs
 bash web/scripts/browser-check-sections.sh                  # browser-check por grupos de seções (cada grupo sob teto de 2400 MB)
-bash web/scripts/browser-check-sections.sh 1 4              # só os grupos 1 e 4;  BC_ONLY=marcas,crm node web/scripts/browser-check.mjs = seções soltas
+bash web/scripts/browser-check-sections.sh 4 6              # só os grupos 4 (instagram) e 6 (crm);  BC_ONLY=marcas,crm node web/scripts/browser-check.mjs = seções soltas
 ```
 
 > **Atenção:** `npm run smoke` e `yarn browser-check` só devem rodar contra o banco local descartável. A limpeza deles apaga linhas que casam com padrões de teste (por exemplo `Browser[0-9]+`); nunca aponte `DATABASE_URL` para um banco com dados reais.
