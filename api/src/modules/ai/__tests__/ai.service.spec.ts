@@ -251,14 +251,14 @@ describe('AiService.video — download do Gemini (SSRF / chave / teto)', () => {
   });
 
   it('em produção sem o fetch guardado o serviço nem sobe (fail-closed)', () => {
-    const env = validateEnv({ ...gwEnv, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64), UNSUBSCRIBE_SECRET: 'u'.repeat(16) });
+    const env = validateEnv({ ...gwEnv, NODE_ENV: 'production', PUBLIC_URL: 'https://api.x.app', APP_URL: 'https://x.app', CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64), UNSUBSCRIBE_SECRET: 'u'.repeat(16) });
     const keys = { get: async () => null } as unknown as AiKeysService;
     expect(() => new AiService(keys, async () => json({}), env)).toThrow(/AI_GUARDED_FETCH/);
     expect(() => new AiService(keys, async () => json({}), env, async () => json({}))).not.toThrow();
   });
 
   it('NODE_ENV ausente (lista de permissão: só development|test dispensam) também é fail-closed', () => {
-    const env = validateEnv({ ...gwEnv, NODE_ENV: undefined, CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64), UNSUBSCRIBE_SECRET: 'u'.repeat(16) });
+    const env = validateEnv({ ...gwEnv, NODE_ENV: undefined, PUBLIC_URL: 'https://api.x.app', APP_URL: 'https://x.app', CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64), UNSUBSCRIBE_SECRET: 'u'.repeat(16) });
     expect(env.NODE_ENV).toBeUndefined();
     const keys = { get: async () => null } as unknown as AiKeysService;
     expect(() => new AiService(keys, async () => json({}), env)).toThrow(/AI_GUARDED_FETCH/);

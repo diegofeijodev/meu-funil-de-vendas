@@ -52,6 +52,16 @@ const trustProxy = () =>
       }
     });
 
+/** `true` se a URL não é http(s) válida ou aponta para localhost/loopback/0.0.0.0. */
+function isLocalUrl(raw: string): boolean {
+  try {
+    const h = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::1' || /^127\./.test(h);
+  } catch {
+    return true;
+  }
+}
+
 const envSchema = z
   .object({
     /** Sem default de propósito: só 'development'/'test' liberam a chave de dev do cofre e o Swagger. */
@@ -131,11 +141,26 @@ const envSchema = z
     EVOLUTION_API_KEY: opt(),
     RESEND_API_KEY: opt(),
     CALCOM_API_KEY: opt(),
+    /** Segredo do webhook de WhatsApp (Z-API/Evolution), fallback global do segredo salvo por empresa (cofre empresa → global → ambiente). */
+    WHATSAPP_WEBHOOK_SECRET: opt(),
     /** Só testes (smoke/browser-check): Resend e Cal.com falsos. Ignoradas em NODE_ENV=production. */
     RESEND_API_URL: opt(),
     CALCOM_API_URL: opt(),
   })
   .superRefine((env, ctx) => {
+    // Fora de development/test, URL pública que ainda aponta para a máquina local = redirect_uri de OAuth, links assinados e e-mails quebrados.
+    // O default do schema é localhost, então "não definida" cai aqui também.
+    if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {
+      for (const key of ['PUBLIC_URL', 'APP_URL'] as const) {
+        if (isLocalUrl(env[key])) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: 'defina a URL pública real (não vale localhost/127.0.0.1) fora de NODE_ENV=development/test',
+          });
+        }
+      }
+    }
     if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test' && !env.CREDENTIALS_ENCRYPTION_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

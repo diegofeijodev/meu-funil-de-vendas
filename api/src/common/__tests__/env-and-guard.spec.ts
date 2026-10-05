@@ -4,17 +4,51 @@ import Fastify from 'fastify';
 import { parseTrustProxy, toFastifyTrustProxy, validateEnv } from '../config/env.validation';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 const base = { DATABASE_URL: 'x', JWT_SECRET: 'test-secret-with-16+chars' };
+const prod = { NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'k', UNSUBSCRIBE_SECRET: 'u', PUBLIC_URL: 'https://api.meufunil.app', APP_URL: 'https://meufunil.app' };
 
 describe('validateEnv — chave do cofre', () => {
   it('NODE_ENV ausente ou production sem CREDENTIALS_ENCRYPTION_KEY falha no boot', () => {
     expect(() => validateEnv(base)).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
-    expect(() => validateEnv({ ...base, NODE_ENV: 'production' })).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
+    expect(() => validateEnv({ ...base, NODE_ENV: 'production', PUBLIC_URL: prod.PUBLIC_URL, APP_URL: prod.APP_URL })).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
   });
   it('development/test sem chave passam; production com chave passa', () => {
     expect(() => validateEnv({ ...base, NODE_ENV: 'development' })).not.toThrow();
     expect(() => validateEnv({ ...base, NODE_ENV: 'test' })).not.toThrow();
-    expect(() => validateEnv({ ...base, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'k', UNSUBSCRIBE_SECRET: 'u' })).not.toThrow();
+    expect(() => validateEnv({ ...base, ...prod })).not.toThrow();
+  });
+});
+
+describe('validateEnv — PUBLIC_URL/APP_URL em produção', () => {
+  it('não definidas (default localhost) ou apontando para localhost/loopback/URL inválida falham o boot', () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: 'production', CREDENTIALS_ENCRYPTION_KEY: 'k', UNSUBSCRIBE_SECRET: 'u' })).toThrow(/PUBLIC_URL/);
+    expect(() => validateEnv({ ...base, ...prod, PUBLIC_URL: 'http://localhost:3015' })).toThrow(/PUBLIC_URL/);
+    expect(() => validateEnv({ ...base, ...prod, APP_URL: 'http://127.0.0.1:3025' })).toThrow(/APP_URL/);
+    expect(() => validateEnv({ ...base, ...prod, APP_URL: 'não é url' })).toThrow(/APP_URL/);
+    expect(() => validateEnv({ ...base, ...prod, PUBLIC_URL: 'https://api.meufunil.app' })).not.toThrow();
+  });
+  it('em development/test o default localhost vale', () => {
+    expect(validateEnv({ ...base, NODE_ENV: 'development' }).PUBLIC_URL).toBe('http://localhost:3015');
+    expect(() => validateEnv({ ...base, NODE_ENV: 'test' })).not.toThrow();
+  });
+});
+
+describe('validateEnv — chaves do schema declaradas no compose e no .env.example', () => {
+  const root = path.resolve(__dirname, '../../../..');
+  const schema = fs.readFileSync(path.resolve(__dirname, '../config/env.validation.ts'), 'utf8');
+  const keys = [...schema.slice(schema.indexOf('z\n  .object({'), schema.indexOf('.superRefine')).matchAll(/^ {4}([A-Z][A-Z0-9_]+):/gm)].map((m) => m[1]!);
+  it('toda chave aparece em docker-compose.yml (serviço api) e em api/.env.example (ativa ou comentada)', () => {
+    const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+    const example = fs.readFileSync(path.join(root, 'api/.env.example'), 'utf8');
+    expect(keys.length).toBeGreaterThan(40);
+    expect(keys.filter((k) => !new RegExp(`^\\s+${k}:`, 'm').test(compose))).toEqual([]);
+    expect(keys.filter((k) => !new RegExp(`^#?\\s*${k}=`, 'm').test(example))).toEqual([]);
+  });
+  it('WHATSAPP_WEBHOOK_SECRET é lida do ambiente (fallback do cofre)', () => {
+    expect(validateEnv({ ...base, ...prod, WHATSAPP_WEBHOOK_SECRET: 'abc' }).WHATSAPP_WEBHOOK_SECRET).toBe('abc');
   });
 });
 

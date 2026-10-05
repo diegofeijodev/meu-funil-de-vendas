@@ -33,8 +33,9 @@ services:
       NODE_ENV: production
       PORT: 3015
       CORS_ORIGINS: http://localhost:3025
-      PUBLIC_URL: http://localhost:3015
-      APP_URL: http://localhost:3025
+      # Em produção as duas são OBRIGATÓRIAS e não podem apontar para localhost (a API não sobe): defina no .env do compose.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      APP_URL: ${APP_URL:-}
       UPLOADS_DIR: /data/uploads
       # Flags declaradas no compose mesmo quando o default do zod já resolve
       # (regra de ops do workspace: flag nova precisa aparecer aqui).
@@ -49,8 +50,47 @@ services:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      # Só testes (Graph falsa); ignorada em produção.
+      # Só testes (Graph falsa); ignorada fora de development/test.
       META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-}
+      # Demais chaves do schema (vazio = ausente/default do schema). As bases *_BASE_URL/*_API_URL (provedores falsos) só valem em development/test.
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-}
+      FILES_SIGNING_SECRET: ${FILES_SIGNING_SECRET:-}
+      AI_OPENAI_BASE_URL: ${AI_OPENAI_BASE_URL:-}
+      AI_GEMINI_BASE_URL: ${AI_GEMINI_BASE_URL:-}
+      AI_MODEL_TEXT: ${AI_MODEL_TEXT:-}
+      AI_MODEL_TEXT_FAST: ${AI_MODEL_TEXT_FAST:-}
+      AI_MODEL_IMAGE_OPENAI: ${AI_MODEL_IMAGE_OPENAI:-}
+      AI_MODEL_IMAGE_GEMINI: ${AI_MODEL_IMAGE_GEMINI:-}
+      AI_MODEL_VIDEO: ${AI_MODEL_VIDEO:-}
+      AI_MODEL_GEMINI_FLASH: ${AI_MODEL_GEMINI_FLASH:-}
+      AI_MODEL_GEMINI_PRO: ${AI_MODEL_GEMINI_PRO:-}
+      AI_BYO_OPENAI_TEXT_MODEL: ${AI_BYO_OPENAI_TEXT_MODEL:-}
+      AI_BYO_GEMINI_TEXT_MODEL: ${AI_BYO_GEMINI_TEXT_MODEL:-}
+      EXPORTS_TTL_HOURS: ${EXPORTS_TTL_HOURS:-}
+      CRM_CRON_SECRET: ${CRM_CRON_SECRET:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_SYSTEM_USER_TOKEN: ${META_SYSTEM_USER_TOKEN:-}
+      META_GRAPH_TOKEN: ${META_GRAPH_TOKEN:-}
+      META_AD_ACCOUNT_ID: ${META_AD_ACCOUNT_ID:-}
+      META_PAGE_ID: ${META_PAGE_ID:-}
+      META_INSTAGRAM_ACCOUNT_ID: ${META_INSTAGRAM_ACCOUNT_ID:-}
+      GOOGLE_ADS_API_VERSION: ${GOOGLE_ADS_API_VERSION:-}
+      GOOGLE_ADS_CLIENT_ID: ${GOOGLE_ADS_CLIENT_ID:-}
+      GOOGLE_ADS_CLIENT_SECRET: ${GOOGLE_ADS_CLIENT_SECRET:-}
+      GOOGLE_ADS_DEVELOPER_TOKEN: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
+      TIKTOK_APP_ID: ${TIKTOK_APP_ID:-}
+      TIKTOK_APP_SECRET: ${TIKTOK_APP_SECRET:-}
+      WHATSAPP_CLOUD_TOKEN: ${WHATSAPP_CLOUD_TOKEN:-}
+      ZAPI_TOKEN: ${ZAPI_TOKEN:-}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      CALCOM_API_KEY: ${CALCOM_API_KEY:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      RESEND_API_URL: ${RESEND_API_URL:-}
+      CALCOM_API_URL: ${CALCOM_API_URL:-}
     volumes:
       - meufunil_uploads:/data/uploads
     ports:
