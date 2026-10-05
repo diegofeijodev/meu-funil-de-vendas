@@ -127,7 +127,9 @@ export class CadenceService {
       else if (c.trigger_type === 'tag') where.tags = { has: value };
       else where.campaign_name = value;
       if (c.trigger_type === 'stage' && !/^[0-9a-f-]{36}$/i.test(value)) continue;
-      const leads = await this.prisma.crm_leads.findMany({ where, select: { id: true }, take: 200 });
+      // Só quem ainda não foi matriculado nesta cadência, do mais antigo ao mais novo: com mais de 200 combinando, a fila anda a cada rodada.
+      where.crm_cadence_runs = { none: { cadence_id: c.id } };
+      const leads = await this.prisma.crm_leads.findMany({ where, select: { id: true }, orderBy: { created_at: 'asc' }, take: 200 });
       for (const lead of leads) {
         const run = await this.prisma.crm_cadence_runs.findUnique({ where: { cadence_id_lead_id: { cadence_id: c.id, lead_id: lead.id } }, select: { id: true } });
         if (run) continue;
@@ -155,7 +157,7 @@ export class CadenceService {
 
   /** Escrita condicionada ao token do lease; false = o lease foi perdido (outro worker assumiu). */
   private async guarded(runId: string, token: string, data: Prisma.crm_cadence_runsUncheckedUpdateManyInput, release = true): Promise<boolean> {
-    const r = await this.prisma.crm_cadence_runs.updateMany({ where: { id: runId, lease_token: token }, data: { ...data, ...(release ? { lease_until: null, lease_token: null } : {}) } });
+    const r = await this.prisma.crm_cadence_runs.updateMany({ where: { id: runId, lease_token: token, status: 'running' }, data: { ...data, ...(release ? { lease_until: null, lease_token: null } : {}) } });
     return r.count > 0;
   }
 
@@ -194,7 +196,7 @@ export class CadenceService {
   }
 
   /** Executa os passos vencidos. Chamada pelo cron de 5 min e pelo "Executar agora" (`workspaceId` limita a uma empresa). */
-  async runDue(limit = 200, workspaceId?: string): Promise<{ executed: number; skipped: number }> {
+  async runDue(limit = 25, workspaceId?: string): Promise<{ executed: number; skipped: number }> {
     const claimed = await this.claim(limit, workspaceId);
     if (!claimed.length) return { executed: 0, skipped: 0 };
     const tokenOf = new Map(claimed.map((c) => [c.id, c.token]));
@@ -291,6 +293,10 @@ export class CadenceService {
     const vars = { nome: lead.name ?? '', cidade: lead.city ?? '', empresa: '', responsavel: ownerName ?? '' };
     const body = renderVariables(step.message ?? '', vars);
     const log = (event: string, extra: { messageId?: string | null; detail?: string | null } = {}) => this.logEvent(run, index, event, { channel: step.channel, ...extra });
+    // Escritas DEPOIS do envio: se falharem a mensagem já saiu, então o run segue (só registra o erro no log) em vez de virar "failed".
+    const afterSend = async (fn: () => Promise<unknown>) => {
+      try { await fn(); } catch (e) { this.logger.error(`run ${run.id}: registro pós-envio falhou: ${errText(e)}`); }
+    };
 
     if (step.channel === 'email' && lead.email && !lead.unsubscribed) {
       // E-mail de verdade quando o Resend está configurado; senão vira tarefa.
@@ -298,7 +304,7 @@ export class CadenceService {
       if (integ?.status === 'connected') {
         const subject = renderVariables(step.subject || 'Seguimos à disposição', vars);
         await this.email.sendLeadEmail({ workspaceId: ws, leadId: lead.id, subject, body, authorType: 'ai' });
-        await log('sent', { detail: `e-mail: ${subject}` });
+        await afterSend(() => log('sent', { detail: `e-mail: ${subject}` }));
         return;
       }
     }
@@ -320,7 +326,7 @@ export class CadenceService {
     if (!lead.phone && lead.instagram_id && step.channel === 'wa_text') {
       try {
         const sent = await this.instagram.sendInstagramAndStore({ workspaceId: ws, leadId: lead.id, text: body, authorType: 'ai' });
-        await log('sent', { messageId: sent.id, detail: 'instagram' });
+        await afterSend(() => log('sent', { messageId: sent.id, detail: 'instagram' }));
       } catch (e) {
         await log('skipped', { detail: errText(e) || 'instagram indisponível' });
       }
@@ -348,11 +354,11 @@ export class CadenceService {
       message = { to: lead.phone, kind: 'text', body };
     }
     const sent = await this.whatsapp.sendAndStore({ integration, conversationId: conversation.id, leadId: lead.id, message, authorType: 'ai' });
-    await this.core.addInteraction({
+    await afterSend(() => this.core.addInteraction({
       workspaceId: ws, leadId: lead.id, kind: 'message_out', authorType: 'ai', content: body || message.templateName || 'Passo da cadência',
       metadata: { cadence_id: run.cadence_id, step_index: index },
-    });
-    await log('sent', { messageId: sent.id });
+    }));
+    await afterSend(() => log('sent', { messageId: sent.id }));
   }
 
   /** Lead respondeu: se o SDR não atende a conversa, cria a tarefa para o responsável. */

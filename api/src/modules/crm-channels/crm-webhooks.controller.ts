@@ -119,8 +119,10 @@ export class LeadgenWebhookController {
     try { payload = JSON.parse(raw); } catch { reply.status(400); return 'Bad request'; }
     let failed = false;
     for (const entry of Array.isArray(payload?.entry) ? payload.entry : []) {
-      for (const change of entry.changes ?? []) {
-        const leadgenId = String(change.value?.['leadgen_id'] ?? '');
+      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.changes)) continue;
+      for (const change of entry.changes) {
+        if (!change || typeof change !== 'object' || !change.value || typeof change.value !== 'object') continue;
+        const leadgenId = String(change.value['leadgen_id'] ?? '');
         if (!leadgenId) continue;
         const eventId = await this.ledger.claimEvent({ workspaceId: integration.workspace_id, source: 'meta_leadgen', externalId: leadgenId, payload: change.value });
         if (!eventId) continue;

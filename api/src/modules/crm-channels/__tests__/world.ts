@@ -19,6 +19,8 @@ export function channelsWorld(opts: { provider?: string; secrets?: Record<string
     // a restrição única parcial (source, external_id) do banco: sem ela o ledger não teria como deduplicar
     crm_webhook_events: new IgTable(() => ({ status: 'processed', error_message: null }), ['source', 'external_id']),
     crm_sdr_documents: new IgTable(),
+    // índice único parcial (workspace, external_id) das mensagens recebidas
+    crm_messages: new IgTable(() => ({}), ['workspace_id', 'external_id']),
   };
   Object.assign(w.prisma, extra);
   Object.assign(w.t, extra);

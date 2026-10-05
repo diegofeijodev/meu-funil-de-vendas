@@ -22,7 +22,7 @@ export class CrmCronService implements OnModuleInit {
 
   async runCadences() {
     const triggered = await this.cadences.applyStageAndTagTriggers();
-    const result = await this.cadences.runDue(200);
+    const result = await this.cadences.runDue();
     const slaTasks = await this.cadences.createSlaAlerts(500);
     return { ...result, triggered, sla_tasks: slaTasks };
   }

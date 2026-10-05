@@ -16,6 +16,7 @@ import { OutgoingMessage, WaProviders } from './wa-providers';
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
   readonly providers: WaProviders;
+  private readonly sdrInFlight = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -146,6 +147,11 @@ export class WhatsAppService {
     const lead = await this.leadForPhone(integration, phone, msg);
     const conversation = await this.ensureConversation({ integration, phone, waId: msg.waId ?? null, leadId: lead.id });
 
+    // Reentrega/reprocessamento do mesmo evento do provedor: já gravada, nenhum efeito colateral (contador, janela, cadência, SDR).
+    if (msg.externalId && (await this.prisma.crm_messages.findFirst({ where: { workspace_id: ws, external_id: msg.externalId, direction: 'in' }, select: { id: true } }))) {
+      return { leadId: lead.id, conversationId: conversation.id, ignored: 'mensagem duplicada' };
+    }
+
     // Mídia da API oficial chega como id: baixa e guarda para aparecer na conversa e para o SDR entender.
     let mediaFile: { bytes: Buffer; mime: string } | null = null;
     if (!msg.mediaUrl && msg.mediaId && integration.provider === 'whatsapp_cloud') {
@@ -160,9 +166,15 @@ export class WhatsAppService {
       }
     }
 
-    await this.prisma.crm_messages.create({
-      data: { workspace_id: ws, conversation_id: conversation.id, lead_id: lead.id, direction: 'in', message_type: msg.type, body: msg.body, media_url: msg.mediaUrl ?? null, status: 'received', external_id: msg.externalId, author_type: 'system' },
-    });
+    try {
+      await this.prisma.crm_messages.create({
+        data: { workspace_id: ws, conversation_id: conversation.id, lead_id: lead.id, direction: 'in', message_type: msg.type, body: msg.body, media_url: msg.mediaUrl ?? null, status: 'received', external_id: msg.externalId, author_type: 'system' },
+      });
+    } catch (e) {
+      // Índice único parcial (workspace, external_id) das recebidas: outra entrega da mesma mensagem ganhou a corrida.
+      if ((e as { code?: string }).code === 'P2002') return { leadId: lead.id, conversationId: conversation.id, ignored: 'mensagem duplicada' };
+      throw e;
+    }
     await this.prisma.crm_conversations.update({
       where: { id: conversation.id },
       data: { lead_id: lead.id, unread_count: { increment: 1 }, last_message_at: new Date(), last_message_preview: msg.body ?? 'Mídia recebida', window_expires_at: new Date(Date.now() + WINDOW_MS) },
@@ -195,6 +207,11 @@ export class WhatsAppService {
   /** Roda o agente SDR para a mensagem recebida e responde no WhatsApp. */
   private async triggerSdr(integration: Integration, leadId: string, conversationId: string, inboundText: string) {
     if (!inboundText.trim()) return;
+    // Uma execução por lead por vez (instância única): duas mensagens simultâneas não geram duas respostas.
+    // A mais recente já está no histórico e entra na próxima execução.
+    const guardKey = `${integration.workspace_id}:${leadId}`;
+    if (this.sdrInFlight.has(guardKey)) return;
+    this.sdrInFlight.add(guardKey);
     try {
       const result = await this.sdr.run({ workspaceId: integration.workspace_id, leadId, conversationId, inboundText });
       const reply = ('reply' in result && result.reply) || null;
@@ -204,6 +221,8 @@ export class WhatsAppService {
       await this.sendAndStore({ integration, conversationId, leadId, message: { to: lead.phone, kind: 'text', body: reply }, authorType: 'ai' });
     } catch (err) {
       this.logger.error(`[sdr] falha ao responder o lead: ${errText(err)}`);
+    } finally {
+      this.sdrInFlight.delete(guardKey);
     }
   }
 

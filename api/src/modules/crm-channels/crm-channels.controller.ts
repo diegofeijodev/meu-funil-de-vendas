@@ -102,7 +102,7 @@ export class CrmCadencesController {
   @Post('run-cadences-now') @HttpCode(200)
   async run(@CurrentUser() u: AuthUser, @Body() d: D.WsDto) {
     await requireManager(this.access, u.id, d.workspaceId, MANAGE_MSG_CAD);
-    const r = await this.svc.runDue(200, d.workspaceId);
+    const r = await this.svc.runDue(25, d.workspaceId);
     return { ...r, slaTasks: await this.svc.createSlaAlerts(500, d.workspaceId) };
   }
 }

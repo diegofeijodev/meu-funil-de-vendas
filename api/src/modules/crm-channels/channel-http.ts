@@ -56,9 +56,27 @@ export class ChannelHttp {
     const res = await this.http(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`Não foi possível baixar a mídia (HTTP ${res.status}).`);
     const len = Number(res.headers.get('content-length') ?? 0);
-    if (len > maxBytes) throw new Error('Mídia grande demais.');
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > maxBytes) throw new Error('Mídia grande demais.');
+    if (len > maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('Mídia grande demais.');
+    }
+    // Sem content-length confiável: lê em pedaços e aborta ao passar do teto (nunca carrega o corpo inteiro).
+    const chunks: Buffer[] = [];
+    let total = 0;
+    if (res.body) {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error('Mídia grande demais.');
+        }
+        chunks.push(Buffer.from(value));
+      }
+    }
+    const buf = Buffer.concat(chunks);
     return { bytes: buf, mime: (res.headers.get('content-type') ?? '').split(';')[0] || 'application/octet-stream' };
   }
 }
