@@ -208,12 +208,28 @@ export class AdsOpsService {
     return { byAd, byAdset };
   }
 
-  private async recentRuleAction(campaignId: string, key: string, hours: number) {
-    const hit = await this.prisma.ai_recommendations.findFirst({
-      where: { campaign_id: campaignId, source: 'rule', payload: { path: ['target'], equals: key }, created_at: { gte: new Date(Date.now() - hours * 3600e3) } },
-      select: { id: true },
+  /**
+   * Reserva a ação da regra ANTES de chamar a Meta: com um advisory lock por campanha, confere se já houve ação recente neste alvo e,
+   * se não, grava a linha `source='rule'`. Duas execuções sobrepostas (cron + HTTP, ou duas HTTP) não agem duas vezes no mesmo alvo.
+   * Devolve o id da reserva, ou null se já havia ação recente.
+   */
+  private async claimRuleAction(c: CampaignRow, key: string, hours: number, row: { action: string; title: string; reason: string; payload: Record<string, unknown> }): Promise<string | null> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'ads-rule:' + c.id}))`;
+      const hit = await tx.ai_recommendations.findFirst({
+        where: { campaign_id: c.id, source: 'rule', payload: { path: ['target'], equals: key }, created_at: { gte: new Date(Date.now() - hours * 3600e3) } },
+        select: { id: true },
+      });
+      if (hit) return null;
+      const made = await tx.ai_recommendations.create({
+        data: {
+          workspace_id: c.workspace_id, campaign_id: c.id, action: row.action, title: row.title, reason: row.reason, severity: 'high', requires_approval: false,
+          status: 'applied', source: 'rule', payload: row.payload as Prisma.InputJsonObject, applied_at: new Date(), result: 'Aplicando na Meta…',
+        },
+        select: { id: true },
+      });
+      return made.id;
     });
-    return !!hit;
   }
 
   // ------------------------------------------------------------------ 2.3 regras automáticas
@@ -223,11 +239,18 @@ export class AdsOpsService {
     if (!rules.enabled || !c.meta_campaign_id) return [];
     const ws = c.workspace_id;
     const actions: string[] = [];
-    const log = async (action: string, title: string, reason: string, payload: Record<string, unknown>, result: string) => {
-      await this.prisma.ai_recommendations.create({
-        data: { workspace_id: ws, campaign_id: c.id, action, title, reason, severity: 'high', requires_approval: false, status: 'applied', source: 'rule', payload: payload as Prisma.InputJsonObject, applied_at: new Date(), result },
-      });
-      actions.push(title);
+    /** Reserva (atômica), executa na Meta e confirma; se a Meta falhar, solta a reserva para a próxima rodada tentar. */
+    const act = async (key: string, hours: number, row: { action: string; title: string; reason: string; payload: Record<string, unknown> }, result: string, run: () => Promise<unknown>) => {
+      const id = await this.claimRuleAction(c, key, hours, row);
+      if (!id) return;
+      try {
+        await run();
+      } catch (e) {
+        await this.prisma.ai_recommendations.deleteMany({ where: { id } }).catch(() => undefined);
+        throw e;
+      }
+      await this.prisma.ai_recommendations.update({ where: { id }, data: { result } });
+      actions.push(row.title);
     };
 
     const week = await this.statsFor(c.id, ws, 7);
@@ -238,19 +261,22 @@ export class AdsOpsService {
       const tooExpensive = rules.maxCpl != null && cpl != null && cpl > rules.maxCpl;
       const noLeads = a.leads === 0;
       if (!tooExpensive && !noLeads) continue;
-      if (await this.recentRuleAction(c.id, adId, 24 * 7)) continue;
       const st = await this.ops.adEffectiveStatus(ws, adId).catch(() => null);
       if (st !== 'ACTIVE') continue;
       // Nunca pausa o último anúncio ativo do conjunto.
       const siblings = [...week.byAd.entries()].filter(([id, x]) => x.adsetId === a.adsetId && id !== adId);
       if (!siblings.length) continue;
-      await this.ops.setAdStatus(ws, adId, 'PAUSED');
-      await log(
-        'pause_ad',
-        `Regra: anúncio "${a.name}" pausado`,
-        noLeads ? `Gastou ${money(a.spend)} em 7 dias sem nenhum lead (limite: ${money(rules.minSpendToJudge)}).` : `CPL de ${money(cpl!)} acima do teto de ${money(rules.maxCpl!)} nos últimos 7 dias.`,
-        { target: adId, adId },
+      await act(
+        adId,
+        24 * 7,
+        {
+          action: 'pause_ad',
+          title: `Regra: anúncio "${a.name}" pausado`,
+          reason: noLeads ? `Gastou ${money(a.spend)} em 7 dias sem nenhum lead (limite: ${money(rules.minSpendToJudge)}).` : `CPL de ${money(cpl!)} acima do teto de ${money(rules.maxCpl!)} nos últimos 7 dias.`,
+          payload: { target: adId, adId },
+        },
         'Pausado na Meta',
+        () => this.ops.setAdStatus(ws, adId, 'PAUSED'),
       );
     }
     // Escala conjunto barato (com teto e no máximo 1 aumento a cada 24 h).
@@ -259,19 +285,22 @@ export class AdsOpsService {
       for (const [adsetId, a] of recent.byAdset) {
         const cpl = cplOf(a);
         if (cpl == null || a.leads < 3 || cpl >= rules.scaleBelowCpl) continue;
-        if (await this.recentRuleAction(c.id, adsetId, 24)) continue;
         const cur = await this.ops.getAdsetBudget(ws, adsetId);
         if (cur.status !== 'ACTIVE' || !cur.dailyBudget) continue;
         let next = Math.round(cur.dailyBudget * (1 + rules.scaleStepPct / 100) * 100) / 100;
         if (rules.maxDailyBudget != null) next = Math.min(next, rules.maxDailyBudget);
         if (next <= cur.dailyBudget) continue;
-        await this.ops.setAdsetBudget(ws, adsetId, next);
-        await log(
-          'increase_budget',
-          `Regra: verba de "${cur.name}" de ${money(cur.dailyBudget)} para ${money(next)}/dia`,
-          `CPL de ${money(cpl)} nos últimos 3 dias, abaixo da meta de ${money(rules.scaleBelowCpl)}.`,
-          { target: adsetId, adsetId, from: cur.dailyBudget, to: next },
+        await act(
+          adsetId,
+          24,
+          {
+            action: 'increase_budget',
+            title: `Regra: verba de "${cur.name}" de ${money(cur.dailyBudget)} para ${money(next)}/dia`,
+            reason: `CPL de ${money(cpl)} nos últimos 3 dias, abaixo da meta de ${money(rules.scaleBelowCpl)}.`,
+            payload: { target: adsetId, adsetId, from: cur.dailyBudget, to: next },
+          },
           'Verba alterada na Meta',
+          () => this.ops.setAdsetBudget(ws, adsetId, next),
         );
       }
     }

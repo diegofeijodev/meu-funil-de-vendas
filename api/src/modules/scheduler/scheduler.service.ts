@@ -83,6 +83,20 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     return true;
   }
 
+  /**
+   * Execução por HTTP (`/api/public/cron/*`) com a MESMA trava dos ticks agendados: trava todos os `names` de uma vez (nomes de `JOB_SCHEDULES`);
+   * se algum já está rodando (tick ou outra chamada HTTP), não executa e devolve `{ skipped: 'em execução' }`.
+   */
+  async runExclusive<T>(names: string[], fn: () => Promise<T>): Promise<{ skipped: string } | { value: T }> {
+    if (names.some((n) => this.running.has(n))) return { skipped: 'em execução' };
+    for (const n of names) this.running.add(n);
+    try {
+      return { value: await fn() };
+    } finally {
+      for (const n of names) this.running.delete(n);
+    }
+  }
+
   private async heartbeat(name: string, status: string, detail: string | null): Promise<void> {
     try {
       await this.prisma.cron_heartbeats.upsert({

@@ -180,9 +180,9 @@ fonte única de nome/cron/heartbeat; os módulos só acrescentam o `handler`. O 
 O "o que falta configurar" (`setup`) confere a frescura dos heartbeats `crm-cadences` ≤ 20 min, `instagram-queue` ≤ 20 min, `ads-sync` ≤ 4 h e
 `crm-daily` ≤ 26 h; esses nomes são exatamente os gravados pelos jobs acima (e pelas rotas HTTP).
 
-**Sem agendamento duplo.** Há UMA forma de agendar por implantação: ou o agendador em processo (`SCHEDULER_ENABLED=true`, padrão de produção, uma
+**Sem agendamento duplo.** Há UMA forma de agendar por implantação: ou o agendador em processo (`SCHEDULER_ENABLED=true`, recomendado em produção, uma
 instância) **ou** um cron externo chamando as rotas `/api/public/cron/*` com `SCHEDULER_ENABLED=false`. As rotas HTTP não substituem nem repetem os
-jobs: servem a esse cron externo e a disparos manuais (smoke/browser-check). Ligar os dois ao mesmo tempo roda cada trabalho duas vezes.
+jobs: servem a esse cron externo e a disparos manuais (smoke/browser-check). Ligar os dois ao mesmo tempo não duplica o trabalho na mesma instância: as rotas HTTP passam pela mesma trava por job dos ticks (`SchedulerService.runExclusive`) e, se o job já está rodando, respondem 200 `{ "skipped": "em execução" }`. Em várias instâncias a trava é só do processo, então continue com UMA forma de agendar. As regras automáticas de anúncios reservam a ação (linha `source='rule'`, com advisory lock por campanha) antes de chamar a Meta, então rodadas sobrepostas não escalam a verba duas vezes.
 
 ## 8. Padrões do CRM (interno)
 

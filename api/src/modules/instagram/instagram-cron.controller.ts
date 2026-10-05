@@ -28,9 +28,10 @@ export class InstagramCronController {
     if (!(await this.auth.isAuthorized(secret, ['instagram']))) throw new UnauthorizedException({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
     const name = `instagram-${body.task === 'publish' ? 'queue' : (body.task ?? 'all')}`;
     try {
-      const out = await this.cron.run(body.task);
+      const out = await this.cron.runExclusive(body.task);
+      if ('skipped' in out) return out;
       await this.auth.heartbeat(name, 'ok', null);
-      return out;
+      return out.value;
     } catch (e) {
       await this.auth.heartbeat(name, 'error', errText(e));
       throw e;

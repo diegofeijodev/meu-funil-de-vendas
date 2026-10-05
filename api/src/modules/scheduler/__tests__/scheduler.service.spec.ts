@@ -51,4 +51,22 @@ describe('SchedulerService', () => {
     expect(Object.keys(JOB_SCHEDULES)).toHaveLength(12);
     expect(JOB_SCHEDULES['crm-daily'].cron).toBe('10 9 * * *');
   });
+
+  it('runExclusive: usa a mesma trava dos ticks; chamada sobreposta devolve { skipped } e libera ao terminar', async () => {
+    const { svc } = mk(false);
+    let release!: () => void;
+    svc.register({ name: 'j1', cron: '* * * * *', handler: () => new Promise<void>((r) => (release = r)) });
+    svc.register({ name: 'j2', cron: '* * * * *', handler: async () => {} });
+    const tick = svc.run('j1');
+    expect(await svc.runExclusive(['j1', 'j2'], async () => 'x')).toEqual({ skipped: 'em execução' });
+    release();
+    await tick;
+    let inside!: () => void;
+    const http = svc.runExclusive(['j1', 'j2'], () => new Promise<string>((r) => (inside = () => r('ok'))));
+    expect(await svc.run('j2')).toBe(false); // tick de j2 pula enquanto o HTTP roda
+    expect(await svc.runExclusive(['j1'], async () => 'y')).toEqual({ skipped: 'em execução' });
+    inside();
+    expect(await http).toEqual({ value: 'ok' });
+    expect(await svc.runExclusive(['j1', 'j2'], async () => 'z')).toEqual({ value: 'z' });
+  });
 });

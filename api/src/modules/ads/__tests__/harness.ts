@@ -55,7 +55,14 @@ export function adsWorld() {
     cron_heartbeats: new IgTable(),
   };
   // oauth_states usa `state_hash` como chave (findUnique({ where: { state_hash } })) — o IgTable já resolve por igualdade.
-  const prisma: any = { ...t, workspace_members: memMembers };
+  // $transaction em série (simula o pg_advisory_xact_lock por campanha) e $executeRaw sem efeito.
+  let chain: Promise<unknown> = Promise.resolve();
+  const prisma: any = {
+    ...t,
+    workspace_members: memMembers,
+    $executeRaw: async () => 0,
+    $transaction: (fn: (tx: any) => Promise<unknown>) => { const run = chain.then(() => fn(prisma)); chain = run.catch(() => undefined); return run; },
+  };
   const access = new WorkspaceAccessService(prisma);
   const guards = new CampaignGuardsService(prisma, access);
   const store = new MemStore();

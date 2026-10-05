@@ -49,6 +49,25 @@ export class InstagramCronService implements OnModuleInit {
     return { metrics: await this.metrics.collectDueMetrics(), learning: await this.metrics.learnFromTopPosts().catch((e) => ({ error: errText(e) })) };
   }
 
+  /** Nomes dos jobs agendados (`JOB_SCHEDULES`) que esta tarefa ocupa — a trava é a mesma dos ticks. */
+  static lockNames(task?: CronTask): string[] {
+    switch (task) {
+      case 'weekly': return ['instagram-autopilot-weekly'];
+      case 'optimize': return ['instagram-optimizer-monday'];
+      case 'account': return ['instagram-account-daily'];
+      case 'queue':
+      case 'publish': return ['instagram-queue-5min'];
+      case 'media': return ['instagram-media-5min'];
+      case 'metrics': return ['instagram-metrics-5min'];
+      default: return ['instagram-queue-5min', 'instagram-media-5min', 'instagram-metrics-5min'];
+    }
+  }
+
+  /** Execução por HTTP: respeita a trava por job do agendador (`{ skipped }` se já está rodando). */
+  runExclusive(task?: CronTask) {
+    return this.scheduler.runExclusive(InstagramCronService.lockNames(task), () => this.run(task));
+  }
+
   /** Sem `task`: queue + media + metrics (compatibilidade). */
   async run(task?: CronTask): Promise<Record<string, unknown>> {
     switch (task) {

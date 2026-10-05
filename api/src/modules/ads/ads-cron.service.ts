@@ -21,6 +21,12 @@ export class AdsCronService implements OnModuleInit {
     return out;
   }
 
+  /** Execução por HTTP com a trava por job do agendador (`rules` também sincroniza, então ocupa os dois jobs). */
+  runExclusive(task?: 'sync' | 'rules') {
+    const names = task === 'rules' ? ['ads-insights-3h', 'ads-rules-daily'] : ['ads-insights-3h'];
+    return this.scheduler.runExclusive(names, () => this.run(task));
+  }
+
   /** Jobs do `pg_cron` (db.md §6): `ads-insights-3h` e `ads-rules-daily`, com os heartbeats que "o que falta configurar" lê. */
   onModuleInit() {
     this.scheduler.register({ ...JOB_SCHEDULES['ads-insights-3h'], handler: async () => JSON.stringify(await this.run('sync')).slice(0, 300) });

@@ -141,6 +141,7 @@ describe('cron do gestor de tráfego', () => {
     const w = adsWorld();
     const auth = new CronAuthService(w.prisma, { CRM_CRON_SECRET: 'segredo-cron' } as any);
     const cron: any = { run: jest.fn(async (t?: string) => ({ sync: [], ...(t === 'rules' ? { rules: [] } : {}) })) };
+    cron.runExclusive = jest.fn(async (t?: string) => ({ value: await cron.run(t) }));
     const ctl = new AdsPublicController(w.oauth, w.channels, cron, auth);
     await expect(ctl.cronAds(undefined, {})).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(ctl.cronAds('errado', {})).rejects.toBeInstanceOf(UnauthorizedException);
@@ -155,6 +156,25 @@ describe('cron do gestor de tráfego', () => {
     cron.run.mockRejectedValueOnce(new Error('boom'));
     await expect(ctl.cronAds('segredo-cron', {})).rejects.toThrow('boom');
     expect(w.t['cron_heartbeats']!.rows.find((r) => r.name === 'ads-sync')).toMatchObject({ last_status: 'error', last_detail: 'boom' });
+  });
+
+  it('rota: se o job já está rodando, 200 { skipped } sem executar nem gravar heartbeat', async () => {
+    const w = adsWorld();
+    const auth = new CronAuthService(w.prisma, { CRM_CRON_SECRET: 'segredo-cron' } as any);
+    const ops: any = { recoverStaleApplying: jest.fn(async () => 0), syncAllInsights: jest.fn(async () => []), runAllRules: jest.fn(async () => []) };
+    const sched = new SchedulerService({} as any, w.prisma, { SCHEDULER_ENABLED: false } as any);
+    const svc = new AdsCronService(sched, ops);
+    svc.onModuleInit();
+    const ctl = new AdsPublicController(w.oauth, w.channels, svc, auth);
+    let release!: () => void;
+    ops.syncAllInsights.mockImplementationOnce(() => new Promise((r) => (release = () => r([]))));
+    const first = ctl.cronAds('segredo-cron', { task: 'rules' });
+    await new Promise((r) => setImmediate(r));
+    expect(await ctl.cronAds('segredo-cron', { task: 'rules' })).toEqual({ skipped: 'em execução' });
+    expect(await ctl.cronAds('segredo-cron', {})).toEqual({ skipped: 'em execução' }); // sync ocupa o mesmo job
+    release();
+    await first;
+    expect(ops.syncAllInsights).toHaveBeenCalledTimes(1);
   });
 
   it('serviço: sync sempre; rules só com task=rules; registra os 2 jobs do agendador com os horários do db.md', async () => {

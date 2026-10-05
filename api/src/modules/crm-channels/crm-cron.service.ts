@@ -40,6 +40,15 @@ export class CrmCronService implements OnModuleInit {
     return { costs: results };
   }
 
+  /** Execução por HTTP com a trava por job do agendador (`{ skipped }` se já está rodando). */
+  cadencesExclusive() {
+    return this.scheduler.runExclusive(['crm-cadences-5min'], () => this.runCadences());
+  }
+
+  dailyExclusive() {
+    return this.scheduler.runExclusive(['crm-daily'], () => this.runDaily());
+  }
+
   onModuleInit() {
     this.scheduler.register({ ...JOB_SCHEDULES['crm-cadences-5min'], handler: async () => JSON.stringify(await this.runCadences()).slice(0, 300) });
     this.scheduler.register({
@@ -65,9 +74,10 @@ export class CrmCronController {
   async cadences(@Headers('x-cron-secret') secret: string | undefined, @Body() _b: unknown) {
     if (!(await this.auth.isAuthorized(secret, ['crm_cadences']))) throw new UnauthorizedException({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
     try {
-      const out = await this.cron.runCadences();
+      const out = await this.cron.cadencesExclusive();
+      if ('skipped' in out) return out;
       await this.auth.heartbeat('crm-cadences');
-      return out;
+      return out.value;
     } catch (e) {
       await this.auth.heartbeat('crm-cadences', 'error', errText(e));
       throw new HttpException('cadence run failed', 500);
@@ -77,7 +87,9 @@ export class CrmCronController {
   @Post('crm-daily') @HttpCode(200)
   async daily(@Headers('x-cron-secret') secret: string | undefined, @Body() _b: unknown) {
     if (!(await this.auth.isAuthorized(secret, ['crm_daily']))) throw new UnauthorizedException({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
-    const out = await this.cron.runDaily();
+    const res = await this.cron.dailyExclusive();
+    if ('skipped' in res) return res;
+    const out = res.value;
     const bad = out.costs.find((c) => c.error);
     await this.auth.heartbeat('crm-daily', bad ? 'error' : 'ok', bad?.error ?? null);
     return out;

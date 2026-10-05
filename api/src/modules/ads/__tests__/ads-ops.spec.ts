@@ -123,6 +123,24 @@ describe('regras automáticas (2.3)', () => {
     expect(await w.adsOps.runRulesForCampaign(c)).toEqual([]);
   });
 
+  it('duas execuções sobrepostas escalam a verba UMA vez (reserva antes da Meta)', async () => {
+    const { w, c } = setup();
+    perfRow(w, c, { meta_ad_id: '9301', meta_adset_id: '9101', adset_name: 'Conj', ad_name: 'A', spend: 40, leads: 8 });
+    w.respond((path, opts) => (path === '/9101' && opts.params?.fields ? { daily_budget: '5000', name: 'Conj', effective_status: 'ACTIVE' } : undefined));
+    const [a, b] = await Promise.all([w.adsOps.runRulesForCampaign(c), w.adsOps.runRulesForCampaign(c)]);
+    expect([...a, ...b]).toHaveLength(1);
+    expect(w.calls.filter((x) => x.opts.method === 'POST')).toHaveLength(1);
+    expect(w.t['ai_recommendations']!.rows.filter((r) => r.source === 'rule')).toHaveLength(1);
+  });
+
+  it('se a Meta falha, a reserva é solta (a próxima rodada tenta de novo)', async () => {
+    const { w, c } = setup();
+    perfRow(w, c, { meta_ad_id: '9301', meta_adset_id: '9101', adset_name: 'Conj', ad_name: 'A', spend: 40, leads: 8 });
+    w.respond((path, opts) => (path === '/9101' && opts.params?.fields ? { daily_budget: '5000', name: 'Conj', effective_status: 'ACTIVE' } : opts.method === 'POST' ? new Error('Meta fora') : undefined));
+    await expect(w.adsOps.runRulesForCampaign(c)).rejects.toThrow('Meta fora');
+    expect(w.t['ai_recommendations']!.rows.filter((r) => r.source === 'rule')).toHaveLength(0);
+  });
+
   it('não escala com menos de 3 leads, CPL acima da meta ou já no teto; regra desligada não faz nada', async () => {
     const { w, c } = setup();
     perfRow(w, c, { meta_ad_id: '9301', meta_adset_id: '9101', spend: 10, leads: 2 });

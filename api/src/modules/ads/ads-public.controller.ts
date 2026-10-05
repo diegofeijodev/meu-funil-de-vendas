@@ -76,9 +76,10 @@ export class AdsPublicController {
     if (!(await this.auth.isAuthorized(secret, ['ads']))) throw new UnauthorizedException({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
     const name = `ads-${body.task ?? 'sync'}`;
     try {
-      const out = await this.cron.run(body.task);
+      const out = await this.cron.runExclusive(body.task);
+      if ('skipped' in out) return out;
       await this.auth.heartbeat(name, 'ok', null);
-      return out;
+      return out.value;
     } catch (e) {
       await this.auth.heartbeat(name, 'error', errMsg(e));
       throw e;
