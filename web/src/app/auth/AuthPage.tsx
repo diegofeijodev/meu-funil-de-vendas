@@ -53,11 +53,10 @@ export function AuthPage() {
           company_name: company || `Workspace de ${name || email}`,
         });
         toast.success("Conta criada. Preparamos um workspace de demonstração para você.");
-        navigate({ to: "/overview" });
       } else {
         await signIn(email, password);
-        navigate({ to: "/overview" });
       }
+      // Quem navega é o efeito acima (`user` definido -> /overview): navegar aqui também empilharia duas entradas no histórico.
     } catch (err) {
       // As mensagens da API são as do GoTrue que esta tela já mapeava.
       const raw = apiErrorMessage(err, "");

@@ -64,7 +64,7 @@ export function AiKeysCard() {
         ))}
       </div>
       <p className="mt-4 text-xs text-muted-foreground">
-        No Creative Studio, escolha ChatGPT ou Gemini em "Qual IA usar". Copies usam sua chave OpenAI primeiro, depois a do Gemini.
+        No Creative Studio, escolha ChatGPT ou Gemini em &quot;Qual IA usar&quot;. Copies usam sua chave OpenAI primeiro, depois a do Gemini.
         As chaves ficam só no servidor e valem para esta área de trabalho.
       </p>
     </Section>
