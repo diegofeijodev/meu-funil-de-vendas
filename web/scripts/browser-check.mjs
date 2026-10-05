@@ -9,6 +9,11 @@
 // `next build` (ver CLAUDE.md, "Regras de baixo consumo").
 //
 //   node scripts/browser-check.mjs
+//   BC_ONLY=marcas,campanhas node scripts/browser-check.mjs     # só essas seções (o login roda sempre)
+//   Seções: shell, overview, marcas, config, agencia, campanhas, estudio, instagram, meta, crm, canais, integracoes,
+//   navegacao, refresh, sessao. O passeio inteiro NÃO cabe num processo sob o teto de memória: use
+//   `bash web/scripts/browser-check-sections.sh` (sobe fakes + API + web por grupo de seções e soma os totais).
+//   BC_NO_AI=1: API subida SEM gateway de IA → exercita o caminho "IA do app não configurada" (seções de IA).
 //
 // Task 3 (campanhas): a API deve subir com o gateway de IA FALSO que este script levanta na 3099:
 //   AI_GATEWAY_URL=http://127.0.0.1:3099/v1 AI_GATEWAY_API_KEY=fake npm run start:smoke
@@ -33,6 +38,13 @@ const SENHA = process.env.MEUFUNIL_CHECK_PASSWORD ?? 'meufunil123';
  */
 const IGNORADAS = [/\/_next\/static\/webpack\/.*\.hot-update\.json$/];
 const ignorada = (url) => IGNORADAS.some((re) => re.test(url));
+/** Ficha de lead inexistente (`/crm/leads/0000…0001`): a API responde 404 de propósito (a tela fica em "Carregando lead…"). */
+const ESPERADAS = [
+  { url: /00000000-0000-4000-8000-000000000001/, status: 404 },
+  // Rota desconhecida (seção "404"): o documento responde 404 de propósito.
+  { url: /\/nao-existe-xyz$/, status: 404 },
+];
+const respostaEsperada = (url, status) => ESPERADAS.some((e) => e.url.test(url) && e.status === status);
 
 /**
  * Falhas de REDE que não são o app quebrado: `_rsc` + `ERR_ABORTED` = o roteador
@@ -47,6 +59,10 @@ const REDE_IGNORADA = [
   { url: /\/v1\/setup\/status$/, erro: 'net::ERR_ABORTED' },
   // Instagram: sair da tela cancela as leituras que ainda estavam a caminho.
   { url: /\/v1\/workspaces\/[^/]+\/(instagram-account|ig-[a-z-]+)(\?|$)/, erro: 'net::ERR_ABORTED' },
+  // Navegar (ou sair) com chunks do Next ainda a caminho: o navegador aborta o `.js` pendente.
+  { url: /\/_next\/static\/chunks\/.*\.js(\?|$)/, erro: 'net::ERR_ABORTED' },
+  // Marcas: sair da tela cancela a leitura da marca que ainda estava a caminho.
+  { url: /\/v1\/workspaces\/[^/]+\/brands(\/[0-9a-f-]{36})?(\/[a-z-]+)?(\?|$)/, erro: 'net::ERR_ABORTED' },
   // Download de exportação da biblioteca: o link assinado (`?dl=<nome>`) vira download e o navegador "aborta" a navegação do <a>.
   { url: /\/v1\/files\/creative-assets\/.*[?&]dl=/, erro: 'net::ERR_ABORTED' },
 ];
@@ -150,7 +166,21 @@ const gateway = createServer((req, res) => {
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(out) } }] }));
   });
 });
-await new Promise((resolve) => gateway.listen(3099, '127.0.0.1', resolve)).catch(() => {});
+// Porta ocupada (outro gateway falso já de pé): o `error` do servidor NÃO pode ficar sem ouvinte (derrubaria o script).
+let gatewayProprio = true;
+await new Promise((resolve) => {
+  gateway.once('error', (e) => { gatewayProprio = false; console.log(`  (gateway de IA falso: ${e.code ?? e.message} — usando o que já está na 3099)`); resolve(); });
+  gateway.listen(3099, '127.0.0.1', resolve);
+});
+gateway.on('error', () => {});
+
+const SECOES = ['shell', 'overview', 'marcas', 'config', 'agencia', 'campanhas', 'estudio', 'instagram', 'meta', 'crm', 'canais', 'integracoes', 'navegacao', 'refresh', 'sessao'];
+const SELECIONADAS = process.env.BC_ONLY ? new Set(process.env.BC_ONLY.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+if (SELECIONADAS) {
+  const desconhecidas = [...SELECIONADAS].filter((s) => !SECOES.includes(s));
+  if (desconhecidas.length) { console.log(`BC_ONLY com seção desconhecida: ${desconhecidas.join(', ')} (válidas: ${SECOES.join(', ')})`); process.exit(2); }
+}
+const SEM_IA = process.env.BC_NO_AI === '1';
 
 const erros = [];
 let fakeGraph = null; // Graph falsa da Meta (Task 6), se este script a subiu
@@ -166,29 +196,49 @@ const ko = (m, detalhe = '') => {
 };
 const check = (nome, cond, detalhe = '') => (cond ? ok(nome) : ko(nome, detalhe));
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  // Teto de memória: um renderer só, heap do V8 pequeno, sem GPU/extensões/dev-shm (o /dev/shm do cgroup é minúsculo).
+  args: ['--disable-gpu', '--disable-dev-shm-usage', '--renderer-process-limit=1', '--js-flags=--max-old-space-size=256', '--disable-extensions'],
+});
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
-const page = await ctx.newPage();
-const rel = () => page.url().replace(BASE, '') || '/';
+let page = null; // uma página por seção (fechada ao fim): a sessão fica no localStorage do contexto
+const rel = () => (page ? page.url().replace(BASE, '') || '/' : '-');
 
-page.on('console', (m) => {
-  if (m.type() === 'error') erros.push(`[console] ${rel()}: ${m.text().slice(0, 200)}`);
-});
-page.on('pageerror', (e) => erros.push(`[pageerror] ${rel()}: ${String(e).slice(0, 200)}`));
-page.on('response', (r) => {
-  if (r.status() >= 400 && !ignorada(r.url())) {
-    erros.push(`[http ${r.status()}] ${r.request().method()} ${r.url().replace(API, 'api')}`);
-  }
-});
-page.on('requestfailed', (r) => {
-  const erro = r.failure()?.errorText ?? '?';
-  if (!redeIgnorada(r.url(), erro)) erros.push(`[rede] ${r.method()} ${r.url().replace(API, 'api')} — ${erro}`);
-});
+/** Erros que a própria seção declarou como esperados (válidos até o fim dela). */
+let toleradas = [];
+const registra = (msg) => { if (!toleradas.some((re) => re.test(msg))) erros.push(msg); };
+/** Marca o logout provocado pela seção "Sessão": 401 em leituras em voo é esperado. */
+let logoutEsperado = false;
+
+const novaPagina = async () => {
+  const pg = await ctx.newPage();
+  pg.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    const url = m.location().url ?? '';
+    const texto = m.text();
+    if (respostaEsperada(url, 404) && /404/.test(texto)) return;
+    if (logoutEsperado && /401/.test(texto) && /\/v1\//.test(url)) return;
+    if (ignorada(url) && /Failed to load resource/.test(texto)) return;
+    registra(`[console] ${rel()}: ${texto.slice(0, 200)}`);
+  });
+  pg.on('pageerror', (e) => registra(`[pageerror] ${rel()}: ${String(e).slice(0, 200)}`));
+  pg.on('response', (r) => {
+    if (r.status() < 400 || ignorada(r.url()) || respostaEsperada(r.url(), r.status())) return;
+    if (logoutEsperado && r.status() === 401 && /\/v1\//.test(r.url())) return;
+    registra(`[http ${r.status()}] ${r.request().method()} ${r.url().replace(API, 'api')}`);
+  });
+  pg.on('requestfailed', (r) => {
+    const erro = r.failure()?.errorText ?? '?';
+    if (!redeIgnorada(r.url(), erro)) registra(`[rede] ${r.method()} ${r.url().replace(API, 'api')} — ${erro}`);
+  });
+  return pg;
+};
+page = await novaPagina();
 
 const corpo = async () => await page.locator('body').innerText();
 
-// Limpezas registradas pelas seções com dados persistentes. Idempotentes: rodam de novo no fim (inclusive se o script abortar)
-// para não deixar resíduo que quebraria a próxima rodada.
+// Limpezas registradas pelas seções com dados persistentes. Idempotentes: rodam de novo no fim da seção (em `finally`, mesmo
+// que ela aborte) e no fim do script, para não deixar resíduo que quebraria a próxima rodada.
 const limpezas = [];
 const rodaLimpezas = () => {
   for (const f of limpezas) {
@@ -198,6 +248,74 @@ const rodaLimpezas = () => {
 /** `innerText` aplica o `uppercase` do CSS nos rótulos: compara sem diferenciar caixa. */
 const tem = (txt, t) => txt.toLowerCase().includes(t.toLowerCase());
 const sessaoGuardada = () => page.evaluate(() => !!window.localStorage.getItem('authUser'));
+
+// ── Ajudantes compartilhados pelas seções ──────────────────────────────────────────────────
+const tmp = mkdtempSync(path.join(tmpdir(), 'mf-bc-'));
+const esperaShell = () => page.waitForFunction(() => !!document.querySelector('aside select')?.value, null, { timeout: 30000 });
+/** Tira dos erros coletados o que o próprio passo provoca de propósito (HTTP + eco no console). */
+const esperado = (re) => {
+  for (let k = erros.length - 1; k >= 0; k--) if (re.test(erros[k])) erros.splice(k, 1);
+};
+/** Como `esperado`, mas vale também para o que chegar DEPOIS (retentativas do react-query), até o fim da seção. */
+const tolera = (re) => { toleradas.push(re); esperado(re); };
+/** Chamada autenticada à API a partir da página (token da sessão). */
+const apiCall = (method, p, body) =>
+  page.evaluate(
+    async ([base, m, path, b]) => {
+      const t = JSON.parse(window.localStorage.getItem('authUser')).access_token;
+      const headers = { Authorization: `Bearer ${t}`, ...(b ? { 'Content-Type': 'application/json' } : {}) };
+      const r = await fetch(base + path, { method: m, headers, body: b ? JSON.stringify(b) : undefined });
+      const txt = await r.text();
+      return { status: r.status, body: txt ? JSON.parse(txt) : null };
+    },
+    [API, method, p, body ?? null],
+  );
+const igPsql = (sql) => {
+  try { return execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtA -c "${sql.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); } catch { return ''; }
+};
+let wsId = null; // empresa demo (definida logo depois do login)
+let aiLive = false; // a API fala com o gateway de IA falso?
+
+/** Varre o resíduo que as seções criam, por padrão de nome (rodadas abortadas incluídas). Idempotente. */
+const varre = () => {
+  if (!wsId) return;
+  const planos = `name LIKE 'Instagram · Campanha Check %' OR name LIKE 'Plano IG Check %'`;
+  igPsql(`DELETE FROM ig_posts WHERE plan_id IN (SELECT id FROM ig_content_plans WHERE ${planos})`);
+  igPsql(`DELETE FROM ig_content_plans WHERE ${planos}`);
+  igPsql(`DELETE FROM brands WHERE workspace_id='${wsId}' AND (name LIKE 'Marca Check %' OR name LIKE 'Marca Camp %' OR name LIKE 'Marca Studio %' OR name LIKE 'Marca IG Check %' OR name LIKE 'Marca Meta %')`);
+};
+
+/**
+ * Roda uma seção: página nova (a anterior é fechada), pré-limpeza, corpo, e limpeza em `finally`. Um `waitFor` que estoura (ou qualquer
+ * exceção) vira UMA falha contada e o passeio segue para a próxima seção.
+ */
+const section = async (id, fn) => {
+  if (SELECIONADAS && !SELECIONADAS.has(id)) {
+    console.log(`-- ${id}: pulada (BC_ONLY) --`);
+    return;
+  }
+  await page.close().catch(() => {});
+  page = await novaPagina();
+  toleradas = [];
+  logoutEsperado = false;
+  const t0 = igPsql('SELECT now()');
+  try {
+    varre();
+    await page.goto(`${BASE}/overview`);
+    await esperaShell();
+    await fn();
+  } catch (e) {
+    ko(`seção "${id}" abortada`, String(e).split('\n')[0].slice(0, 300));
+  } finally {
+    rodaLimpezas();
+    limpezas.length = 0;
+    varre();
+    if (t0 && wsId) igPsql(`DELETE FROM activity_logs WHERE workspace_id='${wsId}' AND created_at >= '${t0}'`);
+    toleradas = [];
+    logoutEsperado = false;
+  }
+};
+
 
 try {
   // ── 1. "/" sem sessão -> /auth (login pelo formulário) ─────────
@@ -242,6 +360,20 @@ try {
   check('login pelo formulário leva a /overview', rel() === '/overview', rel());
   check('sessão guardada em localStorage["authUser"]', await sessaoGuardada());
 
+  // ── Base (sempre): empresa demo e se a API tem o gateway de IA falso ──────────────────────
+  wsId = (await apiCall('GET', '/v1/workspaces')).body[0].workspace_id;
+  const respIa = await apiCall('POST', '/v1/copy-ai/generate-copy-with-ai', { workspaceId: wsId, brand: {}, brief: {} });
+  esperado(/generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
+  if (SEM_IA) {
+    aiLive = false;
+    check('BC_NO_AI=1: a API responde "IA do app não configurada." (sem gateway)', respIa.status === 502 && /IA do app não configurada/.test(JSON.stringify(respIa.body)), `${respIa.status} ${JSON.stringify(respIa.body).slice(0, 120)}`);
+  } else {
+    aiLive = respIa.status === 200;
+    check('API com o gateway de IA falso (AI_GATEWAY_URL=http://127.0.0.1:3099/v1)', aiLive, 'sem o gateway falso o teste de IA roda no modo "sem IA" (BC_NO_AI=1)');
+  }
+
+  await section('shell', async () => {
+
   // ── 2. shell ───────────────────────────────────────────────────
   console.log('-- Shell --');
   await page.getByText(EMAIL).first().waitFor({ timeout: 30000 });
@@ -269,13 +401,9 @@ try {
   check('fonte display (Manrope) aplicada em .font-display', /manrope/i.test(fontes.h.split(',')[0]), fontes.h);
   check('tab title do root', (await page.title()).includes('Meu Funil'), await page.title());
 
-  // ── 2b. Task 2: Overview, Marcas, Configurações, Agência ───────
-  const tmp = mkdtempSync(path.join(tmpdir(), 'mf-bc-'));
-  const esperaShell = () => page.waitForFunction(() => !!document.querySelector('aside select')?.value, null, { timeout: 30000 });
-  /** Tira dos erros coletados o que o próprio passo provoca de propósito (HTTP + eco no console). */
-  const esperado = (re) => {
-    for (let k = erros.length - 1; k >= 0; k--) if (re.test(erros[k])) erros.splice(k, 1);
-  };
+  });
+
+  await section('overview', async () => {
 
   console.log('-- Overview --');
   await page.goto(`${BASE}/overview`);
@@ -289,9 +417,13 @@ try {
   const aguardaChecklist = await page.getByText(/passos essenciais concluídos/).first().waitFor({ timeout: 15000 }).then(() => true, () => false);
   check('overview: checklist de configuração (compacto) aparece enquanto faltam passos', aguardaChecklist);
   check('overview: 8 cartões de KPI', (await page.locator('.grid.sm\\:grid-cols-2.xl\\:grid-cols-4 > *').count()) >= 8);
+  });
+
+  await section('marcas', async () => {
 
   console.log('-- Marcas --');
   const marca = `Marca Check ${Date.now()}`;
+  tolera(/\[http 404\] GET api\/v1\/workspaces\/[^/]+\/brands\/|404 \(Not Found\)/); // a marca excluída é relida pelas retentativas do react-query
   await page.goto(`${BASE}/brands`);
   await page.getByRole('heading', { name: 'Brands' }).waitFor({ timeout: 30000 });
   check('brands: título da aba', (await page.title()) === 'Brands · Meu Funil', await page.title());
@@ -424,6 +556,9 @@ try {
   // o GET 404 da marca excluída é provocado de propósito (com a máquina lenta as 5 leituras chegam depois dos 1,5 s)
   await page.waitForLoadState('networkidle').catch(() => {});
   esperado(/\[http 404\]|404 \(Not Found\)/);
+  });
+
+  await section('config', async () => {
 
   console.log('-- Configurações --');
   await page.goto(`${BASE}/settings`);
@@ -436,6 +571,10 @@ try {
   check('settings: título da aba', (await page.title()) === 'Configurações · Meu Funil', await page.title());
   check('settings: checklist completo ("Ver tudo"/"Recolher")', txtSet.includes('Recolher') || txtSet.includes('Ver tudo'));
   const nomeOriginal = await page.inputValue('#fn');
+  limpezas.push(() => {
+    igPsql(`UPDATE profiles SET full_name='${nomeOriginal.replace(/'/g, "''")}' WHERE full_name='Nome Check'`);
+    igPsql(`UPDATE workspaces SET name=regexp_replace(name, ' Check$', '') WHERE id='${wsId}' AND name LIKE '% Check'`);
+  });
   await page.fill('#fn', 'Nome Check');
   await page.getByRole('button', { name: 'Salvar' }).nth(1).click();
   await page.getByText('Perfil atualizado.').waitFor({ timeout: 10000 });
@@ -456,6 +595,9 @@ try {
   await page.getByText('Workspace atualizado.').waitFor({ timeout: 10000 });
   await page.waitForFunction((n) => [...document.querySelectorAll('aside select option')].some((o) => o.textContent === n), wsOriginal, { timeout: 15000 });
   ok('nome do workspace restaurado');
+  });
+
+  await section('agencia', async () => {
 
   console.log('-- Agência --');
   await page.goto(`${BASE}/agency`);
@@ -467,35 +609,21 @@ try {
   await page.getByRole('button', { name: 'Abrir' }).first().click();
   await page.waitForURL('**/overview', { timeout: 15000 });
   check('"Abrir" troca a empresa e vai para /overview', rel() === '/overview', rel());
-  rmSync(tmp, { recursive: true, force: true });
+  });
+
+  await section('campanhas', async () => {
 
 
   // ── 2c. Task 3: Campanhas, estrategista, copy engine, aprovações ─
   console.log('-- Campanhas, estrategista, aprovações --');
-  /** Chamada autenticada à API a partir da página (token da sessão). */
-  const apiCall = (method, p, body) =>
-    page.evaluate(
-      async ([base, m, path, b]) => {
-        const t = JSON.parse(window.localStorage.getItem('authUser')).access_token;
-        const headers = { Authorization: `Bearer ${t}`, ...(b ? { 'Content-Type': 'application/json' } : {}) };
-        const r = await fetch(base + path, { method: m, headers, body: b ? JSON.stringify(b) : undefined });
-        const txt = await r.text();
-        return { status: r.status, body: txt ? JSON.parse(txt) : null };
-      },
-      [API, method, p, body ?? null],
-    );
-  // `fullDate` do protótipo faz `new Date('YYYY-MM-DD').toLocaleDateString('pt-BR')`: no fuso do navegador (Brasília) sai um dia antes.
-  const fmtData = (iso) => page.evaluate((d) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }), iso);
+  // `fullDate` (web/src/lib/format.ts) trata 'YYYY-MM-DD' como data local: sai o mesmo dia, em qualquer fuso.
+  const fmtData = async (iso) => iso.split('-').reverse().join('/');
   const d1 = await fmtData('2026-10-05');
   const d2 = await fmtData('2026-11-05');
   const marcaNome = `Marca Camp ${Date.now()}`;
   const campNome = `Campanha Check ${Date.now()}`;
-  const wsId = (await apiCall('GET', '/v1/workspaces')).body[0].workspace_id;
   const mrc = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: marcaNome, segment: 'Bar' })).body;
   await apiCall('PATCH', `/v1/workspaces/${wsId}/brands/${mrc.id}`, { tone_of_voice: 'descontraído', preferred_words: ['chopp'] });
-  const aiLive = (await apiCall('POST', '/v1/copy-ai/generate-copy-with-ai', { workspaceId: wsId, brand: {}, brief: {} })).status === 200;
-  esperado(/generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
-  check('API com o gateway de IA falso (AI_GATEWAY_URL=http://127.0.0.1:3099/v1)', aiLive, 'sem o gateway falso o teste de IA roda no modo "sem IA"');
   fakeAi.strategy = 0; fakeAi.copy = 0; fakeAi.prompts.length = 0;
 
   // lista
@@ -688,6 +816,9 @@ try {
   try {
     execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM ig_content_plans WHERE name LIKE 'Instagram · Campanha Check %'"`, { stdio: 'ignore' });
   } catch { /* sem docker: o plano de teste fica (rascunho) */ }
+  });
+
+  await section('estudio', async () => {
 
 
   // ── 2d. Task 4: Creative Studio, Biblioteca de mídia, Canva ──────
@@ -893,6 +1024,9 @@ try {
   try {
     execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM creative_generation_jobs WHERE prompt LIKE 'Prompt check %'; DELETE FROM creatives WHERE title IN ('Criativo Check','upload-check'); DELETE FROM ig_posts WHERE creative_brief->>'from_library' IS NOT NULL AND theme='upload-check'"`, { stdio: 'ignore' });
   } catch { /* sem docker: sobram jobs/posts de teste */ }
+  });
+
+  await section('instagram', async () => {
 
 
   // ── 2e. Task 5: Instagram (página, estratégia, calendário, aprovações, programação automática) ──
@@ -902,9 +1036,6 @@ try {
   await apiCall('PATCH', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`, { tone_of_voice: 'descontraído' });
   const igAi = (await apiCall('POST', '/v1/instagram/suggest-pillars', { workspaceId: wsId })).status === 200;
   esperado(/suggest-pillars|502|AI_NOT_CONFIGURED/);
-  const igPsql = (sql) => {
-    try { return execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtA -c "${sql.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); } catch { return ''; }
-  };
 
   const igT0 = igPsql('SELECT now()');
   await page.goto(`${BASE}/instagram`);
@@ -1102,6 +1233,9 @@ try {
   igPsql(`DELETE FROM ig_autopilot_events WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`);
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`);
   check('limpeza do Instagram: nada sobrou do teste', igPsql(`SELECT count(*) FROM ig_posts WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM ig_auto_runs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0');
+  });
+
+  await section('meta', async () => {
 
   // ── Task 6: Meta Ads, gestor de tráfego, Performance e AI Insights ──────────────────────────
   // Graph FALSA (api/scripts/fake-graph.mjs, porta 3098): a API precisa ter subido com
@@ -1281,6 +1415,9 @@ try {
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaMeta.id}`);
   limpezaMeta(metaExistentes, mT0);
   check('limpeza da Meta: nada sobrou (campanha, cron, credenciais, atividade)', igPsql(`SELECT count(*) FROM campaigns WHERE id='${campMetaId}'`) === '0' && igPsql(`SELECT count(*) FROM cron_tokens WHERE name='ads' AND token='${cronTok}'`) === '0' && igPsql(`SELECT count(*) FROM performance_daily WHERE workspace_id='${wsId}' AND ad_name IN ('Anúncio caro','Anúncio bom')`) === '0' && igPsql(`SELECT count(*) FROM activity_logs WHERE workspace_id='${wsId}' AND action='campaign.published' AND created_at >= '${mT0}'`) === '0');
+  });
+
+  await section('crm', async () => {
 
   // ── CRM núcleo (Task 7) ─────────────────────────────────────────
   console.log('-- CRM núcleo --');
@@ -1514,6 +1651,9 @@ try {
   rmSync(crmTmp, { recursive: true, force: true });
   limpaCrm();
   check('limpeza do CRM: nada sobrou (leads, etapas, tags, motivos, integração, cadência)', crmSql(`SELECT (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND (name LIKE '%${crmTag}%' OR email LIKE '%${crmTag}%')) + (SELECT count(*) FROM crm_stages WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_tags WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_loss_reasons WHERE name LIKE '%${crmTag}%') + (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind='site_form') + (SELECT count(*) FROM crm_cadences WHERE name LIKE '%${crmTag}%')`) === '0');
+  });
+
+  await section('canais', async () => {
 
   // ── Canais do CRM (Task 8): Integrações, Inbox, chat, painel do SDR, Cadências ──────────────
   console.log('-- Canais do CRM --');
@@ -1677,6 +1817,9 @@ try {
   check('limpeza dos canais: nada sobrou (integrações, agente, conversas, cadências, segredos)', sql8(`SELECT (SELECT count(*) FROM crm_integrations WHERE workspace_id='${wsId}' AND kind IN ('whatsapp','email','calendar','meta_lead_ads')) + (SELECT count(*) FROM crm_sdr_agents WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_conversations WHERE workspace_id='${wsId}') + (SELECT count(*) FROM crm_cadences WHERE workspace_id='${wsId}' AND (name LIKE '%${t8}%' OR template_key IS NOT NULL)) + (SELECT count(*) FROM crm_leads WHERE workspace_id='${wsId}' AND name LIKE '%${t8}%') + (SELECT count(*) FROM app_credentials WHERE workspace_id='${wsId}' AND key='ZAPI_TOKEN')`) === '0');
 
   page.setDefaultTimeout(30000);
+  });
+
+  await section('integracoes', async () => {
 
   // ── Integrações (Task 9a): cartões, chaves de IA, diagnóstico, histórico e retornos de OAuth pela URL ──────────
   // A API precisa ter subido com AI_OPENAI_BASE_URL=http://127.0.0.1:3099/v1 AI_GEMINI_BASE_URL=http://127.0.0.1:3099/v1beta (o gateway falso responde).
@@ -1753,6 +1896,10 @@ try {
   // ── limpeza ──
   limpa9();
   check('limpeza das integrações: sem jobs de teste nem chaves de IA', sql9(`SELECT (SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND target LIKE 'B9x%') + (SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:${wsId}')`) === '0');
+  });
+
+  await section('navegacao', async () => {
+  const aside = page.locator('aside').first();
 
   // ── 3. navegação por placeholders ──────────────────────────────
   console.log('-- Navegação --');
@@ -1777,9 +1924,10 @@ try {
   const r404 = await page.goto(`${BASE}/nao-existe-xyz`);
   await page.getByText('Page not found').waitFor({ timeout: 15000 });
   check('rota desconhecida mostra o 404 do protótipo, sem shell', (await page.locator('aside').count()) === 0);
-  void r404; // o status HTTP do documento fica 200 (a página já começou a transmitir); o que vale é a tela
-  // o 404 do próprio documento é esperado
-    for (let k = erros.length - 1; k >= 0; k--) if (erros[k].includes('404 (Not Found)')) erros.splice(k, 1);
+  check('rota desconhecida responde HTTP 404 (middleware), não 200', r404?.status() === 404, String(r404?.status()));
+  });
+
+  await section('refresh', async () => {
 
   // ── 4b. refresh no 401 ─────────────────────────────────────────
   console.log('-- Refresh de token --');
@@ -1799,23 +1947,32 @@ try {
   for (let k = erros.length - 1; k >= 0; k--) {
     if (erros[k].startsWith('[http 401]') || erros[k].includes('401 (Unauthorized)')) erros.splice(k, 1);
   }
+  });
+
+  await section('sessao', async () => {
 
   // ── 5. "/" logado e Sair ───────────────────────────────────────
   console.log('-- Sessão --');
   await page.goto(`${BASE}/`);
   await page.waitForURL('**/overview', { timeout: 30000 });
   check('/ com sessão vai para /overview', rel() === '/overview');
+  logoutEsperado = true; // leituras em voo (setup/status) respondem 401 depois do Sair
   await page.getByRole('button', { name: /Sair/ }).first().click({ timeout: 30000 });
   await page.waitForURL('**/auth', { timeout: 30000 });
   check('Sair volta para /auth e limpa a sessão', rel() === '/auth' && !(await sessaoGuardada()));
+  // deixa as leituras que estavam em voo terminarem (401 esperado) ainda com `logoutEsperado` ligado
+  await page.waitForLoadState('networkidle').catch(() => {});
+  });
+
 } catch (e) {
   erros.push(`[script] ${String(e).slice(0, 400)}`);
 } finally {
   rodaLimpezas();
+  rmSync(tmp, { recursive: true, force: true });
 }
 
 await browser.close();
-gateway.close();
+if (gatewayProprio) gateway.close();
 fakeGraph?.kill();
 fakeProviders?.kill();
 console.log(`\n${passou} ok, ${erros.length} falha(s)`);
