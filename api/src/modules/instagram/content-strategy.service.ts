@@ -27,6 +27,8 @@ export type StrategyArgs = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plan: any;
   slots: { at: string; format: string }[];
+  /** Semana repetida: ajustes que o cliente escreveu na estratégia da semana raiz (texto livre, delimitado no prompt). */
+  guidance?: string | null;
 };
 
 export type ReviewPost = { index: number; at: string; theme: string | null; hook: string | null; caption: string | null; headline: string | null; cta: string | null };
@@ -50,6 +52,9 @@ export class ContentStrategyService {
       `3. PRODUTOS: ${JSON.stringify(args.products.map((p) => ({ nome: p.name, descricao: p.description, preco: p.price })))}`,
       `   PERSONAS: ${JSON.stringify(args.personas.map((p) => ({ nome: p.name, dores: p.pains, desejos: p.desires })))}`,
       `4. PLANO: pilares ${JSON.stringify(args.plan?.content_pillars ?? [])}; CTA padrão ${args.plan?.cta_default ?? '-'}.`,
+      args.guidance
+        ? `ORIENTAÇÃO DO CLIENTE (ajustes feitos nas semanas anteriores desta programação — siga, salvo se contrariar a marca): «${args.guidance.replace(/[«»]/g, '').slice(0, 2000)}»`
+        : '',
       'REGRAS: tudo precisa ser do segmento da marca (nunca fale de outro negócio, marketing de agência, Q4, construção de lista etc. se não for o negócio dela).',
       'Não invente preço, promoção ou número que não esteja nos produtos/DNA. Pilares: 3 a 5, pesos somam 100.',
       'distribuicao_por_dia: um item para CADA dia abaixo (data dd/mm/aaaa e dia da semana exatamente como informado), com o tema do dia e o momento do funil (atração, consideração ou conversão).',
@@ -58,7 +63,7 @@ export class ContentStrategyService {
       'DIAS DO PERÍODO:',
       ...periodDays(args.slots).map((d) => `- ${d}`),
       'Devolva SOMENTE JSON exatamente neste formato: {"objetivo_resumido":"...","kpi_principal":"...","publico_foco":"...","mensagem_central":"...","pilares":[{"nome":"...","peso_percentual":40,"por_que_serve_ao_objetivo":"..."}],"distribuicao_por_dia":[{"data":"dd/mm/aaaa","dia_da_semana":"...","tema_do_dia":"...","momento_do_funil":"atração"}],"ctas":["..."],"proibicoes":["..."]}',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     const { json, provider } = await this.content.aiJson(args.workspaceId, 'auto', prompt, STRATEGY_SCHEMA, 'ig_run_strategy');
     const strategy = normalizeStrategy(json, args.objective);
     if (!strategy.pilares.length) throw new UserError('A IA não devolveu a estratégia completa. Tentando de novo no próximo ciclo.');

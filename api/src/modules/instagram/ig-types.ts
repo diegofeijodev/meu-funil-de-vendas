@@ -15,7 +15,22 @@ export const isVideoFormat = (f: IgFormat | string) => f === 'reel' || f === 'st
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PostRow = any;
 
-export type AutopilotEventKind = 'generation' | 'media' | 'schedule' | 'publish' | 'failure' | 'approval' | 'reschedule' | 'optimize' | 'guardrail';
+export type AutopilotEventKind =
+  | 'generation' | 'media' | 'schedule' | 'publish' | 'failure' | 'approval' | 'reschedule' | 'optimize' | 'guardrail'
+  // Produção automática (05/10/2026): estratégia aprovada sozinha, post reescrito/pulado e vídeo refeito pelo crítico.
+  | 'strategy_auto_approved' | 'post_rewritten' | 'post_skipped' | 'video_regenerated';
+
+/** Evento da aprovação automática da estratégia (modo totalmente automático). */
+export const STRATEGY_AUTO_APPROVED = 'Estratégia do período aprovada automaticamente (modo totalmente automático).';
+/** Prefixo do `last_error` de um post pulado pelo modo totalmente automático (a tela lista os "Pulados" por ele). */
+export const SKIP_PREFIX = 'Pulado automaticamente: ';
+export const isSkipped = (p: { status: string; last_error?: string | null }) => p.status === 'cancelled' && !!p.last_error?.startsWith(SKIP_PREFIX);
+/** Atraso máximo para publicar um post da programação; passou disso, o modo "publish" pula o horário. */
+export const OVERDUE_MS = 12 * 3600e3;
+/** Post da programação sem conta conectada: fica pronto com este aviso e é agendado sozinho quando a conta conectar. */
+export const NO_ACCOUNT_MSG = 'Conecte o Instagram para publicar.';
+/** Post da programação que estava na fila quando o token venceu: volta para "pronto" com este aviso. */
+export const TOKEN_EXPIRED_POST_MSG = 'Token da Meta expirado: reconecte o Instagram para publicar.';
 
 export const fmtDate = (iso: string | Date) =>
   new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' });

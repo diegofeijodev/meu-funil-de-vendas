@@ -381,7 +381,7 @@ describe('estratégia do período (passo 1 do fillAutoRun)', () => {
     pilares: [{ nome: 'Almoço', peso_percentual: 70, por_que_serve_ao_objetivo: 'serve' }, { nome: 'Bastidores', peso_percentual: 30, por_que_serve_ao_objetivo: 'conexão' }],
     distribuicao_por_dia: [], ctas: ['Reserve pelo WhatsApp'], proibicoes: ['barato'],
   };
-  const pendingRun = (w: IgWorld, over: Record<string, unknown> = {}) => run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)], strategy: null, strategy_status: 'pending', ...over });
+  const pendingRun = (w: IgWorld, over: Record<string, unknown> = {}) => run(w, plan(w), { mode: 'approval', slots: [slotAt(600, 0), slotAt(660, 1)], strategy: null, strategy_status: 'pending', ...over });
   const setPosts = (s: ReturnType<typeof setup>['s'], n = 2) => {
     s.aiJson['ig_auto_calendar'] = () => ({ posts: Array.from({ length: n }, (_, i) => ({ index: i, theme: `T${i}`, pillar: 'Almoço', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve', hook: 'H', headline: 'M', caption: 'L', hashtags: ['a'], cta: 'Reserve pelo WhatsApp', image_prompt: 'x', slides: [] })) });
   };
@@ -575,22 +575,6 @@ describe('estratégia do período (passo 1 do fillAutoRun)', () => {
     expect(out).toMatchObject({ busy: true, done: true });
     expect(r.status).toBe('cancelled');
     expect(w.t['ig_posts']!.rows).toHaveLength(0);
-  });
-
-  it('semana recorrente herda a estratégia aprovada; sem aprovação nasce "pending"', async () => {
-    const { w, auto } = setup();
-    const p = plan(w);
-    const t = todaySP();
-    const root = run(w, p, { recurring: true, status: 'active', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'] });
-    expect(await auto.renewRecurring()).toEqual({ created: 1 });
-    const kid = w.t['ig_auto_runs']!.rows[1];
-    expect(kid).toMatchObject({ strategy_status: 'approved', focus: OBJECTIVE });
-    expect(kid.strategy).toEqual(STRATEGY);
-    const p2 = plan(w);
-    run(w, p2, { recurring: true, status: 'active', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'], strategy: null, strategy_status: 'pending' });
-    expect(await auto.renewRecurring()).toEqual({ created: 1 });
-    expect(w.t['ig_auto_runs']!.rows.at(-1)).toMatchObject({ strategy_status: 'pending' });
-    void root;
   });
 });
 
@@ -898,5 +882,99 @@ describe('Calendário de conteúdo do plano (generateContentCalendar) — marca,
     expect(prompt).toContain('OBJETIVO (fonte principal): Lotar o happy hour. MARCA: {"nome":"Bar do Zé"');
     expect(prompt).toContain('Nunca fale de outro negócio nem invente preço ou promoção.');
     expect(prompt).toContain('Coerência com a data:');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Produção automática (05/10/2026) — A1: estratégia no modo totalmente automático e semanas repetidas.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('A1 — estratégia no modo "publish" e semanas repetidas', () => {
+  const STRAT = { ...STRATEGY, distribuicao_por_dia: [] };
+  const onePost = () => ({ posts: [{ index: 0, theme: 'T0', pillar: 'A', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve', hook: 'H', headline: 'M', caption: 'Legenda', hashtags: ['a'], cta: 'CTA', image_prompt: 'x', slides: [] }] });
+
+  it('modo "publish": estratégia aprovada sozinha (sem passar por review), evento strategy_auto_approved; o próximo fill já gera os posts', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { mode: 'publish', slots: [slotAt(600, 0)], strategy: null, strategy_status: 'pending' });
+    s.aiJson['ig_run_strategy'] = () => STRAT;
+    expect(await auto.fillAutoRun(r.id)).toEqual({ filled: 0, total: 1, done: false, busy: false, strategyReview: false });
+    expect(r).toMatchObject({ strategy_status: 'approved', locked_until: null, status: 'planning' });
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'strategy_auto_approved', level: 'info', message: 'Estratégia do período aprovada automaticamente (modo totalmente automático).' });
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
+    s.aiJson['ig_auto_calendar'] = onePost;
+    expect(await auto.fillAutoRun(r.id)).toMatchObject({ filled: 1, done: true, strategyReview: false });
+    expect(w.t['ig_posts']!.rows).toHaveLength(1);
+  });
+
+  it('zero cliques pelo tick: o 1º tick aprova a estratégia, o 2º gera os posts', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { mode: 'publish', slots: [slotAt(600, 0)], strategy: null, strategy_status: 'pending' });
+    s.aiJson['ig_run_strategy'] = () => STRAT;
+    s.aiJson['ig_auto_calendar'] = onePost;
+    await auto.autoCalendarTick();
+    expect(r.strategy_status).toBe('approved');
+    expect(w.t['ig_posts']!.rows).toHaveLength(0);
+    await auto.autoCalendarTick();
+    expect(r.status).toBe('active');
+    expect(w.t['ig_posts']!.rows).toHaveLength(1);
+  });
+
+  it('modo "approval" continua esperando a revisão (sem aprovação automática)', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { mode: 'approval', slots: [slotAt(600, 0)], strategy: null, strategy_status: 'pending' });
+    s.aiJson['ig_run_strategy'] = () => STRAT;
+    expect(await auto.fillAutoRun(r.id)).toMatchObject({ strategyReview: true });
+    expect(r.strategy_status).toBe('review');
+    expect(w.t['ig_autopilot_events']!.rows.some((e) => e.kind === 'strategy_auto_approved')).toBe(false);
+  });
+
+  it('semana repetida nasce SEM estratégia (pending) e herda modo, objetivo e o áudio dos vídeos da raiz', async () => {
+    const { w, auto } = setup();
+    const t = todaySP();
+    const root = run(w, plan(w), {
+      recurring: true, status: 'active', mode: 'publish', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'],
+      strategy: { ...STRATEGY, texto_editado: 'nada de promoção' }, video_audio: { modo: 'narracao', instrucoes: 'voz calma' },
+    });
+    expect(await auto.renewRecurring()).toEqual({ created: 1 });
+    const kid = w.t['ig_auto_runs']!.rows.at(-1);
+    expect(kid).toMatchObject({ parent_id: root.id, strategy_status: 'pending', mode: 'publish', focus: OBJECTIVE, video_audio: { modo: 'narracao', instrucoes: 'voz calma' } });
+    expect(kid!.strategy ?? null).toBeNull();
+  });
+
+  it('a filha gera a estratégia das SUAS datas, com os ajustes da raiz como orientação (e como texto_editado); publish aprova, approval vai para review', async () => {
+    const { w, s, auto } = setup();
+    const p = plan(w);
+    const root = run(w, p, { recurring: true, status: 'active', mode: 'publish', strategy: { ...STRATEGY, texto_editado: 'foque no prato executivo; nada de promoção' } });
+    const kidSlots = [{ index: 0, at: '2099-02-02T12:00:00.000Z', format: 'feed_image', kind: 'main' }]; // segunda-feira
+    const kid = run(w, p, { parent_id: root.id, mode: 'publish', slots: kidSlots, strategy: null, strategy_status: 'pending' });
+    const prompts: string[] = [];
+    s.aiJson['ig_run_strategy'] = (req: any) => {
+      prompts.push(req.prompt);
+      return STRAT;
+    };
+    await auto.fillAutoRun(kid.id);
+    expect(prompts[0]).toContain('- segunda-feira, 02/02/2099');
+    expect(prompts[0]).toContain('ORIENTAÇÃO DO CLIENTE (ajustes feitos nas semanas anteriores desta programação — siga, salvo se contrariar a marca): «foque no prato executivo; nada de promoção»');
+    expect(kid.strategy_status).toBe('approved');
+    expect(kid.strategy.texto_editado).toBe('foque no prato executivo; nada de promoção');
+    const kid2 = run(w, p, { parent_id: root.id, mode: 'approval', slots: kidSlots, strategy: null, strategy_status: 'pending' });
+    await auto.fillAutoRun(kid2.id);
+    expect(kid2.strategy_status).toBe('review');
+  });
+
+  it('a orientação é delimitada e limitada: « » do cliente saem e o texto vai até 2000 caracteres', async () => {
+    const { w, s, auto } = setup();
+    const p = plan(w);
+    const root = run(w, p, { recurring: true, status: 'active', strategy: { ...STRATEGY, texto_editado: `a«b»c ${'x'.repeat(3000)}` } });
+    const kid = run(w, p, { parent_id: root.id, mode: 'publish', slots: [slotAt(600, 0)], strategy: null, strategy_status: 'pending' });
+    let prompt = '';
+    s.aiJson['ig_run_strategy'] = (req: any) => {
+      prompt = req.prompt;
+      return STRAT;
+    };
+    await auto.fillAutoRun(kid.id);
+    const guidance = /«([^«»]*)»/.exec(prompt)![1]!;
+    expect(guidance.startsWith('abc ')).toBe(true);
+    expect(guidance.length).toBeLessThanOrEqual(2000);
   });
 });

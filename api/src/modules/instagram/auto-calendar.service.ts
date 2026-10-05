@@ -6,7 +6,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { ContentService } from './content.service';
 import { ContentStrategyService } from './content-strategy.service';
 import { brandContext, DATE_RULES, fullDate, isCreditFailure, RunStrategy, Verdict } from './content-strategy';
-import { ASPECT, fmtDate, IgFormat } from './ig-types';
+import { ASPECT, fmtDate, IgFormat, STRATEGY_AUTO_APPROVED } from './ig-types';
 import { IgStore, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { asList, asText, normalizeHashtags } from './normalize';
@@ -211,18 +211,26 @@ export class AutoCalendarService {
       this.prisma.ig_auto_runs.updateMany({ where: { id: runId, locked_until: lock.until }, data: { locked_until: null, ...extra } });
     try {
       const ctx = await this.runContext(run);
-      // Passo "Estratégia": criada antes dos posts e revisada pelo usuário.
+      // Passo "Estratégia": criada antes dos posts. Modo "publish" (totalmente automático) aprova sozinha; "approval" espera a revisão.
+      // Semana repetida (filha) gera a PRÓPRIA estratégia para as suas datas, com os ajustes da raiz como orientação.
       if (!run.strategy || run.strategy_status === 'pending') {
-        const { strategy } = await this.contentStrategy.buildRunStrategy({
-          workspaceId: run.workspace_id, objective: ctx.objective, brand: ctx.brand, products: ctx.products, personas: ctx.personas, plan: ctx.plan, slots: all,
+        const guidance = await this.parentGuidance(run);
+        const built = await this.contentStrategy.buildRunStrategy({
+          workspaceId: run.workspace_id, objective: ctx.objective, brand: ctx.brand, products: ctx.products, personas: ctx.personas, plan: ctx.plan, slots: all, guidance,
         });
+        const strategy: RunStrategy = guidance ? { ...built.strategy, texto_editado: guidance } : built.strategy;
+        const auto = run.mode === 'publish';
         const saved = await this.prisma.ig_auto_runs.updateMany({
           where: { id: runId, locked_until: lock.until, strategy_status: run.strategy_status, filled: run.filled },
-          data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: 'review', locked_until: null, last_error: null, paused_reason: null },
+          data: { strategy: strategy as unknown as Prisma.InputJsonObject, strategy_status: auto ? 'approved' : 'review', locked_until: null, last_error: null, paused_reason: null },
         });
         if (!saved.count) throw new LeaseLost();
-        await this.store.logEvent({ workspace_id: run.workspace_id, plan_id: run.plan_id, kind: 'generation', message: 'Estratégia do período pronta: revise e aprove para gerar os posts.' });
-        return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: true };
+        await this.store.logEvent(
+          auto
+            ? { workspace_id: run.workspace_id, plan_id: run.plan_id, kind: 'strategy_auto_approved', message: STRATEGY_AUTO_APPROVED }
+            : { workspace_id: run.workspace_id, plan_id: run.plan_id, kind: 'generation', message: 'Estratégia do período pronta: revise e aprove para gerar os posts.' },
+        );
+        return { filled: run.filled, total: all.length, done: false, busy: false, strategyReview: !auto };
       }
       if (run.strategy_status !== 'approved') {
         await release();
@@ -289,6 +297,14 @@ export class AutoCalendarService {
     let campaign: unknown = null;
     if (run.campaign_id) campaign = strategyBrief(await this.strategist.currentStrategy(run.workspace_id, run.campaign_id));
     return { plan, brand, products, personas, objective, campaign };
+  }
+
+  /** Ajustes que o cliente escreveu na estratégia da semana raiz (orientação para a estratégia de cada semana repetida). */
+  private async parentGuidance(run: Prisma.ig_auto_runsGetPayload<object>): Promise<string | null> {
+    if (!run.parent_id) return null;
+    const root = await this.prisma.ig_auto_runs.findFirst({ where: { id: run.parent_id, workspace_id: run.workspace_id }, select: { strategy: true } });
+    const text = (root?.strategy as { texto_editado?: unknown } | null)?.texto_editado;
+    return typeof text === 'string' && text.trim() ? text.trim().slice(0, 2000) : null;
   }
 
   private async askPosts(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, fixes: Map<number, string>) {
@@ -587,9 +603,10 @@ export class AutoCalendarService {
               story_times: root.story_times,
               formats: root.formats,
               focus: root.focus,
-              // Semana repetida herda a estratégia aprovada (só redistribui os dias).
-              ...(root.strategy_status === 'approved' && root.strategy ? { strategy: root.strategy as Prisma.InputJsonObject, strategy_status: 'approved' } : { strategy_status: 'pending' }),
+              // Cada semana repetida gera a PRÓPRIA estratégia (com as datas dela); a raiz entra só como orientação (`parentGuidance`).
+              strategy_status: 'pending',
               mode: root.mode,
+              video_audio: root.video_audio as Prisma.InputJsonObject,
               recurring: false,
               slots: slots as unknown as Prisma.InputJsonArray,
             },
