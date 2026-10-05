@@ -219,7 +219,7 @@ const novaPagina = async () => {
     if (respostaEsperada(url, 404) && /404/.test(texto)) return;
     if (logoutEsperado && /401/.test(texto) && /\/v1\//.test(url)) return;
     if (ignorada(url) && /Failed to load resource/.test(texto)) return;
-    registra(`[console] ${rel()}: ${texto.slice(0, 200)}`);
+    registra(`[console] ${rel()}: ${texto.slice(0, 200)}${url ? ` (${url.replace(API, 'api')})` : ''}`);
   });
   pg.on('pageerror', (e) => registra(`[pageerror] ${rel()}: ${String(e).slice(0, 200)}`));
   pg.on('response', (r) => {
@@ -423,7 +423,7 @@ try {
 
   console.log('-- Marcas --');
   const marca = `Marca Check ${Date.now()}`;
-  tolera(/\[http 404\] GET api\/v1\/workspaces\/[^/]+\/brands\/|404 \(Not Found\)/); // a marca excluída é relida pelas retentativas do react-query
+  tolera(/\[http 404\] GET api\/v1\/workspaces\/[^/]+\/brands\/|\[console\].*404 \(Not Found\).*api\/v1\/workspaces\/[^/]+\/brands\//); // a marca excluída é relida pelas retentativas do react-query
   await page.goto(`${BASE}/brands`);
   await page.getByRole('heading', { name: 'Brands' }).waitFor({ timeout: 30000 });
   check('brands: título da aba', (await page.title()) === 'Brands · Meu Funil', await page.title());
@@ -1747,6 +1747,9 @@ try {
   await page.getByRole('button', { name: 'Salvar agente' }).click();
   await saiu8('Agente SDR salvo.');
   { const v = sql8(`SELECT is_active||','||name FROM crm_sdr_agents WHERE workspace_id='${wsId}'`); check('SDR: agente salvo e ativo', v === `true,Agente ${t8}`, v); }
+  // O check ao vivo mais abaixo não pode depender da hora em que o teste roda (fora do horário o agente só responde a ausência):
+  // o painel salva o expediente padrão; aqui ele passa a cobrir todos os dias, 00:00–23:59 (como o smoke).
+  sql8(`UPDATE crm_sdr_agents SET business_hours = '{"timezone":"America/Sao_Paulo","days":[0,1,2,3,4,5,6],"start":"00:00","end":"23:59"}'::jsonb WHERE workspace_id='${wsId}'`);
   const arq = path.join(tmp8, 'faq.txt');
   writeFileSync(arq, 'Aberto de segunda a sexta. Franquia a partir de R$ 50 mil.');
   await page.locator('input[type=file]').setInputFiles(arq);
@@ -1844,10 +1847,10 @@ try {
   check('integrações: histórico mostra os jobs (alvo, "real", "simulado (antigo)" e o log)', tem(c9, `${t9}-a`) && tem(c9, `${t9}-b`) && tem(c9, 'real') && tem(c9, 'simulado (antigo)') && tem(c9, 'log do job a'));
   check('integrações: dono vê os formulários (credenciais da Meta, herança da agência)', tem(c9, 'Credenciais da Meta') && tem(c9, 'Esta empresa usa as IAs de'));
 
-  // Canva: a URL de retorno vem da origem do app, não de um domínio fixo.
+  // Canva: a URL de retorno é a que a API devolve em `redirectUri` (PUBLIC_URL + caminho: a origem da API, não a do web nem um domínio fixo).
   const secCanva = page.locator('section').filter({ hasText: 'Envie criativos para o Canva' });
   await secCanva.getByRole('button', { name: /Passo a passo/ }).click();
-  check('canva: o passo a passo mostra a URL de retorno desta origem', tem(await secCanva.innerText(), `${BASE}/api/public/canva/oauth/callback`) && !tem(await secCanva.innerText(), 'meufunildevendas'));
+  check('canva: o passo a passo mostra a URL de retorno da API (PUBLIC_URL)', tem(await secCanva.innerText(), `${API}/api/public/canva/oauth/callback`) && !tem(await secCanva.innerText(), 'meufunildevendas'));
 
   // Chaves de IA: salvar (provedor falso) → dica → diagnóstico → testar → remover.
   const boxOpenai = page.locator('div.rounded-lg.border').filter({ hasText: 'ChatGPT (sua conta OpenAI)' }).last();

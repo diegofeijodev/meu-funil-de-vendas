@@ -33,5 +33,6 @@ fi
 case "${NODE_OPTIONS:-}" in *max-old-space-size*) ;; *) export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$((cap - 300))";; esac
 export MF_CAPPED=1   # os runners (smoke/browser-check) conferem isto para não rodar fora do teto
 echo "run-capped: teto ${cap} MB (disponível ${avail} MB): $*" >&2
-systemd-run --user --scope -q -p MemoryMax="${cap}M" -p MemorySwapMax=0 -p CPUQuota=600% \
+# OOMPolicy=kill: estourou o teto -> o scope INTEIRO morre (os filhos em `setsid` da pilha de teste também), não só o processo escolhido pelo oom-killer.
+systemd-run --user --scope -q -p MemoryMax="${cap}M" -p MemorySwapMax=0 -p OOMPolicy=kill -p CPUQuota=600% \
   nice -n 10 "$@"

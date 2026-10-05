@@ -31,6 +31,16 @@ mf_api_env() {
   export SCHEDULER_ENABLED=false   # jobs rodam só pelas rotas /api/public/cron/* (uma instância, sem agendador no teste)
 }
 
+# Aborta se a porta já está ocupada (pilha antiga esquecida de pé): o teste falaria contra o servidor errado.
+mf_assert_port_free() { # porta, nome
+  local busy; busy=$(ss -ltnH 2>/dev/null | grep -E ":$1\b" || true)
+  if [ -n "$busy" ]; then
+    echo "  [stack] porta $1 ($2) já está ocupada — há uma pilha antiga de pé? Encerre-a pelo PID (ss -ltnp | grep ':$1 ') e rode de novo:" >&2
+    echo "$busy" >&2
+    return 1
+  fi
+}
+
 mf_wait_http() { # url, tentativas (1 s cada)
   local url=$1 n=${2:-120}
   for _ in $(seq "$n"); do curl -fs -o /dev/null --max-time 5 "$url" && return 0; sleep 1; done
@@ -57,18 +67,20 @@ mf_start_fakes() {
 }
 
 mf_start_api() {
+  mf_assert_port_free 3015 API || return 1
   mf_api_env
   NODE_OPTIONS=--max-old-space-size=768 mf_spawn api "$MF_ROOT/api" npm run start:smoke
   mf_wait_http http://localhost:3015/health 120 || { echo "API não subiu:"; tail -20 "$MF_LOGS/api.log"; return 1; }
 }
 
 mf_start_web() {
+  mf_assert_port_free 3025 web || return 1
   NODE_OPTIONS=--max-old-space-size=1280 mf_spawn web "$MF_ROOT/web" yarn dev
   mf_wait_http http://localhost:3025/auth 180 || { echo "web não subiu:"; tail -20 "$MF_LOGS/web.log"; return 1; }
 }
 
 mf_stop_all() {
-  local pid
+  local rc=$? pid
   for pid in "${MF_PIDS[@]:-}"; do
     [ -n "$pid" ] && kill -TERM -- "-$pid" 2>/dev/null
   done
@@ -79,6 +91,14 @@ mf_stop_all() {
   MF_PIDS=()
   local busy; busy=$(ss -ltnH 2>/dev/null | grep -E ':(3015|3025|3097|3098|3099)\b' || true)
   if [ -n "$busy" ]; then echo "  [stack] AVISO: portas ainda ocupadas:"; echo "$busy"; else echo "  [stack] tudo derrubado, portas livres."; fi
+  # Logs: só ficam (em .cache/, fora do git) se a rodada falhou; senão o diretório temporário é removido.
+  if [ -n "${MF_LOGS:-}" ] && [ -d "$MF_LOGS" ]; then
+    if [ "$rc" -ne 0 ]; then
+      local keep="$MF_ROOT/.cache/stack-logs-$(date +%Y%m%d-%H%M%S)"
+      mkdir -p "$MF_ROOT/.cache" && cp -r "$MF_LOGS" "$keep" 2>/dev/null && echo "  [stack] falhou (rc=$rc): logs guardados em $keep"
+    fi
+    rm -rf "$MF_LOGS"
+  fi
 }
 
 mf_peak_mb() { # pico de memória do cgroup atual (scope do run-capped), se legível

@@ -13,11 +13,12 @@ set -uo pipefail
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
 ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
 
-# Grupos (3–5 seções, só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
+# Grupos (1–5 seções (instagram e meta ficam sozinhos: juntos o Chrome morria por OOM dentro do cgroup), só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
 GRUPOS=(
   "shell,overview,marcas,config,agencia"
   "campanhas,estudio"
-  "instagram,meta"
+  "instagram"
+  "meta"
   "crm"
   "canais,integracoes"
   "navegacao,refresh,sessao"
