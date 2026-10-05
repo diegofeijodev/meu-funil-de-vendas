@@ -9,7 +9,8 @@
 #   mf_start_web                          # só o browser-check
 MF_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 MF_PIDS=()
-MF_LOGS=${MF_LOGS:-$(mktemp -d "${TMPDIR:-/tmp}/mf-stack-XXXXXX")}
+MF_LOGS_OWNED=0   # 1 só se este script criou o diretório (mktemp): só então ele pode apagá-lo
+if [ -z "${MF_LOGS:-}" ]; then MF_LOGS=$(mktemp -d "${TMPDIR:-/tmp}/mf-stack-XXXXXX"); MF_LOGS_OWNED=1; fi
 
 # ── Ambiente da API em teste (todas as exigências dos scripts atuais, num lugar só) ──────────────
 # Provedores falsos: Graph da Meta (3098), Z-API/Resend/Cal.com (3097), gateway de IA e listagem de modelos (3099).
@@ -97,7 +98,7 @@ mf_stop_all() {
       local keep="$MF_ROOT/.cache/stack-logs-$(date +%Y%m%d-%H%M%S)"
       mkdir -p "$MF_ROOT/.cache" && cp -r "$MF_LOGS" "$keep" 2>/dev/null && echo "  [stack] falhou (rc=$rc): logs guardados em $keep"
     fi
-    rm -rf "$MF_LOGS"
+    [ "$MF_LOGS_OWNED" = 1 ] && rm -rf "$MF_LOGS"
   fi
 }
 
