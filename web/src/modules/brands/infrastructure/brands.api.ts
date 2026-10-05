@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { api } from "@/modules/shared/infrastructure/http";
+import { api, apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const num = z.coerce.number();
 const str = z.string().nullish();
@@ -123,7 +123,8 @@ const uploaded = z.object({ key: z.string(), url: z.string() });
 /**
  * Envio de um arquivo da marca: o navegador manda o arquivo para `POST /v1/workspaces/:ws/files?kind=brands`
  * (era `storage.upload` direto no bucket) e registra o resultado em `brand_assets` (a API assina a URL de 5 anos
- * e, para o logo, também atualiza `brands.logo_url`). Devolve `false` se o upload falhar.
+ * e, para o logo, também atualiza `brands.logo_url`). Falhas lançam com a mensagem exata da API (tamanho, tipo, permissão…);
+ * se o registro falhar depois do envio, a API apaga o arquivo órfão.
  */
 export async function uploadBrandAsset(
   ws: string,
@@ -138,8 +139,8 @@ export async function uploadBrandAsset(
   try {
     const { data } = await api.post(`/v1/workspaces/${ws}/files`, form, { params: { kind: "brands" } });
     key = uploaded.parse(data).key;
-  } catch {
-    return false;
+  } catch (e) {
+    throw new Error(apiErrorMessage(e, `Falha ao enviar ${file.name}.`));
   }
   await api.post(`${base(ws)}/${brandId}/assets`, { kind, name: file.name, storage_path: key, ...(tag ? { tag } : {}) });
   return true;

@@ -147,6 +147,16 @@ describe('BrandsService — arquivos da marca', () => {
     expect((await svc.get(WS_A, b.id)).logo_url).toBe(a.url);
   });
 
+  it('registro falha depois do arquivo guardado: o arquivo órfão é apagado (e o erro propaga)', async () => {
+    const { svc, files, t } = setup();
+    const b = await svc.create(USER, WS_A, { name: 'B' });
+    const key = files.newUploadKey('brands', WS_A, 'png');
+    await files.put('creative-assets', key, Buffer.from('png'));
+    t.brand_assets.create = (async () => { throw new Error('banco caiu'); }) as any;
+    await expect(svc.createAsset(WS_A, b.id, { kind: 'logo', name: 'logo.png', storage_path: key })).rejects.toThrow('banco caiu');
+    expect(await files.exists('creative-assets', key)).toBe(false);
+  });
+
   it('referência guarda a tag; outras artes ignoram a tag', async () => {
     const { svc, files } = setup();
     const b = await svc.create(USER, WS_A, { name: 'B' });

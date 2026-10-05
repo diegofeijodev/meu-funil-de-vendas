@@ -154,13 +154,28 @@ export class BrandsService {
     const ok = key.startsWith('brands/') && this.files.keyBelongsToWorkspace(key, workspaceId) && (await this.safeExists(key));
     if (!ok) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Chave de arquivo inválida.' });
     const url = this.files.signedUrl(BUCKET, key);
-    return this.prisma.$transaction(async (tx) => {
-      const asset = await tx.brand_assets.create({
-        data: { workspace_id: workspaceId, brand_id: brandId, kind: dto.kind, url, name: dto.name, storage_path: key, tag: dto.kind === 'reference' ? (dto.tag ?? null) : null },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const asset = await tx.brand_assets.create({
+          data: { workspace_id: workspaceId, brand_id: brandId, kind: dto.kind, url, name: dto.name, storage_path: key, tag: dto.kind === 'reference' ? (dto.tag ?? null) : null },
+        });
+        if (dto.kind === 'logo') await tx.brands.update({ where: { id: brandId }, data: { logo_url: url } });
+        return asset;
       });
-      if (dto.kind === 'logo') await tx.brands.update({ where: { id: brandId }, data: { logo_url: url } });
-      return asset;
-    });
+    } catch (e) {
+      await this.dropOrphan(key);
+      throw e;
+    }
+  }
+
+  /** O arquivo já foi guardado mas o registro falhou: apaga o órfão (se nenhuma linha de `brand_assets` o referencia). Nunca lança. */
+  private async dropOrphan(key: string): Promise<void> {
+    try {
+      if (await this.prisma.brand_assets.findFirst({ where: { storage_path: key }, select: { id: true } })) return;
+      await this.files.delete(BUCKET, key);
+    } catch {
+      /* melhor esforço: o arquivo fica para a limpeza manual */
+    }
   }
 
   async removeAsset(workspaceId: string, brandId: string, id: string): Promise<void> {
