@@ -1,14 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
-import { buildVisualPrompt, providerPrompt } from '../creative/art-director';
+import { buildVisualPrompt, providerPrompt, threadOf, VisualThread, withVisualThread } from '../creative/art-director';
+import { MIN_SCORE, scoreCreative } from '../creative/critic';
 import { composeCreative } from '../creative/compose';
 import { choiceForProvider, GenerationResult, ProviderChoice, ServerCreativeProvider } from '../creative/creative.types';
 import { PipelineService } from '../creative/pipeline.service';
 import { ChainedProvider, ProviderResolverService, providerLog } from '../creative/provider-resolver.service';
-import { RefsService } from '../creative/refs.service';
+import { BrandRef, RefsService } from '../creative/refs.service';
 import { VideoExtrasService } from '../creative/video-extras.service';
-import { TextLayout, VisualStyle } from '../creative/visual-style';
+import { AiScore, ArtDirection, listField, TextLayout, VisualStyle } from '../creative/visual-style';
 import { AssetsService } from '../media/assets.service';
 import { targetForIgFormat } from '../media/formats';
 import { ImageService } from '../media/image.service';
@@ -44,6 +45,14 @@ type PendingJob = {
 
 type Src = { sourceUrl?: string; bytes?: Uint8Array; mime?: string };
 type RefImages = { referenceImages?: { bytes: Uint8Array; mime: string }[]; referenceUrls?: string[] };
+/** Carrossel: o que o crítico por slide precisa para refazer 1 slide (direções, referências, paleta e a reconstrução com o motivo). */
+type SlideQa = {
+  ads: ArtDirection[];
+  refs: BrandRef[];
+  palette: string[];
+  extra: RefImages;
+  rebuild: (i: number, motivo: string) => Promise<ArtDirection>;
+};
 
 /** Geração da mídia dos posts (imagem única com pipeline, carrossel, Reels/Stories em vídeo) e envio da própria mídia. */
 /** Post que o validador mandou para revisão: o claim troca o status para "generating", mas `review_reason` permanece. */
@@ -190,8 +199,11 @@ export class MediaGenerationService {
     instructions?: string | null,
     extra: RefImages = {},
     lease?: PostLease,
+    qa?: SlideQa,
   ): Promise<{ ok: true; items: number; provider: string; pending?: boolean }> {
     const format = post.format as IgFormat;
+    const slideScores: { slide: number; total: number | null; motivo: string | null; retried: boolean }[] = [];
+    const notes: string[] = [];
     for (let i = start; i < prompts.length; i++) {
       await lease?.renew();
       const req = {
@@ -212,8 +224,21 @@ export class MediaGenerationService {
       }
       if (r.status !== 'ready' || (!r.assetUrl && !r.bytes)) throw new UserError('O provedor não devolveu a mídia pronta.');
       cost += r.cost;
-      const composed = format === 'feed_carousel' ? await this.composeSlide(post, r, i, prompts.length) : null;
-      const item: Record<string, any> = await this.libraryItem(post, composed ? { bytes: composed, mime: 'image/jpeg' } : this.srcOf(r), i, provider.id, req.finalPrompt, r.cost);
+      let result = r;
+      let itemPrompt = req.finalPrompt;
+      let score: AiScore | null = null;
+      if (format === 'feed_carousel' && qa) {
+        const checked = await this.criticSlide(post, provider, r, i, prompts.length, qa, lease);
+        result = checked.result;
+        score = checked.score;
+        cost += checked.cost;
+        if (checked.prompt) itemPrompt = checked.prompt;
+        slideScores.push({ slide: i + 1, total: score?.total ?? null, motivo: score?.motivo ?? null, retried: checked.retried });
+      }
+      if (result.note && !notes.includes(result.note)) notes.push(result.note);
+      const composed = format === 'feed_carousel' ? await this.composeSlide(post, result, i, prompts.length) : null;
+      const item: Record<string, any> = await this.libraryItem(post, composed ? { bytes: composed, mime: 'image/jpeg' } : this.srcOf(result), i, provider.id, itemPrompt, result.cost);
+      if (format === 'feed_carousel' && qa) item['score'] = score?.total ?? null;
       if (isVideoFormat(format)) Object.assign(item, await this.videoCover(post, provider, req.finalPrompt, item['asset_id']));
       media = [...media, item];
     }
@@ -228,9 +253,47 @@ export class MediaGenerationService {
       last_error: null,
       failure_kind: null,
       ai_provider: provider.id,
-      ai_generation_log: this.store.appendLog(post, { step: 'media', provider: provider.id, provider_log: providerLog(provider), items: media.length, cost, instructions }),
+      ai_generation_log: this.store.appendLog(post, { step: 'media', provider: provider.id, provider_log: providerLog(provider), items: media.length, cost, instructions, ...(slideScores.length ? { slide_scores: slideScores } : {}), ...(notes.length ? { notes } : {}) }),
     });
     return { ok: true, items: media.length, provider: provider.id };
+  }
+
+  /** Carrossel: nota do crítico no slide; abaixo de MIN_SCORE refaz 1× com o motivo e fica a de maior nota. Crítico fora do ar não bloqueia. */
+  private async criticSlide(post: PostRow, provider: ChainedProvider, first: GenerationResult, i: number, total: number, qa: SlideQa, lease?: PostLease) {
+    const bytesOf = async (r: GenerationResult) => (r.bytes ? new Uint8Array(r.bytes) : (await this.assets.download(r.assetUrl!)).bytes);
+    const score = async (r: GenerationResult): Promise<AiScore | null> => {
+      try {
+        return await scoreCreative(this.ai, this.images, {
+          workspaceId: post.workspace_id, image: await bytesOf(r), refs: qa.refs, palette: qa.palette, aspectRatio: ASPECT.feed_carousel, subject: qa.ads[i]?.subject ?? post.theme ?? 'post',
+        });
+      } catch (e) {
+        this.logger.warn(`[instagram] crítico do slide ${i + 1} falhou: ${errText(e)}`);
+        return null;
+      }
+    };
+    let best: { result: GenerationResult; score: AiScore | null; prompt: string | null } = { result: first, score: await score(first), prompt: null };
+    let cost = 0;
+    let retried = false;
+    const firstTotal = best.score?.total ?? null;
+    if (best.score && firstTotal !== null && firstTotal < MIN_SCORE) {
+      try {
+        await lease?.renew();
+        const ad = await qa.rebuild(i, best.score.motivo);
+        qa.ads[i] = ad;
+        const finalPrompt = `${providerPrompt(ad)} (imagem ${i + 1} de ${total} do carrossel)`;
+        const again = await provider.generateImage({ finalPrompt, aspectRatio: ASPECT.feed_carousel, kind: 'image', ...qa.extra });
+        if (again.status === 'ready' && (again.bytes || again.assetUrl)) {
+          retried = true;
+          cost += again.cost;
+          const s2 = await score(again);
+          if ((s2?.total ?? -1) > firstTotal) best = { result: again, score: s2, prompt: finalPrompt };
+        }
+      } catch (e) {
+        if (e instanceof PublishClaimLost) throw e;
+        this.logger.warn(`[instagram] nova tentativa do slide ${i + 1} falhou: ${errText(e)}`);
+      }
+    }
+    return { ...best, cost, retried };
   }
 
   async generatePostAssets(
@@ -289,15 +352,27 @@ export class MediaGenerationService {
       // Prompts antigos em inglês não devem continuar sendo enviados ao gerador.
       const legacyEnglish = (value: unknown) => typeof value === 'string' && /\b(photorealistic|still frame|no text|use the product|commercial photograph|natural lighting|frozen layers)\b/i.test(value);
       const override = !instructions && format !== 'feed_carousel' && brief.visual_prompt_override && !legacyEnglish(brief.visual_prompt_override);
-      const ads = await Promise.all(
-        briefs.map(async (p, i) => (override && brief.art_direction ? { ...brief.art_direction, prompt_final: String(brief.visual_prompt_override) } : buildVisualPrompt(this.ai, artBrief(p, i)))),
-      );
+      let thread: VisualThread | null = null;
+      let ads: ArtDirection[];
+      if (format === 'feed_carousel') {
+        // Fio visual único: a direção do 1º slide define paleta, estilo fotográfico e luz; os demais slides repetem.
+        const first = await buildVisualPrompt(this.ai, artBrief(briefs[0]!, 0));
+        const t = threadOf(first);
+        thread = t;
+        const rest = await Promise.all(briefs.slice(1).map((p, k) => buildVisualPrompt(this.ai, { ...artBrief(p, k + 1), visualThread: t })));
+        ads = [first, ...rest].map((ad) => withVisualThread(ad, t));
+      } else {
+        ads = await Promise.all(
+          briefs.map(async (p, i) => (override && brief.art_direction ? { ...brief.art_direction, prompt_final: String(brief.visual_prompt_override) } : buildVisualPrompt(this.ai, artBrief(p, i)))),
+        );
+      }
       const prompts = ads.map((ad) => providerPrompt(ad));
       post.creative_brief = {
         ...brief,
         art_direction: ads[0],
         art_directions: format === 'feed_carousel' ? ads : undefined,
         visual_prompt: ads[0]!.prompt_final,
+        ...(thread ? { visual_thread: thread } : {}),
       };
       await this.store.patchPost(postId, { creative_brief: post.creative_brief });
       await lease.renew();
@@ -341,6 +416,7 @@ export class MediaGenerationService {
               best_score: res.winner.score?.total ?? null,
               cost: res.cost,
               instructions,
+              ...(res.notes?.length ? { notes: res.notes } : {}),
             }),
           });
           return { ok: true, items: 1, provider: provider.id };
@@ -348,20 +424,17 @@ export class MediaGenerationService {
         // Provedor assíncrono: segue o fluxo de pendência de sempre.
         return await this.continueAssets(post, provider, prompts, 0, [], 0, instructions, {}, lease);
       }
-      return await this.continueAssets(
-        post,
-        provider,
-        prompts,
-        0,
-        [],
-        0,
-        instructions,
-        {
-          referenceImages: refs.map((r) => ({ bytes: r.bytes, mime: r.mime })),
-          referenceUrls: refs.map((r) => r.url),
-        },
-        lease,
-      );
+      const extra: RefImages = { referenceImages: refs.map((r) => ({ bytes: r.bytes, mime: r.mime })), referenceUrls: refs.map((r) => r.url) };
+      const palette = listField(vs.paleta_hex).length ? listField(vs.paleta_hex) : ([brand?.primary_color, brand?.secondary_color].filter(Boolean) as string[]);
+      const qa: SlideQa | undefined =
+        format === 'feed_carousel'
+          ? {
+              ads, refs, palette, extra,
+              rebuild: (i, motivo) =>
+                buildVisualPrompt(this.ai, { ...artBrief(briefs[i]!, i), visualThread: thread, previousPrompt: ads[i]!.prompt_final, adjust: `Corrija: ${motivo}` }).then((ad) => (thread ? withVisualThread(ad, thread) : ad)),
+            }
+          : undefined;
+      return await this.continueAssets(post, provider, prompts, 0, [], 0, instructions, extra, lease, qa);
     } catch (e) {
       // Lease perdido: outro processo é dono do post agora — não marcar `failed` nem sobrescrever `last_error` por cima do trabalho dele.
       if (e instanceof PublishClaimLost) {

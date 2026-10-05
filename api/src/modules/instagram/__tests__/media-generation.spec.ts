@@ -423,3 +423,54 @@ describe('B — contexto completo na direção de arte, foto do produto primeiro
     expect(s.pipeline.run.mock.calls.map((c: any) => [c[0].layout, c[0].text.title])).toEqual([['titulo_topo', 'Chope em dobro'], ['titulo_topo', 'Hoje tem'], ['limpo', null], ['cta_rodape', 'H']]);
   });
 });
+
+describe('carrossel: fio visual único e nota do crítico por slide', () => {
+  const carousel = (w: IgWorld, over: Record<string, unknown> = {}) => idea(w, { format: 'feed_carousel', creative_brief: { prompt: 'base', slides: ['s1', 's2', 's3'], compose: false }, ...over });
+
+  it('o 1º slide define o fio visual (paleta, estilo, luz): vai no briefing dos demais e no texto final de todos', async () => {
+    const { w, s, gen } = setup();
+    const post = carousel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    const prompts = s.ai.json.mock.calls.map((c: any) => c[1].prompt as string);
+    expect(prompts).toHaveLength(3);
+    expect(prompts[0]).not.toContain('FIO VISUAL DO CARROSSEL');
+    expect(prompts.slice(1).every((p: string) => p.includes('FIO VISUAL DO CARROSSEL') && p.includes('"paleta":["#fff"]'))).toBe(true);
+    expect(s.provider.generateImage.mock.calls.every((c: any) => c[0].finalPrompt.includes('Fio visual do carrossel (igual em todos os slides): paleta #fff; estilo fotográfico foto; luz l.'))).toBe(true);
+    expect(post.creative_brief.visual_thread).toEqual({ paleta: ['#fff'], estilo_fotografico: 'foto', luz: 'l' });
+  });
+
+  it('slide abaixo de 28/50 é refeito 1× com o motivo do crítico; fica o de maior nota; notas no item e no log', async () => {
+    const { w, s, gen } = setup();
+    const low = { produto: 3, fidelidade: 3, composicao: 3, defeitos: 3, paleta: 3, motivo: 'produto cortado' };
+    const high = { produto: 9, fidelidade: 9, composicao: 9, defeitos: 9, paleta: 9, motivo: 'ótimo' };
+    s.ai.vision.mockResolvedValueOnce(low).mockResolvedValueOnce(high);
+    const post = carousel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.provider.generateImage).toHaveBeenCalledTimes(4); // 3 slides + 1 refação do 1º
+    const rebuild = s.ai.json.mock.calls.map((c: any) => c[1].prompt as string).find((p: string) => p.includes('AJUSTE PEDIDO'));
+    expect(rebuild).toContain('AJUSTE PEDIDO (aplique com prioridade): Corrija: produto cortado');
+    expect(post.media.map((m: any) => m.score)).toEqual([45, 40, 40]);
+    expect(post.ai_generation_log.at(-1).slide_scores).toEqual([
+      { slide: 1, total: 45, motivo: 'ótimo', retried: true },
+      { slide: 2, total: 40, motivo: 'ok', retried: false },
+      { slide: 3, total: 40, motivo: 'ok', retried: false },
+    ]);
+  });
+
+  it('crítico fora do ar não bloqueia o carrossel (sem nota, sem refação)', async () => {
+    const { w, s, gen } = setup();
+    s.ai.vision.mockRejectedValue(new Error('visão indisponível'));
+    const post = carousel(w);
+    expect(await gen.generatePostAssets(WS_A, post.id)).toEqual({ ok: true, items: 3, provider: 'gemini' });
+    expect(s.provider.generateImage).toHaveBeenCalledTimes(3);
+    expect(post.media.map((m: any) => m.score)).toEqual([null, null, null]);
+  });
+
+  it('o aviso do gateway sem referência fica no log de geração do post', async () => {
+    const { w, s, gen } = setup();
+    s.provider.generateImage.mockResolvedValue({ status: 'ready', assetUrl: null, bytes: Buffer.from('89504e470d0a1a0a', 'hex'), mime: 'image/png', thumbnailUrl: null, externalJobId: null, cost: 1, note: 'Gateway sem suporte a referência; gerado sem foto da marca.' });
+    const post = carousel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.ai_generation_log.at(-1).notes).toEqual(['Gateway sem suporte a referência; gerado sem foto da marca.']);
+  });
+});

@@ -46,6 +46,22 @@ const COMPOSITION: Record<string, string> = {
   '16:9': 'enquadramento horizontal amplo, assunto em um dos terços e espaço livre no outro lado',
 };
 
+/** Carrossel: o "fio visual" único (paleta, estilo fotográfico, luz) definido pelo 1º slide e repetido em todos. */
+export type VisualThread = { paleta: string[]; estilo_fotografico: string; luz: string };
+
+export const threadOf = (ad: ArtDirection): VisualThread => ({
+  paleta: listField(ad.color_palette).slice(0, 6),
+  estilo_fotografico: String(ad.style ?? '').trim(),
+  luz: String(ad.lighting ?? '').trim(),
+});
+
+/** Repete o fio visual no texto final do slide (o modelo de imagem não vê os outros slides). Idempotente. */
+export function withVisualThread(ad: ArtDirection, t: VisualThread): ArtDirection {
+  const parts = [t.paleta.length ? `paleta ${t.paleta.join(', ')}` : '', t.estilo_fotografico ? `estilo fotográfico ${t.estilo_fotografico}` : '', t.luz ? `luz ${t.luz}` : ''].filter(Boolean);
+  if (!parts.length || ad.prompt_final.includes('Fio visual do carrossel')) return ad;
+  return { ...ad, prompt_final: `${ad.prompt_final} Fio visual do carrossel (igual em todos os slides): ${parts.join('; ')}.` };
+}
+
 export type ArtBrief = {
   workspaceId: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,6 +84,8 @@ export type ArtBrief = {
   strategy?: unknown;
   /** Contexto completo do post (produto, pilar, persona, funil, estratégia da execução, campanha, data) — nunca vira texto na imagem. */
   context?: PostCreativeContext | null;
+  /** Carrossel: fio visual repetido em todos os slides. */
+  visualThread?: VisualThread | null;
 };
 
 export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<ArtDirection> {
@@ -117,6 +135,9 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
       ? `CONTEXTO DO POST (traduza em cena visual concreta — produto, público, momento do funil, data e estação; nunca escreva estes textos na imagem): ${JSON.stringify(contextForPrompt(b.context))}`
       : '',
     contextProhibitions(b.context).length ? `PROIBIDO NA CENA (estratégia do período): ${contextProhibitions(b.context).join('; ')}.` : '',
+    b.visualThread
+      ? `FIO VISUAL DO CARROSSEL (obrigatório neste slide: mesma paleta, mesmo estilo fotográfico e mesma luz dos outros slides): ${JSON.stringify(b.visualThread)}`
+      : '',
     b.previousPrompt ? `PROMPT ANTERIOR: ${b.previousPrompt}` : '',
     b.adjust ? `AJUSTE PEDIDO (aplique com prioridade): ${b.adjust}` : '',
   ]

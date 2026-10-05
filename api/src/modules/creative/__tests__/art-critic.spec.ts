@@ -1,7 +1,7 @@
 jest.setTimeout(60_000);
 
 import { ImageService } from '../../media/image.service';
-import { BASE_NEGATIVE, buildVisualPrompt, providerPrompt } from '../art-director';
+import { BASE_NEGATIVE, buildVisualPrompt, providerPrompt, threadOf, withVisualThread } from '../art-director';
 import { MIN_SCORE, scoreCreative } from '../critic';
 import { ART } from './world';
 
@@ -71,6 +71,19 @@ describe('diretor de arte', () => {
     expect(prompt).toContain('"produtos":[{"nome":"Chope Pilsen","descricao":"gelado"}]');
     expect(prompt).toContain('PROIBIDO NA CENA (estratégia do período): preço baixo; concorrente.');
     expect(ad.negative).toBe('blurry, logos de concorrentes, texto, preço baixo, concorrente');
+  });
+
+  it('carrossel: o fio visual (do 1º slide) entra no briefing dos demais e é repetido, uma vez só, no texto final', async () => {
+    const ai = { json: jest.fn(async () => ART) };
+    const thread = threadOf({ ...ART, color_palette: ['#c0392b', '#f5deb3'], style: 'foto realista', lighting: 'luz quente' } as any);
+    expect(thread).toEqual({ paleta: ['#c0392b', '#f5deb3'], estilo_fotografico: 'foto realista', luz: 'luz quente' });
+    await buildVisualPrompt(ai as any, brief({ slide: { index: 1, total: 4 }, visualThread: thread }));
+    expect((ai.json.mock.calls[0] as any)[1].prompt).toContain(
+      'FIO VISUAL DO CARROSSEL (obrigatório neste slide: mesma paleta, mesmo estilo fotográfico e mesma luz dos outros slides): {"paleta":["#c0392b","#f5deb3"],"estilo_fotografico":"foto realista","luz":"luz quente"}',
+    );
+    const ad = withVisualThread({ ...ART, prompt_final: 'Copo na mesa.' } as any, thread);
+    expect(ad.prompt_final).toBe('Copo na mesa. Fio visual do carrossel (igual em todos os slides): paleta #c0392b, #f5deb3; estilo fotográfico foto realista; luz luz quente.');
+    expect(withVisualThread(ad, thread).prompt_final).toBe(ad.prompt_final);
   });
 });
 

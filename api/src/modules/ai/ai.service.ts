@@ -25,6 +25,10 @@ const isVertical = (ar: string) => ar === '9:16' || ar === '4:5';
 export const AI_COST = { chatgptImage: 1.5, geminiImage: 1.0, video: 6.0 } as const;
 
 const OPENAI_SIZE: Record<string, string> = { '1:1': '1024x1024', '4:5': '1024x1536', '9:16': '1024x1536', '16:9': '1536x1024' };
+/** Gateway sem `/images/edits` (ou que recusa as fotos): a imagem sai só do texto e o aviso vai para o log de geração do post. */
+export const REF_FALLBACK_NOTE = 'Gateway sem suporte a referência; gerado sem foto da marca.';
+/** Respostas do gateway que significam "não sei editar com imagens" (cai para a geração só com texto). */
+const EDIT_UNSUPPORTED = new Set([400, 404, 415, 422]);
 
 /** Extrai o primeiro objeto `{...}` do texto (a IA às vezes embrulha o JSON). Contrato do protótipo. */
 export function parseJsonLoose(text: string): any {
@@ -243,7 +247,7 @@ export class AiService {
       }
     }
     const r = req.vendor === 'openai' ? await this.gatewayOpenaiImage(req) : await this.gatewayGeminiImage(req);
-    return { ...r, cost: req.vendor === 'openai' ? AI_COST.chatgptImage : AI_COST.geminiImage, note: null };
+    return { ...r, cost: req.vendor === 'openai' ? AI_COST.chatgptImage : AI_COST.geminiImage, note: r.note };
   }
 
   private pngResult(b64png: string | undefined, who: string): { bytes: Buffer; mime: string; ext: string } {
@@ -251,12 +255,12 @@ export class AiService {
     return { bytes: Buffer.from(b64png, 'base64'), mime: 'image/png', ext: 'png' };
   }
 
-  private editForm(model: string, req: AiImageRequest, size: string): FormData {
+  private editForm(model: string, req: AiImageRequest, size: string, withQuality = true): FormData {
     const fd = new FormData();
     fd.append('model', model);
     fd.append('prompt', req.prompt.slice(0, 30000));
     fd.append('size', size);
-    fd.append('quality', 'high');
+    if (withQuality) fd.append('quality', 'high');
     (req.referenceImages ?? []).slice(0, 4).forEach((r, i) => fd.append('image[]', new Blob([r.bytes as BlobPart], { type: r.mime }), `ref${i}.jpg`));
     return fd;
   }
@@ -295,33 +299,50 @@ export class AiService {
     return { bytes: Buffer.from(part.inlineData.data, 'base64'), mime, ext: mime.includes('jpeg') ? 'jpg' : 'png' };
   }
 
-  private async gatewayOpenaiImage(req: AiImageRequest) {
+  private async gatewayOpenaiImage(req: AiImageRequest): Promise<{ bytes: Buffer; mime: string; ext: string; note: string | null }> {
     const model = this.model('openai/gpt-image-2.5-sunburst');
     const size = OPENAI_SIZE[req.aspectRatio] ?? '1024x1024';
+    let note: string | null = null;
     if (req.referenceImages?.length) {
-      // Edição com as fotos de referência; se o endpoint recusar, gera sem elas.
+      // Edição com as fotos de referência; se o endpoint recusar, gera sem elas e avisa no log.
       const res = await this.gw('/images/edits', { body: this.editForm(model, req, size) });
-      if ([400, 404, 415, 422].includes(res.status)) {
+      if (EDIT_UNSUPPORTED.has(res.status)) {
         this.logger.warn(`edição com referências recusada: ${res.status}`);
+        note = REF_FALLBACK_NOTE;
       } else {
         if (!res.ok) throw await this.gatewayError(res);
         const j = (await res.json()) as { data?: { b64_json?: string }[] };
-        return this.pngResult(j.data?.[0]?.b64_json, 'A IA');
+        return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note: null };
       }
     }
     const res = await this.gw('/images/generations', { json: { model, prompt: req.prompt, size, quality: 'high' } });
     if (!res.ok) throw await this.gatewayError(res);
     const j = (await res.json()) as { data?: { b64_json?: string }[] };
-    return this.pngResult(j.data?.[0]?.b64_json, 'A IA');
+    return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note };
   }
 
-  private async gatewayGeminiImage(req: AiImageRequest) {
-    const res = await this.gw('/images/generations', {
-      json: { model: this.model('google/gemini-3.1-flash-image'), prompt: `${req.prompt}\nProporção da imagem: ${req.aspectRatio}.`, size: OPENAI_SIZE[req.aspectRatio] ?? '1024x1024' },
-    });
+  private async gatewayGeminiImage(req: AiImageRequest): Promise<{ bytes: Buffer; mime: string; ext: string; note: string | null }> {
+    const model = this.model('google/gemini-3.1-flash-image');
+    const size = OPENAI_SIZE[req.aspectRatio] ?? '1024x1024';
+    const prompt = `${req.prompt}\nProporção da imagem: ${req.aspectRatio}.`;
+    let note: string | null = null;
+    if (req.referenceImages?.length) {
+      // Fotos de referência (produto primeiro) também pelo gateway: edição com imagens (compatível com OpenAI), sem "quality"
+      // (parâmetro só do gpt-image). Gateway sem suporte → gera só com o texto e avisa no log de geração.
+      const res = await this.gw('/images/edits', { body: this.editForm(model, { ...req, prompt }, size, false) });
+      if (EDIT_UNSUPPORTED.has(res.status)) {
+        this.logger.warn(`edição com referências (Gemini) recusada pelo gateway: ${res.status}`);
+        note = REF_FALLBACK_NOTE;
+      } else {
+        if (!res.ok) throw await this.gatewayError(res);
+        const j = (await res.json()) as { data?: { b64_json?: string }[] };
+        return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note: null };
+      }
+    }
+    const res = await this.gw('/images/generations', { json: { model, prompt, size } });
     if (!res.ok) throw await this.gatewayError(res);
     const j = (await res.json()) as { data?: { b64_json?: string }[] };
-    return this.pngResult(j.data?.[0]?.b64_json, 'A IA');
+    return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note };
   }
 
   // ------------------------------------------------------------------ vídeo

@@ -268,6 +268,8 @@ export function igServices(w: IgWorld) {
   const ai = {
     jsonWithEngine: jest.fn(async (_ws: string, req: any) => ({ content: aiJson[req.name]?.(req) ?? {}, engine: 'IA do app' })),
     json: jest.fn(async () => ({ ...ART })),
+    // Crítico visual (carrossel): 40/50 por padrão.
+    vision: jest.fn(async () => ({ produto: 8, fidelidade: 8, composicao: 8, defeitos: 8, paleta: 8, motivo: 'ok' })),
   } as any;
   const provider: any = {
     id: 'gemini', label: 'Gemini', sandbox: false,
@@ -297,7 +299,7 @@ export function igServices(w: IgWorld) {
   } as any;
   const strategist = { currentStrategy: jest.fn(async () => null) } as any;
   const http = jest.fn(async () => new Response(null, { status: 200 }));
-  const images = {} as any;
+  const images = { shrink: jest.fn(async (b: Uint8Array) => ({ bytes: new Uint8Array(b), mime: 'image/jpeg' })) } as any;
 
   const content = new ContentService(w.prisma, ai, w.store);
   const publishing = new PublishingService(w.store, w.graph, http as any);

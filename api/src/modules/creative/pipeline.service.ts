@@ -55,6 +55,8 @@ export type PipelineResult =
       height: number | null;
       igReady: boolean;
       cost: number;
+      /** Avisos do provedor (ex.: gateway sem referência), sem repetição — vão para o log de geração. */
+      notes: string[];
     };
 
 type PoolItem = { asset: MediaAsset; bytes: Uint8Array; score: AiScore | null; prompt: string };
@@ -83,6 +85,7 @@ export class PipelineService {
     let ad = inp.ad;
     let cost = 0;
     const pool: PoolItem[] = [];
+    const notes: string[] = [];
     const vs = (inp.brand?.visual_style ?? {}) as VisualStyle;
     const palette = listField(vs.paleta_hex).length ? listField(vs.paleta_hex) : [inp.brand?.primary_color, inp.brand?.secondary_color].filter(Boolean);
 
@@ -99,6 +102,7 @@ export class PipelineService {
       const pending = ok.find((r) => r.status === 'generating' && r.externalJobId);
       if (pending && !ok.some((r) => r.status === 'ready')) return pending;
       const ready = ok.filter((r) => r.status === 'ready' && (r.assetUrl || r.bytes));
+      for (const r of ok) if (r.note && !notes.includes(r.note)) notes.push(r.note);
       if (!ready.length) {
         const err = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined;
         const failed = ok.find((r) => r.status === 'failed');
@@ -189,6 +193,7 @@ export class PipelineService {
       height: final.height,
       igReady: final.ig_ready,
       cost,
+      notes,
     };
   }
 }

@@ -264,3 +264,43 @@ describe('AiService.video — download do Gemini (SSRF / chave / teto)', () => {
     expect(() => new AiService(keys, async () => json({}), env)).toThrow(/AI_GUARDED_FETCH/);
   });
 });
+
+describe('AiService.image — fotos de referência também pelo gateway (B2)', () => {
+  const ref = { bytes: new Uint8Array([1, 2, 3]), mime: 'image/jpeg' };
+  const png = (s: string) => json({ data: [{ b64_json: Buffer.from(s).toString('base64') }] });
+
+  it('Gemini pelo gateway com referências: /images/edits (multipart com as fotos, sem "quality"), sem aviso', async () => {
+    const f = fakeFetch([['/images/edits', () => png('EDIT')]]);
+    const ai = setup({ ...gwEnv, AI_MODEL_IMAGE_GEMINI: 'gem-img' }, {}, f.fn);
+    const r = await ai.image(WS, { prompt: 'copo', aspectRatio: '1:1', vendor: 'gemini', referenceImages: [ref, ref], appOnly: true });
+    expect(r.bytes.toString()).toBe('EDIT');
+    expect(r.note).toBeNull();
+    const fd = f.calls[0]!.init!.body as FormData;
+    expect(fd.get('model')).toBe('gem-img');
+    expect(fd.getAll('image[]')).toHaveLength(2);
+    expect(fd.has('quality')).toBe(false);
+    expect(String(fd.get('prompt'))).toContain('Proporção da imagem: 1:1.');
+  });
+
+  it.each([400, 404, 415, 422])('edição recusada pelo gateway (%i): gera só com o texto e avisa no note', async (st) => {
+    const f = fakeFetch([['/images/edits', () => new Response('x', { status: st })], ['/images/generations', () => png('TXT')]]);
+    const r = await setup(gwEnv, {}, f.fn).image(WS, { prompt: 'copo', aspectRatio: '1:1', vendor: 'gemini', referenceImages: [ref], appOnly: true });
+    expect(r.bytes.toString()).toBe('TXT');
+    expect(r.note).toBe('Gateway sem suporte a referência; gerado sem foto da marca.');
+    expect(f.calls.map((c) => c.url.replace('https://gw.test/v1', ''))).toEqual(['/images/edits', '/images/generations']);
+  });
+
+  it('sem referências vai direto para /images/generations; erro de verdade (500) na edição não é engolido', async () => {
+    const f = fakeFetch([['/images/generations', () => png('G')]]);
+    expect((await setup(gwEnv, {}, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini' })).note).toBeNull();
+    expect(f.calls).toHaveLength(1);
+    const bad = fakeFetch([['/images/edits', () => new Response('boom', { status: 500 })]]);
+    await expect(setup(gwEnv, {}, bad.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', referenceImages: [ref] })).rejects.toThrow(/IA respondeu 500/);
+  });
+
+  it('ChatGPT pelo gateway também avisa quando a edição é recusada', async () => {
+    const f = fakeFetch([['/images/edits', () => new Response('x', { status: 404 })], ['/images/generations', () => png('O')]]);
+    const r = await setup(gwEnv, {}, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', referenceImages: [ref] });
+    expect(r.note).toBe('Gateway sem suporte a referência; gerado sem foto da marca.');
+  });
+});
