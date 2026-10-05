@@ -200,14 +200,8 @@ describe('PublishingService.runPublishingQueue (publishing_jobs, lock, retentati
     w.respond((path) => (/^\/c\d+$/.test(path) ? { status_code: 'IN_PROGRESS' } : undefined));
     const p = seedPost(w);
     const j = job(w, p.id);
-    let t = Date.now();
-    const spy = jest.spyOn(Date, 'now').mockImplementation(() => (t += 15_000));
-    try {
-      const res = await svc.runPublishingQueue();
-      expect(res).toEqual([{ job: j.id, status: 'processing' }]);
-    } finally {
-      spy.mockRestore();
-    }
+    const res = await svc.runPublishingQueue();
+    expect(res).toEqual([{ job: j.id, status: 'processing' }]);
     expect(j).toMatchObject({ status: 'pending', attempts: 0, locked_at: null });
     expect(j.run_at.getTime()).toBeGreaterThan(Date.now() + 60e3);
     expect(j.log).toMatch(/ainda está processando/);

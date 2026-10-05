@@ -22,7 +22,7 @@ describe('ids de job de vídeo (nunca consultar um id arbitrário)', () => {
   it('AiService.videoStatus recusa id inválido SEM chamar o provedor', async () => {
     const http = jest.fn();
     const keys = { get: jest.fn() };
-    const ai = new AiService(keys as any, http as any, { AI_GATEWAY_URL: 'https://gw.test/v1', AI_GATEWAY_API_KEY: 'k' } as any);
+    const ai = new AiService(keys as any, http as any, { NODE_ENV: 'test', AI_GATEWAY_URL: 'https://gw.test/v1', AI_GATEWAY_API_KEY: 'k' } as any);
     expect(await ai.videoStatus('ws', '../../admin')).toEqual({ status: 'failed' });
     expect(await ai.videoStatus('ws', 'veo:../x')).toEqual({ status: 'failed' });
     expect(await ai.videoStatus('ws', 'gveo:models/../operations/x')).toEqual({ status: 'failed' });
