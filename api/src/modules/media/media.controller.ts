@@ -80,6 +80,10 @@ export class MediaActionsController {
     let truncated = false;
     for await (const part of req.parts()) {
       if (part.type === 'file') {
+        // O arquivo só é lido depois de conferir que quem envia pode editar esta empresa (campos vêm antes do arquivo).
+        const wsField = fields['workspaceId'];
+        if (!wsField || !isUuid(wsField)) throw bad('Envio inválido.');
+        await this.lib.assertEdit(u.id, wsField);
         const chunks: Buffer[] = [];
         for await (const c of part.file) chunks.push(c as Buffer);
         truncated = truncated || !!(part.file as { truncated?: boolean }).truncated;

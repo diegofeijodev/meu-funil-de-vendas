@@ -290,3 +290,28 @@ describe('MediaQueryService — filtros da tela', () => {
     w.cleanup();
   });
 });
+
+describe('upload-media — autoriza antes de ler o arquivo', () => {
+  function fakeReq(fields: Array<[string, string]>, onRead: () => void) {
+    const file = {
+      type: 'file', fieldname: 'file', filename: 'a.png', mimetype: 'image/png',
+      file: (async function* () { onRead(); yield Buffer.from('x'); })(),
+    };
+    return {
+      isMultipart: () => true,
+      parts: async function* () { for (const [k, v] of fields) yield { type: 'field', fieldname: k, value: v }; yield file; },
+    } as never;
+  }
+  it('viewer e estranho são recusados sem consumir o arquivo; sem workspaceId antes do arquivo = Envio inválido', async () => {
+    const { w, lib } = setup();
+    const { MediaActionsController } = await import('../media.controller');
+    const ctl = new MediaActionsController(lib);
+    let read = 0;
+    const user = (id: string) => ({ id }) as never;
+    expect(await status(ctl.upload(user(VIEWER), fakeReq([['workspaceId', WS_A]], () => read++)))).toBe('403:Seu papel não permite esta ação.');
+    expect(await status(ctl.upload(user(STRANGER), fakeReq([['workspaceId', WS_A]], () => read++)))).toBe('403:Você não tem acesso a esta área de trabalho.');
+    expect(await status(ctl.upload(user(OWNER), fakeReq([], () => read++)))).toBe('400:Envio inválido.');
+    expect(read).toBe(0);
+    w.cleanup();
+  });
+});

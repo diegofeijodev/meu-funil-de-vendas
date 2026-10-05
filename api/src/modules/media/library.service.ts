@@ -55,6 +55,11 @@ export class LibraryService {
     if (edit && !EDITORS.includes(role)) throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Seu papel não permite esta ação.' });
   }
 
+  /** Autoriza edição ANTES de ler o corpo (upload multipart). */
+  async assertEdit(userId: string, workspaceId: string): Promise<void> {
+    await this.member(userId, workspaceId, true);
+  }
+
   private async loadAssets(workspaceId: string, ids: string[]): Promise<Asset[]> {
     const rows = await this.prisma.media_assets.findMany({
       where: { workspace_id: workspaceId, id: { in: ids } },
