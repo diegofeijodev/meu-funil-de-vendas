@@ -39,6 +39,8 @@ const FORMAT_GUIDE: Record<IgFormat, string> = {
   story_video: 'story em vídeo curto: cena simples de 5 s; headline curta; CTA de interação',
 };
 
+/** Trava do lote: MAIOR que o timeout da IA (`AiService.gw`: 180 s) com folga para gravar; senão outro tick pegaria o mesmo lote no meio da chamada. */
+export const LOCK_MS = 240_000;
 const weekdayName = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' });
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const dateCol = (s: string) => new Date(`${s}T12:00:00Z`);
@@ -153,7 +155,7 @@ export class AutoCalendarService {
   async fillAutoRun(runId: string) {
     const claimed = await this.prisma.ig_auto_runs.updateMany({
       where: { id: runId, status: 'planning', OR: [{ locked_until: null }, { locked_until: { lt: new Date() } }] },
-      data: { locked_until: new Date(Date.now() + 150e3) },
+      data: { locked_until: new Date(Date.now() + LOCK_MS) },
     });
     if (!claimed.count) {
       const r = await this.prisma.ig_auto_runs.findUnique({ where: { id: runId }, select: { status: true, filled: true, slots: true } });
@@ -168,7 +170,15 @@ export class AutoCalendarService {
       if (usable.length) await this.writeChunk(run, usable);
       const filled = run.filled + chunk.length;
       const done = filled >= all.length;
-      await this.prisma.ig_auto_runs.update({ where: { id: runId }, data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null } });
+      // Condicional ao `filled` lido: se a trava venceu e outro lote já avançou a programação, este resultado não a sobrescreve.
+      const advanced = await this.prisma.ig_auto_runs.updateMany({
+        where: { id: runId, filled: run.filled },
+        data: { filled, status: done ? 'active' : 'planning', locked_until: null, last_error: null },
+      });
+      if (!advanced.count) {
+        const cur = await this.prisma.ig_auto_runs.findUnique({ where: { id: runId }, select: { status: true, filled: true, slots: true } });
+        return { filled: cur?.filled ?? 0, total: ((cur?.slots as unknown[]) ?? []).length, done: cur?.status !== 'planning', busy: true };
+      }
       if (done)
         await this.store.logEvent({
           workspace_id: run.workspace_id,

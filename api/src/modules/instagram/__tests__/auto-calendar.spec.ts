@@ -60,7 +60,7 @@ describe('createAutoCalendar', () => {
   });
 });
 
-describe('fillAutoRun (estrategista em lotes, lock de 150 s)', () => {
+describe('fillAutoRun (estrategista em lotes, lock de 240 s)', () => {
   const posts = (n: number) => ({ posts: Array.from({ length: n }, (_, i) => ({ index: i, theme: `T${i}`, pillar: 'A', funnel_stage: 'atracao', hook: 'H', headline: 'Manchete', caption: 'Legenda', hashtags: ['a', 'b'], cta: 'CTA', image_prompt: 'cena', slides: ['s1'] })) });
 
   it('preenche 8 horários por chamada, avança "filled" e conclui em "active"', async () => {
@@ -97,6 +97,26 @@ describe('fillAutoRun (estrategista em lotes, lock de 150 s)', () => {
     expect(await auto.fillAutoRun(r2.id)).toMatchObject({ busy: true, filled: 0 });
     r2.locked_until = new Date(Date.now() - 1000);
     expect(await auto.fillAutoRun(r2.id)).toMatchObject({ busy: false, filled: 1, done: true });
+  });
+
+  it('o lock (240 s) é maior que o timeout da IA (180 s); se outro lote avançou a programação no meio, o resultado atrasado não sobrescreve', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { slots: [slotAt(600, 0), slotAt(660, 1)] });
+    let lease = 0;
+    s.aiJson['ig_auto_calendar'] = () => {
+      lease = r.locked_until.getTime() - Date.now();
+      r.filled = 2; // outro worker (lock vencido) já concluiu e avançou
+      r.status = 'active';
+      return posts(2);
+    };
+    const out = await auto.fillAutoRun(r.id);
+    expect(lease).toBeGreaterThanOrEqual(240_000 - 2_000);
+    expect(lease).toBeGreaterThan(180_000);
+    expect(out).toMatchObject({ busy: true, filled: 2, done: true });
+    expect(r).toMatchObject({ filled: 2, status: 'active' });
+    // lock ainda válido aos 200 s: continua ocupado
+    const r2 = run(w, plan(w), { slots: [slotAt(600, 0)], locked_until: new Date(Date.now() + 200e3) });
+    expect(await auto.fillAutoRun(r2.id)).toMatchObject({ busy: true });
   });
 
   it('IA falha: solta o lock, guarda last_error, registra o evento e relança; item malformado/ausente vira post simples', async () => {
