@@ -5,12 +5,20 @@ type Schedule = { startDate: string; endDate: string; weekdays: number[]; times:
 
 /** `POST /v1/instagram/create-auto-calendar` — "publica sozinho" só dono/admin; com aprovação, quem edita. */
 export const createAutoCalendar = serverFnPost<
-  Schedule & { workspaceId: string; planId?: string | null; brandId?: string | null; campaignId?: string | null; focus?: string; mode: "publish" | "approval"; recurring?: boolean },
+  Schedule & { workspaceId: string; planId?: string | null; brandId?: string | null; campaignId?: string | null; focus: string; mode: "publish" | "approval"; recurring?: boolean },
   { runId: string; planId: string; total: number; skipped: number }
 >("/v1/instagram/create-auto-calendar");
 
 /** `POST /v1/instagram/fill-auto-calendar` — próximo lote da estrategista (a tela chama até `done`). */
-export const fillAutoCalendar = serverFnPost<{ runId: string }, { filled: number; total: number; done: boolean; busy: boolean }>("/v1/instagram/fill-auto-calendar");
+export const fillAutoCalendar = serverFnPost<{ runId: string }, { filled: number; total: number; done: boolean; busy: boolean; strategyReview: boolean }>(
+  "/v1/instagram/fill-auto-calendar",
+);
+
+/** `POST /v1/instagram/approve-auto-strategy` — aprova (e opcionalmente ajusta em texto) a estratégia do período: libera a geração dos posts. */
+export const approveAutoStrategy = serverFnPost<{ runId: string; editedText?: string | null }, { ok: true }>("/v1/instagram/approve-auto-strategy");
+
+/** `POST /v1/instagram/redo-auto-strategy` — descarta a estratégia atual e pede outra à IA. */
+export const redoAutoStrategy = serverFnPost<{ runId: string }, { ok: true }>("/v1/instagram/redo-auto-strategy");
 
 /** `POST /v1/instagram/generate-next-auto-media` — gera o criativo do próximo post na janela (laço do navegador). */
 export const generateNextAutoMedia = serverFnPost<{ runId: string; withinHours?: number }, { done: boolean; ok: boolean; error?: string | null; remaining: number }>(

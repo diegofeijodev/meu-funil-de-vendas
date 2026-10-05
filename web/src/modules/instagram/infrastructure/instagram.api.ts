@@ -45,6 +45,14 @@ const post = z
     created_at: z.string(),
     run_id: str,
     automation: str,
+    // Programação com estratégia (05/10/2026): ligação do post ao objetivo + revisão (`needs_review`).
+    objective_link: str,
+    pillar: str,
+    persona: str,
+    product_id: str,
+    funnel_stage: str,
+    review_reason: str,
+    review_score: nullNum,
   })
   .passthrough();
 
@@ -89,8 +97,12 @@ const run = z
     filled: z.coerce.number(),
     slots: z.array(z.any()).nullish().transform((v) => v ?? []),
     last_error: str,
+    // Estratégia do período (jsonb solto, como no protótipo): pending → review → approved.
+    strategy: z.any().nullish().transform((v) => v ?? null),
+    strategy_status: z.string().default("pending"),
+    paused_reason: str,
     weeks: z.coerce.number(),
-    counts: z.object({ total: z.number(), media: z.number(), waiting: z.number(), scheduled: z.number(), published: z.number(), failed: z.number() }),
+    counts: z.object({ total: z.number(), media: z.number(), waiting: z.number(), scheduled: z.number(), published: z.number(), failed: z.number(), review: z.number().default(0) }),
   })
   .passthrough();
 
@@ -122,7 +134,7 @@ export async function listIgPosts(ws: string) {
   return z.array(post).parse(data);
 }
 
-/** Selo do menu lateral: `ig_posts` em `pending_approval` (count exato). */
+/** Selo do menu lateral: `ig_posts` em `pending_approval` ou `needs_review` (count exato). */
 export async function countIgPending(ws: string): Promise<number> {
   const { data } = await api.get(`${base(ws)}/ig-posts/pending-count`);
   return z.object({ count: z.coerce.number() }).parse(data).count;

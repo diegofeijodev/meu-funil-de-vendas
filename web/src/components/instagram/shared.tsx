@@ -27,6 +27,9 @@ export type IgPost = {
   ai_generation_log: any[];
   last_error: string | null;
   created_at: string;
+  /** Posts da programação com estratégia: motivo/nota da revisão (`needs_review`). */
+  review_reason?: string | null;
+  review_score?: number | null;
 };
 
 export const FORMATS: Record<
@@ -45,6 +48,7 @@ export const STATUS_LABEL: Record<string, string> = {
   generating: "Gerando",
   ready: "Pronto",
   pending_approval: "Aguardando aprovação",
+  needs_review: "Precisa de revisão",
   approved: "Aprovado",
   scheduled: "Agendado",
   publishing: "Publicando",
