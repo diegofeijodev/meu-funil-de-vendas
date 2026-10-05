@@ -19,7 +19,7 @@ docker compose up -d postgres              # Postgres na 5439
 cd api
 npm install
 cp .env.example .env                       # ajuste JWT_SECRET (16+ caracteres)
-npx prisma migrate deploy                  # aplica a migração `init` (62 tabelas + users)
+npx prisma migrate deploy                  # aplica as migrações (`init` com 62 tabelas + users e os ajustes seguintes)
 npm run seed                               # demo@meufunil.local / meufunil123
 npm run start:dev                          # http://localhost:3015  (Swagger em /docs)
 curl localhost:3015/health
@@ -45,6 +45,7 @@ bash web/scripts/browser-check-sections.sh 1 4              # só os grupos 1 e 
 - `TRUST_PROXY` — quantos proxies confiar para descobrir o IP do cliente (limite do formulário público, throttle). Aceita um **número de saltos** (`1`), uma **lista de IPs/CIDRs** (`10.0.0.0/8,172.16.0.1`) ou `false`/`true`.
   Cadeia de produção: cliente → nginx → rewrite do Next → API = **`TRUST_PROXY=1`**. O rewrite do Next 15 **não** acrescenta nada ao `X-Forwarded-For` (só preenche com o IP do peer se o cabeçalho faltar); o peer TCP da API é o servidor Next (1 salto confiável) e o `X-Forwarded-For` vem do nginx. Requisitos: o nginx **deve definir** o cabeçalho, de preferência **sobrescrevendo** (`proxy_set_header X-Forwarded-For $remote_addr;`; com `$proxy_add_x_forwarded_for` o `1` ainda pega o cliente, mas só se o nginx anexar); e a **porta da API não pode ser acessível publicamente** (só o Next/nginx falam com ela), senão qualquer um forja o IP.
   **`true` é inseguro**: confia em todo o `X-Forwarded-For` e o cliente forja o primeiro IP da cadeia (rotacionando-o, burla o limite de 5 envios/10 min). Fica só como atalho de desenvolvimento. `false` (padrão): `req.ip` é o do vizinho direto. Número de saltos só é seguro se a porta da API NÃO é alcançável de fora (um cliente direto poderia mandar o `X-Forwarded-For` que quisesse); se der para fixar os endereços dos proxies, prefira a lista de IPs/CIDRs (ex.: a sub-rede da rede docker).
+- Em produção `PUBLIC_URL` e `APP_URL` são **obrigatórias** e não podem apontar para localhost (a API recusa subir).
 - `UPLOADS_DIR` — arquivos em disco (`<bucket>/<chave>`), servidos por URL assinada.
 - `CREDENTIALS_ENCRYPTION_KEY` — cofre AES-256-GCM; **obrigatória em produção**.
 - `UNSUBSCRIBE_SECRET` — HMAC dos links de descadastro; **obrigatória em produção**.
@@ -74,7 +75,7 @@ Detalhes e rotas HTTP equivalentes: `docs/api-contract.md` §7.
 ### Docker completo
 
 ```bash
-JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... UNSUBSCRIBE_SECRET=... docker compose --profile full up --build
+JWT_SECRET=... CREDENTIALS_ENCRYPTION_KEY=... UNSUBSCRIBE_SECRET=... PUBLIC_URL=https://api.exemplo.com APP_URL=https://app.exemplo.com docker compose --profile full up --build
 ```
 
 ## Rodar o web
@@ -93,6 +94,12 @@ Nunca `next build` durante uma tarefa comum (a máquina trava).
 
 ## Estado
 
-Tasks 0 (API + banco) e 1 (fundação do web: login, shell, workspace, shims de rota) concluídas.
-Próximas: marca/visão geral/configurações/agência, campanhas,
-criativos, Instagram, anúncios, CRM — ver `docs/superpowers/plans/`.
+Plano de port **concluído** (Tasks 0 a 9 + onda final + correções da revisão final): API (auth, workspaces, marcas, estúdio criativo, biblioteca de mídia, campanhas,
+Instagram, anúncios/Meta, CRM com canais, SDR, integrações, agendador) e as 25 telas do protótipo, com jest, smoke e browser-check por seções. Contrato: `docs/api-contract.md`.
+
+Desvios aceitos em relação ao protótipo (decididos nas revisões):
+- Upload de mídia pela API com teto de 100 MB (o protótipo aceitava 500 MB); vídeo do Instagram/Reels e criativos "ugc"/"story" tratados como vídeo; link do CapCut de 10 min.
+- `mcp-run` exige escrita; tokens MCP cifrados no cofre; URIs de retorno do OAuth saem de `PUBLIC_URL` (os cartões mostram o valor exato; passo 4 do Canva com texto novo).
+- `lib/format.ts#fullDate` lê data pura como data local (o protótipo mostrava um dia antes em Brasília); rota desconhecida do web responde 404 de verdade (middleware).
+- Toast de erro novo ao pedir aprovação; `toast.info` para o intervalo de sincronização; janela `logoutEsperado` e listas globais de ERR_ABORTED no browser-check; nomes de heartbeat do agendador (cosmético).
+- Sem agendamento duplo: agendador em processo (`SCHEDULER_ENABLED=true`, recomendado em produção) **ou** cron externo; as rotas HTTP de cron usam a mesma trava por job.

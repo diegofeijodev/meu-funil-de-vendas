@@ -293,9 +293,7 @@ Server fns portadas (corpo = o `data` do protótipo). IA só via `AiService` (ch
 | `GET /v1/workspaces/:ws/activity-logs?limit=` | read | `activity_logs[]` por `created_at` desc (`limit` 30 por padrão, 1–200) — o "Audit log" da tela |
 | `POST /v1/approvals/decide-approval` `{ approvalId, decision: 'approved'\|'rejected' }` | manage (do workspace do pedido) | `200 { ok: true }`. `404 "Pedido de aprovação não encontrado."` (inclui empresa alheia, sem vazar); `409 "Este pedido já foi decidido."` (também em corrida: o UPDATE é guardado por `status = pending`); `403 "Só o dono ou um administrador da empresa pode aprovar ou rejeitar."` (marketing/viewer). Numa transação: pedido → `decided_*`; `entity_type 'campaign'` → campanha `approved` (rejeitar = `draft`); `'creative'` → criativo recebe o status da decisão (sempre filtrado pelo workspace do pedido). Atividade `approval.<decisão> {request_id, entity_id}` com `entity_type` do pedido |
 
-**Rotas que as telas chamam e ainda não existem** (shims criados; a API nasce nas tarefas indicadas, até lá a tela mostra o erro da API): `POST /v1/meta/meta-ads-status|meta-ads-publish|meta-ads-set-status`,
-`POST /v1/meta/generate-ads-recommendations` (Task 6); `POST /v1/creative/canva-create-from-brief` (**feita na Task 4**, §20). Componentes `campaign-channels` e `campaign-ads-settings` são
-**placeholders** com a assinatura final (a tarefa de Meta, 6, os substitui); `instagram/approvals` (`IgApprovalList`) é real desde a Task 5 (§22).
+**Rotas que as telas chamam:** todas existem (nenhum placeholder resta). As ações de Meta (`meta-ads-status|meta-ads-publish|meta-ads-set-status`, `generate-ads-recommendations`, §23) e `creative/canva-create-from-brief` (§20) vieram nas Tasks 6 e 4; `campaign-channels`, `campaign-ads-settings` e `instagram/approvals` (`IgApprovalList`) são componentes reais (§22–§23).
 
 ## 18. Biblioteca de mídia — `/v1/workspaces/:workspaceId/{media-assets,copies}` e `POST /v1/media/*`
 

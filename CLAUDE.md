@@ -81,10 +81,10 @@ Seed de dev: `demo@meufunil.local` / `meufunil123` (owner de "Meu Funil Demo").
 - Auth: `modules/auth/**` (axios + zustand). `auth.storage.ts` é o ÚNICO dono do `localStorage` (sessão em `authUser`, empresa atual em `aimos.workspace`; ESLint barra o resto).
   `modules/shared/infrastructure/http.ts`: bearer, **refresh uma vez no 401** (chamadas paralelas dividem um refresh), `apiErrorMessage()` lê `{error:{message}}` — nunca achate para `error.message`.
   Google: `GET /v1/auth/google` (503 sem credenciais -> toast "Não foi possível entrar com o Google."); a sessão volta no fragmento `#access_token=…` para `/auth`.
-- Guarda de sessão em `app/(app)/layout.tsx` (valida com `GET /v1/auth/me`; nenhuma página monta sem sessão). `(app)/[...rest]` é o placeholder das telas ainda não portadas (shell + área vazia); `lib/app-routes.ts` lista as 29 rotas
-  conhecidas (fora delas: 404 do root, sem shell). Cada tarefa de página cria o `page.tsx` real em `(app)/<rota>/`.
+- Guarda de sessão em `app/(app)/layout.tsx` (valida com `GET /v1/auth/me`; nenhuma página monta sem sessão). Todas as 25 rotas do protótipo têm `page.tsx` real em `(app)/<rota>/` (não há catch-all);
+  `lib/app-routes.ts` lista as rotas conhecidas e o `middleware.ts` responde 404 (root, sem shell) às demais; `lib/app-routes.test.ts` (`yarn test`, vitest) garante que páginas e lista não se separem.
 - `lib/workspace.tsx` (`WorkspaceProvider`/`useWorkspace`): `GET /v1/workspaces`; `logActivity` virou no-op (a API registra a atividade). `lib/ig-pending.ts` é o selo do Instagram no menu (`GET /v1/workspaces/:id/ig-posts/pending-count`).
 - ⚠️ `scripts/smoke.sh` e `scripts/browser-check.mjs` só rodam contra o banco local descartável: a limpeza apaga linhas que casam com padrões de teste (ex.: `Browser[0-9]+`).
 - `scripts/browser-check.mjs` (Playwright do freela-web-v2): login pelo formulário, shell, menu, 404, refresh de token, Sair; falha em console/pageerror/rede/HTTP>=400. Cresce a cada tarefa.
 
-- `NODE_ENV` não tem default: chave de dev do cofre e Swagger só com `NODE_ENV=development` (test p/ a chave). Sem NODE_ENV explícito e sem `CREDENTIALS_ENCRYPTION_KEY` a API não sobe.
+- `NODE_ENV` não tem default: chave de dev do cofre e Swagger só com `NODE_ENV=development` (test p/ a chave). Sem NODE_ENV explícito e sem `CREDENTIALS_ENCRYPTION_KEY` a API não sobe. Fora de development/test `PUBLIC_URL` e `APP_URL` também são obrigatórias e não podem apontar para localhost (a API não sobe). Os overrides de provedor falso e as URLs locais/internas (fetch guardado) só valem com NODE_ENV=development|test (lista de permissão em `common/config/test-overrides.ts`).
