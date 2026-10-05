@@ -978,3 +978,151 @@ describe('A1 — estratégia no modo "publish" e semanas repetidas', () => {
     expect(guidance.length).toBeLessThanOrEqual(2000);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Produção automática (05/10/2026) — A2: reescrita do post reprovado no modo totalmente automático.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('A2 — reescrita do post reprovado (modo "publish")', () => {
+  const flagged = (w: IgWorld, r: any, over: Record<string, unknown> = {}) =>
+    seedPost(w, {
+      run_id: r.id, plan_id: r.plan_id, automation: 'publish', status: 'needs_review', media: [], approved_at: null,
+      review_reason: 'fala de outro negócio', review_score: 3, review_attempts: 0, scheduled_at: new Date(Date.now() + 30 * 3600e3),
+      theme: 'Velho', hook: 'Gancho velho', caption: 'Legenda velha', cta: 'CTA', objective_link: 'serve', pillar: 'A', persona: 'Ana',
+      creative_brief: { prompt: 'cena velha', headline: 'Manchete velha', variations: 3 }, ...over,
+    });
+  const item = (over: Record<string, unknown> = {}) => ({
+    posts: [{ index: 0, theme: 'Novo', pillar: 'A', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve ao objetivo', hook: 'Gancho novo', headline: 'Manchete nova', caption: 'Legenda nova', hashtags: ['a'], cta: 'CTA', image_prompt: 'cena nova', slides: [], ...over }],
+  });
+  const approve = (s: ReturnType<typeof setup>['s'], nota = 8) => (s.aiJson['ig_post_review'] = () => ({ results: [{ index: 0, aprovado: true, nota_0_10: nota, motivo: 'ok' }] }));
+  const reject = (s: ReturnType<typeof setup>['s'], motivo = 'ainda fora do segmento') => (s.aiJson['ig_post_review'] = () => ({ results: [{ index: 0, aprovado: false, nota_0_10: 2, motivo }] }));
+
+  it('aprovado na 1ª reescrita: volta para "idea" com o texto novo, sem motivo, conta a tentativa e registra post_rewritten', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r);
+    s.aiJson['ig_auto_calendar'] = () => item();
+    approve(s, 9);
+    expect(await auto.rewritePost(post.id)).toBe('rewritten');
+    expect(post).toMatchObject({ status: 'idea', theme: 'Novo', hook: 'Gancho novo', caption: 'Legenda nova', objective_link: 'serve ao objetivo', review_reason: null, review_score: 9, review_attempts: 1, last_error: null, lease_until: null });
+    expect(post.creative_brief).toMatchObject({ prompt: 'cena nova', headline: 'Manchete nova', variations: 3 });
+    expect(post.ai_generation_log.at(-1)).toMatchObject({ step: 'rewrite', attempt: 1, reason: 'fala de outro negócio', status: 'idea' });
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'post_rewritten', level: 'info', post_id: post.id });
+  });
+
+  it('o prompt da reescrita leva o motivo, a versão reprovada, a estratégia aprovada e as regras de data', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r);
+    let prompt = '';
+    s.aiJson['ig_auto_calendar'] = (req: any) => {
+      prompt = req.prompt;
+      return item();
+    };
+    approve(s);
+    await auto.rewritePost(post.id);
+    expect(prompt).toContain('REFAÇA, reprovado antes por: fala de outro negócio');
+    expect(prompt).toContain('VERSÃO REPROVADA (reescreva corrigindo o motivo; mantenha o que não foi criticado): {"tema":"Velho","gancho":"Gancho velho","headline":"Manchete velha","legenda":"Legenda velha","cta":"CTA"}');
+    expect(prompt).toMatch(/2\. ESTRATÉGIA APROVADA: .*"mensagem_central":"Almoço rápido e gostoso"/);
+    expect(prompt).toContain('Coerência com a data');
+  });
+
+  it('com mídia e o mesmo gancho/headline: volta "ready" mantendo a mídia; headline mudou: mídia descartada e volta "idea"', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const keep = flagged(w, r, { media: [{ url: 'https://cdn.test/a.jpg', type: 'image', order: 0 }], hook: 'Gancho novo', creative_brief: { prompt: 'x', headline: 'Manchete nova' } });
+    s.aiJson['ig_auto_calendar'] = () => item();
+    approve(s);
+    await auto.rewritePost(keep.id);
+    expect(keep).toMatchObject({ status: 'ready', caption: 'Legenda nova' });
+    expect(keep.media).toHaveLength(1);
+    const drop = flagged(w, r, { media: [{ url: 'https://cdn.test/b.jpg', type: 'image', order: 0 }] });
+    await auto.rewritePost(drop.id);
+    expect(drop).toMatchObject({ status: 'idea', media: [] });
+  });
+
+  it('reprovado: a 1ª reescrita vira tentativa 1 (continua em revisão com o novo motivo); a 2ª pula o horário (cancelado + post_skipped)', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r);
+    s.aiJson['ig_auto_calendar'] = () => item();
+    reject(s, 'ainda fora do segmento');
+    expect(await auto.rewritePost(post.id)).toBe('retried');
+    expect(post).toMatchObject({ status: 'needs_review', review_reason: 'ainda fora do segmento', review_attempts: 1, theme: 'Velho' });
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'post_rewritten', level: 'warn' });
+    reject(s, 'continua genérico');
+    w.t['publishing_jobs']!.rows.push({ id: uuid(), ig_post_id: post.id, status: 'pending' });
+    expect(await auto.rewritePost(post.id)).toBe('skipped');
+    expect(post).toMatchObject({ status: 'cancelled', last_error: 'Pulado automaticamente: continua genérico', review_attempts: 2 });
+    expect(w.t['publishing_jobs']!.rows[0]!.status).toBe('cancelled');
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'post_skipped', level: 'warn', post_id: post.id });
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)!.message).toMatch(/continuou reprovado depois de 2 reescrita\(s\) — continua genérico/);
+  });
+
+  it('reprovação por código também conta: data incoerente e checagem final (CTA fora da estratégia)', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const monday = new Date('2099-01-05T10:00:00-03:00');
+    const a = flagged(w, r, { scheduled_at: monday });
+    s.aiJson['ig_auto_calendar'] = () => item({ caption: 'Sextou com chope!' });
+    approve(s);
+    expect(await auto.rewritePost(a.id)).toBe('retried');
+    expect(a.review_reason).toBe('Incoerência de data: "sextou" fora de sexta-feira.');
+    const b = flagged(w, r);
+    s.aiJson['ig_auto_calendar'] = () => item({ cta: 'Clique no link da bio' });
+    expect(await auto.rewritePost(b.id)).toBe('retried');
+    expect(b.review_reason).toBe('Checagem final: CTA fora dos CTAs da estratégia.');
+  });
+
+  it('IA fora do ar: não gasta tentativa, guarda last_error e tenta de novo no próximo tick', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r);
+    s.aiJson['ig_auto_calendar'] = () => {
+      throw new Error('IA fora do ar');
+    };
+    expect(await auto.rewritePost(post.id)).toBeNull();
+    expect(post).toMatchObject({ status: 'needs_review', review_attempts: 0, last_error: 'IA fora do ar', lease_until: null });
+  });
+
+  it('tentativas esgotadas (review_attempts = 2): pula sem chamar a IA; modo "approval" nunca é reescrito; lease vivo é respeitado', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const spent = flagged(w, r, { review_attempts: 2 });
+    expect(await auto.rewritePost(spent.id)).toBe('skipped');
+    expect(spent.last_error).toBe('Pulado automaticamente: fala de outro negócio');
+    const human = flagged(w, r, { automation: 'approval' });
+    const busy = flagged(w, r, { lease_until: new Date(Date.now() + 60e3) });
+    expect(await auto.rewritePost(human.id)).toBeNull();
+    expect(await auto.rewritePost(busy.id)).toBeNull();
+    expect(s.ai.jsonWithEngine).not.toHaveBeenCalled();
+    expect([human.status, busy.status]).toEqual(['needs_review', 'needs_review']);
+  });
+
+  it('tick: a reescrita roda ANTES de agendar; o post reprovado na checagem final só é reescrito no tick seguinte', async () => {
+    const { w, s, auto } = setup();
+    connected(w);
+    const p = plan(w);
+    const r = run(w, p, { status: 'active' });
+    // gancho e headline iguais aos que a IA devolve: a reescrita mantém a mídia (volta "ready") e o passo 2 já agenda
+    const post = seedPost(w, { run_id: r.id, plan_id: p.id, automation: 'publish', status: 'ready', persona: null, objective_link: 'serve', pillar: 'A', cta: 'CTA', hook: 'Gancho novo', creative_brief: { headline: 'Manchete nova' }, scheduled_at: new Date(Date.now() + 30 * 3600e3) });
+    s.aiJson['ig_auto_calendar'] = () => item();
+    approve(s);
+    let out = await auto.autoCalendarTick();
+    expect(post.status).toBe('needs_review'); // reprovado na checagem final do agendamento (passo 2)
+    expect(out['rewritten']).toEqual({ rewritten: 0, retried: 0, skipped: 0 });
+    out = await auto.autoCalendarTick();
+    expect(out['rewritten']).toEqual({ rewritten: 1, retried: 0, skipped: 0 });
+    expect(post.status).toBe('scheduled'); // reescrito (mesmo gancho/headline → mantém a mídia) e agendado no mesmo tick
+  });
+
+  it('o selo de aprovações (pending-count) não conta o post que a IA está reescrevendo', async () => {
+    const { w, s } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    flagged(w, r);
+    seedPost(w, { status: 'needs_review', automation: 'approval', review_reason: 'x' });
+    seedPost(w, { status: 'needs_review', review_reason: 'x' }); // calendário do plano (automation null)
+    seedPost(w, { status: 'pending_approval' });
+    expect(await s.resources.pendingCount(WS_A)).toEqual({ count: 3 });
+  });
+});

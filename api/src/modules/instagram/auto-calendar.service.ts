@@ -6,8 +6,8 @@ import { StrategistService } from '../strategist/strategist.service';
 import { ContentService } from './content.service';
 import { ContentStrategyService } from './content-strategy.service';
 import { brandContext, DATE_RULES, fullDate, isCreditFailure, RunStrategy, Verdict } from './content-strategy';
-import { ASPECT, fmtDate, IgFormat, STRATEGY_AUTO_APPROVED } from './ig-types';
-import { IgStore, errText } from './ig-store.service';
+import { ASPECT, fmtDate, IgFormat, OVERDUE_MS, PostRow, SKIP_PREFIX, STRATEGY_AUTO_APPROVED } from './ig-types';
+import { IgStore, errText, leaseFree, PublishClaimLost } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { asList, asText, normalizeHashtags } from './normalize';
 import { PublishingService } from './publishing.service';
@@ -50,6 +50,10 @@ class LeaseLost extends Error {}
 
 /** Trava do lote: MAIOR que o timeout da IA (`AiService.gw`: 180 s) com folga para gravar; senão outro tick pegaria o mesmo lote no meio da chamada. */
 export const LOCK_MS = 240_000;
+/** Modo "publish": quantas vezes a IA reescreve um post reprovado antes de pular o horário. */
+export const MAX_REWRITES = 2;
+/** Reescritas por tick (cada uma gasta 1 chamada de texto + 1 validação). */
+const REWRITES_PER_TICK = 3;
 const weekdayName = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' });
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const dateCol = (s: string) => new Date(`${s}T12:00:00Z`);
@@ -307,7 +311,13 @@ export class AutoCalendarService {
     return typeof text === 'string' && text.trim() ? text.trim().slice(0, 2000) : null;
   }
 
-  private async askPosts(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, fixes: Map<number, string>) {
+  private async askPosts(
+    run: Prisma.ig_auto_runsGetPayload<object>,
+    slots: Slot[],
+    ctx: RunCtx,
+    fixes: Map<number, string>,
+    previous: Map<number, Record<string, unknown>> = new Map(),
+  ) {
     const { plan, brand, products, personas, objective, campaign } = ctx;
     const strategy = run.strategy as unknown as RunStrategy;
     // Evita repetir temas: últimos posts da empresa + os já criados nesta programação.
@@ -331,7 +341,12 @@ export class AutoCalendarService {
       ...Object.entries(FORMAT_GUIDE).map(([k, v]) => `- ${k}: ${v}.`),
       "Campos: index, theme, pillar (um dos pilares da estratégia), persona, product_name (nome exato do produto citado ou vazio), funnel_stage (atracao|consideracao|conversao), objective_link (uma frase ligando o post ao objetivo), hook, headline (até 7 palavras, sem hashtags), caption (com quebras de linha), hashtags (array JSON de 10 a 15 strings sem #, ex.: ['valinhos','choppgelado']), cta (um dos CTAs da estratégia), image_prompt (briefing visual em português do que aparece, SEM texto na imagem), slides (só carrossel, senão vazio).",
       'HORÁRIOS (data real, fuso America/Sao_Paulo):',
-      ...slots.map((sl) => `- index ${sl.index}: ${fullDate(sl.at)} · ${sl.format}${fixes.get(sl.index) ? ` · REFAÇA, reprovado antes por: ${fixes.get(sl.index)}` : ''}`),
+      ...slots.map(
+        (sl) =>
+          `- index ${sl.index}: ${fullDate(sl.at)} · ${sl.format}${fixes.get(sl.index) ? ` · REFAÇA, reprovado antes por: ${fixes.get(sl.index)}` : ''}${
+            previous.get(sl.index) ? ` · VERSÃO REPROVADA (reescreva corrigindo o motivo; mantenha o que não foi criticado): ${JSON.stringify(previous.get(sl.index))}` : ''
+          }`,
+      ),
       'Devolva SOMENTE JSON estrito {"posts":[...]} com um item por horário.',
     ]
       .filter(Boolean)
@@ -342,7 +357,7 @@ export class AutoCalendarService {
   }
 
   private async writeChunk(run: Prisma.ig_auto_runsGetPayload<object>, slots: Slot[], ctx: RunCtx, keep: () => Promise<void>): Promise<Prisma.ig_postsCreateManyInput[]> {
-    const { plan, products } = ctx;
+    const { products } = ctx;
     const strategy = run.strategy as unknown as RunStrategy;
     const final = new Map<number, { p: any; verdict: Verdict | null; attempts: number; provider: string; issues: string[] }>();
     let pending = slots;
@@ -379,17 +394,10 @@ export class AutoCalendarService {
       }
       pending = next;
     }
-    const productId = (name: unknown) => {
-      const n = (asText(name) ?? '').toLowerCase();
-      return n ? (products.find((x) => x.name && (x.name.toLowerCase() === n || n.includes(x.name.toLowerCase())))?.id ?? null) : null;
-    };
-    const stage = (v: unknown) => {
-      const t = (asText(v) ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-      return t.startsWith('conv') ? 'conversao' : t.startsWith('cons') || t.startsWith('cone') ? 'consideracao' : 'atracao';
-    };
     const rows: Prisma.ig_postsCreateManyInput[] = slots.map((sl) => {
       const f = final.get(sl.index)!;
       const p = f.p ?? {};
+      const { brief, ...columns } = this.postFields(p, sl.format, ctx, `Post de ${weekdayName(sl.at)}`);
       const soon = new Date(sl.at).getTime() - Date.now() < 90 * MIN;
       const rejected = !!f.verdict && !f.verdict.aprovado;
       const empty = !asText(p.caption) && !asText(p.theme);
@@ -405,24 +413,10 @@ export class AutoCalendarService {
         review_reason: needsReview ? f.verdict?.motivo || 'A IA não devolveu conteúdo para este horário.' : null,
         review_score: f.verdict?.nota ?? null,
         scheduled_at: new Date(sl.at),
-        theme: asText(p.theme) ?? `Post de ${weekdayName(sl.at)}`,
-        hook: asText(p.hook),
-        caption: asText(p.caption),
-        hashtags: normalizeHashtags(p.hashtags),
-        cta: asText(p.cta) || plan.cta_default || null,
-        objective_link: asText(p.objective_link),
-        pillar: asText(p.pillar),
-        persona: asText(p.persona),
-        product_id: productId(p.product_name),
-        funnel_stage: stage(p.funnel_stage),
+        ...columns,
         creative_brief: {
-          prompt: asText(p.image_prompt) || asText(p.theme) || '',
-          slides: sl.format === 'feed_carousel' ? (asList(p.slides).slice(0, 10) as string[]) : [],
+          ...brief,
           aspect_ratio: ASPECT[sl.format],
-          headline: asText(p.headline),
-          pillar: asText(p.pillar),
-          funnel_stage: stage(p.funnel_stage),
-          product_name: asText(p.product_name),
           campaign_id: run.campaign_id ?? null,
           // Perto do horário: uma variação só, para a mídia ficar pronta a tempo.
           variations: soon ? 1 : 3,
@@ -445,6 +439,170 @@ export class AutoCalendarService {
     // Última conferência do lease; a gravação em si é atômica com o avanço da programação (ver `fill`).
     await keep();
     return rows;
+  }
+
+  /** Item da IA → colunas do post (a mesma normalização no lote e na reescrita). Produto só da marca do plano; etapa do funil normalizada. */
+  private postFields(p: any, format: string, ctx: RunCtx, fallbackTheme: string) {
+    const name = (asText(p.product_name) ?? '').toLowerCase();
+    const productId = name ? (ctx.products.find((x) => x.name && (x.name.toLowerCase() === name || name.includes(x.name.toLowerCase())))?.id ?? null) : null;
+    const t = (asText(p.funnel_stage) ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const stage = t.startsWith('conv') ? 'conversao' : t.startsWith('cons') || t.startsWith('cone') ? 'consideracao' : 'atracao';
+    return {
+      theme: asText(p.theme) ?? fallbackTheme,
+      hook: asText(p.hook),
+      caption: asText(p.caption),
+      hashtags: normalizeHashtags(p.hashtags),
+      cta: asText(p.cta) || ctx.plan.cta_default || null,
+      objective_link: asText(p.objective_link),
+      pillar: asText(p.pillar),
+      persona: asText(p.persona),
+      product_id: productId,
+      funnel_stage: stage,
+      brief: {
+        prompt: asText(p.image_prompt) || asText(p.theme) || '',
+        slides: format === 'feed_carousel' ? (asList(p.slides).slice(0, 10) as string[]) : [],
+        headline: asText(p.headline),
+        pillar: asText(p.pillar),
+        funnel_stage: stage,
+        product_name: asText(p.product_name),
+      },
+    };
+  }
+
+  /**
+   * Modo "publish" (totalmente automático): post reprovado (validador no preenchimento ou checagem final no agendamento) é reescrito
+   * pela IA com o motivo — um por vez, no tick, sob o lease do post. Até `MAX_REWRITES` reescritas; depois o horário é pulado.
+   */
+  async rewriteFlagged(): Promise<{ rewritten: number; retried: number; skipped: number }> {
+    const out = { rewritten: 0, retried: 0, skipped: 0 };
+    const posts = await this.prisma.ig_posts.findMany({
+      where: { automation: 'publish', status: 'needs_review', run_id: { not: null }, scheduled_at: { gt: new Date(Date.now() - OVERDUE_MS) }, ...leaseFree() },
+      orderBy: { scheduled_at: 'asc' },
+      take: REWRITES_PER_TICK,
+      select: { id: true },
+    });
+    for (const p of posts) {
+      const r = await this.rewritePost(p.id).catch((e) => {
+        this.logger.warn(`[auto-calendar] reescrita do post ${p.id} falhou: ${errText(e)}`);
+        return null;
+      });
+      if (r) out[r]++;
+    }
+    return out;
+  }
+
+  /** Reescreve UM post reprovado do modo "publish" (lease do post); revalida por código (data, CTA, preço, ligação) e pelo validador. */
+  async rewritePost(postId: string): Promise<'rewritten' | 'retried' | 'skipped' | null> {
+    const lease = await this.store.claimLease(postId, null, { status: 'needs_review', automation: 'publish' }, {}, LOCK_MS);
+    if (!lease) return null;
+    try {
+      const post = (await this.prisma.ig_posts.findUnique({ where: { id: postId } })) as PostRow | null;
+      if (!post?.run_id || !post.scheduled_at) return null;
+      const run = await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: post.workspace_id } });
+      if (!run?.strategy || !['planning', 'active'].includes(run.status)) return null;
+      const reason: string = post.review_reason || 'reprovado na revisão';
+      const done: number = post.review_attempts ?? 0;
+      if (done >= MAX_REWRITES) return (await this.skipPost(post, reason, done)) ? 'skipped' : null;
+      const attempt = done + 1;
+      const brief = (post.creative_brief ?? {}) as Record<string, unknown>;
+      const at = new Date(post.scheduled_at).toISOString();
+      let ctx: RunCtx;
+      let items: Map<number, any>;
+      let provider: string;
+      try {
+        ctx = await this.runContext(run);
+        await lease.renew();
+        const previous = { tema: post.theme, gancho: post.hook, headline: brief['headline'] ?? null, legenda: post.caption, cta: post.cta };
+        const slot: Slot = { index: 0, at, format: post.format as IgFormat, kind: String(post.format).startsWith('story') ? 'story' : 'main' };
+        ({ items, provider } = await this.askPosts(run, [slot], ctx, new Map([[0, reason]]), new Map([[0, previous]])));
+      } catch (e) {
+        if (e instanceof PublishClaimLost) throw e;
+        // IA fora do ar / sem crédito: não gasta tentativa; o próximo tick tenta de novo.
+        await this.prisma.ig_posts.updateMany({ where: { id: postId, status: 'needs_review' }, data: { last_error: errText(e) } });
+        return null;
+      }
+      const p = items.get(0) ?? null;
+      const fields = p ? this.postFields(p, post.format, ctx, post.theme ?? `Post de ${weekdayName(at)}`) : null;
+      let verdict: Verdict | null = null;
+      let problems: string[] = [];
+      if (fields) {
+        await lease.renew();
+        const verdicts = await this.contentStrategy.validatePosts({
+          workspaceId: post.workspace_id, brand: ctx.brand, objective: ctx.objective, strategy: run.strategy as unknown as RunStrategy, products: ctx.products,
+          posts: [{ index: 0, at, theme: fields.theme, hook: fields.hook, caption: fields.caption, headline: fields.brief.headline, cta: fields.cta }],
+        });
+        verdict = verdicts.get(0) ?? null;
+        const { brief: nextBrief, ...columns } = fields;
+        problems = await this.publishing.alignmentProblems({ ...post, ...columns, creative_brief: { ...brief, ...nextBrief } }, new Date(at));
+      }
+      await lease.renew();
+      if (fields && (!verdict || verdict.aprovado) && !problems.length) {
+        const { brief: nextBrief, ...columns } = fields;
+        const hadMedia = Array.isArray(post.media) && post.media.length > 0;
+        // Só o texto mudou (mesmo gancho e mesma headline, que entram na arte): a mídia vale; senão ela é refeita pela produção.
+        const keepMedia = hadMedia && (columns.hook ?? '') === (post.hook ?? '') && (nextBrief.headline ?? '') === ((brief['headline'] as string | null | undefined) ?? '');
+        const got = await this.prisma.ig_posts.updateMany({
+          where: { id: postId, status: 'needs_review' },
+          data: {
+            ...columns,
+            creative_brief: { ...brief, ...nextBrief } as Prisma.InputJsonObject,
+            status: keepMedia ? 'ready' : 'idea',
+            ...(keepMedia ? {} : { media: [] }),
+            review_reason: null,
+            review_score: verdict?.nota ?? null,
+            review_attempts: attempt,
+            last_error: null,
+            ai_provider: provider,
+            ai_generation_log: this.store.appendLog(post, { step: 'rewrite', provider, attempt, reason, review: verdict, status: keepMedia ? 'ready' : 'idea' }) as unknown as Prisma.InputJsonArray,
+          },
+        });
+        if (!got.count) return null;
+        await this.store.logEvent({
+          workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: postId, kind: 'post_rewritten',
+          message: `Post reescrito pela IA (tentativa ${attempt} de ${MAX_REWRITES}). Motivo anterior: ${reason}`,
+        });
+        return 'rewritten';
+      }
+      // O motivo do validador (que já inclui as regras de data por código) vem antes da checagem final do agendamento.
+      const motivo = !fields
+        ? 'A IA não devolveu conteúdo para este horário.'
+        : verdict && !verdict.aprovado
+          ? verdict.motivo || 'reprovado na revisão'
+          : `Checagem final: ${problems.join('; ')}.`;
+      if (attempt >= MAX_REWRITES) return (await this.skipPost(post, motivo, attempt)) ? 'skipped' : null;
+      await this.prisma.ig_posts.updateMany({
+        where: { id: postId, status: 'needs_review' },
+        data: {
+          review_reason: motivo,
+          review_score: verdict?.nota ?? null,
+          review_attempts: attempt,
+          last_error: null,
+          ai_generation_log: this.store.appendLog(post, { step: 'rewrite', provider, attempt, reason, review: verdict, problems, status: 'needs_review' }) as unknown as Prisma.InputJsonArray,
+        },
+      });
+      await this.store.logEvent({
+        workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: postId, kind: 'post_rewritten', level: 'warn',
+        message: `Reescrita ${attempt} de ${MAX_REWRITES} ainda reprovada: ${motivo} Nova tentativa no próximo ciclo.`,
+      });
+      return 'retried';
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /** Esgotou as reescritas: o horário é pulado (post cancelado com o motivo, job pendente cancelado) e o painel avisa. */
+  private async skipPost(post: PostRow, reason: string, attempts: number): Promise<boolean> {
+    const got = await this.prisma.ig_posts.updateMany({
+      where: { id: post.id, status: 'needs_review' },
+      data: { status: 'cancelled', last_error: `${SKIP_PREFIX}${reason}`, review_reason: reason, review_attempts: attempts },
+    });
+    if (!got.count) return false;
+    await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: post.id, status: 'pending' }, data: { status: 'cancelled' } });
+    await this.store.logEvent({
+      workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'post_skipped', level: 'warn',
+      message: `Horário de ${post.scheduled_at ? fmtDate(post.scheduled_at) : 'post'} pulado: "${post.theme ?? 'Post'}" continuou reprovado depois de ${attempts} reescrita(s) — ${reason}`,
+    });
+    return true;
   }
 
   /** Usuário aprova (e opcionalmente ajusta em texto) a estratégia: libera a geração dos posts. */
@@ -505,6 +663,9 @@ export class AutoCalendarService {
     for (const r of planning) await this.fillAutoRun(r.id).then(() => filled++).catch(() => null);
     out['filled'] = filled;
 
+    // 2a) Modo totalmente automático: post reprovado é reescrito pela IA (até 2 vezes; depois o horário é pulado). Antes de agendar:
+    //     o post reescrito com a mídia mantida já é agendado neste mesmo tick; o reprovado AGORA no agendamento espera o próximo.
+    out['rewritten'] = await this.rewriteFlagged().catch((e) => ({ error: errText(e) }));
     // 2) Mídia pronta e ainda não agendada (ou aprovada agora): vai para a fila.
     const ready = await this.prisma.ig_posts.findMany({ where: { automation: { not: null }, status: { in: ['ready', 'approved'] } }, orderBy: { scheduled_at: 'asc' }, take: 20, select: { id: true } });
     let scheduled = 0;

@@ -92,7 +92,7 @@ export class PublishingService {
    * estratégia — posts de programações antigas não têm esses campos), expressão incoerente com a data, CTA fora dos CTAs da
    * estratégia e preço fora do cadastro de produtos da marca.
    */
-  private async alignmentProblems(post: PostRow, when: Date): Promise<string[]> {
+  async alignmentProblems(post: PostRow, when: Date): Promise<string[]> {
     const ws: string = post.workspace_id;
     const run = await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: ws }, select: { strategy: true } });
     const problems: string[] = [];
