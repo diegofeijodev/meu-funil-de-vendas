@@ -75,7 +75,7 @@ export class VideoExtrasService {
       try {
         const ratio = inp.aspectRatio === '16:9' ? '16:9' : '9:16';
         const still = await inp.provider.generateImage({
-          finalPrompt: `${inp.visualPrompt}\nStill frame for a video cover. No text, letters or logos.`,
+          finalPrompt: `${inp.visualPrompt}\nQuadro estático para a capa de um vídeo. Não inclua texto, letras nem logotipos.`,
           aspectRatio: ratio,
           kind: 'image',
         });

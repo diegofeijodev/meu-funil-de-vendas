@@ -101,7 +101,11 @@ export class PipelineService {
       const ready = ok.filter((r) => r.status === 'ready' && (r.assetUrl || r.bytes));
       if (!ready.length) {
         const err = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined;
-        throw err?.reason instanceof Error ? err.reason : new UserError('O provedor não devolveu imagens.');
+        const failed = ok.find((r) => r.status === 'failed');
+        // O erro real do provedor (classe incluída, p.ex. AiError 402/429) é preservado; sem ele, o motivo vem do resultado.
+        if (err?.reason instanceof Error) throw err.reason;
+        const reason = err?.reason ? String(err.reason) : null;
+        throw new UserError(reason || failed?.raw || `O provedor não devolveu uma imagem pronta (${ok.map((r) => r.status).join(', ') || 'sem resposta'}).`);
       }
       await Promise.all(
         ready.map(async (r) => {
@@ -128,7 +132,10 @@ export class PipelineService {
       return null;
     };
 
-    const pending = await round(Math.max(1, Math.min(4, inp.variations)));
+    // O post também guarda `variations` como lista de imagens anteriores; esse valor não é uma contagem.
+    // NaN aqui criava zero chamadas ao provedor e o erro enganoso "não devolveu imagens".
+    const count = Number.isFinite(inp.variations) ? Math.max(1, Math.min(4, inp.variations)) : 3;
+    const pending = await round(count);
     if (pending) return { pending, ad };
     await inp.onStage?.();
 

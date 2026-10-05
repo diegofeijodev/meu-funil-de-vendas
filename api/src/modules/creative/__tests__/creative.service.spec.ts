@@ -30,8 +30,8 @@ describe('generate — imagem dirigida', () => {
 
     const job = w.t['creative_generation_jobs']!.rows[0]!;
     expect([job.status, job.provider, job.created_by, job.campaign_id, job.brand_id]).toEqual(['ready', 'gemini', MARKETING, campaign.id, brand.id]);
-    expect(job.final_prompt).toContain('No text, letters or logos anywhere in the image.');
-    expect(job.final_prompt).toContain('Avoid: blurry');
+    expect(job.final_prompt).toContain('Não inclua texto, letras nem logotipos na imagem.');
+    expect(job.final_prompt).toContain('Evite: blurry');
     expect(job.provider_log).toBe('Usado: Gemini (Google)');
     const cr = w.t['creatives']!.rows[0]!;
     expect([cr.status, cr.title, cr.version, cr.provider, cr.campaign_id, Number(cr.real_cost)]).toEqual(['ready', 'Chopp gelado', 1, 'gemini', campaign.id, 2]);
@@ -97,7 +97,7 @@ describe('generate — imagem dirigida', () => {
     expect(call.referenceImages).toHaveLength(1);
     expect(call.referenceImages[0].mime).toBe('image/jpeg');
     expect(call.referenceUrls).toEqual(['https://x/chopp.png']);
-    expect(w.ai.json.mock.calls[0]![1].prompt).toContain('use the product exactly as in the reference images');
+    expect(w.ai.json.mock.calls[0]![1].prompt).toContain('Use o produto exatamente como nas imagens de referência');
     // referência de OUTRO workspace (storage_path alheio) é ignorada
     const other = w.files.newUploadKey('brands', WS_B, 'png');
     await w.files.put('creative-assets', other, w.png);
@@ -134,6 +134,30 @@ describe('generate — imagem dirigida', () => {
     expect(await status(w.svc.generate(OWNER, dto({ campaignId: campaign.id, brandId: otherBrand.id })))).toBe('404:Marca não encontrada.');
     expect(w.ai.json).not.toHaveBeenCalled();
     expect(w.t['creative_generation_jobs']!.rows).toHaveLength(0);
+    w.cleanup();
+  });
+
+  it('provedor que responde "failed" (sem lançar) preserva o erro REAL do provedor no log do job, em vez do genérico "não devolveu imagens"', async () => {
+    const w = await creativeWorld();
+    await seed(w);
+    w.provider.image.mockResolvedValue({ status: 'failed', assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0, raw: 'content_policy_violation: prompt recusado' });
+    const r = await w.svc.generate(ADMIN, dto({ variations: 2 }));
+    expect([r.status, r.error]).toEqual(['failed', 'content_policy_violation: prompt recusado']);
+    const job = w.t['creative_generation_jobs']!.rows[0]!;
+    expect([job.status, job.error_message]).toEqual(['failed', 'content_policy_violation: prompt recusado']);
+    // sem `raw` e sem erro lançado: a mensagem lista os status devolvidos
+    w.provider.image.mockResolvedValue({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0 });
+    const r2 = await w.svc.generate(ADMIN, dto({ variations: 1 }));
+    expect(r2.error).toBe('O provedor não devolveu uma imagem pronta (generating).');
+    w.cleanup();
+  });
+
+  it('`variations` inválido (NaN: o post guarda a lista de imagens anteriores) gera 3 variações, nunca zero chamadas', async () => {
+    const w = await creativeWorld();
+    await seed(w);
+    const r = await w.svc.generate(OWNER, dto({ variations: Number.NaN }));
+    expect(r.status).toBe('ready');
+    expect(w.provider.image).toHaveBeenCalledTimes(3);
     w.cleanup();
   });
 

@@ -150,7 +150,7 @@ describe('cadeia de provedores', () => {
   });
   const ok = (note: string | null = null): GenerationResult => ({ status: 'ready', assetUrl: null, bytes: png, thumbnailUrl: null, externalJobId: null, cost: 0, note });
 
-  it('avança para o próximo em QUALQUER erro, registra o log, lembra quem funcionou e não volta a quem falhou', async () => {
+  it('avança para o próximo em QUALQUER erro, registra o log (sem repetir a linha) e lembra quem funcionou', async () => {
     let aCalls = 0;
     const a = mk('a', async () => { aCalls++; throw new Error('429 cota esgotada'); });
     const b = mk('b', async () => ok('B ok'));
@@ -158,9 +158,42 @@ describe('cadeia de provedores', () => {
     expect(chain.id).toBe('a');
     await chain.generateImage(req);
     await chain.generateImage(req);
-    expect(aCalls).toBe(1); // depois da 1ª falha, A saiu da lista
+    // a lista é imutável: cada chamada tenta A de novo antes de B (A pode ter voltado a funcionar)
+    expect(aCalls).toBe(2);
     expect(chain.id).toBe('b');
     expect(providerLog(chain)).toBe('A: 429 cota esgotada → tentando o próximo\nUsado: B ok');
+  });
+
+  it('variações concorrentes: cada tentativa percorre TODOS os provedores elegíveis (a falha de uma não tira o provedor das outras)', async () => {
+    const calls: string[] = [];
+    let aN = 0;
+    // A falha na 1ª chamada e funciona nas seguintes; B sempre funciona.
+    const a = mk('a', async () => { calls.push('a'); if (++aN === 1) throw new Error('503 indisponível'); return ok('A ok'); });
+    const b = mk('b', async () => { calls.push('b'); return ok('B ok'); });
+    const list = [a, b];
+    const chain = chainProviders(list);
+    const out = await Promise.all([chain.generateImage(req), chain.generateImage(req), chain.generateImage(req)]);
+    expect(out.map((r) => r.note).sort()).toEqual(['A ok', 'A ok', 'B ok']);
+    expect(calls.filter((c) => c === 'a')).toHaveLength(3); // as 3 variações tentaram A
+    expect(list.map((p) => p.id)).toEqual(['a', 'b']); // a lista compartilhada nunca é alterada
+  });
+
+  it('resultado "failed" / sem mídia / job sem id conta como falha e preserva o erro real do provedor no log', async () => {
+    const failed = mk('a', async () => ({ status: 'failed', assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0, raw: 'content_policy_violation' }));
+    const empty = mk('b', async () => ({ status: 'ready', assetUrl: null, bytes: null, thumbnailUrl: null, externalJobId: null, cost: 0 }));
+    const noId = mk('c', async () => ({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: null, cost: 0 }));
+    const good = mk('d', async () => ok('D ok'));
+    const chain = chainProviders([failed, empty, noId, good]);
+    expect((await chain.generateImage(req)).note).toBe('D ok');
+    const log = providerLog(chain);
+    expect(log).toContain('A: content_policy_violation → tentando o próximo');
+    expect(log).toContain('B: B não devolveu uma imagem pronta. → tentando o próximo');
+    expect(log).toContain('C: C não devolveu uma imagem pronta. → tentando o próximo');
+    // se for o último, o erro real é propagado
+    const only = chainProviders([mk('x', async () => ok('x')), failed]);
+    const onlyFailed = chainProviders([failed, failed]);
+    expect(only.id).toBe('x');
+    await expect(onlyFailed.generateImage(req)).rejects.toThrow('content_policy_violation');
   });
 
   it('o último provedor propaga o erro', async () => {

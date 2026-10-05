@@ -19,27 +19,37 @@ export const providerLog = (p: ChainedProvider, r?: GenerationResult | null): st
 /** Mensagem para o log do job (qualquer erro; limitada): é o que o Studio mostra em "Gerações recentes". */
 const logMessage = (e: unknown): string => (e instanceof Error ? e.message : 'erro').slice(0, 200);
 
-/** Provedor que tenta a lista em ordem; quem falha sai da lista (menos o último, que propaga o erro). Qualquer erro avança. */
+/**
+ * Provedor que tenta a lista em ordem. A lista é IMUTÁVEL: cada chamada (cada variação, mesmo em paralelo) percorre a sequência inteira
+ * por conta própria, então um provedor que falhou numa variação continua elegível para as outras (e para a próxima tentativa).
+ * Qualquer erro avança; resultado "failed" / sem mídia / job sem id também conta como falha (o erro real do provedor fica no log).
+ * O último provedor propaga o erro.
+ */
 export function chainProviders(list: ServerCreativeProvider[], warn: (m: string) => void = () => undefined): ChainedProvider {
-  let alive = [...list];
   let current = list[0]!;
   const log: string[] = [];
+  const note = (msg: string) => {
+    if (!log.includes(msg)) log.push(msg);
+  };
   const run = async (fn: (p: ServerCreativeProvider) => Promise<GenerationResult>): Promise<GenerationResult> => {
-    for (;;) {
-      const p = alive[0]!;
+    let lastErr: unknown = null;
+    for (const p of list) {
       try {
         const r = await fn(p);
+        if (r.status === 'failed' || (r.status === 'ready' && !r.assetUrl && !r.bytes) || (r.status === 'generating' && !r.externalJobId))
+          throw new Error(r.raw || `${p.label} não devolveu uma imagem pronta.`);
         current = p;
         const msg = `Usado: ${r.note ?? p.label}`;
         if (log[log.length - 1] !== msg) log.push(msg);
         return r;
       } catch (e) {
-        if (alive.length === 1) throw e;
+        lastErr = e;
+        if (p === list[list.length - 1]) throw e;
         warn(`[creative-chain] ${p.id} falhou, tentando o próximo: ${logMessage(e)}`);
-        log.push(`${p.label}: ${logMessage(e)} → tentando o próximo`);
-        alive = alive.filter((x) => x !== p);
+        note(`${p.label}: ${logMessage(e)} → tentando o próximo`);
       }
     }
+    throw lastErr;
   };
   return {
     get id() { return current.id; },

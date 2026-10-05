@@ -18,17 +18,29 @@ describe('diretor de arte', () => {
     expect(ws).toBe('ws');
     expect(req.name).toBe('art_direction');
     expect(req.schema.required).toHaveLength(13);
-    expect(req.prompt).toContain('Composição para 9:16: vertical frame');
-    expect(req.prompt).toContain('"use the product exactly as in the reference images"');
+    expect(req.prompt).toContain('Composição para 9:16: enquadramento vertical');
+    expect(req.prompt).toContain('"Use o produto exatamente como nas imagens de referência"');
     expect(req.prompt).toContain('PROMPTS QUE FUNCIONARAM PARA ESTA MARCA');
     expect(req.prompt).toContain('\n- b\n- c\n- d'); // só os 3 últimos
     expect(req.prompt).not.toContain('\n- a\n');
     // negative vazio cai no padrão + proibidos da marca; produto de referência garantido; listas normalizadas
     expect(ad.negative).toBe(`${BASE_NEGATIVE}, logos de concorrentes, texto`);
-    expect(ad.prompt_final).toBe('A cold beer on wood Use the product exactly as in the reference images.');
+    expect(ad.prompt_final).toBe('A cold beer on wood Use o produto exatamente como nas imagens de referência.');
     expect(ad.color_palette).toEqual([]);
     expect(ad.video_shots).toEqual([]);
     expect(ad.aspect_ratio).toBe('9:16');
+  });
+
+  it('direção de arte em pt-BR: o prompt manda escrever TUDO em português e não manda mais o prompt_final em inglês', async () => {
+    const ai = { json: jest.fn(async () => ART) };
+    await buildVisualPrompt(ai as any, brief({ aspectRatio: '4:5' }));
+    const prompt = (ai.json.mock.calls[0] as any)[1].prompt as string;
+    expect(prompt).toContain('somente em português do Brasil');
+    expect(prompt).toContain('prompt_final em português do Brasil, 60 a 120 palavras');
+    expect(prompt).toContain('Composição para 4:5: assunto nos dois terços inferiores');
+    expect(prompt).not.toMatch(/em inglês|in English|exactly as in/i);
+    expect(BASE_NEGATIVE).toContain('anatomia deformada');
+    expect(BASE_NEGATIVE).not.toMatch(/deformed|blurry/);
   });
 
   it('vídeo pede tomadas; proporção desconhecida usa a composição 1:1; prompt vazio é erro', async () => {
@@ -40,10 +52,10 @@ describe('diretor de arte', () => {
     await expect(buildVisualPrompt(empty as any, brief())).rejects.toThrow('O diretor de arte não devolveu o prompt.');
   });
 
-  it('providerPrompt: sem texto na imagem por padrão; texto curto permitido quando pedido; sempre "Avoid"', () => {
-    expect(providerPrompt({ prompt_final: 'X.', negative: 'blurry', text_in_image: 'none' })).toBe('X. No text, letters or logos anywhere in the image. Avoid: blurry.');
-    expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: '' })).toContain('No text, letters or logos');
-    expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: 'Promo' })).toBe('X. The only text allowed is "Promo". Avoid: n.');
+  it('providerPrompt: sem texto na imagem por padrão; texto curto permitido quando pedido; sempre "Evite"', () => {
+    expect(providerPrompt({ prompt_final: 'X.', negative: 'blurry', text_in_image: 'none' })).toBe('X. Não inclua texto, letras nem logotipos na imagem. Evite: blurry.');
+    expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: '' })).toContain('Não inclua texto, letras nem logotipos');
+    expect(providerPrompt({ prompt_final: 'X.', negative: 'n', text_in_image: 'Promo' })).toBe('X. O único texto permitido é "Promo". Evite: n.');
   });
 });
 

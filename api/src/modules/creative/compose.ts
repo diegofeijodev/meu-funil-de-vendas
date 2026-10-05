@@ -7,7 +7,7 @@ import { ImageService, Img } from '../media/image.service';
 import type { LogoPosition, TextLayout } from './visual-style';
 
 // opentype.js 2.x não traz tipos e é UMD/CJS: `require` mantém o jest e o ts-node simples.
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const opentype: any = require('opentype.js');
 
 export type RGB = [number, number, number];
