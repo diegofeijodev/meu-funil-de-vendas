@@ -4,6 +4,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl, EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { UserError } from '../media/user-error';
+import { testOverridesAllowed } from '../../common/config/test-overrides';
 
 /** Teto do corpo de qualquer resposta de servidor MCP / OAuth (5 MB). */
 export const MAX_MCP_BODY_BYTES = 5 * 1024 * 1024;
@@ -105,7 +106,7 @@ export class McpClient {
   ) {}
 
   private get allowLocal() {
-    return this.env.NODE_ENV !== 'production';
+    return testOverridesAllowed(this.env);
   }
 
   assertUrl(raw: string): string {

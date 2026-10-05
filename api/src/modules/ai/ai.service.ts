@@ -9,6 +9,7 @@ import { isValidVideoJobId } from './video-job-id';
 import {
   AI_FETCH, AI_GUARDED_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
+import { testOverridesAllowed } from '../../common/config/test-overrides';
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const OPENAI = 'https://api.openai.com/v1';
@@ -54,7 +55,7 @@ export class AiService {
     @Optional() @Inject(AI_GUARDED_FETCH) private readonly guarded?: AiFetch,
   ) {
     // Fail-closed: em produção o download de URLs do provedor SEMPRE passa pelo fetch com DNS verificado (SSRF).
-    if (env.NODE_ENV === 'production' && !guarded) throw new Error('AI_GUARDED_FETCH ausente em produção: o download de vídeo exige o fetch guardado (SSRF).');
+    if (!testOverridesAllowed(env) && !guarded) throw new Error('AI_GUARDED_FETCH ausente fora de desenvolvimento/teste: o download de vídeo exige o fetch guardado (SSRF).');
   }
 
   model(id?: string): string {
@@ -447,7 +448,7 @@ export class AiService {
    * seguidos à mão (≤ 4) revalidando cada salto, a chave só vai ao host original e o corpo é lido com teto.
    */
   private async downloadGeminiVideo(uri: string, key: string): Promise<Buffer> {
-    const allowLocal = this.env.NODE_ENV !== 'production';
+    const allowLocal = testOverridesAllowed(this.env);
     const fetcher = this.guarded ?? this.http;
     let url = this.blockedIfUnsafe(uri, allowLocal);
     const originHost = new URL(url).host;

@@ -4,6 +4,7 @@ import { Env } from '../../common/config/env.validation';
 import { overrideBase } from '../../common/config/test-overrides';
 import { assertExternalUrl, EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { VaultService } from '../vault/vault.service';
+import { testOverridesAllowed } from '../../common/config/test-overrides';
 
 export type ChannelResponse = { status: number; ok: boolean; text: string };
 
@@ -22,7 +23,7 @@ export class ChannelHttp {
     @Inject(EXTERNAL_FETCH) private readonly http: ExternalFetch,
     @Inject(ENV) private readonly env: Pick<Env, 'NODE_ENV' | 'META_GRAPH_BASE_URL' | 'RESEND_API_URL' | 'CALCOM_API_URL'>,
   ) {
-    this.allowLocal = env.NODE_ENV !== 'production';
+    this.allowLocal = testOverridesAllowed(env);
   }
 
   private override(value: string | undefined, fallback: string): string {

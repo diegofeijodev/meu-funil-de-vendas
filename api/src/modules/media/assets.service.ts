@@ -11,6 +11,7 @@ import { aspectFor, TargetFormat, targetFromAspect } from './formats';
 import { ImageService } from './image.service';
 import { notFound, UserError } from './user-error';
 import { readVideoMeta, validateImageForInstagram, validateVideoForInstagram } from './video-meta';
+import { testOverridesAllowed } from '../../common/config/test-overrides';
 
 export const MEDIA_BUCKET = 'creative-assets';
 /** Teto do que se baixa de um provedor/Canva para a biblioteca. */
@@ -98,7 +99,7 @@ export class AssetsService {
 
   /** https público; redirecionamentos seguidos à mão (≤ 5) revalidando CADA salto; corpo lido em streaming e abortado ao passar do teto. */
   private async downloadExternal(first: string): Promise<{ bytes: Uint8Array; mime: string | null }> {
-    const allowLocal = this.env.NODE_ENV !== 'production';
+    const allowLocal = testOverridesAllowed(this.env);
     let url = assertExternalUrl(first, allowLocal, 'endereço da mídia');
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const res = await this.http(url, { redirect: 'manual', signal: AbortSignal.timeout(120_000) });

@@ -110,7 +110,7 @@ export function createGuardedFetch(allowLocal: boolean, resolver?: Resolver): Ex
 
 /**
  * URL externa permitida: https (http só em dev apontando para máquina local) e nunca para a rede interna em produção.
- * Devolve a URL normalizada. `allowLocal` (NODE_ENV ≠ production) libera só o loopback da própria máquina.
+ * Devolve a URL normalizada. `allowLocal` (NODE_ENV = development|test) libera só o loopback da própria máquina.
  */
 export function assertExternalUrl(raw: string, allowLocal: boolean, what = 'endereço'): string {
   let u: URL;

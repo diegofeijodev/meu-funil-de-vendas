@@ -101,7 +101,10 @@ describe('McpClient — segurança de rede e redirecionamentos', () => {
     expect(await status(c.listTools('https://localhost/mcp', null))).toContain('rede interna');
     expect(await status(c.listTools('https://169.254.169.254/latest', null))).toContain('rede interna');
     expect(await status(c.listTools('https://10.0.0.7/mcp', null))).toContain('rede interna');
-    // fora de produção, localhost vale (desenvolvimento)
+    // lista de permissão: NODE_ENV ausente (ou fora de development|test) também bloqueia a rede interna
+    const none = new McpClient(((u: string, i?: RequestInit) => Promise.resolve(mcpServer().fetch(u, i ?? {}))) as any, {} as any);
+    expect(await status(none.listTools('https://localhost/mcp', null))).toContain('rede interna');
+    // em development, localhost vale
     const dev = mcpServer();
     expect((await clientFor(dev.fetch, 'development').listTools('http://localhost:9000/mcp', null)).length).toBe(2);
   });
