@@ -221,6 +221,7 @@ export class MediaGenerationService {
       // O review_reason fica (a pessoa vê o motivo); só approvePost o limpa.
       status: requires === false && !wasFlagged(post) ? 'ready' : 'pending_approval',
       last_error: null,
+      failure_kind: null,
       ai_provider: provider.id,
       ai_generation_log: this.store.appendLog(post, { step: 'media', provider: provider.id, provider_log: providerLog(provider), items: media.length, cost, instructions }),
     });
@@ -316,6 +317,7 @@ export class MediaGenerationService {
             creative_brief: { ...post.creative_brief, art_direction: res.ad, visual_prompt: res.ad.prompt_final, variations: res.variations },
             status: requires === false && !wasFlagged(post) ? 'ready' : 'pending_approval',
             last_error: null,
+            failure_kind: null,
             ai_provider: provider.id,
             ai_generation_log: this.store.appendLog(post, {
               step: 'media',
@@ -357,6 +359,7 @@ export class MediaGenerationService {
       await this.store.patchPost(postId, {
         status: 'failed',
         last_error: errText(e),
+        failure_kind: 'media',
         ai_generation_log: this.store.appendLog(post, {
           step: 'media',
           status: 'failed',
@@ -388,7 +391,7 @@ export class MediaGenerationService {
       if ((post.creative_brief as { pending_job?: unknown } | null)?.pending_job) continue;
       const got = await this.prisma.ig_posts.updateMany({
         where: { id: post.id, status: 'generating', AND: [leaseFree()] },
-        data: { status: 'failed', last_error: GENERATION_INTERRUPTED, lease_until: null },
+        data: { status: 'failed', last_error: GENERATION_INTERRUPTED, lease_until: null, failure_kind: 'media' },
       });
       if (!got.count) continue;
       swept.push(post.id);
@@ -441,7 +444,7 @@ export class MediaGenerationService {
       } catch (e) {
         if (e instanceof PublishClaimLost) continue; // o lease foi assumido por outro ciclo: ele conclui o job
         const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
-        await this.store.patchPost(post.id, { status: 'failed', last_error: errText(e), creative_brief: brief });
+        await this.store.patchPost(post.id, { status: 'failed', last_error: errText(e), failure_kind: 'media', creative_brief: brief });
         out.push({ post: post.id, status: 'failed', error: errText(e) });
       } finally {
         await lease.release();

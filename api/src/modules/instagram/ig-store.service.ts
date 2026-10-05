@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { notFound } from '../media/user-error';
-import { AutopilotEventKind, PostRow } from './ig-types';
+import { AutopilotEventKind, PostRow, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 
 /** Erros de regra (nunca repetidos pela fila). */
 export class Guardrail extends Error {}
@@ -126,6 +126,11 @@ export class IgStore {
     await this.prisma.publishing_jobs.updateMany({
       where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending' },
       data: { status: 'cancelled', locked_at: null },
+    });
+    // Posts da programação que já estavam na fila voltam para "pronto" (com o motivo): reagendados sozinhos quando o token for renovado.
+    await this.prisma.ig_posts.updateMany({
+      where: { workspace_id: workspaceId, run_id: { not: null }, status: 'scheduled' },
+      data: { status: 'ready', last_error: TOKEN_EXPIRED_POST_MSG },
     });
     await this.logEvent({
       workspace_id: workspaceId,

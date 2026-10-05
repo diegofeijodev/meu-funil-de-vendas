@@ -2,7 +2,7 @@ import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited } f
 import { MetaError } from '../meta-graph';
 import { fullCaption, PublishingService } from '../publishing.service';
 import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
-import { igWorld, IgWorld, seedPost, uuid } from './harness';
+import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 import { WS_B } from '../../media/__tests__/mem';
 
 const WS = igWorld().WS_A;
@@ -436,11 +436,18 @@ describe('scheduleAutomated', () => {
     const r = (await svc.scheduleAutomated(late.id)) as { scheduled: string };
     expect(Date.parse(r.scheduled) - Date.now()).toBeLessThan(61e3);
     const origin = Date.now() - 20 * 3600e3;
-    const lost = seedPost(w, { automation: 'publish', status: 'ready', scheduled_at: new Date(origin) });
+    // Modo "approval" (já aprovado): mais de 12 h → mesmo horário do dia seguinte (regra antiga).
+    const lost = seedPost(w, { automation: 'approval', status: 'approved', scheduled_at: new Date(origin) });
     const r2 = (await svc.scheduleAutomated(lost.id)) as { scheduled: string };
     expect(Date.parse(r2.scheduled)).toBeGreaterThan(Date.now() + 30 * 60e3);
     expect(Date.parse(r2.scheduled) - origin).toBe(86400e3);
     expect(w.t['ig_autopilot_events']!.rows.map((e) => e.message).join('|')).toMatch(/Horário perdido/);
+    // Modo "publish": o cronograma é respeitado — mais de 12 h de atraso pula o horário (não empurra 1 dia).
+    const skipped = seedPost(w, { automation: 'publish', status: 'ready', scheduled_at: new Date(origin) });
+    expect(await svc.scheduleAutomated(skipped.id)).toEqual({ skipped: 'prazo vencido' });
+    expect(skipped).toMatchObject({ status: 'cancelled', last_error: 'Pulado automaticamente: o horário passou há mais de 12 h.' });
+    expect(w.t['ig_autopilot_events']!.rows.at(-1)).toMatchObject({ kind: 'post_skipped', level: 'warn', post_id: skipped.id });
+    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === skipped.id)).toHaveLength(0);
     const noAuto = seedPost(w, { status: 'ready' });
     expect(await svc.scheduleAutomated(noAuto.id)).toEqual({ skipped: 'sem mídia' });
   });
@@ -472,5 +479,100 @@ describe('IgStore', () => {
   });
   it('ContainerPending é erro próprio', () => {
     expect(new ContainerPending('x')).toBeInstanceOf(Error);
+  });
+});
+
+describe('A4 — falha de publicação não refaz mídia; sem conta/token o post da programação volta sozinho', () => {
+  const runJob = (w: IgWorld, postId: string, over: Record<string, unknown> = {}) => {
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: postId, target: 'instagram', status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null, ...over };
+    w.t['publishing_jobs']!.rows.push(j);
+    return j;
+  };
+
+  it('scheduleAutomated sem conta: fica "pronto" com o aviso, sem job (nem simulado); quando a conta conecta, agenda e limpa o aviso', async () => {
+    const w = igWorld();
+    const svc = new PublishingService(w.store, w.graph, jest.fn() as any);
+    const p = seedPost(w, { automation: 'publish', status: 'ready', run_id: uuid(), scheduled_at: new Date(Date.now() + 3 * 3600e3) });
+    expect(await svc.scheduleAutomated(p.id)).toEqual({ skipped: 'sem conta' });
+    expect(p).toMatchObject({ status: 'ready', last_error: 'Conecte o Instagram para publicar.' });
+    expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
+    w.t['instagram_accounts']!.rows.push({ id: uuid(), workspace_id: WS, ig_user_id: IG, status: 'connected' });
+    expect(await svc.scheduleAutomated(p.id)).toMatchObject({ scheduled: p.scheduled_at.toISOString() });
+    expect(p).toMatchObject({ status: 'scheduled', last_error: null, failure_kind: null });
+    expect(w.t['publishing_jobs']!.rows.map((j) => [j.mode, j.status])).toEqual([['live', 'pending']]);
+  });
+
+  it('fila: guardrail vira failure_kind "publish" (sem refazer mídia); erro comum que ainda vai tentar de novo não marca', async () => {
+    const { w, svc } = setup();
+    const mock = seedPost(w, { media: [{ url: 'https://picsum.photos/x', type: 'image', order: 0 }] });
+    runJob(w, mock.id);
+    await svc.runPublishingQueue();
+    expect(mock).toMatchObject({ status: 'failed', failure_kind: 'publish' });
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new Error('A Meta recusou') : undefined));
+    const flaky = seedPost(w);
+    runJob(w, flaky.id);
+    await svc.runPublishingQueue();
+    expect(flaky.status).toBe('scheduled');
+    expect(flaky.failure_kind ?? null).toBeNull();
+  });
+
+  it('fila: post da programação sem conta (guardrail) volta para "pronto" com o aviso — nunca "failed"', async () => {
+    const w = igWorld();
+    const svc = new PublishingService(w.store, w.graph, jest.fn(async () => new Response(null, { status: 200 })) as any);
+    useVirtualClock(svc);
+    const p = seedPost(w, { status: 'scheduled', automation: 'publish', run_id: uuid() });
+    const j = runJob(w, p.id);
+    const res = await svc.runPublishingQueue();
+    expect(res[0]).toMatchObject({ job: j.id, status: 'waiting_account' });
+    expect(p).toMatchObject({ status: 'ready', last_error: 'Conecte o Instagram para publicar.' });
+    expect(p.failure_kind ?? null).toBeNull();
+    // post SEM programação (plano/manual): segue o caminho antigo (failed + publish)
+    const manual = seedPost(w, { status: 'scheduled' });
+    runJob(w, manual.id);
+    await svc.runPublishingQueue();
+    expect(manual).toMatchObject({ status: 'failed', failure_kind: 'publish' });
+  });
+
+  it('token vencido: o post da fila e os agendados da programação voltam para "pronto" com o motivo; os do plano ficam como estavam', async () => {
+    const { w, svc } = setup();
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new MetaError('O token da Meta é inválido ou expirou.', 190) : undefined));
+    const runId = uuid();
+    const p = seedPost(w, { status: 'scheduled', automation: 'publish', run_id: runId });
+    runJob(w, p.id);
+    const queued = seedPost(w, { status: 'scheduled', automation: 'publish', run_id: runId });
+    const planPost = seedPost(w, { status: 'scheduled' });
+    await svc.runPublishingQueue();
+    expect(p).toMatchObject({ status: 'ready', last_error: 'Token da Meta expirado: reconecte o Instagram para publicar.' });
+    expect(queued).toMatchObject({ status: 'ready', last_error: 'Token da Meta expirado: reconecte o Instagram para publicar.' });
+    expect(planPost.status).toBe('scheduled');
+  });
+
+  it('varredor de publicação marca failure_kind "publish"; publicar com sucesso limpa', async () => {
+    const { w, svc } = setup();
+    const stuck = seedPost(w, { status: 'publishing', lease_until: null });
+    await svc.sweepStalePublishing();
+    expect(stuck).toMatchObject({ status: 'failed', failure_kind: 'publish' });
+    const ok = seedPost(w, { failure_kind: 'publish' });
+    await svc.publishInstagramPost(ok.id);
+    expect(ok).toMatchObject({ status: 'published', failure_kind: null });
+  });
+
+  it('Review Focus #1 — empresa sem conta com muitos prontos não trava as outras; reconectou, agenda sozinho (sem refazer mídia)', async () => {
+    const w = igWorld();
+    const s = igServices(w);
+    const auto = s.auto;
+    w.t['instagram_accounts']!.rows.push({ id: uuid(), workspace_id: WS_B, ig_user_id: 'igB', status: 'connected' });
+    const late = (ws: string, i: number) => seedPost(w, { workspace_id: ws, automation: 'publish', status: 'ready', run_id: uuid(), scheduled_at: new Date(Date.now() + (1 + i) * 60e3 + 3600e3) });
+    const blocked = Array.from({ length: 25 }, (_, i) => late(WS, i)); // WS_A sem conta, horários mais cedo
+    const other = seedPost(w, { workspace_id: WS_B, automation: 'publish', status: 'ready', run_id: uuid(), scheduled_at: new Date(Date.now() + 5 * 3600e3) });
+    const out = await auto.autoCalendarTick();
+    expect(out['scheduled']).toBe(1);
+    expect(other.status).toBe('scheduled');
+    expect(blocked.every((p) => p.status === 'ready')).toBe(true);
+    // a conta de WS_A conecta: no tick seguinte os prontos entram na fila (20 por tick), sem nova geração de mídia
+    w.t['instagram_accounts']!.rows.push({ id: uuid(), workspace_id: WS, ig_user_id: IG, status: 'connected' });
+    await auto.autoCalendarTick();
+    expect(blocked.filter((p) => p.status === 'scheduled')).toHaveLength(20);
+    expect(s.pipeline.run).not.toHaveBeenCalled();
   });
 });

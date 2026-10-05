@@ -260,14 +260,16 @@ describe('autoCalendarTick (a cada 5 min)', () => {
     const r = run(w, p, { status: 'active' });
     const ready = seedPost(w, { automation: 'publish', status: 'ready', plan_id: p.id, run_id: r.id, ...ALIGNED, scheduled_at: new Date(Date.now() + 3600e3) });
     const waitApproval = seedPost(w, { automation: 'approval', status: 'ready', approved_at: null, plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3 * 3600e3) });
-    const failed = seedPost(w, { automation: 'publish', status: 'failed', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { prompt: 'x', variations: 3 } });
-    const failedTwice = seedPost(w, { automation: 'publish', status: 'failed', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { auto_retried: true } });
+    const failed = seedPost(w, { automation: 'publish', status: 'failed', failure_kind: 'media', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { prompt: 'x', variations: 3 } });
+    const failedTwice = seedPost(w, { automation: 'publish', status: 'failed', failure_kind: 'media', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { auto_retried: true } });
+    const publishFail = seedPost(w, { automation: 'publish', status: 'failed', failure_kind: 'publish', plan_id: p.id, run_id: r.id, scheduled_at: new Date(Date.now() + 3600e3), creative_brief: { prompt: 'y' } });
     const out = await auto.autoCalendarTick();
     expect(out).toMatchObject({ filled: 0, scheduled: 1, rescheduled: 0 });
     expect(ready.status).toBe('scheduled');
     expect(waitApproval.status).toBe('ready');
     expect(failed).toMatchObject({ status: 'idea', creative_brief: { prompt: 'x', auto_retried: true, variations: 1 } });
     expect(failedTwice.status).toBe('failed');
+    expect(publishFail.status).toBe('failed'); // falha de publicação: a mídia não é refeita
     expect(r.status).toBe('active'); // ainda há posts em aberto
     void s;
   });

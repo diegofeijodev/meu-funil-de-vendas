@@ -666,8 +666,17 @@ export class AutoCalendarService {
     // 2a) Modo totalmente automático: post reprovado é reescrito pela IA (até 2 vezes; depois o horário é pulado). Antes de agendar:
     //     o post reescrito com a mídia mantida já é agendado neste mesmo tick; o reprovado AGORA no agendamento espera o próximo.
     out['rewritten'] = await this.rewriteFlagged().catch((e) => ({ error: errText(e) }));
-    // 2) Mídia pronta e ainda não agendada (ou aprovada agora): vai para a fila.
-    const ready = await this.prisma.ig_posts.findMany({ where: { automation: { not: null }, status: { in: ['ready', 'approved'] } }, orderBy: { scheduled_at: 'asc' }, take: 20, select: { id: true } });
+    // 2) Mídia pronta e ainda não agendada (ou aprovada agora): vai para a fila — só empresas com o Instagram conectado (sem conta o post
+    //    fica pronto com o aviso e entra aqui sozinho quando a conta conectar; uma empresa sem conta não ocupa as 20 vagas das outras).
+    const live = await this.prisma.instagram_accounts.findMany({ where: { status: 'connected', ig_user_id: { not: null } }, select: { workspace_id: true } });
+    const ready = live.length
+      ? await this.prisma.ig_posts.findMany({
+          where: { automation: { not: null }, status: { in: ['ready', 'approved'] }, workspace_id: { in: live.map((a) => a.workspace_id) } },
+          orderBy: { scheduled_at: 'asc' },
+          take: 20,
+          select: { id: true },
+        })
+      : [];
     let scheduled = 0;
     for (const p of ready) {
       const r = await this.publishing.scheduleAutomated(p.id).catch(async (e) => {
@@ -680,7 +689,8 @@ export class AutoCalendarService {
 
     // 2b) Falha na geração do criativo: uma nova tentativa automática (volta para "ideia").
     const failed = await this.prisma.ig_posts.findMany({
-      where: { automation: { not: null }, status: 'failed', scheduled_at: { gt: new Date(Date.now() - 12 * 3600e3) } },
+      // Só falha de MÍDIA ganha nova geração; falha de publicação (conta, token, limite, guardrail) não refaz o criativo à toa.
+      where: { automation: { not: null }, status: 'failed', failure_kind: 'media', scheduled_at: { gt: new Date(Date.now() - OVERDUE_MS) } },
       take: 10,
       select: { id: true, creative_brief: true },
     });

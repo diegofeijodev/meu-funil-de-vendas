@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserError } from '../media/user-error';
-import { fmtDate, IgFormat, PostRow } from './ig-types';
+import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { ContainerPending, Guardrail, IgStore, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
@@ -18,6 +18,8 @@ const STALE_LOCK_MS = 15 * 60e3;
  */
 const PUBLISH_LEASE_MS = 15 * 60e3;
 export const PUBLISH_INTERRUPTED = 'Publicação interrompida — tente publicar de novo.';
+/** Guardrail de publicação sem conta (texto do protótipo). Post da programação com ele volta para "pronto" em vez de falhar. */
+export const NO_ACCOUNT_GUARDRAIL = 'Nenhuma conta do Instagram conectada nesta empresa. Conecte em Instagram → Visão geral e agende de novo.';
 
 export type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string | null; error?: string };
 
@@ -82,7 +84,7 @@ export class PublishingService {
       this.prisma.publishing_jobs.create({
         data: { workspace_id: workspaceId, channel: 'instagram_organic', ig_post_id: postId, target: 'instagram', status: 'pending', mode: acc ? 'live' : 'mock', run_at: when },
       }),
-      this.prisma.ig_posts.update({ where: { id: postId }, data: { status: 'scheduled', scheduled_at: when, last_error: null } }),
+      this.prisma.ig_posts.update({ where: { id: postId }, data: { status: 'scheduled', scheduled_at: when, last_error: null, failure_kind: null } }),
     ]);
     return { ok: true, sandbox: !acc };
   }
@@ -113,8 +115,9 @@ export class PublishingService {
 
   /**
    * Agenda um post automático com mídia pronta. No modo "approval" só agenda depois de aprovado.
-   * Se a mídia ficou pronta depois do horário, publica o quanto antes (até 12 h de atraso);
-   * mais que isso, passa para o mesmo horário do dia seguinte.
+   * Sem conta do Instagram conectada: nada de job simulado — o post fica pronto com o aviso e o tick o agenda quando a conta conectar.
+   * Mídia pronta depois do horário: publica o quanto antes (até 12 h de atraso); passou disso, o modo "publish" pula o horário
+   * (o cronograma é respeitado) e o modo "approval" passa para o mesmo horário do dia seguinte.
    */
   async scheduleAutomated(postId: string): Promise<{ skipped: string } | { scheduled: string }> {
     const post = await this.prisma.ig_posts.findUnique({ where: { id: postId } });
@@ -122,14 +125,25 @@ export class PublishingService {
     if (!post?.automation || !Array.isArray(media) || !media.length) return { skipped: 'sem mídia' };
     if (!['ready', 'approved'].includes(post.status)) return { skipped: post.status };
     if (post.automation === 'approval' && !post.approved_at) return { skipped: 'aguardando aprovação' };
+    if (!(await this.store.liveAccount(post.workspace_id))) {
+      if (post.last_error !== NO_ACCOUNT_MSG && post.last_error !== TOKEN_EXPIRED_POST_MSG) {
+        await this.prisma.ig_posts.updateMany({ where: { id: postId, status: post.status }, data: { last_error: NO_ACCOUNT_MSG } });
+      }
+      return { skipped: 'sem conta' };
+    }
     const MIN = 60e3;
     let at = post.scheduled_at ? post.scheduled_at.getTime() : Date.now();
     const late = Date.now() - at;
     let msg: string;
     if (late <= 0) msg = `Agendado para ${fmtDate(new Date(at))}.`;
-    else if (late <= 12 * 3600e3) {
+    else if (late <= OVERDUE_MS) {
       at = Date.now() + MIN;
       msg = 'A mídia ficou pronta depois do horário: publicando agora.';
+    } else if (post.automation === 'publish') {
+      const reason = 'o horário passou há mais de 12 h.';
+      const got = await this.prisma.ig_posts.updateMany({ where: { id: postId, status: post.status }, data: { status: 'cancelled', last_error: `${SKIP_PREFIX}${reason}` } });
+      if (got.count) await this.store.logEvent({ workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: postId, kind: 'post_skipped', level: 'warn', message: `Horário pulado: ${reason}` });
+      return { skipped: 'prazo vencido' };
     } else {
       while (at < Date.now() + 30 * MIN) at += 86400e3;
       msg = `Horário perdido: reagendado para ${fmtDate(new Date(at))}.`;
@@ -239,7 +253,7 @@ export class PublishingService {
       if (active) continue;
       const got = await this.prisma.ig_posts.updateMany({
         where: { id: p.id, status: 'publishing', AND: [leaseFree()] },
-        data: { status: 'failed', last_error: PUBLISH_INTERRUPTED, lease_until: null },
+        data: { status: 'failed', last_error: PUBLISH_INTERRUPTED, lease_until: null, failure_kind: 'publish' },
       });
       if (!got.count) continue;
       swept.push(p.id);
@@ -286,7 +300,7 @@ export class PublishingService {
     if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline, lease);
 
     // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
-    if (!acc) throw new Guardrail('Nenhuma conta do Instagram conectada nesta empresa. Conecte em Instagram → Visão geral e agende de novo.');
+    if (!acc) throw new Guardrail(NO_ACCOUNT_GUARDRAIL);
 
     const ig = acc.ig_user_id as string;
     const limit = await this.graph.graph<{ data?: { quota_usage?: number }[] }>(ws, `/${ig}/content_publishing_limit`, { params: { fields: 'quota_usage' } }).catch((e) => {
@@ -341,6 +355,7 @@ export class PublishingService {
       ig_permalink: info.permalink ?? null,
       ig_creation_id: null,
       last_error: null,
+      failure_kind: null,
     });
     return { ok: true, sandbox: false, permalink: info.permalink ?? null };
   }
@@ -412,6 +427,8 @@ export class PublishingService {
         const retry = !tokenExpired && !blocked && (rate || attempts < MAX_ATTEMPTS);
         const post = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id } }) : null;
         if (tokenExpired && post) await this.store.handleTokenExpired(post.workspace_id, msg);
+        // Post da programação sem conta/token: volta para "pronto" (sem refazer mídia) e é reagendado sozinho quando a conta reconectar.
+        const backToReady = !!post?.run_id && (tokenExpired || (blocked && msg === NO_ACCOUNT_GUARDRAIL));
         if (post)
           await this.store.logEvent({
             workspace_id: post.workspace_id,
@@ -433,13 +450,18 @@ export class PublishingService {
           },
         });
         if (post)
-          await this.store.patchPost(post.id, {
-            status: retry ? 'scheduled' : 'failed',
-            last_error: msg,
-            retry_count: (post.retry_count ?? 0) + (rate ? 0 : 1),
-            ...(retry ? { scheduled_at: new Date(Date.now() + delay) } : {}),
-          });
-        results.push({ job: job.id, status: retry ? 'retry' : 'failed', error: msg });
+          await this.store.patchPost(
+            post.id,
+            backToReady
+              ? { status: 'ready', last_error: tokenExpired ? TOKEN_EXPIRED_POST_MSG : NO_ACCOUNT_MSG, ig_creation_id: null }
+              : {
+                  status: retry ? 'scheduled' : 'failed',
+                  last_error: msg,
+                  retry_count: (post.retry_count ?? 0) + (rate ? 0 : 1),
+                  ...(retry ? { scheduled_at: new Date(Date.now() + delay) } : { failure_kind: 'publish' }),
+                },
+          );
+        results.push({ job: job.id, status: backToReady ? 'waiting_account' : retry ? 'retry' : 'failed', error: msg });
       }
     }
     return results;

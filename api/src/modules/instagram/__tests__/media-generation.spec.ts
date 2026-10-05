@@ -33,7 +33,7 @@ describe('generatePostAssets — imagem única (pipeline)', () => {
     expect(post.media).toEqual([expect.objectContaining({ type: 'image', order: 0, width: 1080, height: 1080, ig_ready: true, issues: [] })]);
     expect(post.media[0].asset_id).toBeTruthy();
     expect(post.creative_brief).toMatchObject({ prompt: 'copo de chopp', visual_prompt: ART.prompt_final, art_direction: { prompt_final: ART.prompt_final }, variations: [expect.objectContaining({ winner: true })] });
-    expect(post).toMatchObject({ last_error: null, ai_provider: 'gemini' });
+    expect(post).toMatchObject({ last_error: null, ai_provider: 'gemini', failure_kind: null });
     expect(post.ai_generation_log.at(-1)).toMatchObject({ step: 'media', provider: 'gemini', items: 1, variations: 1, best_score: 40, cost: 3 });
   });
 
@@ -103,7 +103,7 @@ describe('generatePostAssets — imagem única (pipeline)', () => {
     const post = idea(w);
     const r = await gen.generatePostAssets(WS_A, post.id);
     expect(r).toEqual({ ok: false, error: 'x' });
-    expect(post).toMatchObject({ status: 'failed', last_error: 'x' });
+    expect(post).toMatchObject({ status: 'failed', last_error: 'x', failure_kind: 'media' });
     expect(post.ai_generation_log.at(-1)).toMatchObject({ step: 'media', status: 'failed', error: 'x', provider: null });
   });
 
@@ -159,8 +159,8 @@ describe('generatePostAssets — carrossel e vídeo', () => {
     expect(post.creative_brief.pending_job).toBeUndefined();
     expect(post.media).toHaveLength(1);
     expect(post.media[0]).toMatchObject({ type: 'video', order: 0 });
-    expect(post.status).toBe('scheduled'); // automação "publish": o piloto agenda assim que a mídia fica pronta (sem conta = sandbox)
-    expect(post.last_error).toBeNull();
+    expect(post).toMatchObject({ status: 'ready', last_error: 'Conecte o Instagram para publicar.' }); // sem conta: pronto, sem job simulado
+    expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
     expect(post.ai_generation_log.at(-1)).toMatchObject({ step: 'media', items: 1, cost: 6 });
   });
 
@@ -173,7 +173,7 @@ describe('generatePostAssets — carrossel e vídeo', () => {
     s.provider.getGenerationStatus.mockImplementation(async (id: string) => ({ status: id === 'veo:z' && failing.status === 'generating' ? 'failed' : 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: id, cost: 0 }));
     const out = await gen.pollPendingMedia();
     expect(out).toEqual(expect.arrayContaining([{ post: failing.id, status: 'failed', error: 'O provedor informou falha na geração da mídia.' }]));
-    expect(failing).toMatchObject({ status: 'failed', last_error: 'O provedor informou falha na geração da mídia.' });
+    expect(failing).toMatchObject({ status: 'failed', last_error: 'O provedor informou falha na geração da mídia.', failure_kind: 'media' });
     expect(failing.creative_brief.pending_job).toBeUndefined();
     expect(noJob.status).toBe('generating');
     void timeout;
@@ -303,7 +303,7 @@ describe('lease do poller e varredor de geração', () => {
     const live = idea(w, { status: 'generating', creative_brief: {}, lease_until: new Date(Date.now() + 20 * 60e3) });
     const withJob = idea(w, { format: 'reel', status: 'generating', creative_brief: pending('veo:j'), lease_until: null });
     expect((await gen.sweepStaleGenerating()).sort()).toEqual([dead.id, legacy.id].sort());
-    expect(dead).toMatchObject({ status: 'failed', last_error: 'Geração da mídia interrompida — tente gerar de novo.', lease_until: null });
+    expect(dead).toMatchObject({ status: 'failed', last_error: 'Geração da mídia interrompida — tente gerar de novo.', lease_until: null, failure_kind: 'media' });
     expect(legacy.status).toBe('failed');
     expect(live.status).toBe('generating');
     expect(withJob.status).toBe('generating');

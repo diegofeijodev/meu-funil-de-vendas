@@ -131,7 +131,7 @@ export class InstagramActionsService {
     } catch (e) {
       const msg = errText(e);
       if (e instanceof PublishClaimLost) return { ok: false as const, sandbox: false, error: msg };
-      await this.store.patchPost(postId, { status: 'failed', last_error: msg });
+      await this.store.patchPost(postId, { status: 'failed', last_error: msg, failure_kind: 'publish' });
       return { ok: false as const, sandbox: false, error: msg };
     }
   }
