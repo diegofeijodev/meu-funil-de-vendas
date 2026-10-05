@@ -294,6 +294,6 @@ describe('áudio do vídeo nos provedores (C4)', () => {
     await h.generateVideo({ ...req, kind: 'video', aspectRatio: '9:16', audio: false });
     await h.generateVideo({ ...req, kind: 'video', aspectRatio: '9:16' });
     const gens = mcp.callTool.mock.calls.filter((c) => c[1] === 'generate_video');
-    expect(gens.map((c) => (c[2] as any).params.sound)).toEqual([false, true]);
+    expect(gens.map((c) => (c as any[])[2].params.sound)).toEqual([false, true]);
   });
 });
