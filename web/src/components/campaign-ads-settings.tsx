@@ -18,6 +18,7 @@ import {
   type AutomationRules,
 } from "@/lib/meta/ads-config";
 import { listMetaAudiences, saveCampaignAdsSettings, syncCrmCustomerAudience } from "@/lib/meta/ads-ops.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Audience = { id: string; name: string; subtype: string; size: number | null };
 
@@ -56,7 +57,7 @@ export function CampaignAdsSettings({
     try {
       setAudiences(await loadAudiences({ data: { workspaceId } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível carregar os públicos da Meta.");
+      toast.error(apiErrorMessage(e, "Não foi possível carregar os públicos da Meta."));
     } finally {
       setBusy(null);
     }
@@ -69,7 +70,7 @@ export function CampaignAdsSettings({
       toast.success(`Público atualizado na Meta com ${r.uploaded} contatos do CRM.`);
       await fetchAudiences();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível criar o público.");
+      toast.error(apiErrorMessage(e, "Não foi possível criar o público."));
     } finally {
       setBusy(null);
     }
@@ -93,7 +94,7 @@ export function CampaignAdsSettings({
       qc.invalidateQueries({ queryKey: ["campaign", campaign.id] });
       toast.success("Configuração salva.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+      toast.error(apiErrorMessage(e, "Não foi possível salvar."));
     } finally {
       setBusy(null);
     }

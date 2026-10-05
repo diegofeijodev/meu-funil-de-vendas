@@ -22,6 +22,7 @@ import {
   testIntegration,
   type ChannelSecretKey,
 } from "@/lib/crm-integrations.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export type ChannelIntegration = {
   id: string;
@@ -85,7 +86,7 @@ function useRunner(workspaceId: string | null, onDone: () => void) {
       await fn();
       onDone();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Algo deu errado. Tente novamente.");
+      toast.error(apiErrorMessage(e, "Algo deu errado. Tente novamente."));
     } finally {
       setBusy(false);
     }
@@ -135,7 +136,7 @@ export function SecretField({
               qc.invalidateQueries({ queryKey: ["channel-secrets", workspaceId] });
               toast.success("Credencial salva no servidor.");
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+              toast.error(apiErrorMessage(e, "Não foi possível salvar."));
             }
           }}
         >
@@ -501,7 +502,7 @@ export function FailedEventsCard({ workspaceId, canEdit }: { workspaceId: string
                     await retry({ data: { workspaceId: workspaceId!, eventId: ev.id as string } });
                     toast.success("Reprocessado com sucesso.");
                   } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Falhou de novo.");
+                    toast.error(apiErrorMessage(e, "Falhou de novo."));
                   } finally {
                     setBusy(null);
                     qc.invalidateQueries({ queryKey: ["crm-failed-events", workspaceId] });

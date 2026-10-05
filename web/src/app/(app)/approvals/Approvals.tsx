@@ -10,6 +10,7 @@ import { PageHeader, Section, EmptyState, StatusPill } from "@/components/ui-bit
 import { Button } from "@/components/ui/button";
 import { shortDate } from "@/lib/format";
 import { IgApprovalList } from "@/components/instagram/approvals";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const ENTITY: Record<string, string> = {
   campaign: "Campanha",
@@ -39,7 +40,7 @@ export function Approvals() {
       qc.invalidateQueries({ queryKey: ["approvals", workspaceId] });
       toast.success(status === "approved" ? "Aprovado. A ação foi liberada." : "Rejeitado.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível registrar a decisão.");
+      toast.error(apiErrorMessage(e, "Não foi possível registrar a decisão."));
     }
   };
 

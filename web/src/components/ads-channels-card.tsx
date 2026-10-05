@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { HowTo } from "@/components/how-to";
 import { useWorkspace } from "@/lib/workspace";
 import { adsChannelLoginUrl, adsChannelsStatus, listAdsChannelAccounts, saveAdsChannelApp } from "@/lib/ads/channels.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Channel = "google" | "tiktok";
 
@@ -111,7 +112,7 @@ function ChannelBox({ channel, missing, redirectUri, canManage, workspaceId }: {
     try {
       await fn();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível concluir.");
+      toast.error(apiErrorMessage(e, "Não foi possível concluir."));
     } finally {
       setBusy(null);
     }

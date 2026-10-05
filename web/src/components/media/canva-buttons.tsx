@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { canvaImportDesign, canvaListDesigns, canvaSendAsset } from "@/lib/creative/canva.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** Envia as mídias escolhidas para os uploads do Canva da empresa. */
 export function SendToCanvaButton({ workspaceId, assetIds, disabled }: { workspaceId: string; assetIds: string[]; disabled?: boolean }) {
@@ -27,7 +28,7 @@ export function SendToCanvaButton({ workspaceId, assetIds, disabled }: { workspa
             await send({ data: { workspaceId, assetId: id } });
             ok++;
           } catch (e) {
-            errors.push(e instanceof Error ? e.message : "falhou");
+            errors.push(apiErrorMessage(e, "falhou"));
           }
         }
         setBusy(false);
@@ -55,7 +56,7 @@ export function ImportFromCanvaButton({ workspaceId, onImported }: { workspaceId
     try {
       setDesigns(await list({ data: { workspaceId, query: query || null } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível listar os designs.");
+      toast.error(apiErrorMessage(e, "Não foi possível listar os designs."));
     } finally {
       setBusy(null);
     }
@@ -68,7 +69,7 @@ export function ImportFromCanvaButton({ workspaceId, onImported }: { workspaceId
       onImported();
       setOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível importar.");
+      toast.error(apiErrorMessage(e, "Não foi possível importar."));
     } finally {
       setBusy(null);
     }

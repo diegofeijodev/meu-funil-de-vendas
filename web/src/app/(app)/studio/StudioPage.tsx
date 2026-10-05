@@ -25,6 +25,7 @@ import { LayoutSelect, VariationsGrid } from "@/components/creative/art-directio
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export function Studio() {
   const { workspaceId, canEdit } = useWorkspace();
@@ -127,7 +128,7 @@ export function Studio() {
       const r = await runPreview({ data: payload() });
       setArt({ ad: r.artDirection as Record<string, unknown>, prompt: r.artDirection.prompt_final });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível montar o prompt visual.");
+      toast.error(apiErrorMessage(e, "Não foi possível montar o prompt visual."));
     } finally {
       setBusy(false);
     }
@@ -200,7 +201,7 @@ export function Studio() {
       else if (res.status === "generating") toast.success("A IA está gerando a nova versão. Ela aparece aqui quando ficar pronta.");
       else toast.success("Nova versão gerada.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a nova versão.");
+      toast.error(apiErrorMessage(e, "Não foi possível gerar a nova versão."));
     } finally {
       setBusy(false);
     }
@@ -532,7 +533,7 @@ function CreativeExtras({ extras, creativeId, isVideo }: { extras: unknown; crea
             const r = await pack({ data: { creativeId } });
             window.open(r.url, "_blank");
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Não foi possível montar o pacote.");
+            toast.error(apiErrorMessage(err, "Não foi possível montar o pacote."));
           } finally {
             setBusy(false);
           }

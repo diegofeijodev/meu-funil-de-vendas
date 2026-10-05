@@ -268,7 +268,7 @@ function LeadEmailForm({ workspaceId, leadId, onSent }: { workspaceId: string; l
             toast.success("E-mail enviado.");
             onSent();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : "Não foi possível enviar.");
+            toast.error(apiErrorMessage(e, "Não foi possível enviar."));
           } finally {
             setBusy(false);
           }

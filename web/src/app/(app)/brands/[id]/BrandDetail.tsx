@@ -560,7 +560,7 @@ function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: Bran
       setLists(Object.fromEntries(GUIDE_LISTS.map((l) => [l.key, listField((guide as Record<string, unknown>)[l.key]).join(", ")])));
       toast.success("Guia sugerido pela IA. Revise e clique em Salvar guia visual.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível gerar o guia.");
+      toast.error(apiErrorMessage(e, "Não foi possível gerar o guia."));
     } finally {
       setBusy(null);
     }

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, MediaThumb, type IgPost } from "./shared";
 import { IgAutoCalendar } from "./auto-calendar";
 import { useWorkspace } from "@/lib/workspace";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const DAY = 86400e3;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -98,7 +99,7 @@ export function IgCalendar({
       toast.success("Post reagendado.");
       qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao reagendar.");
+      toast.error(apiErrorMessage(e, "Falha ao reagendar."));
     }
   };
 

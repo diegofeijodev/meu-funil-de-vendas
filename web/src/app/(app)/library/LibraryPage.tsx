@@ -62,6 +62,7 @@ import {
 } from "@/lib/media/export.functions";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Asset = {
   id: string;
@@ -248,7 +249,7 @@ export function LibraryPage() {
       if (ok) toast.success(typeof ok === "function" ? ok(r) : ok);
       return r;
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Algo deu errado. Tente novamente.");
+      toast.error(apiErrorMessage(e, "Algo deu errado. Tente novamente."));
       return null;
     } finally {
       setBusy(null);
@@ -330,7 +331,7 @@ export function LibraryPage() {
         if (!r.igReady)
           toast.warning(`${file.name}: ${r.issues.join(" ") || "fora do padrão do Instagram."}`);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : `Falha ao enviar ${file.name}.`);
+        toast.error(apiErrorMessage(e, `Falha ao enviar ${file.name}.`));
       }
     }
     setBusy(null);

@@ -26,6 +26,7 @@ import {
   useIgAccount,
   type IgPost,
 } from "./shared";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export function IgOverview({
   workspaceId,
@@ -50,7 +51,7 @@ export function IgOverview({
       qc.invalidateQueries({ queryKey: ["ig-metrics", workspaceId] });
       toast.success(`${r.imported} post(s) novo(s) importado(s) · resultados de ${r.metrics} atualizados.`);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível importar."),
+    onError: (e) => toast.error(apiErrorMessage(e, "Não foi possível importar.")),
   });
   const opts = useMutation({ mutationFn: () => list({ data: { workspaceId } }) });
   const loadOptions = () => {
@@ -68,7 +69,7 @@ export function IgOverview({
         toast.success(`Instagram @${r.username} conectado.`);
       } else toast.error(r.error);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível conectar."),
+    onError: (e) => toast.error(apiErrorMessage(e, "Não foi possível conectar.")),
   });
   const dis = useMutation({
     mutationFn: () => disconnect({ data: { workspaceId } }),
@@ -76,7 +77,7 @@ export function IgOverview({
       qc.invalidateQueries({ queryKey: ["ig-account", workspaceId] });
       toast.success("Instagram desconectado.");
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível desconectar."),
+    onError: (e) => toast.error(apiErrorMessage(e, "Não foi possível desconectar.")),
   });
 
   const since = Date.now() - 30 * 86400e3;

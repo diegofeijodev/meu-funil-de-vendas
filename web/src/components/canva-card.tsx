@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { HowTo } from "@/components/how-to";
 import { useWorkspace } from "@/lib/workspace";
 import { canvaDisconnect, canvaGetStatus, canvaOAuthStart, canvaSaveApp, canvaTest } from "@/lib/creative/canva.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** Caminho (na origem do app) que o Canva chama ao voltar do login; o web repassa para a API. */
 
@@ -50,7 +51,7 @@ export function CanvaCard() {
     try {
       await fn();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falhou.");
+      toast.error(apiErrorMessage(e, "Falhou."));
     } finally {
       setBusy(null);
       qc.invalidateQueries({ queryKey: ["canva", workspaceId] });

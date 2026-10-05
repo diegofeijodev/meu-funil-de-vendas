@@ -11,6 +11,7 @@ import { Select } from "@/components/crm/select";
 import { cn } from "@/lib/utils";
 import { sendInstagramMessage, sendWhatsAppMessage } from "@/lib/crm-integrations.functions";
 import { getLeadConversation, listIntegrations, listMessages, listQuickReplies, listWaTemplates, type ChatMessage } from "@/modules/crm/infrastructure/crm-channels.api";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Message = ChatMessage;
 
@@ -96,7 +97,7 @@ export function WhatsAppChat({
       await qc.invalidateQueries({ queryKey: ["crm-messages", conversation?.id] });
       await qc.invalidateQueries({ queryKey: ["crm-conversation", leadId, channel] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível enviar a mensagem.");
+      toast.error(apiErrorMessage(err, "Não foi possível enviar a mensagem."));
     } finally {
       setBusy(false);
     }

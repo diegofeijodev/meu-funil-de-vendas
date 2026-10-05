@@ -27,6 +27,7 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { FORMATS, useIgAccount } from "./shared";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const WEEK = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MAIN_FORMATS = ["feed_image", "feed_carousel", "reel"] as const;
@@ -102,7 +103,7 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
       }
       toast.success("Programação pronta. Os demais criativos são gerados sozinhos antes de cada horário.");
     } catch (e) {
-      toast.error(`${e instanceof Error ? e.message : "Falhou"} — o agendador continua em até 5 minutos.`);
+      toast.error(`${apiErrorMessage(e, "Falhou")} — o agendador continua em até 5 minutos.`);
     } finally {
       setProgress(null);
       refresh();
@@ -181,7 +182,7 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
                           toast.success(`Programação cancelada (${res.cancelled} posts retirados).`);
                           refresh();
                         } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Falha ao cancelar.");
+                          toast.error(apiErrorMessage(e, "Falha ao cancelar."));
                         }
                       }}
                     >
@@ -308,7 +309,7 @@ function AutoCalendarDialog({
       toast.success(`Programação criada: ${r.total} posts.${r.skipped ? ` ${r.skipped} horário(s) que já passaram foram ignorados.` : ""}`);
       onCreated(r.runId, r.total);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível criar.");
+      toast.error(apiErrorMessage(e, "Não foi possível criar."));
     } finally {
       setBusy(false);
     }

@@ -15,6 +15,7 @@ import { computeKpis } from "@/lib/metrics";
 import { brl } from "@/lib/format";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export function InsightsPage() {
   const { workspaceId, canEdit, role } = useWorkspace();
@@ -40,7 +41,7 @@ export function InsightsPage() {
       if (r.errors.length) toast.warning(r.errors.join(" · "));
       if (r.created) toast.success(`${r.created} recomendações geradas com os resultados reais da Meta.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível rodar o otimizador.");
+      toast.error(apiErrorMessage(e, "Não foi possível rodar o otimizador."));
     } finally {
       setRunning(false);
     }
@@ -53,7 +54,7 @@ export function InsightsPage() {
       qc.invalidateQueries({ queryKey: ["insights", workspaceId] });
       toast.success(r.result);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível aplicar.");
+      toast.error(apiErrorMessage(e, "Não foi possível aplicar."));
     } finally {
       setDeciding(null);
     }

@@ -10,6 +10,7 @@ import { EmptyState, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** Lista de posts do Instagram aguardando aprovação — usada na aba Instagram e em Aprovações. */
 export function IgApprovalList({
@@ -44,7 +45,7 @@ export function IgApprovalList({
           : reject({ data: { workspaceId, postId: id, reason } }));
         ok++;
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Falha.");
+        toast.error(apiErrorMessage(e, "Falha."));
       }
     }
     setBusy(false);

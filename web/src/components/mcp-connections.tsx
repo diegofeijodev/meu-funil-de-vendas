@@ -13,6 +13,7 @@ import { useWorkspace, logActivity } from "@/lib/workspace";
 import { fetchMcpConnections, fetchMcpStatusAllWorkspaces, type McpProvider } from "@/lib/mcp-client";
 import { mcpConnect, mcpDisconnect, mcpOAuthStart } from "@/lib/mcp.functions";
 import { HowTo, type HowToStep } from "@/components/how-to";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const PROVIDERS: {
   id: McpProvider;
@@ -120,7 +121,7 @@ export function McpConnections() {
       toast.error(res.error ?? "Não foi possível conectar.");
     } catch (e) {
       popup?.close();
-      toast.error(e instanceof Error ? e.message : "Não foi possível conectar agora. Tente novamente.");
+      toast.error(apiErrorMessage(e, "Não foi possível conectar agora. Tente novamente."));
     } finally {
       setBusy(null);
     }

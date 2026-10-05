@@ -10,6 +10,7 @@ import { Section, StatCard } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { collectAccountInsightsNow } from "@/lib/instagram/instagram.functions";
 import { fmtNum } from "./shared";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** 5.2 Evolução da conta: seguidores, alcance, visitas ao perfil e cliques no link (30 dias). */
 export function IgAccountInsights({ workspaceId }: { workspaceId: string }) {
@@ -38,7 +39,7 @@ export function IgAccountInsights({ workspaceId }: { workspaceId: string }) {
               qc.invalidateQueries({ queryKey: ["ig-account-insights", workspaceId] });
               toast.success("skipped" in r ? String(r.skipped) : `Conta atualizada (${r.days} dia(s)).`);
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Não foi possível atualizar.");
+              toast.error(apiErrorMessage(e, "Não foi possível atualizar."));
             } finally {
               setBusy(false);
             }

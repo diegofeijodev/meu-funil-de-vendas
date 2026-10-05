@@ -93,7 +93,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success(`Estratégia v${r.version} gerada pela IA. Revise e aprove para orientar copy e criativos.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a estratégia.");
+      toast.error(apiErrorMessage(e, "Não foi possível gerar a estratégia."));
     } finally {
       setBusy(null);
     }
@@ -107,7 +107,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success("Estratégia aprovada. Copy, criativos e vídeos passam a seguir esta versão.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível aprovar.");
+      toast.error(apiErrorMessage(e, "Não foi possível aprovar."));
     } finally {
       setBusy(null);
     }
@@ -119,7 +119,7 @@ export function CampaignDetail() {
       await runIgPlan({ data: { campaignId: id } });
       toast.success("Plano do Instagram criado em rascunho. Revise em Instagram → Estratégia.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível criar o plano.");
+      toast.error(apiErrorMessage(e, "Não foi possível criar o plano."));
     } finally {
       setBusy(null);
     }
@@ -135,7 +135,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success(`Novas copies geradas com ${engine}.`);
     } catch (e) {
-      toast.error(`Copy não gerada: ${e instanceof Error ? e.message : "erro"}`);
+      toast.error(`Copy não gerada: ${apiErrorMessage(e, "erro")}`);
     } finally {
       setBusy(null);
     }
@@ -151,7 +151,7 @@ export function CampaignDetail() {
         toast.success("Design criado no Canva. Edite e depois use Importar do Canva na Biblioteca.");
       } else toast.success("O Canva ainda está montando o design. Ele aparece nos seus designs em instantes.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível criar no Canva.");
+      toast.error(apiErrorMessage(e, "Não foi possível criar no Canva."));
     } finally {
       setBusy(null);
     }
@@ -190,7 +190,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao publicar");
+      toast.error(apiErrorMessage(e, "Falha ao publicar"));
     } finally {
       setBusy(null);
     }
@@ -206,7 +206,7 @@ export function CampaignDetail() {
       if (r.message) toast.info(r.message);
       else toast.success(`Resultados da Meta sincronizados (${r.rows} linhas de anúncio por dia).`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar.");
+      toast.error(apiErrorMessage(e, "Não foi possível sincronizar."));
     } finally {
       setBusy(null);
     }
@@ -220,7 +220,7 @@ export function CampaignDetail() {
       if (r.errors.length) toast.warning(r.errors.join(" · "));
       if (r.created) toast.success(`${r.created} recomendações da IA em AI Insights.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível gerar recomendações.");
+      toast.error(apiErrorMessage(e, "Não foi possível gerar recomendações."));
     } finally {
       setBusy(null);
     }
@@ -234,7 +234,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success(status === "ACTIVE" ? "Campanha ativada na Meta." : "Campanha pausada na Meta.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível alterar na Meta.");
+      toast.error(apiErrorMessage(e, "Não foi possível alterar na Meta."));
     } finally {
       setBusy(null);
     }

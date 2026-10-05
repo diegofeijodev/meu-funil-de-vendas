@@ -8,6 +8,7 @@ import { Section, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createExternalCampaign, linkExternalCampaign, setExternalCampaignStatus } from "@/lib/ads/channels.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Camp = {
   id: string;
@@ -34,7 +35,7 @@ export function CampaignChannels({ campaign, canEdit, canManage }: { campaign: C
       await fn();
       qc.invalidateQueries({ queryKey: ["campaign", campaign.id] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível concluir.");
+      toast.error(apiErrorMessage(e, "Não foi possível concluir."));
     } finally {
       setBusy(null);
     }

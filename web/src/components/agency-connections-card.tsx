@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useWorkspace } from "@/lib/workspace";
 import { fetchAiInheritFrom } from "@/modules/integrations/infrastructure/integrations.api";
 import { applyAiInheritanceToAll, setAiInheritance } from "@/lib/agency.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** 7.1 Conexões de IA da agência: conecte uma vez e as outras empresas herdam. */
 export function AgencyConnectionsCard() {
@@ -33,7 +34,7 @@ export function AgencyConnectionsCard() {
       qc.invalidateQueries({ queryKey: ["mcp"] });
       toast.success(ok);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+      toast.error(apiErrorMessage(e, "Não foi possível salvar."));
     } finally {
       setBusy(false);
     }

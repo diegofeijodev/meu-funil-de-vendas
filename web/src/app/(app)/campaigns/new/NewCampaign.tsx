@@ -108,7 +108,7 @@ export function NewCampaign() {
         await runStrategy({ data: { campaignId: campaign.id } });
       } catch (e) {
         strategyOk = false;
-        toast.warning(`Estratégia não gerada: ${e instanceof Error ? e.message : "erro"}. Gere de novo na campanha.`);
+        toast.warning(`Estratégia não gerada: ${apiErrorMessage(e, "erro")}. Gere de novo na campanha.`);
       }
       try {
         const { content: copy, engine } = await generateCopySmart(workspaceId!, brand as BrandContext, brief, 0, {
@@ -117,7 +117,7 @@ export function NewCampaign() {
         await createCopy(workspaceId, campaign.id, copy);
         toast.message(`Copy gerada com ${engine}.`);
       } catch (e) {
-        toast.warning(`Copy não gerada: ${e instanceof Error ? e.message : "erro"}. Gere de novo na campanha.`);
+        toast.warning(`Copy não gerada: ${apiErrorMessage(e, "erro")}. Gere de novo na campanha.`);
       }
 
       if (strategyOk) toast.success("Campanha criada com estratégia gerada pela IA.");

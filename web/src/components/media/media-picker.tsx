@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatLabel, targetForIgFormat } from "@/lib/media/formats";
 import { attachMediaToPost } from "@/lib/media/export.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 export type MediaAsset = {
   id: string;
@@ -81,7 +82,7 @@ export function PickFromLibrary({
       setPicked([]);
       onDone();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível anexar a mídia.");
+      toast.error(apiErrorMessage(e, "Não foi possível anexar a mídia."));
     } finally {
       setBusy(false);
     }

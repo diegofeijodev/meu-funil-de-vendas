@@ -154,7 +154,7 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
       }));
       toast.success("A IA sugeriu 5 pilares.");
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao sugerir."),
+    onError: (e) => toast.error(apiErrorMessage(e, "Falha ao sugerir.")),
   });
 
   const gen = useMutation({
@@ -179,7 +179,7 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
     },
     onError: (e) => {
       setProgress(null);
-      toast.error(e instanceof Error ? e.message : "Falha ao gerar o calendário.");
+      toast.error(apiErrorMessage(e, "Falha ao gerar o calendário."));
     },
   });
 
@@ -412,7 +412,7 @@ export function IgStrategy({ workspaceId }: { workspaceId: string }) {
               onClick={() =>
                 save().then(
                   () => toast.success("Plano salvo."),
-                  (e) => toast.error(e.message),
+                  (e) => toast.error(apiErrorMessage(e)),
                 )
               }
             >

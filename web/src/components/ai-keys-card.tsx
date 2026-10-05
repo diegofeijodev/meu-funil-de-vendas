@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useWorkspace } from "@/lib/workspace";
 import { aiKeysStatus, aiKeysSave, aiKeysTest, aiKeysRemove } from "@/lib/ai-keys.functions";
 import { HowTo, type HowToStep } from "@/components/how-to";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Vendor = "openai" | "gemini";
 
@@ -89,7 +90,7 @@ function VendorBox({
 
   const run = async (kind: string, fn: () => Promise<void>) => {
     setBusy(kind);
-    try { await fn(); } catch (e) { toast.error(e instanceof Error ? e.message : "Não foi possível agora."); }
+    try { await fn(); } catch (e) { toast.error(apiErrorMessage(e, "Não foi possível agora.")); }
     finally { setBusy(null); }
   };
 

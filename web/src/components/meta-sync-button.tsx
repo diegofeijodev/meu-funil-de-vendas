@@ -8,6 +8,7 @@ import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWorkspace } from "@/lib/workspace";
 import { syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** Painéis com dados reais da Meta: botão para puxar os resultados na hora (o cron atualiza a cada 3 h). */
 export function MetaSyncButton({ invalidate }: { invalidate: unknown[] }) {
@@ -28,7 +29,7 @@ export function MetaSyncButton({ invalidate }: { invalidate: unknown[] }) {
           if (r.message) toast.info(r.message);
           else toast.success(r.campaigns ? `Resultados da Meta atualizados (${r.campaigns} campanha(s)).` : "Nenhuma campanha publicada na Meta ainda.");
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Não foi possível sincronizar com a Meta.");
+          toast.error(apiErrorMessage(e, "Não foi possível sincronizar com a Meta."));
         } finally {
           setBusy(false);
         }

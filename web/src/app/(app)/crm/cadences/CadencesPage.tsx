@@ -33,6 +33,7 @@ import {
 } from "@/lib/crm-cadences.functions";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type CadenceRow = {
   id: string;
@@ -130,7 +131,7 @@ export function CadencesPage() {
       setEditing(null);
       refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível salvar.");
+      toast.error(apiErrorMessage(err, "Não foi possível salvar."));
     }
   };
 

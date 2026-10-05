@@ -33,6 +33,7 @@ import { FORMATS, STATUS_LABEL, type IgPost } from "./shared";
 import { PickFromLibrary } from "@/components/media/media-picker";
 import { ArtDirectionPanel } from "@/components/creative/art-direction-panel";
 import type { TextLayout } from "@/lib/creative/visual-style";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const toLocal = (iso: string | null) => {
   if (!iso) return "";
@@ -93,7 +94,7 @@ export function PostEditor({
       if (r && r.ok === false) throw new Error(r.error ?? "Falhou.");
       toast.success(typeof ok === "string" ? ok : "Feito.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Algo deu errado.");
+      toast.error(apiErrorMessage(e, "Algo deu errado."));
     } finally {
       setBusy(null);
       refresh();

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useWorkspace } from "@/lib/workspace";
 import { metaAdsStatus, metaAdsTest, metaAdsSaveCredentials, metaListAssets, metaLoginUrl, metaSaveApp, metaSaveAssets } from "@/lib/meta-ads.functions";
 import { HowTo } from "@/components/how-to";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const STEPS = [
   { text: "Crie um app do tipo Empresa (Business) e anote o ID do app e a Chave secreta (Configurações > Básico):", link: { label: "Painel de apps da Meta", url: "https://developers.facebook.com/apps" } },
@@ -67,7 +68,7 @@ export function MetaAdsCard() {
       if (r.configured) toast.success("Credenciais salvas no cofre. Clique em Testar conexão.");
       else toast.info(`Salvo, mas ainda faltam: ${r.missing.join(", ")}.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar agora.");
+      toast.error(apiErrorMessage(e, "Não foi possível salvar agora."));
     } finally {
       setBusy(null);
     }
@@ -212,7 +213,7 @@ function FacebookLogin({ workspaceId, redirectUri, onDone }: { workspaceId: stri
     try {
       await fn();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível concluir.");
+      toast.error(apiErrorMessage(e, "Não foi possível concluir."));
     } finally {
       setBusy(null);
     }

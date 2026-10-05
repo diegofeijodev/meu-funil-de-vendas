@@ -8,6 +8,7 @@ import { Section, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { useWorkspace } from "@/lib/workspace";
 import { diagnoseAi } from "@/lib/ai-diagnostics.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 /** 4.5 Testa de verdade as IAs e conexões desta empresa e mostra o erro real de cada uma. */
 export function AiDiagnosticsCard() {
@@ -21,7 +22,7 @@ export function AiDiagnosticsCard() {
     try {
       setResult(await run({ data: { workspaceId, withImage } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível rodar o diagnóstico.");
+      toast.error(apiErrorMessage(e, "Não foi possível rodar o diagnóstico."));
     } finally {
       setBusy(false);
     }

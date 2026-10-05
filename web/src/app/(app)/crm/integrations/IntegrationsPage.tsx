@@ -30,6 +30,7 @@ import {
   SiteFormCard,
   type ChannelIntegration,
 } from "@/components/crm/channel-cards";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const STATUS_LABEL: Record<string, string> = {
   disconnected: "Desconectado",
@@ -176,7 +177,7 @@ function MetaCard({
       await fn();
       onDone();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Algo deu errado. Tente novamente.");
+      toast.error(apiErrorMessage(err, "Algo deu errado. Tente novamente."));
     } finally {
       setBusy(false);
     }
@@ -376,7 +377,7 @@ function WhatsAppCard({
       await fn();
       onDone();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Algo deu errado. Tente novamente.");
+      toast.error(apiErrorMessage(err, "Algo deu errado. Tente novamente."));
     } finally {
       setBusy(false);
     }

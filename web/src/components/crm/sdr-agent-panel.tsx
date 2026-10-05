@@ -18,6 +18,7 @@ import {
   deleteSdrDocument,
   testSdrAgent,
 } from "@/lib/crm-sdr.functions";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 type Question = { key: string; question: string; weight: number };
 type Hours = { timezone: string; days: number[]; start: string; end: string };
@@ -125,7 +126,7 @@ export function SdrAgentPanel({ workspaceId }: { workspaceId: string | null }) {
       toast.success("Agente SDR salvo.");
       void qc.invalidateQueries({ queryKey: ["crm-sdr-agent", workspaceId] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(apiErrorMessage(err)),
   });
 
   const uploadMutation = useMutation({
@@ -146,7 +147,7 @@ export function SdrAgentPanel({ workspaceId }: { workspaceId: string | null }) {
       toast.success("Arquivo adicionado à base de conhecimento.");
       void qc.invalidateQueries({ queryKey: ["crm-sdr-agent", workspaceId] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => toast.error(apiErrorMessage(err)),
   });
 
   if (!workspaceId) return null;
@@ -459,7 +460,7 @@ function TestChat({
       setHistory([...next, { role: "assistant", content: result.reply }]);
       setLast(result.decision as unknown as Record<string, unknown>);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível testar o agente.");
+      toast.error(apiErrorMessage(err, "Não foi possível testar o agente."));
     } finally {
       setBusy(false);
     }
