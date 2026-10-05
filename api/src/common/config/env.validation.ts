@@ -125,7 +125,7 @@ const envSchema = z
     META_APP_SECRET: opt(),
     META_SYSTEM_USER_TOKEN: opt(),
     META_GRAPH_TOKEN: opt(),
-    /** Só testes (smoke/browser-check): Graph falsa. Ignorada em NODE_ENV=production. */
+    /** Só testes (smoke/browser-check): Graph falsa. Só vale em development/test (lista de permissão `testOverridesAllowed`). */
     META_GRAPH_BASE_URL: opt(),
     META_AD_ACCOUNT_ID: opt(),
     META_PAGE_ID: opt(),
@@ -143,7 +143,7 @@ const envSchema = z
     CALCOM_API_KEY: opt(),
     /** Segredo do webhook de WhatsApp (Z-API/Evolution), fallback global do segredo salvo por empresa (cofre empresa → global → ambiente). */
     WHATSAPP_WEBHOOK_SECRET: opt(),
-    /** Só testes (smoke/browser-check): Resend e Cal.com falsos. Ignoradas em NODE_ENV=production. */
+    /** Só testes (smoke/browser-check): Resend e Cal.com falsos. Só valem em development/test (lista de permissão `testOverridesAllowed`). */
     RESEND_API_URL: opt(),
     CALCOM_API_URL: opt(),
   })
