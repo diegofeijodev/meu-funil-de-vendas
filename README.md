@@ -25,7 +25,17 @@ npm run start:dev                          # http://localhost:3015  (Swagger em 
 curl localhost:3015/health
 ```
 
-Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typecheck`, e com a API de pé (`npm run start:smoke`) `npm run smoke`.
+Verificações (uma por vez — a máquina é pequena). **Todo comando pesado passa por `scripts/run-capped.sh <teto-MB> <comando>`**: roda num cgroup
+com teto de memória e lock compartilhado (`.cache/heavy.lock`, fora do git; `HEAVY_LOCK` troca). Passou do teto → só o comando morre (137); sem memória livre → 75.
+
+```bash
+cd api && ../scripts/run-capped.sh 1500 npm test            # jest completo
+cd api && ../scripts/run-capped.sh 1500 npm run typecheck
+cd web && ../scripts/run-capped.sh 1500 yarn typecheck && ../scripts/run-capped.sh 1500 yarn lint
+scripts/run-capped.sh 1300 bash api/scripts/smoke-capped.sh # fakes + API + `npm run smoke`, derruba tudo pelos PIDs
+bash web/scripts/browser-check-sections.sh                  # browser-check por grupos de seções (cada grupo sob teto de 2400 MB)
+bash web/scripts/browser-check-sections.sh 1 4              # só os grupos 1 e 4;  BC_ONLY=marcas,crm node web/scripts/browser-check.mjs = seções soltas
+```
 
 > **Atenção:** `npm run smoke` e `yarn browser-check` só devem rodar contra o banco local descartável. A limpeza deles apaga linhas que casam com padrões de teste (por exemplo `Browser[0-9]+`); nunca aponte `DATABASE_URL` para um banco com dados reais.
 
@@ -41,7 +51,25 @@ Verificações (uma por vez — a máquina é pequena): `npm test`, `npm run typ
 - `AI_GATEWAY_URL` / `AI_GATEWAY_API_KEY` / `AI_MODEL_*` — gateway de IA compatível com OpenAI. Sem eles a IA do app responde "IA do app não configurada."
   (o cliente ainda pode usar a própria chave OpenAI/Gemini por workspace).
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — login com Google (opcional; sem eles o endpoint responde 503).
-- `SCHEDULER_ENABLED` — jobs agendados (substituem o pg_cron); ligue em **uma** instância só.
+- `SCHEDULER_ENABLED` — jobs agendados (substituem o pg_cron); ligue em **uma** instância só. Nunca junto com um cron externo chamando
+  `/api/public/cron/*` (rodaria tudo duas vezes): ou um ou outro.
+
+### Agendador (UTC)
+
+| job | cron | heartbeat | módulo |
+|---|---|---|---|
+| `crm-cadences-5min` | `*/5 * * * *` | `crm-cadences` | `crm-channels` |
+| `instagram-queue-5min` / `-media-5min` / `-metrics-5min` | `*/5 * * * *` | `instagram-queue` / `-media` / `-metrics` | `instagram` |
+| `instagram-autopilot-weekly` | `0 21 * * 0` | `instagram-weekly` | `instagram` |
+| `instagram-optimizer-monday` | `0 12 * * 1` | `instagram-optimize` | `instagram` |
+| `instagram-account-daily` | `25 10 * * *` | `instagram-account` | `instagram` |
+| `ads-insights-3h` | `17 */3 * * *` | `ads-sync` | `ads` |
+| `ads-rules-daily` | `40 12 * * *` | `ads-rules` | `ads` |
+| `crm-daily` | `10 9 * * *` | `crm-daily` | `crm-channels` |
+| `creative-poll-5min` (extra) | `*/5 * * * *` | `creative` | `creative` |
+| `exports-cleanup-hourly` (extra) | `47 * * * *` | `exports_cleanup` | `integrations` |
+
+Detalhes e rotas HTTP equivalentes: `docs/api-contract.md` §7.
 
 ### Docker completo
 

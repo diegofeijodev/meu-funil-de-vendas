@@ -50,7 +50,11 @@ A máquina do dono tem 7,6 GB de RAM e outros containers/projetos rodando — el
 3. Só UM de {jest, tsc, API, `next dev`, browser-check} de pé por vez. Para smoke: `npm run start:smoke` (ts-node `--transpile-only`, sem watch) em
    background, espere `curl -s localhost:3015/health`, rode `npm run smoke`, e **mate pelo PID** (`ss -ltnp | grep ':3015 '`) — nunca `pkill -f`.
 4. `npm run typecheck` (`tsc --noEmit`) roda **uma vez, sozinho**, no fim da tarefa. Antes disso rode só o jest focado no que mexeu.
-5. `npx prisma migrate dev` pode ficar pendurado depois de aplicar (a migração já está feita): confira com `prisma migrate status` e mate o processo pelo PID.
+5. **Todo comando pesado (jest, tsc, lint, smoke, browser-check, migrate) vai por `scripts/run-capped.sh <teto-MB> <comando>`** (cgroup com `MemoryMax` + lock
+   `.cache/heavy.lock` fora do git): estourar o teto mata só o comando (137) em vez de travar a máquina; 75 = sem memória livre agora (espere 2 min).
+   Tetos: jest/typecheck/lint 1500; smoke (`api/scripts/smoke-capped.sh`) 1300; browser-check 2400 **por grupo** (`web/scripts/browser-check-sections.sh`,
+   seções via `BC_ONLY`). Se um grupo morrer com 137, reparta o grupo — não suba o teto. A pilha de teste (fakes + API + web) vive em `scripts/test-stack.sh`.
+6. `npx prisma migrate dev` pode ficar pendurado depois de aplicar (a migração já está feita): confira com `prisma migrate status` e mate o processo pelo PID.
 
 ## Comandos
 

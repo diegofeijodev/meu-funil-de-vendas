@@ -157,8 +157,32 @@ Ordem em texto/JSON (igual ao protótipo): chave OpenAI do workspace → chave G
 ## 7. Agendador (interno)
 
 `SchedulerService.register({ name, cron (UTC), heartbeat?, handler })`; só liga com `SCHEDULER_ENABLED=true` (UMA instância). Cada execução grava
-`cron_heartbeats(name, last_run_at, last_status, last_detail)` e não se sobrepõe. `JOB_SCHEDULES` traz os 10 horários do pg_cron (db.md §6).
-`run(name)` também serve às rotas `/api/public/cron/*` (protegidas por token) das tarefas seguintes.
+`cron_heartbeats(name, last_run_at, last_status, last_detail)` e não se sobrepõe a si mesma. `JOB_SCHEDULES` (`modules/scheduler/job-schedules.ts`) é a
+fonte única de nome/cron/heartbeat; os módulos só acrescentam o `handler`. O teste `scheduler/__tests__/job-list.spec.ts` trava a lista inteira.
+
+**Agenda (UTC; BRT = UTC−3)** — os 10 jobs do pg_cron do protótipo (db.md §6) + 2 extras do port:
+
+| job | cron (UTC) | heartbeat | módulo que registra | rota HTTP equivalente |
+|---|---|---|---|---|
+| `crm-cadences-5min` | `*/5 * * * *` | `crm-cadences` | `crm-channels` (`CrmCronService`) | `POST /api/public/cron/crm-cadences` |
+| `instagram-queue-5min` | `*/5 * * * *` | `instagram-queue` | `instagram` (`InstagramCronService`) | `POST /api/public/cron/instagram` `{task:"queue"}` |
+| `instagram-media-5min` | `*/5 * * * *` | `instagram-media` | `instagram` | idem `{task:"media"}` |
+| `instagram-metrics-5min` | `*/5 * * * *` | `instagram-metrics` | `instagram` | idem `{task:"metrics"}` |
+| `instagram-autopilot-weekly` | `0 21 * * 0` (dom 18:00 BRT) | `instagram-weekly` | `instagram` | idem `{task:"weekly"}` |
+| `instagram-optimizer-monday` | `0 12 * * 1` (seg 09:00 BRT) | `instagram-optimize` | `instagram` | idem `{task:"optimize"}` |
+| `instagram-account-daily` | `25 10 * * *` | `instagram-account` | `instagram` | idem `{task:"account"}` |
+| `ads-insights-3h` | `17 */3 * * *` | `ads-sync` | `ads` (`AdsCronService`) | `POST /api/public/cron/ads` `{task:"sync"}` |
+| `ads-rules-daily` | `40 12 * * *` | `ads-rules` | `ads` | idem `{task:"rules"}` |
+| `crm-daily` | `10 9 * * *` (06:10 BRT) | `crm-daily` | `crm-channels` | `POST /api/public/cron/crm-daily` |
+| `creative-poll-5min` *(extra)* | `*/5 * * * *` | `creative` | `creative` (`CreativePollJob`) | — (sem rota) |
+| `exports-cleanup-hourly` *(extra)* | `47 * * * *` | `exports_cleanup` | `integrations` (`ExportsCleanupService`) | — (sem rota) |
+
+O "o que falta configurar" (`setup`) confere a frescura dos heartbeats `crm-cadences` ≤ 20 min, `instagram-queue` ≤ 20 min, `ads-sync` ≤ 4 h e
+`crm-daily` ≤ 26 h; esses nomes são exatamente os gravados pelos jobs acima (e pelas rotas HTTP).
+
+**Sem agendamento duplo.** Há UMA forma de agendar por implantação: ou o agendador em processo (`SCHEDULER_ENABLED=true`, padrão de produção, uma
+instância) **ou** um cron externo chamando as rotas `/api/public/cron/*` com `SCHEDULER_ENABLED=false`. As rotas HTTP não substituem nem repetem os
+jobs: servem a esse cron externo e a disparos manuais (smoke/browser-check). Ligar os dois ao mesmo tempo roda cada trabalho duas vezes.
 
 ## 8. Padrões do CRM (interno)
 
