@@ -118,6 +118,14 @@ const envSchema = z
     SCHEDULER_ENABLED: bool('false'),
     /** Horas até a limpeza apagar os arquivos de `exports/<workspace>/` (o link de download vale 10 min). */
     EXPORTS_TTL_HOURS: z.coerce.number().positive().default(24),
+    /** Produção antecipada do "Programar com IA": posts por rodada de 5 min (no máximo 1 por empresa), janela e meta (horas antes do horário). */
+    IG_PRODUCTION_PER_TICK: z.coerce.number().int().min(1).max(20).default(4),
+    IG_PRODUCTION_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(48),
+    IG_PRODUCTION_TARGET_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    /** Nota mínima (0–50) do crítico de vídeo; abaixo dela o vídeo é refeito 1 vez. */
+    MIN_VIDEO_SCORE: z.coerce.number().int().min(0).max(50).default(28),
+    /** Binário do ffmpeg (opcional). Sem ele: o `ffmpeg-static` das dependências. No contêiner: /usr/bin/ffmpeg. */
+    FFMPEG_PATH: opt(),
 
     // --- Variáveis que tarefas posteriores leem (todas opcionais) ---
     CRM_CRON_SECRET: opt(),
@@ -148,6 +156,13 @@ const envSchema = z
     CALCOM_API_URL: opt(),
   })
   .superRefine((env, ctx) => {
+    if (env.IG_PRODUCTION_TARGET_HOURS > env.IG_PRODUCTION_WINDOW_HOURS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['IG_PRODUCTION_TARGET_HOURS'],
+        message: 'a meta (horas antes do horário) não pode ser maior que a janela de produção (IG_PRODUCTION_WINDOW_HOURS)',
+      });
+    }
     // Fora de development/test, URL pública que ainda aponta para a máquina local = redirect_uri de OAuth, links assinados e e-mails quebrados.
     // O default do schema é localhost, então "não definida" cai aqui também.
     if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {

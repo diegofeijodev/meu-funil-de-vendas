@@ -590,6 +590,8 @@ model ig_posts {
   funnel_stage        String?
   review_reason       String?
   review_score        Decimal?              @db.Decimal
+  review_attempts     Int                   @default(0)
+  failure_kind        String?
   workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
   run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)
@@ -690,6 +692,7 @@ model ig_auto_runs {
   strategy               Json?            @db.JsonB
   strategy_status        String           @default("pending")
   paused_reason          String?
+  video_audio            Json             @default("{\"modo\":\"ambiente_trilha\",\"instrucoes\":\"\"}") @db.JsonB
   created_at             DateTime         @default(now()) @db.Timestamptz(6)
   updated_at             DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
   workspace              workspaces       @relation("ig_auto_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)

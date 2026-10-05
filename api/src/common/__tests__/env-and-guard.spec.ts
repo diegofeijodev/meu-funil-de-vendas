@@ -103,3 +103,17 @@ describe('TRUST_PROXY', () => {
     expect(await ipFor(true, '1.2.3.4, 203.0.113.9')).toBe('1.2.3.4');
   });
 });
+describe('validateEnv — produção automática e vídeo (05/10/2026)', () => {
+  it('padrões: 4 por rodada, janela de 48 h, meta de 24 h, nota mínima 28; FFMPEG_PATH opcional', () => {
+    const e = validateEnv({ ...base, NODE_ENV: 'test' });
+    expect([e.IG_PRODUCTION_PER_TICK, e.IG_PRODUCTION_WINDOW_HOURS, e.IG_PRODUCTION_TARGET_HOURS, e.MIN_VIDEO_SCORE, e.FFMPEG_PATH]).toEqual([4, 48, 24, 28, undefined]);
+    const c = validateEnv({ ...base, NODE_ENV: 'test', IG_PRODUCTION_PER_TICK: '2', MIN_VIDEO_SCORE: '30', FFMPEG_PATH: '/usr/bin/ffmpeg' });
+    expect([c.IG_PRODUCTION_PER_TICK, c.MIN_VIDEO_SCORE, c.FFMPEG_PATH]).toEqual([2, 30, '/usr/bin/ffmpeg']);
+  });
+
+  it('valores fora da faixa e meta maior que a janela falham o boot', () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: 'test', IG_PRODUCTION_PER_TICK: '0' })).toThrow(/IG_PRODUCTION_PER_TICK/);
+    expect(() => validateEnv({ ...base, NODE_ENV: 'test', MIN_VIDEO_SCORE: '51' })).toThrow(/MIN_VIDEO_SCORE/);
+    expect(() => validateEnv({ ...base, NODE_ENV: 'test', IG_PRODUCTION_WINDOW_HOURS: '12', IG_PRODUCTION_TARGET_HOURS: '24' })).toThrow(/IG_PRODUCTION_TARGET_HOURS/);
+  });
+});
