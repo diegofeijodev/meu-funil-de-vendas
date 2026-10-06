@@ -19,12 +19,14 @@
 //   AI_GATEWAY_URL=http://127.0.0.1:3099/v1 AI_GATEWAY_API_KEY=fake npm run start:smoke
 // (sem isso a seção de campanhas detecta "IA do app não configurada" e testa o caminho sem IA).
 import { chromium } from '/home/doutor/coding/freela/freela-web-v2/node_modules/playwright/index.mjs';
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const BASE = 'http://localhost:3025';
 const API = 'http://localhost:3015';
@@ -65,13 +67,15 @@ const REDE_IGNORADA = [
   { url: /\/v1\/workspaces\/[^/]+\/brands(\/[0-9a-f-]{36})?(\/[a-z-]+)?(\?|$)/, erro: 'net::ERR_ABORTED' },
   // Download de exportação da biblioteca: o link assinado (`?dl=<nome>`) vira download e o navegador "aborta" a navegação do <a>.
   { url: /\/v1\/files\/creative-assets\/.*[?&]dl=/, erro: 'net::ERR_ABORTED' },
+  // Vídeo (<video>) da biblioteca/post: o navegador lê o MP4 em pedaços (Range) e aborta o pedido anterior ao trocar de tela ou re-renderizar.
+  { url: /\/v1\/files\/creative-assets\/media\/[^?]+\.mp4\?exp=\d+&sig=[0-9a-f]+$/, erro: 'net::ERR_ABORTED' },
 ];
 const redeIgnorada = (url, erro) =>
   ignorada(url) || REDE_IGNORADA.some((r) => r.url.test(url) && erro === r.erro);
 
 
 // ── Gateway de IA falso (OpenAI-compatível) — nenhuma chamada de rede externa ─────────────
-const fakeAi = { strategy: 0, copy: 0, prompts: [], sdr: null };
+const fakeAi = { strategy: 0, copy: 0, prompts: [], sdr: null, videos: [], videoScores: 0 };
 const estrategia = (n) => ({
   resumo_executivo: `Resumo v${n}`, problema: 'Poucos clientes na semana', objetivo_smart: 'Dobrar leads em 30 dias', icp: 'Adultos 25-45',
   oferta: 'Chopp em dobro', big_idea: `Big idea v${n}`, mensagem_principal: 'Venha beber junto', funil: 'Topo ao fundo', canais: 'Meta Ads',
@@ -97,6 +101,37 @@ const direcaoDeArte = {
   prompt_final: 'A frosty glass of draft beer on a wooden bar counter, warm light, 50mm lens, photorealistic, shallow depth of field, highly detailed', video_shots: [],
 };
 let notaN = 0;
+// Produção automática: roteiro de vídeo da IA (narração) e um MP4 de verdade (480×854, 4 s, com som) feito pelo ffmpeg-static da API —
+// o Veo falso devolve este arquivo e a API o converte para 1080×1920 com o ffmpeg real. Gerado uma vez, sob demanda.
+const roteiroFake = {
+  gancho_visual: 'o chope é servido até a borda em câmera lenta',
+  sujeito: 'copo de chope gelado com colarinho cremoso',
+  cenario: 'balcão de madeira de um bar aconchegante',
+  tomadas: [
+    { inicio_s: 0, fim_s: 2.5, enquadramento: 'close', acao: 'o chope é servido até a borda', movimento_camera: 'travelling lento para a frente', lente: '85 mm' },
+    { inicio_s: 2.5, fim_s: 5.5, enquadramento: 'plano médio', acao: 'a mão desliza o copo até a frente', movimento_camera: 'câmera parada', lente: '50 mm' },
+    { inicio_s: 5.5, fim_s: 8, enquadramento: 'plano aberto', acao: 'amigos brindam ao fundo', movimento_camera: 'leve recuo', lente: '35 mm' },
+  ],
+  iluminacao: 'luz quente de fim de tarde',
+  paleta_hex: ['#c0392b', '#f5deb3'],
+  estilo: 'comercial realista',
+  ritmo: 'abre rápido e fecha firme',
+  cta_visual: 'o copo em primeiro plano com o bar desfocado ao fundo',
+  audio: { modo: 'narracao', descricao: 'bar ao fundo', fala: 'Hoje tem chope gelado! Reserve sua mesa pelo WhatsApp.' },
+  evitar: ['copos de outras marcas'],
+};
+const requireApi = createRequire(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../api/package.json'));
+let videoFalso = null;
+const fakeVideo = () => {
+  if (videoFalso) return videoFalso;
+  const bin = process.env.FFMPEG_PATH || requireApi('ffmpeg-static');
+  const dir = mkdtempSync(path.join(tmpdir(), 'mf-bc-video-'));
+  const out = path.join(dir, 'veo.mp4');
+  execFileSync(bin, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=480x854:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', out]);
+  videoFalso = readFileSync(out);
+  rmSync(dir, { recursive: true, force: true });
+  return videoFalso;
+};
 const gateway = createServer((req, res) => {
   let raw = '';
   req.on('data', (c) => (raw += c));
@@ -117,6 +152,20 @@ const gateway = createServer((req, res) => {
       else { res.statusCode = 401; res.end('{}'); }
       return;
     }
+    // Produção automática (C1): Veo do gateway — POST /v1/videos (registra o corpo), GET /v1/videos/:id (pronto na hora), GET …/content (MP4 real).
+    if (req.method === 'POST' && req.url === '/v1/videos') {
+      fakeAi.videos.push(body);
+      res.end(JSON.stringify({ id: `vid${fakeAi.videos.length}`, status: 'queued' }));
+      return;
+    }
+    const vid = /^\/v1\/videos\/(vid\d+)(\/content)?$/.exec(req.url ?? '');
+    if (req.method === 'GET' && vid) {
+      if (vid[2]) {
+        res.setHeader('Content-Type', 'video/mp4');
+        res.end(fakeVideo());
+      } else res.end(JSON.stringify({ id: vid[1], status: 'completed' }));
+      return;
+    }
     if (req.url?.endsWith('/images/generations') || req.url?.endsWith('/images/edits')) {
       fakeAi.images = (fakeAi.images ?? 0) + 1;
       res.end(JSON.stringify({ data: [{ b64_json: PNG_1X1 }] }));
@@ -129,6 +178,12 @@ const gateway = createServer((req, res) => {
     if (name === 'campaign_strategy') out = estrategia(++fakeAi.strategy);
     else if (name === 'copy') out = copia(++fakeAi.copy);
     else if (name === 'art_direction') out = direcaoDeArte;
+    // Produção automática (C2/C5): roteiro por tomada e crítico de vídeo (1ª nota 20/50 → refação; depois 45/50).
+    else if (name === 'video_direction') out = roteiroFake;
+    else if (name === 'video_score') {
+      const t = fakeAi.videoScores++ === 0 ? 4 : 9;
+      out = { roteiro: t, marca: t, tecnica: t, produto: t, scroll: t, motivo: t < 9 ? 'O produto quase não aparece no gancho' : 'Produto claro e gancho forte' };
+    }
     // Task 8: agente SDR do CRM (decisão configurável por `fakeAi.sdr`).
     else if (name === 'sdr_decision') out = fakeAi.sdr ?? { resposta: 'Olá! Sou o agente. Em qual cidade você quer atuar?', campos_extraidos: { cidade: null, capital: null, prazo: null, decisor: null, email: null, observacoes: null }, score: 20, temperatura: 'morno', proxima_etapa: 'manter', transferir_humano: false, motivo: '', horario_escolhido: null };
     // Task 5 (Instagram): pilares, calendário, legenda e conteúdo da programação automática.
@@ -1220,7 +1275,10 @@ try {
   await dlg.getByText('A estratégia e todos os posts partem deste objetivo.').waitFor({ timeout: 10000 });
   check('programação: botão "Criar e publicar automaticamente" (dono) com o objetivo preenchido', (await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).isEnabled()));
   if (igAi) {
-    await dlg.getByRole('button', { name: /Criar e publicar automaticamente/ }).click();
+    check('programação: no "Totalmente automático" o diálogo explica a produção sem cliques', tem(await dlg.innerText(), 'Sem cliques depois de criar: a estratégia é aprovada sozinha') && tem(await dlg.innerText(), 'refeito pela IA até 2 vezes'));
+    // A revisão humana da estratégia (refazer/editar/aprovar) é do modo "Com minha aprovação"; o "Totalmente automático" vem no bloco seguinte.
+    await dlg.getByRole('button', { name: /Com minha aprovação/ }).click();
+    await dlg.getByRole('button', { name: /Criar e gerar para aprovação/ }).click();
     await page.getByText(/Programação criada: 1 posts\./).waitFor({ timeout: 30000 });
     // Passo 1: a estratégia do período sai primeiro e espera a aprovação (nenhum post é gerado ainda)
     await page.getByText('Estratégia do período pronta: revise no card da programação e clique em Aprovar e gerar posts.').waitFor({ timeout: 120000 });
@@ -1247,9 +1305,9 @@ try {
     check('API: o prompt dos posts levou o objetivo, a estratégia aprovada com os ajustes e as regras de data', fakeAi.prompts.some((x) => x.name === 'ig_auto_calendar' && x.prompt.includes(`1. OBJETIVO DO PERÍODO (fonte principal, cada post precisa servir a ele): ${OBJETIVO}`) && x.prompt.includes('"ajustes_do_cliente":"foque no prato executivo; nada de promoção"') && x.prompt.includes('Coerência com a data')));
     check('API: cada post foi revisado (ig_post_review) com a data real', fakeAi.prompts.some((x) => x.name === 'ig_post_review' && /- index 0 · \S+, \d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}:/.test(x.prompt)));
     const autoPost = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.run_id === rodada.id);
-    check('API: post automático "publish" com mídia e agendado na fila (sandbox: sem conta)', autoPost.automation === 'publish' && autoPost.status === 'scheduled' && autoPost.media.length === 1 && autoPost.theme === 'Auto 0', JSON.stringify([autoPost.automation, autoPost.status]));
+    check('API: post automático "approval" com mídia, aguardando aprovação', autoPost.automation === 'approval' && autoPost.status === 'pending_approval' && autoPost.media.length === 1 && autoPost.theme === 'Auto 0', JSON.stringify([autoPost.automation, autoPost.status]));
     check('API: post amarrado ao objetivo (objective_link, pillar, persona, funnel_stage) com nota da revisão e sem motivo de revisão', autoPost.objective_link === 'Serve ao objetivo do almoço' && autoPost.pillar === 'Bastidores' && autoPost.persona === 'Ana' && autoPost.funnel_stage === 'atracao' && autoPost.review_score === 8 && autoPost.review_reason === null && autoPost.product_id === null, JSON.stringify([autoPost.objective_link, autoPost.pillar, autoPost.persona, autoPost.funnel_stage, autoPost.review_score, autoPost.review_reason]));
-    check('programação: cartão da execução (Em andamento, contagem, "publica sozinho", estratégia aprovada)', tem(await corpo(), 'Em andamento') && tem(await corpo(), '1 conteúdos · 1 criativos') && tem(await corpo(), 'publica sozinho') && tem(await corpo(), 'Estratégia · aprovada') && tem(await corpo(), 'Seus ajustes: foque no prato executivo; nada de promoção'));
+    check('programação: cartão da execução (Em andamento, contagem do período, "com aprovação", estratégia aprovada)', tem(await corpo(), 'Em andamento') && tem(await corpo(), '1 conteúdos · 1 produzidos') && tem(await corpo(), 'com aprovação') && tem(await corpo(), 'Estratégia · aprovada') && tem(await corpo(), 'Seus ajustes: foque no prato executivo; nada de promoção'));
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: 'Cancelar', exact: true }).first().click();
     await page.getByText(/Programação cancelada \(1 posts retirados\)\./).waitFor({ timeout: 30000 });
@@ -1257,6 +1315,120 @@ try {
     check('API: programação cancelada e post retirado da fila', cancelada.status === 'cancelled' && igPsql(`SELECT status FROM ig_posts WHERE run_id='${cancelada.id}'`) === 'cancelled' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE ig_post_id='${autoPost.id}' AND status='pending'`) === '0');
   } else {
     await dlg.getByRole('button', { name: 'Fechar' }).click();
+  }
+
+  // ── Produção automática (zero cliques): "Totalmente automático" com 1 Reels amanhã às 12:00 e "Narração curta"; o cron `media` (o mesmo
+  //    job do agendador) produz o vídeo sem ninguém clicar — roteiro por tomada, foto do produto como 1º quadro, nota do crítico com 1 refação
+  //    e conversão pelo ffmpeg real; sem conta conectada o post fica pronto com o aviso. Depois, o painel de vídeo do editor.
+  let fotoProduto = null;
+  if (igAi) {
+    // foto do produto da marca (referência com a etiqueta "produto"): vira o primeiro quadro do vídeo
+    fotoProduto = await page.evaluate(
+      async ([base, ws, b64]) => {
+        const t = JSON.parse(window.localStorage.getItem('authUser')).access_token;
+        const fd = new FormData();
+        fd.append('file', new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: 'image/png' }), 'chope-produto.png');
+        const r = await fetch(`${base}/v1/workspaces/${ws}/files?kind=brands`, { method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: fd });
+        return r.json();
+      },
+      [API, wsId, PNG_1X1],
+    );
+    const refProduto = (await apiCall('POST', `/v1/workspaces/${wsId}/brands/${marcaIg.id}/assets`, { kind: 'reference', name: 'chope-produto.png', storage_path: fotoProduto.storage_path, tag: 'produto' })).body;
+    check('marca: foto do produto registrada como referência "produto"', refProduto?.tag === 'produto', JSON.stringify(refProduto));
+
+    const amanha = igPsql(`SELECT to_char((now() AT TIME ZONE 'America/Sao_Paulo')::date + 1, 'YYYY-MM-DD')`);
+    await page.goto(`${BASE}/instagram?tab=calendar`);
+    await page.getByText('Programar com IA').first().waitFor({ timeout: 30000 });
+    await page.getByRole('button', { name: 'Nova programação' }).click();
+    const dlg2 = page.getByRole('dialog');
+    await dlg2.getByText('Nova programação com IA').waitFor({ timeout: 15000 });
+    await dlg2.locator('select').first().selectOption({ label: `Plano: ${igSobras.plano}` });
+    await dlg2.locator('input[type="date"]').nth(0).fill(amanha);
+    await dlg2.locator('input[type="date"]').nth(1).fill(amanha);
+    for (const h of ['09:00', '19:00']) await dlg2.getByLabel(`Remover ${h}`).click();
+    for (const f of ['Feed', 'Carrossel']) await dlg2.locator('label').filter({ hasText: new RegExp(`^${f}$`) }).locator('button[role="checkbox"]').click();
+    await dlg2.getByText(/^1 post\(s\)/).waitFor({ timeout: 20000 });
+    const txtDlg2 = await dlg2.innerText();
+    for (const t of ['Áudio dos vídeos (Reels e stories em vídeo)', 'Ambiente + trilha', 'Narração curta', 'Sem áudio']) check(`programação: diálogo mostra "${t}"`, tem(txtDlg2, t));
+    await dlg2.getByRole('button', { name: /Narração curta/ }).click();
+    await dlg2.getByPlaceholder(/Instruções \(opcional\)/).fill('voz feminina calma');
+    await dlg2.getByPlaceholder(/Ex\.: Levar público de Valinhos/).fill(OBJETIVO);
+    fakeAi.videos.length = 0;
+    fakeAi.videoScores = 0;
+    await dlg2.getByRole('button', { name: /Criar e publicar automaticamente/ }).click();
+    await page.getByText(/Programação criada: 1 posts\./).waitFor({ timeout: 30000 });
+    await page.getByText('Programação pronta. Os demais criativos são gerados sozinhos antes de cada horário.').waitFor({ timeout: 180000 });
+    ok('programação "Totalmente automático": sem nenhum clique de aprovação até "Programação pronta"');
+    const zr = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-auto-runs`)).body[0];
+    check('API: "Totalmente automático" aprova a estratégia sozinho e guarda o áudio dos vídeos', zr.mode === 'publish' && zr.strategy_status === 'approved' && zr.video_audio?.modo === 'narracao' && zr.video_audio?.instrucoes === 'voz feminina calma' && zr.counts.total === 1 && zr.counts.queued === 1, JSON.stringify([zr.strategy_status, zr.video_audio, zr.counts]));
+    const zp = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.run_id === zr.id);
+    check('API: o Reels de amanhã nasce como ideia, sem mídia (a produção antecipada é do agendador)', zp?.format === 'reel' && zp.status === 'idea' && zp.media.length === 0, JSON.stringify([zp?.format, zp?.status]));
+    check('API: evento "strategy_auto_approved" no piloto', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-autopilot-events?limit=20`)).body.some((e) => e.kind === 'strategy_auto_approved'));
+
+    // post vencido (> 12 h sem criativo) na mesma programação: a produção pula com aviso
+    igPsql(`INSERT INTO ig_posts(workspace_id,plan_id,run_id,automation,format,status,theme,scheduled_at) VALUES ('${wsId}','${planoIg.id}','${zr.id}','publish','feed_image','idea','Vencido check', now() - interval '13 hours')`);
+    // o cron `media` (o mesmo do agendador), pela rota HTTP com um token próprio
+    const tokAntigo = igPsql(`SELECT token FROM cron_tokens WHERE name='instagram'`);
+    const tokBc = `bc-cron-${Date.now()}`;
+    igPsql(`INSERT INTO cron_tokens(name,token) VALUES ('instagram','${tokBc}') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token`);
+    limpezas.push(() => igPsql(tokAntigo ? `UPDATE cron_tokens SET token='${tokAntigo}' WHERE name='instagram'` : `DELETE FROM cron_tokens WHERE name='instagram' AND token='${tokBc}'`));
+    limpezas.push(() => igPsql(`DELETE FROM cron_heartbeats WHERE name LIKE 'instagram-%' AND last_run_at >= '${igT0}'`));
+    const tick = await fetch(`${API}/api/public/cron/instagram`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-cron-secret': tokBc },
+      body: JSON.stringify({ task: 'media' }),
+      signal: AbortSignal.timeout(300000),
+    }).then((r) => r.json());
+    check('cron media: a produção antecipada pulou o vencido e produziu o Reels (sem clique)', tick.production?.skipped >= 1 && tick.production?.ready >= 1, JSON.stringify(tick.production));
+
+    const zv = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.id === zp.id);
+    const vd = zv.creative_brief?.video_direction ?? {};
+    const tomadas = vd.direction?.tomadas ?? [];
+    check('API: roteiro por tomada (0 a 8 s) com o áudio da programação', tomadas.length === 3 && tomadas[0].inicio_s === 0 && tomadas.at(-1).fim_s === 8 && vd.audio?.modo === 'narracao' && vd.audio?.instrucoes === 'voz feminina calma', JSON.stringify([tomadas.length, vd.audio]));
+    check('API: a foto do produto da marca virou o primeiro quadro', vd.first_frame_ref === refProduto.id, JSON.stringify(vd.first_frame_ref));
+    check('API: nota do crítico 20/50 → refeito 1×; ficou o de maior nota (45/50)', vd.scores?.length === 2 && vd.scores[0].total === 20 && vd.scores[1].total === 45 && vd.winner_attempt === 2, JSON.stringify(vd.scores));
+    check('API: vídeo convertido pelo ffmpeg para o padrão do Instagram (1080×1920, ig_ready)', zv.media?.length === 1 && zv.media[0].type === 'video' && zv.media[0].ig_ready === true && igPsql(`SELECT width||'x'||height FROM media_assets WHERE id='${zv.media[0].asset_id}'`) === '1080x1920', JSON.stringify(zv.media?.[0]));
+    check('API: sem conta conectada o post fica pronto com o aviso e sem job simulado', zv.status === 'ready' && zv.last_error === 'Conecte o Instagram para publicar.' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE ig_post_id='${zv.id}'`) === '0', JSON.stringify([zv.status, zv.last_error]));
+    check('Veo: 2 pedidos de 8 s, com áudio e o 1º quadro', fakeAi.videos.length === 2 && fakeAi.videos.every((v) => v.parameters?.durationSeconds === 8 && v.parameters?.generateAudio === true && !!v.instances?.[0]?.image?.bytesBase64Encoded), JSON.stringify(fakeAi.videos.map((v) => v.parameters)));
+    check('Veo: prompt pt-BR com o roteiro por tomada, a fala e a orientação do cliente', fakeAi.videos.every((v) => {
+      const p = v.instances?.[0]?.prompt ?? '';
+      return p.includes('Roteiro por tomada:') && p.includes('A voz diz: "Hoje tem chope gelado! Reserve sua mesa pelo WhatsApp."') && p.includes('Orientação do cliente para o áudio: voz feminina calma');
+    }));
+    check('diretor de vídeo: a refação levou o motivo do crítico', !!fakeAi.prompts.filter((x) => x.name === 'video_direction').at(-1)?.prompt.includes('O CRÍTICO REPROVOU O VÍDEO ANTERIOR (corrija isto com prioridade): «O produto quase não aparece no gancho»'));
+
+    // cartão do período e "Pulados"
+    await page.goto(`${BASE}/instagram?tab=calendar`);
+    await page.getByText('Programar com IA').first().waitFor({ timeout: 30000 });
+    await page.getByText('2 conteúdos · 1 produzidos · 0 produzindo · 0 na fila · 0 agendados · 0 publicados · 1 pulados').waitFor({ timeout: 30000 });
+    ok('programação: cartão do período (produzidos / produzindo / na fila / agendados / publicados / pulados)');
+    await page.getByText('Pulados (1)').click();
+    await page.getByText(/Vencido check · .+ — o horário passou há mais de 12 h sem o criativo pronto\./).waitFor({ timeout: 10000 });
+    ok('programação: "Pulados (1)" lista o post pulado com o motivo');
+
+    // Visão geral: eventos novos no piloto e o editor do Reels (painel de vídeo)
+    await page.goto(`${BASE}/instagram`);
+    await page.getByText('Fila dos próximos 7 dias').waitFor({ timeout: 30000 });
+    await page.getByText('Vídeo refeito ·').first().waitFor({ timeout: 30000 });
+    const txtOv = await corpo();
+    for (const t of ['Estratégia aprovada ·', 'Pulado ·', 'Vídeo refeito ·']) check(`piloto automático: evento "${t.replace(' ·', '')}" no painel`, tem(txtOv, t));
+    await page.locator('button', { hasText: 'Auto 0' }).first().click();
+    await page.getByRole('heading', { name: /^Reels/ }).waitFor({ timeout: 15000 });
+    await page.getByText('Roteiro do vídeo').waitFor({ timeout: 15000 });
+    const txtVid = await corpo();
+    for (const t of ['Roteiro final enviado ao gerador de vídeo (editável)', 'Tomadas', '0s–2,5s', 'Áudio deste vídeo', 'Nota do crítico: 45/50', 'refeito 1× · ficou o de maior nota', 'Salvar roteiro e áudio', 'Regenerar vídeo']) {
+      check(`editor do Reels mostra "${t}"`, tem(txtVid, t));
+    }
+    await page.locator('#video-audio-mode').selectOption('sem_audio');
+    await page.getByRole('button', { name: 'Salvar roteiro e áudio' }).click();
+    await page.getByText('Roteiro e áudio salvos. Clique em Regenerar vídeo para usar.').waitFor({ timeout: 15000 });
+    const salvo = (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.find((x) => x.id === zp.id);
+    check('API: o editor salvou o áudio do post (Sem áudio) e o roteiro igual ao gerado não vira override', salvo.creative_brief.audio?.modo === 'sem_audio' && salvo.creative_brief.visual_prompt_override === null, JSON.stringify([salvo.creative_brief.audio, salvo.creative_brief.visual_prompt_override]));
+    const antesVideos = fakeAi.videos.length;
+    await page.getByRole('button', { name: 'Regenerar vídeo' }).click();
+    await page.getByText('Vídeo enviado para geração: ele aparece aqui quando ficar pronto.').waitFor({ timeout: 180000 });
+    const ultimo = fakeAi.videos.at(-1);
+    check('Regenerar vídeo: novo pedido ao Veo sem áudio e com "Áudio: nenhum (vídeo sem som)." no roteiro', fakeAi.videos.length === antesVideos + 1 && ultimo?.parameters?.generateAudio === false && (ultimo?.instances?.[0]?.prompt ?? '').includes('Áudio: nenhum (vídeo sem som).'), JSON.stringify(ultimo?.parameters));
+    await page.keyboard.press('Escape');
   }
 
   // ── Resultados: insights da conta + ranking dos publicados ──
@@ -1279,12 +1451,14 @@ try {
 
   // ── limpeza: posts, planos, programações, jobs, mídia (arquivos) e a marca de teste ──
   // posts.plan_id/run_id são ON DELETE SET NULL: apaga os posts ANTES do plano (jobs e métricas saem em cascata)
-  const idsMidia = igPsql(`SELECT string_agg(id::text, ',') FROM media_assets WHERE workspace_id='${wsId}' AND ig_post_id IS NOT NULL AND created_at >= '${igT0}'`);
+  // toda mídia criada pela seção (vídeos originais, convertidos e capas incluídos)
+  const idsMidia = igPsql(`SELECT string_agg(id::text, ',') FROM media_assets WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`);
   if (idsMidia) await apiCall('POST', '/v1/media/delete-media-assets', { workspaceId: wsId, assetIds: idsMidia.split(',') });
   igPsql(`DELETE FROM ig_posts WHERE workspace_id='${wsId}' AND (plan_id='${planoIg.id}' OR run_id IN (SELECT id FROM ig_auto_runs WHERE plan_id='${planoIg.id}') OR ig_media_id='ig-media-check')`);
   igPsql(`DELETE FROM ig_content_plans WHERE id='${planoIg.id}'`);
   igPsql(`DELETE FROM ig_account_insights WHERE workspace_id='${wsId}' AND followers_total=5400`);
   igPsql(`DELETE FROM ig_autopilot_events WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`);
+  if (fotoProduto?.key) await apiCall('DELETE', `/v1/workspaces/${wsId}/files?key=${encodeURIComponent(fotoProduto.key)}`);
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`);
   check('limpeza do Instagram: nada sobrou do teste', igPsql(`SELECT count(*) FROM ig_posts WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM ig_auto_runs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0');
   });
