@@ -345,6 +345,8 @@ export function igServices(w: IgWorld) {
         r.run_id && r.status === 'idea' && r.scheduled_at &&
         r.scheduled_at.getTime() > now.getTime() - OVERDUE_MS &&
         r.scheduled_at.getTime() <= now.getTime() + p.windowHours * 3600e3 &&
+        (r.scheduled_at.getTime() <= now.getTime() + p.targetHours * 3600e3 ||
+          w.t['instagram_accounts']!.rows.some((a) => a.workspace_id === r.workspace_id && a.status === 'connected' && a.ig_user_id)) &&
         (!r.lease_until || r.lease_until.getTime() < now.getTime()),
     );
     return rankProductionCandidates(rows as any[], { now, perTick: p.perTick, targetHours: p.targetHours });

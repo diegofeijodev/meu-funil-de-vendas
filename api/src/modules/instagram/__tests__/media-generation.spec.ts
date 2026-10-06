@@ -683,3 +683,31 @@ describe('vídeo (Reels/Story): roteiro detalhado, primeiro quadro, áudio, nota
     expect(post.media[0]).toMatchObject({ ig_ready: false, issues: ['Codec mpeg4'] });
   });
 });
+
+describe('revisão final — I1: refação assíncrona que dá erro mantém o primeiro vídeo', () => {
+  const best = { item: { url: 'https://cdn.test/1.mp4', type: 'video', order: 0, asset_id: 'a1', duration: 8, ig_ready: true, issues: [] }, score: 20, attempt: 1, prompt: 'roteiro 1', direction: null };
+  const second = (w: IgWorld, job: string) =>
+    idea(w, {
+      format: 'reel', status: 'generating',
+      creative_brief: {
+        video_direction: { prompt: 'roteiro 2', direction: null, audio: { modo: 'ambiente_trilha', instrucoes: '' }, first_frame_ref: null },
+        pending_job: { provider: 'gemini', jobId: job, index: 0, prompts: ['roteiro 2'], media: [], cost: 6, started_at: new Date().toISOString(), video: { attempt: 2, best, scores: [{ attempt: 1, total: 20, motivo: 'm' }] } },
+      },
+    });
+
+  it('erro ao consultar o provedor ou na conversão da 2ª tentativa: fica o primeiro vídeo (nunca failed)', async () => {
+    const { w, s, gen } = setup();
+    const net = second(w, 'veo:net');
+    s.provider.getGenerationStatus.mockRejectedValueOnce(new Error('rede caiu'));
+    expect(await gen.pollPendingMedia()).toEqual([{ post: net.id, status: 'ready' }]);
+    expect(net).toMatchObject({ status: 'pending_approval' });
+    expect(net.media[0].asset_id).toBe('a1');
+    expect(net.creative_brief.video_direction.scores[1]).toMatchObject({ attempt: 2, total: null, error: 'rede caiu' });
+    const conv = second(w, 'veo:conv');
+    s.provider.getGenerationStatus.mockResolvedValueOnce({ status: 'ready', assetUrl: 'https://provider.test/v2.mp4', thumbnailUrl: null, externalJobId: 'veo:conv', cost: 0 });
+    s.conform.ensureIgReady.mockRejectedValueOnce(new Error('Vídeo fora do padrão do Instagram mesmo depois da conversão: x'));
+    expect(await gen.pollPendingMedia()).toEqual([{ post: conv.id, status: 'ready' }]);
+    expect(conv.status).not.toBe('failed');
+    expect(conv.media[0].asset_id).toBe('a1');
+  });
+});

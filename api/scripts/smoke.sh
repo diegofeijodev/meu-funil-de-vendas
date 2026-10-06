@@ -664,6 +664,14 @@ curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"media"}' >/
 check "prod: 2ª rodada — só a falha de mídia ganha nova tentativa (auto_retried); a de publicação fica" "true,failed:media,,failed:publish" "$(PSQL "SELECT coalesce(creative_brief->>'auto_retried','')||','||status||coalesce(':'||failure_kind,'') FROM ig_posts WHERE id='$A1'"),$(PSQL "SELECT coalesce(creative_brief->>'auto_retried','')||','||status||coalesce(':'||failure_kind,'') FROM ig_posts WHERE id='$B1'")"
 check "prod: o pulado não gera evento de novo" "1" "$(PSQL "SELECT count(*) FROM ig_autopilot_events WHERE post_id='$AO' AND kind='post_skipped'")"
 PSQL "UPDATE ig_posts SET status='cancelled' WHERE run_id IN ('$RUNA','$NRUN') AND status <> 'cancelled'" >/dev/null
+# Sem Instagram conectado (WID) o criativo só sai dentro da meta de 24 h; com a conta (NID), adianta até 48 h. A SQL real decide.
+PSQL "INSERT INTO instagram_accounts(workspace_id,ig_user_id,status) VALUES ('$NID','ig-smoke-prod','connected')" >/dev/null
+X1=$(PSQL "INSERT INTO ig_posts(workspace_id,plan_id,run_id,automation,format,status,theme,scheduled_at) VALUES ('$WID','$PLID','$RUNA','publish','feed_image','idea','Prod sem conta', now() + interval '30 hours') RETURNING id" | head -1)
+Y1=$(PSQL "INSERT INTO ig_posts(workspace_id,plan_id,run_id,automation,format,status,theme,scheduled_at) VALUES ('$NID','$NPL','$NRUN','publish','feed_image','idea','Prod com conta', now() + interval '30 hours') RETURNING id" | head -1)
+curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"media"}' >/dev/null
+check "prod: sem Instagram conectado não adianta o criativo (+30 h fica ideia); com a conta adianta (sem IA: falha de mídia)" "idea,failed:media" "$(for p in $X1 $Y1; do PSQL "SELECT status||coalesce(':'||failure_kind,'') FROM ig_posts WHERE id='$p'"; done | paste -sd,)"
+PSQL "UPDATE ig_posts SET status='cancelled' WHERE id IN ('$X1','$Y1')" >/dev/null
+PSQL "DELETE FROM instagram_accounts WHERE workspace_id='$NID'" >/dev/null
 PSQL "UPDATE ig_content_plans SET status='active', auto_publish=true WHERE id='$PLID'" >/dev/null
 WK=$(curl -s -X POST $CRON -H "x-cron-secret: $CTOK" -H "$J" -d '{"task":"weekly"}')
 check "cron weekly: sem IA o plano falha, a semana é liberada e o evento 'failure' fica" "true,0,failure" "$(echo "$WK" | jq -r '[.weekly[] | select(.plan=="'$PLID'" and has("error"))] | length > 0' | tr '\n' ','; PSQL "SELECT count(*) FROM ig_autopilot_weeks WHERE plan_id='$PLID'" | tr '\n' ','; PSQL "SELECT kind FROM ig_autopilot_events WHERE plan_id='$PLID' AND message LIKE 'Falha ao gerar o calendário%' LIMIT 1")"

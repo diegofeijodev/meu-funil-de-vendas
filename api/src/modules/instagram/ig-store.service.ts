@@ -55,6 +55,11 @@ export class PostLease {
   async release() {
     await this.prisma.ig_posts.updateMany({ where: { id: this.postId, lease_until: this.until }, data: { lease_until: null } }).catch(() => undefined);
   }
+
+  /** Em vez de soltar, segura o post por `ms` (espera antes da próxima tentativa); só se o lease ainda for deste processo. */
+  async holdFor(ms: number) {
+    await this.prisma.ig_posts.updateMany({ where: { id: this.postId, lease_until: this.until }, data: { lease_until: new Date(Date.now() + ms) } }).catch(() => undefined);
+  }
 }
 
 /** Acesso às linhas de `ig_posts` e ao registro do piloto automático (sempre com id + workspace). */

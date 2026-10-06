@@ -292,6 +292,43 @@ describe('autoCalendarTick (a cada 5 min)', () => {
     expect(w.t['ig_autopilot_events']!.rows.find((e) => e.kind === 'reschedule')).toMatchObject({ level: 'warn' });
   });
 
+  describe('I5 — passo 1 em rodízio: uma programação com problema não trava as das outras empresas', () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60e3);
+    const pair = (w: IgWorld, a: Record<string, unknown>, b: Record<string, unknown>) => {
+      const p = plan(w);
+      const first = run(w, p, { slots: [slotAt(600, 0)], ...a }); // criada antes
+      const second = run(w, p, { slots: [slotAt(600, 0)], ...b });
+      return { first, second };
+    };
+    it('falhou há menos de 30 min: espera (não gasta IA a cada 5 min) e a vez é da outra', async () => {
+      const { w, s, auto } = setup();
+      s.aiJson['ig_auto_calendar'] = () => ({ posts: [{ index: 0, theme: 'T' }] });
+      const { first, second } = pair(w, { last_error: 'IA fora do ar', updated_at: ago(5) }, { updated_at: ago(1) });
+      await auto.autoCalendarTick();
+      expect(first).toMatchObject({ status: 'planning', filled: 0 });
+      expect(second).toMatchObject({ status: 'active', filled: 1 });
+    });
+    it('falhou há mais de 30 min (ex.: créditos repostos): volta a ser tentada', async () => {
+      const { w, s, auto } = setup();
+      s.aiJson['ig_auto_calendar'] = () => ({ posts: [{ index: 0, theme: 'T' }] });
+      const { first } = pair(w, { last_error: 'Créditos de IA esgotados', paused_reason: 'Créditos de IA esgotados — programação pausada', updated_at: ago(31) }, { updated_at: ago(1) });
+      await auto.autoCalendarTick();
+      expect(first).toMatchObject({ status: 'active', filled: 1, last_error: null, paused_reason: null });
+    });
+    it('a vez é de quem foi atendida há mais tempo (updated_at), não da mais antiga; travada por outro worker fica de fora', async () => {
+      const { w, s, auto } = setup();
+      s.aiJson['ig_auto_calendar'] = () => ({ posts: [{ index: 0, theme: 'T' }] });
+      const { first, second } = pair(w, { updated_at: ago(2) }, { updated_at: ago(20) });
+      await auto.autoCalendarTick();
+      expect([first.status, second.status]).toEqual(['planning', 'active']);
+      const { first: busy, second: free } = pair(w, { updated_at: ago(60), locked_until: new Date(Date.now() + 60e3) }, { updated_at: ago(1) });
+      await auto.autoCalendarTick();
+      expect([first.status, busy.status, free.status]).toEqual(['active', 'planning', 'planning']); // rodada anterior: `first` estava na fila antes de `free`
+      await auto.autoCalendarTick();
+      expect([busy.status, free.status]).toEqual(['planning', 'active']);
+    });
+  });
+
   it('5: todos os posts finalizados → programação "done"; planning vira active pelo próprio tick', async () => {
     const { w, s, auto } = setup();
     const p = plan(w);
@@ -312,6 +349,7 @@ describe('renewRecurring', () => {
     const { w, auto } = setup();
     const p = plan(w);
     const t = todaySP();
+    connected(w);
     const root = run(w, p, { recurring: true, status: 'active', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'] });
     expect(await auto.renewRecurring()).toEqual({ created: 1 });
     const kid = w.t['ig_auto_runs']!.rows[1];
@@ -324,6 +362,21 @@ describe('renewRecurring', () => {
     root.status = 'cancelled';
     root.recurring = false;
     expect(await auto.renewRecurring()).toEqual({ created: 0 });
+  });
+
+  it('I4 — sem Instagram conectado a semana seguinte não nasce sozinha (nada de IA para quem não publica); ao conectar, renova a partir de hoje', async () => {
+    const { w, auto } = setup();
+    const t = todaySP();
+    const root = run(w, plan(w), { recurring: true, status: 'active', start_date: DATE(plusDays(t, -10)), end_date: DATE(plusDays(t, -4)), times: ['09:00'] });
+    w.t['instagram_accounts']!.rows.push({ id: uuid(), workspace_id: WS_A, ig_user_id: null, status: 'disconnected' });
+    expect(await auto.renewRecurring()).toEqual({ created: 0 });
+    expect(w.t['ig_auto_runs']!.rows).toHaveLength(1);
+    w.t['instagram_accounts']!.rows[0]!.status = 'connected';
+    w.t['instagram_accounts']!.rows[0]!.ig_user_id = 'ig1';
+    expect(await auto.renewRecurring()).toEqual({ created: 1 });
+    const kid = w.t['ig_auto_runs']!.rows[1];
+    expect(kid).toMatchObject({ parent_id: root.id });
+    expect(kid.start_date.toISOString().slice(0, 10)).toBe(t);
   });
 });
 
@@ -923,6 +976,7 @@ describe('A1 — estratégia no modo "publish" e semanas repetidas', () => {
 
   it('semana repetida nasce SEM estratégia (pending) e herda modo, objetivo e o áudio dos vídeos da raiz', async () => {
     const { w, auto } = setup();
+    connected(w);
     const t = todaySP();
     const root = run(w, plan(w), {
       recurring: true, status: 'active', mode: 'publish', start_date: DATE(plusDays(t, -3)), end_date: DATE(plusDays(t, 3)), times: ['09:00'],
@@ -1067,7 +1121,7 @@ describe('A2 — reescrita do post reprovado (modo "publish")', () => {
     expect(b.review_reason).toBe('Checagem final: CTA fora dos CTAs da estratégia.');
   });
 
-  it('IA fora do ar: não gasta tentativa, guarda last_error e tenta de novo no próximo tick', async () => {
+  it('IA fora do ar: não gasta tentativa, guarda last_error e tenta de novo depois de ~30 min', async () => {
     const { w, s, auto } = setup();
     const r = run(w, plan(w), { status: 'active' });
     const post = flagged(w, r);
@@ -1075,7 +1129,8 @@ describe('A2 — reescrita do post reprovado (modo "publish")', () => {
       throw new Error('IA fora do ar');
     };
     expect(await auto.rewritePost(post.id)).toBeNull();
-    expect(post).toMatchObject({ status: 'needs_review', review_attempts: 0, last_error: 'IA fora do ar', lease_until: null });
+    expect(post).toMatchObject({ status: 'needs_review', review_attempts: 0, last_error: 'IA fora do ar' });
+    expect(post.lease_until.getTime()).toBeGreaterThan(Date.now() + 20 * 60e3); // espera ~30 min antes da próxima tentativa (revisão final I3)
   });
 
   it('tentativas esgotadas (review_attempts = 2): pula sem chamar a IA; modo "approval" nunca é reescrito; lease vivo é respeitado', async () => {
@@ -1163,5 +1218,76 @@ describe('C4 — áudio dos vídeos na programação', () => {
     expect(await errors({ videoAudio: { modo: 'narracao', instrucoes: 'x'.repeat(501) } })).toBeGreaterThan(0);
     expect(await errors({ videoAudio: { modo: 'narracao', volume: 10 } })).toBeGreaterThan(0);
     expect(await errors({ videoAudio: 'narracao' })).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Revisão final (05/10/2026): a reescrita nunca libera um post reprovado sem revalidação e não prende a fila.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('revisão final — reescrita segura e com espera', () => {
+  const flagged = (w: IgWorld, r: any, over: Record<string, unknown> = {}) =>
+    seedPost(w, {
+      run_id: r.id, plan_id: r.plan_id, automation: 'publish', status: 'needs_review', media: [], approved_at: null,
+      review_reason: 'CTA com promoção inventada', review_score: 3, review_attempts: 0, scheduled_at: new Date(Date.now() + 30 * 3600e3),
+      theme: 'Tema', hook: 'Gancho novo', caption: 'Legenda velha', cta: 'Promoção 50% hoje', objective_link: 'serve', pillar: 'A', persona: 'Ana',
+      creative_brief: { prompt: 'cena', headline: 'Manchete nova', variations: 3 }, ...over,
+    });
+  const item = (over: Record<string, unknown> = {}) => ({
+    posts: [{ index: 0, theme: 'Tema', pillar: 'A', persona: 'Ana', product_name: '', funnel_stage: 'atracao', objective_link: 'serve ao objetivo', hook: 'Gancho novo', headline: 'Manchete nova', caption: 'Legenda nova', hashtags: ['a'], cta: 'CTA', image_prompt: 'cena', slides: [], ...over }],
+  });
+  const approve = (s: ReturnType<typeof setup>['s']) => (s.aiJson['ig_post_review'] = () => ({ results: [{ index: 0, aprovado: true, nota_0_10: 8, motivo: 'ok' }] }));
+
+  it('C1 — CTA mudou (vai na arte: último slide/capa): a mídia é descartada e o criativo é refeito', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r, { media: [{ url: 'https://cdn.test/a.jpg', type: 'image', order: 0 }] });
+    s.aiJson['ig_auto_calendar'] = () => item();
+    approve(s);
+    expect(await auto.rewritePost(post.id)).toBe('rewritten');
+    expect(post).toMatchObject({ status: 'idea', cta: 'CTA', media: [] });
+  });
+
+  it('C1 — sem gancho, o tema vai na capa: tema mudou → mídia descartada', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r, { hook: null, cta: 'CTA', media: [{ url: 'https://cdn.test/a.jpg', type: 'image', order: 0 }] });
+    s.aiJson['ig_auto_calendar'] = () => item({ hook: '', theme: 'Tema novo' });
+    approve(s);
+    await auto.rewritePost(post.id);
+    expect(post).toMatchObject({ status: 'idea', media: [] });
+  });
+
+  it('C2 — revisor indisponível (sem veredito): continua em revisão, não gasta tentativa e espera antes de tentar de novo', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const post = flagged(w, r);
+    s.aiJson['ig_auto_calendar'] = () => item();
+    s.aiJson['ig_post_review'] = () => {
+      throw new Error('429 limite');
+    };
+    expect(await auto.rewritePost(post.id)).toBeNull();
+    expect(post).toMatchObject({ status: 'needs_review', review_attempts: 0, theme: 'Tema', caption: 'Legenda velha' });
+    expect(post.last_error).toMatch(/revisão/i);
+    expect(post.lease_until.getTime()).toBeGreaterThan(Date.now() + 20 * 60e3); // espera ~30 min
+  });
+
+  it('I3 — falha sem gastar tentativa (IA fora, programação sem estratégia) segura o post por ~30 min: o próximo da fila é atendido', async () => {
+    const { w, s, auto } = setup();
+    const r = run(w, plan(w), { status: 'active' });
+    const noStrategy = run(w, plan(w), { status: 'active', strategy: null });
+    const stuck = flagged(w, noStrategy, { scheduled_at: new Date(Date.now() + 2 * 3600e3) });
+    const a = flagged(w, r, { scheduled_at: new Date(Date.now() + 3 * 3600e3) });
+    const b = flagged(w, r, { scheduled_at: new Date(Date.now() + 4 * 3600e3) });
+    const c = flagged(w, r, { scheduled_at: new Date(Date.now() + 5 * 3600e3) });
+    s.aiJson['ig_auto_calendar'] = () => {
+      throw new Error('IA fora do ar');
+    };
+    await auto.rewriteFlagged();
+    for (const p of [stuck, a, b]) expect(p.lease_until.getTime()).toBeGreaterThan(Date.now() + 20 * 60e3);
+    s.aiJson['ig_auto_calendar'] = () => item();
+    approve(s);
+    expect(await auto.rewriteFlagged()).toEqual({ rewritten: 1, retried: 0, skipped: 0 }); // só o "c" estava livre
+    expect(c.status).toBe('idea');
   });
 });

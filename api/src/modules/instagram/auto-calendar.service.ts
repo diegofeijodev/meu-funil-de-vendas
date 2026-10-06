@@ -55,6 +55,12 @@ export const LOCK_MS = 240_000;
 export const MAX_REWRITES = 2;
 /** Reescritas por tick (cada uma gasta 1 chamada de texto + 1 validação). */
 const REWRITES_PER_TICK = 3;
+/** Reescrita que não pôde rodar (IA ou revisor fora, programação sem estratégia): o post espera este tempo antes da próxima tentativa. */
+const REWRITE_BACKOFF_MS = 30 * 60e3;
+/** Revisor indisponível: o post reescrito não sai sem veredito. */
+const REVIEW_UNAVAILABLE = 'Revisão automática indisponível agora: nova tentativa em 30 min.';
+/** Programação cujo lote falhou (IA fora, sem créditos): o tick só tenta de novo depois disto — e, enquanto isso, atende as outras. */
+const FILL_BACKOFF_MS = 30 * 60e3;
 const weekdayName = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' });
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const dateCol = (s: string) => new Date(`${s}T12:00:00Z`);
@@ -272,7 +278,8 @@ export class AutoCalendarService {
     } catch (e) {
       if (e instanceof LeaseLost) return this.snapshot(runId, true);
       const credit = isCreditFailure(errText(e));
-      await release({ last_error: errText(e), paused_reason: credit ? 'Créditos de IA esgotados — programação pausada' : null });
+      // `updated_at` explícito: é por ele que o tick faz o rodízio e conta a espera depois da falha.
+      await release({ last_error: errText(e), paused_reason: credit ? 'Créditos de IA esgotados — programação pausada' : null, updated_at: new Date() });
       await this.store.logEvent({
         workspace_id: run.workspace_id,
         plan_id: run.plan_id,
@@ -498,11 +505,16 @@ export class AutoCalendarService {
   async rewritePost(postId: string): Promise<'rewritten' | 'retried' | 'skipped' | null> {
     const lease = await this.store.claimLease(postId, null, { status: 'needs_review', automation: 'publish' }, {}, LOCK_MS);
     if (!lease) return null;
+    // Falhou sem gastar tentativa: segura o post por um tempo (não volta no próximo tick nem ocupa a vez dos outros).
+    let hold = false;
     try {
       const post = (await this.prisma.ig_posts.findUnique({ where: { id: postId } })) as PostRow | null;
       if (!post?.run_id || !post.scheduled_at) return null;
       const run = await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: post.workspace_id } });
-      if (!run?.strategy || !['planning', 'active'].includes(run.status)) return null;
+      if (!run?.strategy || !['planning', 'active'].includes(run.status)) {
+        hold = true;
+        return null;
+      }
       const reason: string = post.review_reason || 'reprovado na revisão';
       const done: number = post.review_attempts ?? 0;
       if (done >= MAX_REWRITES) return (await this.skipPost(post, reason, done)) ? 'skipped' : null;
@@ -522,6 +534,7 @@ export class AutoCalendarService {
         if (e instanceof PublishClaimLost) throw e;
         // IA fora do ar / sem crédito: não gasta tentativa; o próximo tick tenta de novo.
         await this.prisma.ig_posts.updateMany({ where: { id: postId, status: 'needs_review' }, data: { last_error: errText(e) } });
+        hold = true;
         return null;
       }
       const p = items.get(0) ?? null;
@@ -535,6 +548,12 @@ export class AutoCalendarService {
           posts: [{ index: 0, at, theme: fields.theme, hook: fields.hook, caption: fields.caption, headline: fields.brief.headline, cta: fields.cta }],
         });
         verdict = verdicts.get(0) ?? null;
+        if (!verdict) {
+          // Sem veredito (revisor fora do ar ou sem resposta para o post): nunca libera sem revalidação — espera e tenta de novo.
+          await this.prisma.ig_posts.updateMany({ where: { id: postId, status: 'needs_review' }, data: { last_error: REVIEW_UNAVAILABLE } });
+          hold = true;
+          return null;
+        }
         const { brief: nextBrief, ...columns } = fields;
         problems = await this.publishing.alignmentProblems({ ...post, ...columns, creative_brief: { ...brief, ...nextBrief } }, new Date(at));
       }
@@ -542,8 +561,15 @@ export class AutoCalendarService {
       if (fields && (!verdict || verdict.aprovado) && !problems.length) {
         const { brief: nextBrief, ...columns } = fields;
         const hadMedia = Array.isArray(post.media) && post.media.length > 0;
-        // Só o texto mudou (mesmo gancho e mesma headline, que entram na arte): a mídia vale; senão ela é refeita pela produção.
-        const keepMedia = hadMedia && (columns.hook ?? '') === (post.hook ?? '') && (nextBrief.headline ?? '') === ((brief['headline'] as string | null | undefined) ?? '');
+        // Só a legenda mudou: a mídia vale. Gancho, headline, CTA (último slide/capa) e o tema (capa sem gancho) entram na arte —
+        // qualquer um deles mudou: a mídia é descartada e a produção refaz o criativo.
+        const same = (a: unknown, b: unknown) => ((a as string | null | undefined) ?? '') === ((b as string | null | undefined) ?? '');
+        const keepMedia =
+          hadMedia &&
+          same(columns.hook, post.hook) &&
+          same(nextBrief.headline, brief['headline']) &&
+          same(columns.cta, post.cta) &&
+          (!!post.hook || same(columns.theme, post.theme));
         const got = await this.prisma.ig_posts.updateMany({
           where: { id: postId, status: 'needs_review' },
           data: {
@@ -589,7 +615,8 @@ export class AutoCalendarService {
       });
       return 'retried';
     } finally {
-      await lease.release();
+      if (hold) await lease.holdFor(REWRITE_BACKOFF_MS);
+      else await lease.release();
     }
   }
 
@@ -660,8 +687,23 @@ export class AutoCalendarService {
   async autoCalendarTick() {
     const out: Record<string, unknown> = {};
 
-    // 1) Lotes pendentes da estrategista (o usuário pode ter fechado a página).
-    const planning = await this.prisma.ig_auto_runs.findMany({ where: { status: 'planning', strategy_status: { not: 'review' } }, orderBy: { created_at: 'asc' }, take: 1, select: { id: true } });
+    // 1) Lotes pendentes da estrategista (o usuário pode ter fechado a página). Rodízio: a vez é de quem foi atendida há mais tempo
+    //    (cada lote ou falha atualiza o updated_at); travada por outro worker fica de fora; falhou há menos de 30 min espera — sem
+    //    gastar IA a cada 5 min e sem travar as programações das outras empresas (pausada por créditos volta a ser tentada depois).
+    const now = Date.now();
+    const planning = await this.prisma.ig_auto_runs.findMany({
+      where: {
+        status: 'planning',
+        strategy_status: { not: 'review' },
+        AND: [
+          { OR: [{ locked_until: null }, { locked_until: { lt: new Date(now) } }] },
+          { OR: [{ last_error: null }, { updated_at: { lt: new Date(now - FILL_BACKOFF_MS) } }] },
+        ],
+      },
+      orderBy: [{ updated_at: 'asc' }, { id: 'asc' }],
+      take: 1,
+      select: { id: true },
+    });
     let filled = 0;
     for (const r of planning) await this.fillAutoRun(r.id).then(() => filled++).catch(() => null);
     out['filled'] = filled;
@@ -737,11 +779,25 @@ export class AutoCalendarService {
     return out;
   }
 
-  /** Recorrente: quando faltam 7 dias para acabar, cria a semana seguinte com a mesma configuração. */
+  /**
+   * Recorrente: quando faltam 7 dias para acabar, cria a semana seguinte com a mesma configuração. Só para empresa com o Instagram
+   * conectado: sem conta nada é publicado, e renovar sozinho gastaria IA toda semana sem fim. Ao conectar, a próxima semana nasce a partir de hoje.
+   */
   async renewRecurring() {
     const roots = await this.prisma.ig_auto_runs.findMany({ where: { recurring: true, parent_id: null, status: { in: ['planning', 'active', 'done'] } }, take: 50 });
+    const live = roots.length
+      ? new Set(
+          (
+            await this.prisma.instagram_accounts.findMany({
+              where: { workspace_id: { in: [...new Set(roots.map((r) => r.workspace_id))] }, status: 'connected', ig_user_id: { not: null } },
+              select: { workspace_id: true },
+            })
+          ).map((a) => a.workspace_id),
+        )
+      : new Set<string>();
     let created = 0;
     for (const root of roots) {
+      if (!live.has(root.workspace_id)) continue;
       const kid = await this.prisma.ig_auto_runs.findFirst({ where: { parent_id: root.id }, orderBy: { end_date: 'desc' }, select: { end_date: true } });
       const lastEnd = dayOf(kid?.end_date ?? root.end_date);
       if (lastEnd >= plusDays(todaySP(), 7)) continue;

@@ -48,7 +48,9 @@ describe('ProductionService.candidates (consulta real)', () => {
     expect(sql).toMatch(/p\.status = 'idea'/);
     expect(sql).toMatch(/p\.lease_until IS NULL OR p\.lease_until < \$::timestamptz/);
     expect(sql).toMatch(/ORDER BY late DESC, x\.scheduled_at ASC/);
-    expect(values).toEqual(['2099-01-02T12:00:00.000Z', '2099-01-01T00:00:00.000Z', '2099-01-03T12:00:00.000Z', '2099-01-01T12:00:00.000Z', 3]);
+    // Sem Instagram conectado o criativo só é feito dentro da meta (24 h): nada de gastar com 48 h de antecedência para quem não publica.
+    expect(sql).toMatch(/AND \(p\.scheduled_at <= \$::timestamptz\s+OR EXISTS \(SELECT 1 FROM instagram_accounts a WHERE a\.workspace_id = p\.workspace_id AND a\.status = 'connected' AND a\.ig_user_id IS NOT NULL\)\)/);
+    expect(values).toEqual(['2099-01-02T12:00:00.000Z', '2099-01-01T00:00:00.000Z', '2099-01-03T12:00:00.000Z', '2099-01-02T12:00:00.000Z', '2099-01-01T12:00:00.000Z', 3]);
   });
 });
 
@@ -74,6 +76,22 @@ describe('ProductionService.productionTick (janela 48 h → meta 24 h)', () => {
     await prod.productionTick();
     expect(a2.status).toBe('scheduled'); // rodada seguinte: o próximo da empresa A
     expect(far.status).toBe('idea');
+  });
+
+  it('I4 — sem Instagram conectado: produz só dentro das 24 h da meta (não com 48 h de antecedência); conectada, adianta', async () => {
+    const { w, prod } = setup();
+    const ra = runFor(w, WS_A);
+    const rb = runFor(w, WS_B);
+    connected(w, WS_B);
+    const semConta = idea(w, ra, inH(30));
+    const comConta = idea(w, rb, inH(30));
+    expect(await prod.productionTick()).toMatchObject({ started: 1 });
+    expect(semConta.status).toBe('idea');
+    expect(comConta.status).toBe('scheduled');
+    const perto = idea(w, ra, inH(10));
+    await prod.productionTick();
+    expect(perto.media).toHaveLength(1); // dentro da meta: o criativo fica pronto (publica quando a conta conectar)
+    expect(semConta.status).toBe('idea');
   });
 
   it('prioridade: com 1 vaga por rodada, o post a menos de 24 h de outra empresa passa à frente', async () => {

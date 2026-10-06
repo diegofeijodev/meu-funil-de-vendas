@@ -33,10 +33,10 @@ export class InstagramCronService implements OnModuleInit {
 
   /** `queue`: conclui mídias assíncronas pendentes + fila de publicação. `publish` = alias de `queue`. */
   private async queue() {
-    return {
-      pendingMedia: await this.mediaGen.pollPendingMedia().catch((e) => ({ error: errText(e) })),
-      queue: await this.publishing.runPublishingQueue(),
-    };
+    // A fila de publicação vem primeiro: concluir vídeos (ffmpeg + crítico + refação) pode levar minutos e não pode atrasar o horário.
+    const queue = await this.publishing.runPublishingQueue();
+    const pendingMedia = await this.mediaGen.pollPendingMedia().catch((e) => ({ error: errText(e) }));
+    return { pendingMedia, queue };
   }
 
   /** `media`: calendário automático (lotes, reescrita, agendar, regras) + produção antecipada das programações + piloto dos planos. */

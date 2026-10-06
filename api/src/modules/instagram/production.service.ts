@@ -52,7 +52,11 @@ export class ProductionService {
     this.targetHours = env.IG_PRODUCTION_TARGET_HOURS;
   }
 
-  /** Rodízio NA consulta: ROW_NUMBER() por empresa (1 post cada, o mais próximo); atrasados para a meta primeiro; lease livre. */
+  /**
+   * Rodízio NA consulta: ROW_NUMBER() por empresa (1 post cada, o mais próximo); atrasados para a meta primeiro; lease livre.
+   * Empresa sem Instagram conectado só entra dentro da meta (24 h): o criativo fica pronto (a tela promete isso), mas sem gastar com
+   * 48 h de antecedência — nem ocupar a vaga de quem publica — enquanto a conta pode nunca conectar.
+   */
   async candidates(now = new Date()): Promise<ProductionCandidate[]> {
     const target = new Date(now.getTime() + this.targetHours * 3600e3).toISOString();
     const since = new Date(now.getTime() - OVERDUE_MS).toISOString();
@@ -67,6 +71,8 @@ export class ProductionService {
              AND p.status = 'idea'
              AND p.scheduled_at > ${since}::timestamptz
              AND p.scheduled_at <= ${until}::timestamptz
+             AND (p.scheduled_at <= ${target}::timestamptz
+                  OR EXISTS (SELECT 1 FROM instagram_accounts a WHERE a.workspace_id = p.workspace_id AND a.status = 'connected' AND a.ig_user_id IS NOT NULL))
              AND (p.lease_until IS NULL OR p.lease_until < ${now.toISOString()}::timestamptz)
         ) x
        WHERE x.rn = 1

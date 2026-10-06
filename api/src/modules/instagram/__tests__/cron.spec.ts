@@ -66,10 +66,10 @@ describe('InstagramCronService.run (tarefas do server.md §5.2)', () => {
   it('queue: mídias assíncronas + fila de publicação (e "publish" é o mesmo)', async () => {
     const { svc, calls } = cronParts();
     expect(await svc.run('queue')).toEqual({ pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
-    expect(calls).toEqual(['pollPendingMedia', 'runPublishingQueue']);
+    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     calls.length = 0;
     await svc.run('publish');
-    expect(calls).toEqual(['pollPendingMedia', 'runPublishingQueue']);
+    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
   });
 
   it('media: calendário automático e depois o piloto; metrics; weekly; optimize; account', async () => {
@@ -124,7 +124,7 @@ describe('jobs do agendador (db.md §6, em UTC, atrás de SCHEDULER_ENABLED)', (
     const { svc, scheduler, w, calls } = cronParts();
     svc.onModuleInit();
     expect(await scheduler.run('instagram-queue-5min')).toBe(true);
-    expect(calls).toEqual(['pollPendingMedia', 'runPublishingQueue']);
+    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'instagram-queue', last_status: 'ok' });
     await scheduler.run('instagram-optimizer-monday');
     expect(w.t['cron_heartbeats']!.rows.map((r) => r.name)).toEqual(['instagram-queue', 'instagram-optimize']);
@@ -150,7 +150,7 @@ describe('POST /api/public/cron/instagram', () => {
   it('com o token: roda a tarefa e grava o heartbeat DEPOIS (ok); erro grava "error" e propaga', async () => {
     const { c, w, calls, mediaGen } = ctrl();
     expect(await c.run('tok-ig', { task: 'queue' })).toEqual({ pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
-    expect(calls).toEqual(['pollPendingMedia', 'runPublishingQueue']);
+    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'instagram-queue', last_status: 'ok' });
     await c.run('tok-ig', { task: 'publish' });
     await c.run('tok-ig', {});

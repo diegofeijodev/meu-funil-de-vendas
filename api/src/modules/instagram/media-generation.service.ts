@@ -725,6 +725,21 @@ export class MediaGenerationService {
         out.push({ post: post.id, status: 'ready' });
       } catch (e) {
         if (e instanceof PublishClaimLost) continue; // o lease foi assumido por outro ciclo: ele conclui o job
+        // Refação do vídeo que deu erro (rede, download, conversão…): o primeiro vídeo, já pago e com nota, fica — nunca `failed`.
+        const pjNow = post.creative_brief?.pending_job as PendingJob | undefined;
+        if (pjNow?.video?.best && isVideoFormat(post.format)) {
+          try {
+            const provider = await this.providers.resolve(post.workspace_id, choiceForProvider(pjNow.provider));
+            const scores = [...pjNow.video.scores, { attempt: pjNow.video.attempt, total: null, motivo: null, error: errText(e) }];
+            await this.completeVideo(post, provider, pjNow.video.best, scores, pjNow.cost, pjNow.instructions ?? null, lease);
+            await this.afterMediaReady(post);
+            out.push({ post: post.id, status: 'ready' });
+            continue;
+          } catch (e2) {
+            if (e2 instanceof PublishClaimLost) continue;
+            this.logger.warn(`[instagram] não deu para manter o primeiro vídeo: ${errText(e2)}`);
+          }
+        }
         const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
         await this.store.patchPost(post.id, { status: 'failed', last_error: errText(e), failure_kind: 'media', creative_brief: brief });
         out.push({ post: post.id, status: 'failed', error: errText(e) });

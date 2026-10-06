@@ -523,6 +523,7 @@ function AutoCalendarDialog({
           {account?.status !== "connected" && (
             <p className="rounded-md border border-warning/40 p-2 text-xs text-warning">
               O Instagram desta empresa não está conectado: os conteúdos e criativos são criados, mas só serão publicados depois de conectar a conta em Visão geral.
+              Até lá, cada criativo só é feito nas 24 h antes do horário e a repetição semanal fica parada.
             </p>
           )}
 
