@@ -1,3 +1,6 @@
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import { CreateAutoCalendarDto } from '../instagram.dto';
 import { ADMIN, MARKETING, OWNER, STRANGER, VIEWER, WS_A, WS_B, status } from '../../media/__tests__/mem';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 import { plusDays, todaySP } from '../slots';
@@ -1137,5 +1140,28 @@ describe('A3 — painel do período (summary)', () => {
     const [row] = (await auto.summary(WS_A)) as any[];
     expect(row.counts).toMatchObject({ total: 11, produced: 2, producing: 1, queued: 2, scheduled: 1, published: 1, rewriting: 1, review: 1, skipped: 1 });
     expect(row.skipped_posts).toEqual([{ id: expect.any(String), theme: 'Vencido', scheduled_at: new Date('2099-01-02T12:00:00Z'), reason: 'o horário passou há mais de 12 h sem o criativo pronto.' }]);
+  });
+});
+
+describe('C4 — áudio dos vídeos na programação', () => {
+  it('createAutoCalendar grava video_audio (instruções limpas); sem o campo fica o padrão do banco', async () => {
+    const { w, a } = setup();
+    const p = plan(w);
+    await a.createAutoCalendar(OWNER, input({ planId: p.id, mode: 'publish', videoAudio: { modo: 'narracao', instrucoes: '  voz\nfeminina calma  ' } }));
+    expect(w.t['ig_auto_runs']!.rows[0].video_audio).toEqual({ modo: 'narracao', instrucoes: 'voz feminina calma' });
+    await a.createAutoCalendar(OWNER, input({ planId: p.id }));
+    expect(w.t['ig_auto_runs']!.rows[1].video_audio).toEqual({ modo: 'ambiente_trilha', instrucoes: '' });
+  });
+
+  it('Review Focus #5 — DTO: modo fora da lista, instruções > 500, campo extra ou valor que não é objeto → erro de validação', async () => {
+    const base = { workspaceId: uuid(), startDate: '2099-01-01', endDate: '2099-01-02', weekdays: [1], times: ['09:00'], storyTimes: [], formats: ['reel'], focus: OBJECTIVE, mode: 'publish' };
+    const errors = async (o: Record<string, unknown>) => (await validate(plainToInstance(CreateAutoCalendarDto, { ...base, ...o }), { whitelist: true, forbidNonWhitelisted: true })).length;
+    expect(await errors({ videoAudio: { modo: 'narracao', instrucoes: 'voz calma' } })).toBe(0);
+    expect(await errors({ videoAudio: { modo: 'sem_audio' } })).toBe(0);
+    expect(await errors({})).toBe(0);
+    expect(await errors({ videoAudio: { modo: 'karaoke' } })).toBeGreaterThan(0);
+    expect(await errors({ videoAudio: { modo: 'narracao', instrucoes: 'x'.repeat(501) } })).toBeGreaterThan(0);
+    expect(await errors({ videoAudio: { modo: 'narracao', volume: 10 } })).toBeGreaterThan(0);
+    expect(await errors({ videoAudio: 'narracao' })).toBeGreaterThan(0);
   });
 });

@@ -260,6 +260,24 @@ export const ART = {
   subject: 's', scene: 'c', composition: 'x', lighting: 'l', camera: '50mm', style: 'foto', color_palette: ['#fff'], mood: 'm', text_in_image: 'none', negative: 'blurry',
   aspect_ratio: '1:1', prompt_final: 'A frosty glass of draft beer on a wooden counter, warm light, 50mm', video_shots: [],
 };
+/** Roteiro de vídeo que a IA falsa devolve (`video_direction`). */
+export const VIDEO_DIR = {
+  gancho_visual: 'o chope é servido até a borda em câmera lenta',
+  sujeito: 'copo de chope gelado com colarinho cremoso',
+  cenario: 'balcão de madeira de um bar aconchegante',
+  tomadas: [
+    { inicio_s: 0, fim_s: 2.5, enquadramento: 'close', acao: 'o chope é servido até a borda', movimento_camera: 'travelling lento para a frente', lente: '85 mm' },
+    { inicio_s: 2.5, fim_s: 5.5, enquadramento: 'plano médio', acao: 'a mão desliza o copo até a frente', movimento_camera: 'câmera parada', lente: '50 mm' },
+    { inicio_s: 5.5, fim_s: 8, enquadramento: 'plano aberto', acao: 'amigos brindam ao fundo', movimento_camera: 'leve recuo', lente: '35 mm' },
+  ],
+  iluminacao: 'luz quente de fim de tarde',
+  paleta_hex: ['#c0392b', '#f5deb3'],
+  estilo: 'comercial realista',
+  ritmo: 'abre rápido e fecha firme',
+  cta_visual: 'o copo em primeiro plano com o bar desfocado ao fundo',
+  audio: { modo: 'ambiente_trilha', descricao: 'som do bar e trilha leve', fala: '' },
+  evitar: ['copos de outras marcas'],
+};
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 
 export function igServices(w: IgWorld) {
@@ -267,7 +285,7 @@ export function igServices(w: IgWorld) {
   const aiJson: Record<string, (req: any) => any> = {};
   const ai = {
     jsonWithEngine: jest.fn(async (_ws: string, req: any) => ({ content: aiJson[req.name]?.(req) ?? {}, engine: 'IA do app' })),
-    json: jest.fn(async () => ({ ...ART })),
+    json: jest.fn(async (_ws: string, req: any) => (req?.name === 'video_direction' ? structuredClone(VIDEO_DIR) : { ...ART })),
     // Crítico visual (carrossel): 40/50 por padrão.
     vision: jest.fn(async () => ({ produto: 8, fidelidade: 8, composicao: 8, defeitos: 8, paleta: 8, motivo: 'ok' })),
   } as any;
@@ -290,6 +308,7 @@ export function igServices(w: IgWorld) {
   } as any;
   const extras = { build: jest.fn(async () => ({ cover_url: 'https://cdn.test/cover.jpg', captions_srt: 'https://cdn.test/c.srt' })) } as any;
   const assets = {
+    readBytes: jest.fn(async () => ({ bytes: new Uint8Array(PNG), mime: null })),
     ingest: jest.fn(async (i: any) => {
       const row = { id: uuid(), workspace_id: i.workspaceId, url: `https://cdn.test/${uuid()}.${i.kind === 'video' ? 'mp4' : 'jpg'}`, kind: i.kind, width: 1080, height: i.kind === 'video' ? 1920 : 1350, duration_seconds: i.kind === 'video' ? 8 : null, ig_ready: true, quality_report: {}, provider: i.provider ?? 'upload', source: i.source, ig_post_id: i.igPostId ?? null, title: i.title };
       w.t['media_assets']!.rows.push(row);
@@ -299,13 +318,19 @@ export function igServices(w: IgWorld) {
   } as any;
   const strategist = { currentStrategy: jest.fn(async () => null) } as any;
   const http = jest.fn(async () => new Response(null, { status: 200 }));
-  const images = { shrink: jest.fn(async (b: Uint8Array) => ({ bytes: new Uint8Array(b), mime: 'image/jpeg' })) } as any;
+  const images = {
+    shrink: jest.fn(async (b: Uint8Array) => ({ bytes: new Uint8Array(b), mime: 'image/jpeg' })),
+    padToAspect: jest.fn(async (b: Uint8Array) => ({ bytes: new Uint8Array(b), mime: 'image/jpeg' })),
+  } as any;
+  // Crítico de vídeo (40/50 por padrão) e conversão (devolve o próprio asset) falsos: nenhum ffmpeg nos testes do Instagram.
+  const quality = { minScore: 28, score: jest.fn(async () => ({ roteiro: 8, marca: 8, tecnica: 8, produto: 8, scroll: 8, total: 40, motivo: 'bom' })) } as any;
+  const conform = { ensureIgReady: jest.fn(async (a: any) => a) } as any;
 
   const content = new ContentService(w.prisma, ai, w.store);
   const publishing = new PublishingService(w.store, w.graph, http as any);
   useVirtualClock(publishing);
   const postContext = new PostContextService(w.store, strategist);
-  const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images, postContext);
+  const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images, postContext, quality, conform);
   const metrics = new MetricsService(w.store, w.graph);
   const account = new AccountService(w.store, w.graph, metrics, assets);
   const contentStrategy = new ContentStrategyService(content);
@@ -328,5 +353,5 @@ export function igServices(w: IgWorld) {
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
-  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext };
+  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext, images, quality, conform };
 }

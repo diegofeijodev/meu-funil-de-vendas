@@ -1,5 +1,6 @@
-import { Transform } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { AUDIO_MODES } from '../creative/video-director';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { IG_FORMATS } from './ig-types';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -85,6 +86,12 @@ class AutoScheduleBase {
   @IsOptional() @IsBoolean() asap?: boolean;
 }
 
+/** Áudio dos vídeos da programação (Reels e stories em vídeo). */
+export class VideoAudioDto {
+  @IsIn([...AUDIO_MODES]) modo!: (typeof AUDIO_MODES)[number];
+  @IsOptional() @IsString() @MaxLength(500) instrucoes?: string;
+}
+
 export class CreateAutoCalendarDto extends AutoScheduleBase {
   /** Criar exige ao menos um dia (a prévia aceita vazio e devolve 0 horários). */
   @IsArray() @ArrayMinSize(1) @IsInt({ each: true }) @Min(0, { each: true }) @Max(6, { each: true }) declare weekdays: number[];
@@ -96,6 +103,8 @@ export class CreateAutoCalendarDto extends AutoScheduleBase {
   @Transform(trim) @IsString({ message: FOCUS_MSG }) @MinLength(30, { message: FOCUS_MSG }) @MaxLength(1000) focus!: string;
   @IsIn(['publish', 'approval']) mode!: 'publish' | 'approval';
   @IsOptional() @IsBoolean() recurring?: boolean;
+  /** Áudio dos vídeos (sem o campo: padrão do banco — ambiente + trilha, sem instruções). */
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => VideoAudioDto) videoAudio?: VideoAudioDto;
 }
 
 export class PreviewAutoCalendarDto extends AutoScheduleBase {}

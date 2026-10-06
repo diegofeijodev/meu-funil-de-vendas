@@ -154,7 +154,7 @@ export class InstagramActionsService {
     await this.access.require(userId, d.workspaceId, d.mode === 'publish' ? 'manage' : 'write');
     return this.auto.createAutoRun(d.workspaceId, userId, {
       startDate: d.startDate, endDate: d.endDate, weekdays: d.weekdays, times: d.times, storyTimes: d.storyTimes, formats: d.formats, asap: d.asap,
-      planId: d.planId, brandId: d.brandId, campaignId: d.campaignId, focus: d.focus, mode: d.mode, recurring: d.recurring,
+      planId: d.planId, brandId: d.brandId, campaignId: d.campaignId, focus: d.focus, mode: d.mode, recurring: d.recurring, videoAudio: d.videoAudio,
     });
   }
 

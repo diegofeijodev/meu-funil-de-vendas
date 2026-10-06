@@ -4,13 +4,16 @@ import { AiService } from '../ai/ai.service';
 import { buildVisualPrompt, providerPrompt, threadOf, VisualThread, withVisualThread } from '../creative/art-director';
 import { MIN_SCORE, scoreCreative } from '../creative/critic';
 import { composeCreative } from '../creative/compose';
-import { choiceForProvider, GenerationResult, ProviderChoice, ServerCreativeProvider } from '../creative/creative.types';
+import { choiceForProvider, GenerationRequest, GenerationResult, ProviderChoice, ServerCreativeProvider } from '../creative/creative.types';
+import { directVideo, resolveAudio, stillPrompt, VIDEO_PROMPT_MAX_CHARS, VIDEO_SECONDS, VideoAudio, VideoDirection } from '../creative/video-director';
+import { VideoQualityService, VideoScore } from '../creative/video-quality.service';
 import { PipelineService } from '../creative/pipeline.service';
 import { ChainedProvider, ProviderResolverService, providerLog } from '../creative/provider-resolver.service';
 import { BrandRef, RefsService } from '../creative/refs.service';
 import { VideoExtrasService } from '../creative/video-extras.service';
 import { AiScore, ArtDirection, listField, TextLayout, VisualStyle } from '../creative/visual-style';
-import { AssetsService } from '../media/assets.service';
+import { AssetsService, MediaAsset } from '../media/assets.service';
+import { VideoConformService } from '../media/video-conform.service';
 import { targetForIgFormat } from '../media/formats';
 import { ImageService } from '../media/image.service';
 import { UserError } from '../media/user-error';
@@ -18,7 +21,7 @@ import { ContentService } from './content.service';
 import { ASPECT, IgFormat, isVideoFormat, PostRow } from './ig-types';
 import { IgStore, PostLease, PublishClaimLost, errText, leaseFree } from './ig-store.service';
 import { PublishingService } from './publishing.service';
-import { orderRefsForProduct } from '../creative/creative-context';
+import { firstFrameRef, orderRefsForProduct } from '../creative/creative-context';
 import { PostContextService } from './post-context.service';
 
 const MAX_UPLOAD = 100 * 1024 * 1024;
@@ -31,6 +34,19 @@ const MEDIA_LEASE_MS = 30 * 60e3;
 export const GENERATION_INTERRUPTED = 'Geração da mídia interrompida — tente gerar de novo.';
 /** Quanto a geração de vídeo espera dentro da requisição/tick (como o Estúdio); depois disso o poller (`instagram-queue`) conclui. */
 export const VIDEO_WAIT_MS = 25_000;
+/** Primeiro quadro do vídeo (9:16): a foto do produto/marca encaixada sem distorcer, sobras na cor dominante. */
+const FIRST_FRAME_W = 720;
+const FIRST_FRAME_H = 1280;
+/** Prompts antigos em inglês não devem continuar sendo enviados ao gerador. */
+const legacyEnglish = (value: unknown) =>
+  typeof value === 'string' && /\b(photorealistic|still frame|no text|use the product|commercial photograph|natural lighting|frozen layers)\b/i.test(value);
+
+type VideoScoreEntry = { attempt: number; total: number | null; motivo: string | null; error?: string };
+type VideoCandidate = { item: Record<string, any>; score: number | null; attempt: number; prompt: string; direction: VideoDirection | null };
+/** Estado do vídeo entre a 1ª geração e a refação (vai no `pending_job` quando o provedor é assíncrono). */
+type VideoState = { attempt: 1 | 2; best: VideoCandidate | null; scores: VideoScoreEntry[] };
+type StoredVideoDirection = { direction: VideoDirection | null; prompt: string; audio: VideoAudio; first_frame_ref: string | null; scores?: VideoScoreEntry[]; winner_attempt?: number };
+type VideoOutcome = { ok: true; items: number; provider: string; pending?: boolean };
 
 type PendingJob = {
   provider: string;
@@ -41,6 +57,7 @@ type PendingJob = {
   cost: number;
   instructions?: string | null;
   started_at: string;
+  video?: VideoState;
 };
 
 type Src = { sourceUrl?: string; bytes?: Uint8Array; mime?: string };
@@ -74,6 +91,8 @@ export class MediaGenerationService {
     private readonly publishing: PublishingService,
     private readonly images: ImageService,
     private readonly postContext: PostContextService,
+    private readonly quality: VideoQualityService,
+    private readonly conform: VideoConformService,
   ) {}
 
   private get prisma() {
@@ -91,13 +110,10 @@ export class MediaGenerationService {
     return brandId;
   }
 
-  /**
-   * Salva a mídia na Biblioteca (padronizada no formato do post) e devolve o item de mídia do post
-   * com largura/altura/duração reais. Toda mídia do Instagram fica ligada à marca do plano.
-   */
-  private async libraryItem(post: PostRow, src: Src, order: number, provider: string, prompt: string | null, cost = 0, title?: string) {
+  /** Salva a mídia na Biblioteca (padronizada no formato do post), sempre ligada à marca do plano. */
+  private async ingestAsset(post: PostRow, src: Src, provider: string, prompt: string | null, cost = 0, title?: string): Promise<MediaAsset> {
     const video = src.mime ? src.mime.startsWith('video/') : isVideoFormat(post.format);
-    const a = await this.assets.ingest({
+    return this.assets.ingest({
       brandId: await this.brandIdOfPost(post),
       workspaceId: post.workspace_id,
       kind: video ? 'video' : 'image',
@@ -111,6 +127,10 @@ export class MediaGenerationService {
       cost,
       igPostId: post.id,
     });
+  }
+
+  /** Item de mídia do post com largura/altura/duração reais. */
+  private mediaItem(a: MediaAsset, order: number) {
     return {
       url: a.url,
       type: a.kind,
@@ -122,6 +142,10 @@ export class MediaGenerationService {
       ig_ready: a.ig_ready,
       issues: ((a.quality_report as { issues?: string[] } | null)?.issues ?? []) as string[],
     };
+  }
+
+  private async libraryItem(post: PostRow, src: Src, order: number, provider: string, prompt: string | null, cost = 0, title?: string) {
+    return this.mediaItem(await this.ingestAsset(post, src, provider, prompt, cost, title), order);
   }
 
   /** Bytes (ou URL) que o provedor devolveu. */
@@ -158,7 +182,7 @@ export class MediaGenerationService {
   }
 
   /** Reels/Stories em vídeo: capa com logo, gancho e CTA (usada como capa do Reels) + legendas. */
-  private async videoCover(post: PostRow, provider: ServerCreativeProvider, prompt: string, assetId: string | null) {
+  private async videoCover(post: PostRow, provider: ServerCreativeProvider, prompt: string, assetId: string | null, durationSec: number) {
     if (post.creative_brief?.compose === false) return {};
     try {
       const brandId = await this.brandIdOfPost(post);
@@ -169,7 +193,7 @@ export class MediaGenerationService {
         provider,
         visualPrompt: prompt,
         aspectRatio: '9:16',
-        durationSec: 8,
+        durationSec,
         headline: post.hook ?? post.theme ?? null,
         cta: post.cta ?? null,
         captionText: post.hook ?? null,
@@ -239,7 +263,7 @@ export class MediaGenerationService {
       const composed = format === 'feed_carousel' ? await this.composeSlide(post, result, i, prompts.length) : null;
       const item: Record<string, any> = await this.libraryItem(post, composed ? { bytes: composed, mime: 'image/jpeg' } : this.srcOf(result), i, provider.id, itemPrompt, result.cost);
       if (format === 'feed_carousel' && qa) item['score'] = score?.total ?? null;
-      if (isVideoFormat(format)) Object.assign(item, await this.videoCover(post, provider, req.finalPrompt, item['asset_id']));
+      if (isVideoFormat(format)) Object.assign(item, await this.videoCover(post, provider, req.finalPrompt, item['asset_id'], Number(item['duration']) || VIDEO_SECONDS));
       media = [...media, item];
     }
     const requires = await this.store.approvalRequired(post);
@@ -296,6 +320,147 @@ export class MediaGenerationService {
     return { ...best, cost, retried };
   }
 
+  /** Áudio do vídeo: o do post (`creative_brief.audio`) sobrepõe o da programação (`ig_auto_runs.video_audio`). */
+  private async audioFor(post: PostRow): Promise<VideoAudio> {
+    const run = post.run_id ? await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: post.workspace_id }, select: { video_audio: true } }) : null;
+    return resolveAudio(run?.video_audio, post.creative_brief?.audio);
+  }
+
+  /**
+   * Reels/Story em vídeo: diretor de vídeo (roteiro por tomada) → primeiro quadro (foto do produto/marca em 9:16) → vídeo com o áudio
+   * configurado (espera curta; o poller conclui) → `finishVideo`. `criticNote` = refação pedida pelo crítico (2ª tentativa).
+   */
+  private async startVideo(post: PostRow, provider: ChainedProvider, instructions: string | null, lease: PostLease, state: VideoState, criticNote: string | null = null, cost = 0): Promise<VideoOutcome> {
+    const ws: string = post.workspace_id;
+    const brand = await this.content.brandFor(ws, await this.brandIdOfPost(post));
+    const vs = (brand?.visual_style ?? {}) as VisualStyle;
+    const ctx = await this.postContext.build(post, brand?.id ?? null);
+    const audio = await this.audioFor(post);
+    const refs = await this.refs.loadBrandRefs(ws, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined });
+    const ref = firstFrameRef(refs, ctx.product?.name ?? null);
+    const frame = ref
+      ? await this.images.padToAspect(ref.bytes, FIRST_FRAME_W, FIRST_FRAME_H).catch((e) => {
+          this.logger.warn(`[instagram] primeiro quadro falhou (segue só com o texto): ${errText(e)}`);
+          return null;
+        })
+      : null;
+    const brief = post.creative_brief ?? {};
+    const prev = brief.video_direction as StoredVideoDirection | undefined;
+    const override =
+      !instructions && !criticNote && typeof brief.visual_prompt_override === 'string' && brief.visual_prompt_override.trim() && !legacyEnglish(brief.visual_prompt_override)
+        ? String(brief.visual_prompt_override).trim().slice(0, VIDEO_PROMPT_MAX_CHARS)
+        : null;
+    await lease.renew();
+    let direction: VideoDirection | null = prev?.direction ?? null;
+    let prompt: string;
+    if (override) prompt = override;
+    else {
+      const r = await directVideo(this.ai, {
+        workspaceId: ws, brand, context: ctx, format: post.format === 'story_video' ? 'story_video' : 'reel',
+        theme: post.theme ?? null, hook: post.hook ?? null, cta: post.cta ?? null, userPrompt: (brief.prompt as string | undefined) ?? null,
+        audio, hasFirstFrame: !!frame, provider: provider.id, adjust: instructions, previousPrompt: instructions || criticNote ? (prev?.prompt ?? null) : null, criticNote,
+      });
+      direction = r.direction;
+      prompt = r.prompt;
+    }
+    const stored: StoredVideoDirection = { direction, prompt, audio, first_frame_ref: frame && ref ? ref.id : null, scores: state.scores };
+    post.creative_brief = { ...brief, video_direction: stored, visual_prompt: prompt };
+    await this.store.patchPost(post.id, { creative_brief: post.creative_brief });
+    await lease.renew();
+    const req: GenerationRequest = {
+      finalPrompt: prompt, aspectRatio: '9:16', kind: 'video', maxWaitMs: VIDEO_WAIT_MS, audio: audio.modo !== 'sem_audio',
+      ...(frame ? { referenceImages: [frame] } : {}),
+      ...(frame && ref && /^https:\/\//i.test(ref.url) ? { referenceUrls: [ref.url] } : {}),
+    };
+    const r = await provider.generateVideo(req);
+    if (r.status === 'generating' && r.externalJobId) {
+      const { pending_job: _old, ...rest } = post.creative_brief;
+      const pending: PendingJob = { provider: provider.id, jobId: r.externalJobId, index: 0, prompts: [prompt], media: [], cost, instructions, started_at: new Date().toISOString(), video: state };
+      post.creative_brief = { ...rest, pending_job: pending };
+      await this.store.patchPost(post.id, { status: 'generating', ai_provider: provider.id, creative_brief: post.creative_brief });
+      return { ok: true, items: 0, provider: provider.id, pending: true };
+    }
+    if (r.status !== 'ready' || (!r.assetUrl && !r.bytes)) throw new UserError('O provedor não devolveu a mídia pronta.');
+    return this.finishVideo(post, provider, r, state, cost + r.cost, instructions, lease);
+  }
+
+  /** Vídeo pronto (síncrono ou pelo poller): biblioteca → padrão do Instagram (ffmpeg) → nota do crítico → no máximo 1 refação. */
+  private async finishVideo(post: PostRow, provider: ChainedProvider, r: GenerationResult, state: VideoState, cost: number, instructions: string | null, lease: PostLease): Promise<VideoOutcome> {
+    const stored = (post.creative_brief?.video_direction ?? {}) as StoredVideoDirection;
+    const audio = resolveAudio(stored.audio);
+    await lease.renew();
+    const raw = await this.ingestAsset(post, this.srcOf(r), provider.id, stored.prompt ?? null, r.cost);
+    await lease.renew();
+    const asset = await this.conform.ensureIgReady(
+      raw,
+      { workspaceId: post.workspace_id, brandId: await this.brandIdOfPost(post), igPostId: post.id, title: post.theme ?? 'Reels', provider: provider.id },
+      { silent: audio.modo === 'sem_audio' },
+    );
+    const { score, error } = await this.scoreVideo(post, asset, stored, lease);
+    const scores: VideoScoreEntry[] = [...state.scores, { attempt: state.attempt, total: score?.total ?? null, motivo: score?.motivo ?? null, ...(error ? { error } : {}) }];
+    const candidate: VideoCandidate = { item: this.mediaItem(asset, 0), score: score?.total ?? null, attempt: state.attempt, prompt: stored.prompt ?? '', direction: stored.direction ?? null };
+    const best = !state.best || (candidate.score ?? -1) > (state.best.score ?? -1) ? candidate : state.best;
+    if (score && score.total < this.quality.minScore && state.attempt === 1) {
+      await this.store.logEvent({
+        workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'video_regenerated', level: 'warn',
+        message: `Vídeo refeito: nota ${score.total}/50, abaixo de ${this.quality.minScore} (${score.motivo || 'sem motivo'}).`,
+      });
+      try {
+        return await this.startVideo(post, provider, instructions, lease, { attempt: 2, best, scores }, score.motivo || 'nota baixa do crítico', cost);
+      } catch (e) {
+        if (e instanceof PublishClaimLost) throw e;
+        this.logger.warn(`[instagram] refação do vídeo falhou; fica o primeiro: ${errText(e)}`);
+        return this.completeVideo(post, provider, best, [...scores, { attempt: 2, total: null, motivo: null, error: errText(e) }], cost, instructions, lease);
+      }
+    }
+    return this.completeVideo(post, provider, best, scores, cost, instructions, lease);
+  }
+
+  /** Nota do crítico de vídeo; fora do ar não bloqueia (segue com o vídeo e registra). */
+  private async scoreVideo(post: PostRow, asset: MediaAsset, stored: StoredVideoDirection, lease: PostLease): Promise<{ score: VideoScore | null; error: string | null }> {
+    try {
+      const { bytes } = await this.assets.readBytes(asset);
+      await lease.renew();
+      const brand = await this.content.brandFor(post.workspace_id, await this.brandIdOfPost(post));
+      const vs = (brand?.visual_style ?? {}) as VisualStyle;
+      const palette = listField(vs.paleta_hex).length ? listField(vs.paleta_hex) : ([brand?.primary_color, brand?.secondary_color].filter(Boolean) as string[]);
+      const score = await this.quality.score(post.workspace_id, bytes, {
+        durationSec: Number(asset.duration_seconds) || VIDEO_SECONDS, script: stored.prompt ?? '', subject: stored.direction?.sujeito || post.theme || 'o produto da marca', palette,
+      });
+      return { score, error: null };
+    } catch (e) {
+      if (e instanceof PublishClaimLost) throw e;
+      this.logger.warn(`[instagram] crítico do vídeo indisponível (segue com o vídeo): ${errText(e)}`);
+      return { score: null, error: `crítico indisponível: ${errText(e)}` };
+    }
+  }
+
+  /** Fecha o vídeo com o de maior nota: capa (duração real), roteiro do vencedor, notas no log; status como o resto da geração. */
+  private async completeVideo(post: PostRow, provider: ChainedProvider, best: VideoCandidate, scores: VideoScoreEntry[], cost: number, instructions: string | null, lease: PostLease): Promise<VideoOutcome> {
+    const stored = (post.creative_brief?.video_direction ?? {}) as StoredVideoDirection;
+    await lease.renew();
+    const still = best.direction ? stillPrompt(best.direction) : best.prompt || post.theme || 'Reels';
+    const cover = await this.videoCover(post, provider, still, best.item['asset_id'] ?? null, Number(best.item['duration']) || VIDEO_SECONDS);
+    const media = [{ ...best.item, ...cover }];
+    const requires = await this.store.approvalRequired(post);
+    const { pending_job: _drop, ...brief } = post.creative_brief ?? {};
+    const regenError = scores.find((x) => x.attempt === 2 && x.error)?.error ?? null;
+    await this.store.patchPost(post.id, {
+      media,
+      creative_brief: { ...brief, visual_prompt: best.prompt, video_direction: { ...stored, direction: best.direction, prompt: best.prompt, scores, winner_attempt: best.attempt } },
+      // Post reprovado pelo validador (needs_review) NUNCA vai direto para "ready" (ver `wasFlagged`).
+      status: requires === false && !wasFlagged(post) ? 'ready' : 'pending_approval',
+      last_error: null,
+      failure_kind: null,
+      ai_provider: provider.id,
+      ai_generation_log: this.store.appendLog(post, {
+        step: 'media', provider: provider.id, provider_log: providerLog(provider), items: 1, cost, instructions,
+        video_scores: scores, regenerated: scores.length > 1, winner_attempt: best.attempt, ...(regenError ? { regen_error: regenError } : {}),
+      }),
+    });
+    return { ok: true, items: 1, provider: provider.id };
+  }
+
   async generatePostAssets(
     workspaceId: string,
     postId: string,
@@ -321,6 +486,8 @@ export class MediaGenerationService {
     try {
       const provider = await this.providers.resolve(workspaceId, providerChoice);
       used = provider;
+      // Reels/Story em vídeo: caminho próprio (roteiro detalhado, primeiro quadro, áudio, nota de qualidade, conversão).
+      if (isVideoFormat(format)) return await this.startVideo(post, provider, instructions ?? null, lease, { attempt: 1, best: null, scores: [] });
       const brief = post.creative_brief ?? {};
       const vs = (brand?.visual_style ?? {}) as VisualStyle;
       // Contexto completo do post (produto, pilar, persona, funil, estratégia da execução, campanha) — montado num lugar só.
@@ -350,7 +517,6 @@ export class MediaGenerationService {
       });
       // Prompt editado pelo usuário (sem novo ajuste) vale para o post de mídia única.
       // Prompts antigos em inglês não devem continuar sendo enviados ao gerador.
-      const legacyEnglish = (value: unknown) => typeof value === 'string' && /\b(photorealistic|still frame|no text|use the product|commercial photograph|natural lighting|frozen layers)\b/i.test(value);
       const override = !instructions && format !== 'feed_carousel' && brief.visual_prompt_override && !legacyEnglish(brief.visual_prompt_override);
       let thread: VisualThread | null = null;
       let ads: ArtDirection[];
@@ -507,14 +673,44 @@ export class MediaGenerationService {
         const pj = pjFresh;
         // O id do job só chega ao provedor se estiver gravado neste post/workspace (vínculo no ProviderResolver).
         const provider = await this.providers.resolve(post.workspace_id, choiceForProvider(pj.provider));
+        // Refação do vídeo que não deu certo (falhou ou passou de 1 h): fica o primeiro vídeo — o post nunca prende nem falha por isso.
+        const keepBest = async (error: string) => {
+          const v = pj.video!;
+          await this.completeVideo(post, provider, v.best!, [...v.scores, { attempt: v.attempt, total: null, motivo: null, error }], pj.cost, pj.instructions ?? null, lease);
+          await this.afterMediaReady(post);
+          out.push({ post: post.id, status: 'ready' });
+        };
         const r = await provider.getGenerationStatus(pj.jobId);
         if (r.status === 'generating') {
-          if (Date.now() - new Date(pj.started_at).getTime() > PENDING_TIMEOUT_MS) throw new UserError('O provedor não concluiu a mídia em 1 hora.');
+          if (Date.now() - new Date(pj.started_at).getTime() > PENDING_TIMEOUT_MS) {
+            if (pj.video?.best) {
+              await keepBest('O provedor não concluiu a refação em 1 hora.');
+              continue;
+            }
+            throw new UserError('O provedor não concluiu a mídia em 1 hora.');
+          }
           out.push({ post: post.id, status: 'generating' });
           continue;
         }
         const assetUrl = r.assetUrl ?? (r.status === 'ready' && !r.bytes ? await provider.getAsset(pj.jobId) : null);
-        if (r.status !== 'ready' || (!assetUrl && !r.bytes)) throw new UserError('O provedor informou falha na geração da mídia.');
+        if (r.status !== 'ready' || (!assetUrl && !r.bytes)) {
+          if (pj.video?.best) {
+            await keepBest('O provedor informou falha na refação do vídeo.');
+            continue;
+          }
+          throw new UserError('O provedor informou falha na geração da mídia.');
+        }
+        // Vídeo do caminho novo (roteiro + crítico): conversão, nota e, se preciso, a refação (que pode ficar pendente de novo).
+        if (pj.video && isVideoFormat(post.format)) {
+          const res = await this.finishVideo(post, provider, { ...r, assetUrl }, pj.video, pj.cost + (r.cost ?? 0), pj.instructions ?? null, lease);
+          if (res.pending) {
+            out.push({ post: post.id, status: 'generating' });
+            continue;
+          }
+          await this.afterMediaReady(post);
+          out.push({ post: post.id, status: 'ready' });
+          continue;
+        }
         const media = [
           ...pj.media,
           await this.libraryItem(post, this.srcOf({ ...r, assetUrl }), pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
@@ -561,8 +757,18 @@ export class MediaGenerationService {
     if (file.bytes.length > MAX_UPLOAD) throw new UserError('Arquivo acima de 100 MB.');
     const format = post.format as IgFormat;
     const current: any[] = format === 'feed_carousel' ? (post.media ?? []) : [];
-    const item = await this.libraryItem(post, { bytes: new Uint8Array(file.bytes), mime: file.mimetype }, current.length, 'upload', null, 0, file.filename.replace(/\.[^.]+$/, ''));
-    const media = [...current, item];
+    let asset = await this.ingestAsset(post, { bytes: new Uint8Array(file.bytes), mime: file.mimetype }, 'upload', null, 0, file.filename.replace(/\.[^.]+$/, ''));
+    if (video && !asset.ig_ready) {
+      // Vídeo do usuário fora do padrão do Instagram: converte (ffmpeg); se não der, fica o original com os avisos (como antes).
+      const original = asset;
+      asset = await this.conform
+        .ensureIgReady(original, { workspaceId, brandId: await this.brandIdOfPost(post), igPostId: post.id, title: original.title ?? 'Vídeo', provider: 'upload' }, { silent: false })
+        .catch((e) => {
+          this.logger.warn(`[instagram] conversão do vídeo enviado falhou: ${errText(e)}`);
+          return original;
+        });
+    }
+    const media = [...current, this.mediaItem(asset, current.length)];
     await this.store.patchPost(postId, {
       media,
       status: post.status === 'idea' || post.status === 'failed' ? 'pending_approval' : post.status,

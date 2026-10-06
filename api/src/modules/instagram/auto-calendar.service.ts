@@ -12,6 +12,7 @@ import { MediaGenerationService } from './media-generation.service';
 import { asList, asText, normalizeHashtags } from './normalize';
 import { PublishingService } from './publishing.service';
 import { AutoConfig, AutoMode, CHUNK, computeSlots, MIN, plusDays, Slot, todaySP, uniqTimes } from './slots';
+import { resolveAudio } from '../creative/video-director';
 
 const ITEM = {
   type: 'object',
@@ -75,6 +76,7 @@ export type CreateAutoInput = AutoConfig & {
   focus?: string;
   mode: AutoMode;
   recurring?: boolean;
+  videoAudio?: { modo: string; instrucoes?: string } | null;
 };
 
 /**
@@ -165,6 +167,7 @@ export class AutoCalendarService {
         focus: input.focus?.trim() || null,
         mode: input.mode,
         recurring: !!input.recurring,
+        ...(input.videoAudio ? { video_audio: resolveAudio(input.videoAudio) as unknown as Prisma.InputJsonObject } : {}),
         slots: slots as unknown as Prisma.InputJsonArray,
       },
       select: { id: true },

@@ -1,3 +1,4 @@
+import { UserError } from '../../media/user-error';
 import { WS_A, WS_B, OWNER, STRANGER, status } from '../../media/__tests__/mem';
 import { ProviderResolverService } from '../../creative/provider-resolver.service';
 import { PublishClaimLost } from '../ig-store.service';
@@ -148,7 +149,7 @@ describe('generatePostAssets — carrossel e vídeo', () => {
     const post = idea(w, { format: 'reel', automation: 'publish' });
     expect(await gen.generatePostAssets(WS_A, post.id)).toEqual({ ok: true, items: 0, provider: 'gemini', pending: true });
     expect(post.status).toBe('generating');
-    expect(post.creative_brief.pending_job).toMatchObject({ provider: 'gemini', jobId: 'veo:abc', index: 0, cost: 0, media: [] });
+    expect(post.creative_brief.pending_job).toMatchObject({ provider: 'gemini', jobId: 'veo:abc', index: 0, cost: 0, media: [], video: { attempt: 1, best: null, scores: [] } });
 
     // ainda gerando
     expect(await gen.pollPendingMedia()).toEqual([{ post: post.id, status: 'generating' }]);
@@ -472,5 +473,213 @@ describe('carrossel: fio visual único e nota do crítico por slide', () => {
     const post = carousel(w);
     await gen.generatePostAssets(WS_A, post.id);
     expect(post.ai_generation_log.at(-1).notes).toEqual(['Gateway sem suporte a referência; gerado sem foto da marca.']);
+  });
+});
+
+describe('vídeo (Reels/Story): roteiro detalhado, primeiro quadro, áudio, nota de qualidade e conversão', () => {
+  const reel = (w: IgWorld, over: Record<string, unknown> = {}) => idea(w, { format: 'reel', hook: 'Gancho', theme: 'Happy hour', cta: 'Reserve', creative_brief: { prompt: 'chope sendo servido' }, ...over });
+  const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
+  const videoAssets = (w: IgWorld) => w.t['media_assets']!.rows.filter((x) => x.kind === 'video');
+  const score = (total: number, motivo = 'm') => ({ roteiro: 0, marca: 0, tecnica: 0, produto: 0, scroll: 0, total, motivo });
+  const dirPrompts = (s: any) => s.ai.json.mock.calls.filter((c: any) => c[1].name === 'video_direction').map((c: any) => c[1].prompt as string);
+
+  it('roteiro estruturado → texto final pt-BR (250–450 palavras) enviado ao provedor; tomadas, áudio, nota e capa no post', async () => {
+    const { w, s, gen } = setup();
+    const post = reel(w);
+    expect(await gen.generatePostAssets(WS_A, post.id)).toEqual({ ok: true, items: 1, provider: 'gemini' });
+    expect(dirPrompts(s)[0]).toContain('cobrindo de 0 a 8 s SEM buracos');
+    const req = s.provider.generateVideo.mock.calls[0][0];
+    expect(req).toMatchObject({ aspectRatio: '9:16', kind: 'video', maxWaitMs: 25_000, audio: true });
+    expect(req.referenceImages).toBeUndefined();
+    expect(req.finalPrompt).toContain('Roteiro por tomada:');
+    expect(words(req.finalPrompt)).toBeGreaterThanOrEqual(250);
+    expect(words(req.finalPrompt)).toBeLessThanOrEqual(450);
+    const vd = post.creative_brief.video_direction;
+    expect(vd).toMatchObject({ prompt: req.finalPrompt, audio: { modo: 'ambiente_trilha', instrucoes: '' }, first_frame_ref: null, scores: [{ attempt: 1, total: 40, motivo: 'bom' }], winner_attempt: 1 });
+    expect(vd.direction.tomadas[0].inicio_s).toBe(0);
+    expect(vd.direction.tomadas.at(-1).fim_s).toBe(8);
+    expect(post.creative_brief.visual_prompt).toBe(req.finalPrompt);
+    expect(post.media[0]).toMatchObject({ type: 'video', duration: 8, ig_ready: true, cover_url: 'https://cdn.test/cover.jpg' });
+    expect(post.ai_generation_log.at(-1)).toMatchObject({ step: 'media', items: 1, video_scores: [{ attempt: 1, total: 40 }], regenerated: false, winner_attempt: 1 });
+    expect(s.extras.build.mock.calls[0][0]).toMatchObject({
+      visualPrompt: 'copo de chope gelado com colarinho cremoso. balcão de madeira de um bar aconchegante. Luz: luz quente de fim de tarde. Estilo: comercial realista. Paleta: #c0392b, #f5deb3',
+      durationSec: 8,
+    });
+    expect(s.conform.ensureIgReady.mock.calls[0][2]).toEqual({ silent: false });
+  });
+
+  it('primeiro quadro: a foto do produto do post, encaixada em 9:16, vai como referência; o roteiro sabe que começa da foto', async () => {
+    const { w, s, gen } = setup();
+    const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé', visual_style: {} };
+    w.t['brands']!.rows.push(brand);
+    const p = plan(w, { brand_id: brand.id });
+    const prod = { id: uuid(), workspace_id: WS_A, brand_id: brand.id, name: 'Chope Pilsen', description: null, price: null };
+    w.t['products']!.rows.push(prod);
+    const photo = new Uint8Array([9, 9]);
+    s.refs.loadBrandRefs.mockResolvedValueOnce([
+      { id: 'amb', tag: 'ambiente', name: 'bar.jpg', url: 'https://cdn.test/bar.jpg', bytes: new Uint8Array([1]), mime: 'image/jpeg' },
+      { id: 'prod', tag: 'produto', name: 'chope-pilsen.png', url: 'https://cdn.test/chope.png', bytes: photo, mime: 'image/jpeg' },
+    ]);
+    const post = reel(w, { plan_id: p.id, product_id: prod.id });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.images.padToAspect).toHaveBeenCalledWith(photo, 720, 1280);
+    const req = s.provider.generateVideo.mock.calls[0][0];
+    expect(req.referenceImages).toEqual([{ bytes: photo, mime: 'image/jpeg' }]);
+    expect(req.referenceUrls).toEqual(['https://cdn.test/chope.png']);
+    expect(post.creative_brief.video_direction.first_frame_ref).toBe('prod');
+    expect(dirPrompts(s)[0]).toContain('O vídeo COMEÇA a partir da foto real enviada');
+    expect(req.finalPrompt).toContain('Comece exatamente a partir da imagem de referência enviada');
+  });
+
+  it('áudio: o do post sobrepõe o da execução; "sem áudio" desliga o áudio no provedor e pede conversão silenciosa; valor inválido no post cai no da execução', async () => {
+    const { w, s, gen } = setup();
+    const p = plan(w);
+    const r = { id: uuid(), workspace_id: WS_A, plan_id: p.id, video_audio: { modo: 'narracao', instrucoes: 'voz calma' } };
+    w.t['ig_auto_runs']!.rows.push(r);
+    const mute = reel(w, { plan_id: p.id, run_id: r.id, creative_brief: { prompt: 'x', audio: { modo: 'sem_audio' } } });
+    await gen.generatePostAssets(WS_A, mute.id);
+    expect(s.provider.generateVideo.mock.calls[0][0].audio).toBe(false);
+    expect(s.conform.ensureIgReady.mock.calls[0][2]).toEqual({ silent: true });
+    expect(dirPrompts(s)[0]).toContain('ÁUDIO (modo "sem_audio")');
+    const bogus = reel(w, { plan_id: p.id, run_id: r.id, creative_brief: { prompt: 'x', audio: { modo: 'karaoke', instrucoes: 'y'.repeat(5000) } } });
+    await gen.generatePostAssets(WS_A, bogus.id);
+    expect(s.provider.generateVideo.mock.calls[1][0].audio).toBe(true);
+    expect(bogus.creative_brief.video_direction.audio).toEqual({ modo: 'narracao', instrucoes: 'voz calma' });
+  });
+
+  it('nota abaixo de 28: refaz 1 vez com o motivo do crítico no roteiro; fica o de maior nota; evento video_regenerated', async () => {
+    const { w, s, gen } = setup();
+    s.quality.score.mockResolvedValueOnce(score(20, 'O produto quase não aparece')).mockResolvedValueOnce(score(42, 'ótimo'));
+    const post = reel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.provider.generateVideo).toHaveBeenCalledTimes(2);
+    const dirs = dirPrompts(s);
+    expect(dirs).toHaveLength(2);
+    expect(dirs[1]).toContain('O CRÍTICO REPROVOU O VÍDEO ANTERIOR (corrija isto com prioridade): «O produto quase não aparece»');
+    expect(dirs[1]).toContain('ROTEIRO ANTERIOR (refaça melhorando):');
+    const [, second] = videoAssets(w);
+    expect(post.media[0].asset_id).toBe(second!.id);
+    expect(post.creative_brief.video_direction).toMatchObject({ scores: [{ attempt: 1, total: 20 }, { attempt: 2, total: 42 }], winner_attempt: 2 });
+    expect(w.t['ig_autopilot_events']!.rows.find((e) => e.kind === 'video_regenerated')).toMatchObject({ level: 'warn', message: 'Vídeo refeito: nota 20/50, abaixo de 28 (O produto quase não aparece).' });
+    expect(post.ai_generation_log.at(-1)).toMatchObject({ regenerated: true, winner_attempt: 2 });
+  });
+
+  it('a refação saiu pior: fica o primeiro vídeo (e o roteiro dele)', async () => {
+    const { w, s, gen } = setup();
+    s.quality.score.mockResolvedValueOnce(score(25)).mockResolvedValueOnce(score(10));
+    const post = reel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    const [first] = videoAssets(w);
+    expect(post.media[0].asset_id).toBe(first!.id);
+    expect(post.creative_brief.video_direction.winner_attempt).toBe(1);
+    expect(post.creative_brief.video_direction.prompt).toBe(s.provider.generateVideo.mock.calls[0][0].finalPrompt);
+  });
+
+  it('Review Focus #4 — crítico fora do ar: segue com o vídeo e registra; refação que falha: fica o primeiro (nunca failed)', async () => {
+    const { w, s, gen } = setup();
+    s.quality.score.mockRejectedValueOnce(new Error('visão indisponível'));
+    const a = reel(w);
+    expect(await gen.generatePostAssets(WS_A, a.id)).toMatchObject({ ok: true, items: 1 });
+    expect(a.status).toBe('pending_approval');
+    expect(a.creative_brief.video_direction.scores).toEqual([{ attempt: 1, total: null, motivo: null, error: 'crítico indisponível: visão indisponível' }]);
+    expect(s.provider.generateVideo).toHaveBeenCalledTimes(1);
+    s.quality.score.mockResolvedValueOnce(score(12, 'deformado'));
+    s.provider.generateVideo
+      .mockResolvedValueOnce({ status: 'ready', assetUrl: 'https://provider.test/v.mp4', thumbnailUrl: null, externalJobId: null, cost: 6 })
+      .mockRejectedValueOnce(new Error('Veo fora do ar'));
+    const b = reel(w);
+    expect(await gen.generatePostAssets(WS_A, b.id)).toMatchObject({ ok: true, items: 1 });
+    expect(b.media).toHaveLength(1);
+    expect(b.creative_brief.video_direction.scores).toEqual([{ attempt: 1, total: 12, motivo: 'deformado' }, { attempt: 2, total: null, motivo: null, error: 'Veo fora do ar' }]);
+    expect(b.ai_generation_log.at(-1)).toMatchObject({ regen_error: 'Veo fora do ar', winner_attempt: 1 });
+    expect(b.status).not.toBe('failed');
+  });
+
+  it('vídeo que continua fora do padrão depois da conversão: o post falha como mídia (failure_kind "media")', async () => {
+    const { w, s, gen } = setup();
+    s.conform.ensureIgReady.mockRejectedValueOnce(new UserError('Vídeo fora do padrão do Instagram mesmo depois da conversão: Largura de 640px; o mínimo é 720px.'));
+    const post = reel(w);
+    expect(await gen.generatePostAssets(WS_A, post.id)).toEqual({ ok: false, error: 'Vídeo fora do padrão do Instagram mesmo depois da conversão: Largura de 640px; o mínimo é 720px.' });
+    expect(post).toMatchObject({ status: 'failed', failure_kind: 'media' });
+  });
+
+  it('assíncrono: pending_job guarda o estado do vídeo; o poller conclui com crítico, refação (também assíncrona) e capa', async () => {
+    const { w, s, gen } = setup();
+    const pend = (id: string) => ({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: id, cost: 6 });
+    const done = (id: string) => ({ status: 'ready', assetUrl: `https://provider.test/${id}.mp4`, thumbnailUrl: null, externalJobId: id, cost: 0 });
+    s.provider.generateVideo.mockResolvedValueOnce(pend('veo:a1')).mockResolvedValueOnce(pend('veo:a2'));
+    s.quality.score.mockResolvedValueOnce(score(15, 'gancho fraco')).mockResolvedValueOnce(score(38, 'bom'));
+    const post = reel(w, { automation: 'publish' });
+    expect(await gen.generatePostAssets(WS_A, post.id)).toEqual({ ok: true, items: 0, provider: 'gemini', pending: true });
+    expect(post.creative_brief.pending_job).toMatchObject({ jobId: 'veo:a1', video: { attempt: 1, best: null, scores: [] } });
+    s.provider.getGenerationStatus.mockResolvedValueOnce(done('veo:a1'));
+    expect(await gen.pollPendingMedia()).toEqual([{ post: post.id, status: 'generating' }]); // 1º pronto, nota 15 → refação pendente
+    expect(post.creative_brief.pending_job).toMatchObject({ jobId: 'veo:a2', video: { attempt: 2, best: { attempt: 1, score: 15 }, scores: [{ attempt: 1, total: 15 }] } });
+    expect(post.status).toBe('generating');
+    s.provider.getGenerationStatus.mockResolvedValueOnce(done('veo:a2'));
+    expect(await gen.pollPendingMedia()).toEqual([{ post: post.id, status: 'ready' }]);
+    expect(post.creative_brief.pending_job).toBeUndefined();
+    expect(post.creative_brief.video_direction).toMatchObject({ winner_attempt: 2, scores: [{ attempt: 1, total: 15 }, { attempt: 2, total: 38 }] });
+    expect(post.media[0]).toMatchObject({ type: 'video', cover_url: 'https://cdn.test/cover.jpg' });
+    expect(post).toMatchObject({ status: 'ready', last_error: 'Conecte o Instagram para publicar.' });
+  });
+
+  it('Review Focus #4 — assíncrono: a refação falhou ou não terminou em 1 h — fica o primeiro vídeo', async () => {
+    const { w, s, gen } = setup();
+    const best = { item: { url: 'https://cdn.test/1.mp4', type: 'video', order: 0, asset_id: 'a1', duration: 8, ig_ready: true, issues: [] }, score: 20, attempt: 1, prompt: 'roteiro 1', direction: null };
+    const mk = (age: number) =>
+      idea(w, {
+        format: 'reel', status: 'generating',
+        creative_brief: {
+          video_direction: { prompt: 'roteiro 2', direction: null, audio: { modo: 'ambiente_trilha', instrucoes: '' }, first_frame_ref: null },
+          pending_job: { provider: 'gemini', jobId: `veo:r${age}`, index: 0, prompts: ['roteiro 2'], media: [], cost: 6, started_at: new Date(Date.now() - age).toISOString(), video: { attempt: 2, best, scores: [{ attempt: 1, total: 20, motivo: 'm' }] } },
+        },
+      });
+    const failing = mk(1000);
+    const stale = mk(61 * 60e3);
+    s.provider.getGenerationStatus.mockImplementation(async (id: string) => ({ status: id === 'veo:r1000' ? 'failed' : 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: id, cost: 0 }));
+    expect(await gen.pollPendingMedia()).toEqual(expect.arrayContaining([{ post: failing.id, status: 'ready' }, { post: stale.id, status: 'ready' }]));
+    for (const p of [failing, stale]) {
+      expect(p.status).toBe('pending_approval');
+      expect(p.media[0].asset_id).toBe('a1');
+      expect(p.creative_brief.video_direction).toMatchObject({ winner_attempt: 1, prompt: 'roteiro 1' });
+      expect(p.creative_brief.video_direction.scores[1]).toMatchObject({ attempt: 2, total: null });
+      expect(p.creative_brief.pending_job).toBeUndefined();
+    }
+  });
+
+  it('roteiro editado no editor (visual_prompt_override) vai direto ao provedor, sem o diretor; com ajuste, o diretor refaz com o pedido delimitado', async () => {
+    const { w, s, gen } = setup();
+    const post = reel(w, { creative_brief: { prompt: 'x', visual_prompt_override: 'MEU ROTEIRO: o chope é servido.' } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(dirPrompts(s)).toHaveLength(0);
+    expect(s.provider.generateVideo.mock.calls[0][0].finalPrompt).toBe('MEU ROTEIRO: o chope é servido.');
+    await gen.generatePostAssets(WS_A, post.id, 'auto', 'mais close no copo');
+    expect(dirPrompts(s)[0]).toContain('AJUSTE PEDIDO PELO CLIENTE (aplique com prioridade): «mais close no copo»');
+  });
+
+  it('capa e legendas usam a duração real do vídeo', async () => {
+    const { w, s, gen } = setup();
+    const base = s.assets.ingest.getMockImplementation()!;
+    s.assets.ingest.mockImplementation(async (i: any) => ({ ...(await base(i)), ...(i.kind === 'video' ? { duration_seconds: 10 } : {}) }));
+    const post = reel(w);
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(s.extras.build.mock.calls[0][0].durationSec).toBe(10);
+    expect(post.media[0].duration).toBe(10);
+  });
+
+  it('upload de vídeo fora do padrão é convertido; se a conversão falhar, fica o original com os avisos', async () => {
+    const { w, s, a } = setup();
+    const post = reel(w);
+    const base = s.assets.ingest.getMockImplementation()!;
+    s.assets.ingest.mockImplementationOnce(async (i: any) => ({ ...(await base(i)), ig_ready: false, quality_report: { issues: ['Largura de 640px; o mínimo é 720px.'] } }));
+    s.conform.ensureIgReady.mockImplementationOnce(async (asset: any) => ({ ...asset, id: 'convertido', ig_ready: true, quality_report: { issues: [] } }));
+    await a.uploadPostMedia(OWNER, WS_A, post.id, { filename: 'v.mp4', mimetype: 'video/mp4', bytes: Buffer.alloc(10, 1) });
+    expect(post.media[0]).toMatchObject({ asset_id: 'convertido', ig_ready: true });
+    expect(s.conform.ensureIgReady.mock.calls[0][2]).toEqual({ silent: false });
+    s.assets.ingest.mockImplementationOnce(async (i: any) => ({ ...(await base(i)), ig_ready: false, quality_report: { issues: ['Codec mpeg4'] } }));
+    s.conform.ensureIgReady.mockRejectedValueOnce(new Error('ffmpeg falhou (código 1)'));
+    await a.uploadPostMedia(OWNER, WS_A, post.id, { filename: 'v2.mp4', mimetype: 'video/mp4', bytes: Buffer.alloc(10, 1) });
+    expect(post.media[0]).toMatchObject({ ig_ready: false, issues: ['Codec mpeg4'] });
   });
 });

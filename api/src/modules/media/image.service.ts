@@ -60,6 +60,29 @@ export type Img = any;
  * Processamento de imagens no servidor com jimp (JavaScript puro, sem binário nativo — igual ao protótipo).
  * Corte central "cover" para o tamanho exato, re-encode sem metadados, JPEG 92 (ou PNG com alfa) e miniatura 400px.
  */
+/** Cor mais frequente da imagem (histograma com 16 níveis por canal, amostrado), na média dos pixels daquele balde. */
+export function dominantColor(img: Img): [number, number, number] {
+  const data = img.bitmap.data as Uint8Array;
+  const step = Math.max(4, Math.floor(data.length / 4 / 50_000) * 4);
+  const buckets = new Map<number, { n: number; r: number; g: number; b: number }>();
+  for (let i = 0; i + 3 < data.length; i += step) {
+    if (data[i + 3]! < 128) continue;
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+    const c = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
+    c.n++;
+    c.r += r;
+    c.g += g;
+    c.b += b;
+    buckets.set(key, c);
+  }
+  let best: { n: number; r: number; g: number; b: number } | null = null;
+  for (const c of buckets.values()) if (!best || c.n > best.n) best = c;
+  return best ? [Math.round(best.r / best.n), Math.round(best.g / best.n), Math.round(best.b / best.n)] : [0, 0, 0];
+}
+
 @Injectable()
 export class ImageService {
   /** Lê JPEG/PNG (e o que o jimp detectar); arquivo ilegível = 400 com mensagem simples. */
@@ -158,5 +181,15 @@ export class ImageService {
     const { width, height } = img.bitmap as { width: number; height: number };
     if (Math.max(width, height) > max) img.scaleToFit({ w: max, h: max });
     return { bytes: new Uint8Array(await img.getBuffer('image/jpeg', { quality: 85 })), mime: 'image/jpeg' };
+  }
+
+  /** Primeiro quadro do vídeo: encaixa a imagem INTEIRA em `width`×`height` (sem cortar nem distorcer); sobras na cor dominante. JPEG q90. */
+  async padToAspect(bytes: Uint8Array, width: number, height: number): Promise<{ bytes: Uint8Array; mime: string }> {
+    const img = await this.read(bytes);
+    img.scaleToFit({ w: width, h: height });
+    const [r, g, b] = dominantColor(img);
+    const canvas = this.blank(width, height, ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0);
+    canvas.composite(img, Math.round((width - img.bitmap.width) / 2), Math.round((height - img.bitmap.height) / 2));
+    return { bytes: new Uint8Array(await canvas.getBuffer('image/jpeg', { quality: 90 })), mime: 'image/jpeg' };
   }
 }
