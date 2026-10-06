@@ -47,6 +47,8 @@ services:
       - '127.0.0.1:3015:3015'
     volumes:
       - meufunil_uploads:/data/uploads
+      # Exportação do Lovable (docs/migracao-lovable.md) — só leitura para o importador.
+      - ./lovable-export:/import:ro
 
 volumes:
   meufunil_pgdata:
