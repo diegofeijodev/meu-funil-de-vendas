@@ -8,6 +8,13 @@
       "when": 1791318926760,
       "tag": "0000_export_meufunil_temp",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791322854874,
+      "tag": "0001_remove_export_and_crons",
+      "breakpoints": true
     }
   ]
 }
