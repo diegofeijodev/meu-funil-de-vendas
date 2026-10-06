@@ -3777,17 +3777,6 @@ export type Database = {
     }
     Functions: {
       create_workspace: { Args: { _name: string }; Returns: string }
-      export_meufunil: {
-        Args: {
-          p_action: string
-          p_limit?: number
-          p_offset?: number
-          p_schema?: string
-          p_table?: string
-          p_token: string
-        }
-        Returns: Json
-      }
       has_workspace_role: {
         Args: {
           _roles: Database["public"]["Enums"]["workspace_role"][]
