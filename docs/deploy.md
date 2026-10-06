@@ -19,8 +19,10 @@ Sem o `A` o certbot não emite o certificado e a web não fala com a API.
 ```bash
 # na sua máquina: empacota a árvore (sem node_modules/dist/uploads/.git/web) e manda
 cd /home/doutor/coding/freela/meu-funil
-tar czf /tmp/meufunil-src.tgz --exclude=node_modules --exclude=dist --exclude=./api/uploads --exclude=./api/coverage \
-  --exclude=./api/.cache --exclude=.git --exclude=./api/.env api docker-compose.prod.yml docs/deploy
+tar czf /tmp/meufunil-src.tgz --anchored --exclude=api/uploads --exclude=api/coverage --exclude=api/.cache --exclude=api/.env \
+  --exclude=api/dist --exclude=api/node_modules --no-anchored --exclude=node_modules --exclude=.git --exclude='*.log' \
+  api docker-compose.prod.yml docs/deploy
+tar tzf /tmp/meufunil-src.tgz | grep -E '(^|/)\.env|^api/uploads|node_modules'   # só os .env.example podem aparecer
 scp /tmp/meufunil-src.tgz ubuntu@56.124.127.54:/tmp/
 # no EC2
 ssh ubuntu@56.124.127.54
@@ -36,7 +38,8 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d api-meufunil.freelaservicosapp.com.br --redirect -m tecnologia.3dfranquias@gmail.com --agree-tos -n
 ```
 
-- `tar --exclude` **ancorado** (`./api/uploads`): sem âncora ele leva junto pastas de código com o mesmo nome.
+- `tar --exclude` **ancorado** (`--anchored --exclude=api/uploads`): sem âncora ele leva junto pastas de código com o mesmo nome, e
+  `./api/uploads` não casa com os nomes dentro do tar (que começam em `api/`) — os uploads locais iriam junto.
 - Tetos de memória no compose (API 1 GB, Postgres 384 MB): a máquina é do Freela de produção.
 - **Banco nasce vazio** (só `prisma migrate deploy`; **nunca** `npm run seed` em produção). Cadastro é aberto: o 1º usuário cria a conta pela tela.
 - `CREDENTIALS_ENCRYPTION_KEY` não muda depois de salvar credenciais (o cofre fica ilegível).
