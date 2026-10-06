@@ -27,6 +27,15 @@ export function readTable(dir: string, schema: string, table: string): Record<st
   return rows as Record<string, unknown>[];
 }
 
+/** Tabela exportada conferida contra o manifesto (linhas = contagem); serve para `public.*` e `auth.*`. */
+export function readCheckedTable(dir: string, m: Manifest, schema: string, table: string): Record<string, unknown>[] {
+  const key = `${schema}.${table}`;
+  if (!(key in m.counts)) throw new Error(`${key} não está no manifesto da exportação. Refaça o pull.`);
+  const rows = readTable(dir, schema, table);
+  if (rows.length !== Number(m.counts[key])) throw new Error(`tables/${key}.json tem ${rows.length} linha(s); o manifesto diz ${m.counts[key]}. Refaça o pull.`);
+  return rows;
+}
+
 /** Caminho do arquivo exportado, sem sair de `<dir>/storage/<bucket>`. */
 export function exportedFilePath(dir: string, bucket: string, name: string): string {
   const base = path.resolve(dir, 'storage', bucket);

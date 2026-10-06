@@ -51,10 +51,13 @@ check "nome com espaço e acento reescrito" "t" "$(q "SELECT preview_url LIKE 'h
 check "link de arquivo que não veio fica e é listado" "t,1" "$(q "SELECT preview_url LIKE '%supabase.co%' FROM creatives WHERE title='Criativo sem arquivo'"),$(grep -v '^RELATORIO_JSON' "$TMP/o5" | grep -c 'sumiu/arquivo.png')"
 check "mídia do post (jsonb) reescrita" "0" "$(q "SELECT count(*) FROM ig_posts WHERE media::text LIKE '%supabase.co%'")"
 check "updated_at preservado (gatilhos desligados na carga)" "2026-01-02 03:04:05" "$(q "SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM brands")"
-check "credenciais no formato do nosso cofre (a vazia fica vazia)" "0|1" "$(q "SELECT count(*) FROM app_credentials WHERE value <> '' AND value NOT LIKE 'enc:v2:%'")|$(q "SELECT count(*) FROM app_credentials WHERE value = ''")"
+check "credenciais no formato do nosso cofre (as vazias, inclusive a cifrada vazia do Lovable, ficam vazias)" "0|2" "$(q "SELECT count(*) FROM app_credentials WHERE value <> '' AND value NOT LIKE 'enc:v2:%'")|$(q "SELECT count(*) FROM app_credentials WHERE value = ''")"
 check "token de conexão cifrado" "t" "$(q "SELECT access_token LIKE 'enc:v2:%' FROM mcp_connections")"
-check "publicação vencida cancelada e post com falha; futura segue" "cancelled,queued|failed:publish,scheduled" \
+check "fila vencida (pending/running) cancelada; running futuro volta a pending; posts vencidos (inclusive automáticos aprovados) com falha" \
+  "cancelled,cancelled,pending,pending|failed:publish,failed:publish,failed:publish,ready,scheduled,publishing" \
   "$(q "SELECT string_agg(status, ',' ORDER BY run_at) FROM publishing_jobs")|$(q "SELECT string_agg(status||coalesce(':'||failure_kind,''), ',' ORDER BY scheduled_at) FROM ig_posts")"
+check "histórico do job preservado (mensagem acrescentada ao log)" "t" "$(q "SELECT log LIKE 'agendado%Reagende pela tela.' FROM publishing_jobs WHERE run_at < now() - interval '36 hours'")"
+check "cadências duplicadas: fica a mais recente, e o relatório conta" "2,1" "$(q 'SELECT count(*) FROM crm_cadence_runs'),$(grep -c '1 matrícula(s) de cadência descartada(s)' "$TMP/o5")"
 check "cadências: vencida há 1 dia segue; há 5 dias para" "running,stopped" "$(q "SELECT string_agg(status, ',' ORDER BY next_run_at DESC) FROM crm_cadence_runs")"
 check "travas zeradas" "0,0" "$(q 'SELECT count(*) FROM ig_posts WHERE lease_until IS NOT NULL'),$(q 'SELECT count(*) FROM crm_cadence_runs WHERE lease_token IS NOT NULL')"
 check "arquivos copiados (inclusive com acento)" "3,1" "$(find "$UP" -type f | wc -l),$(test -f "$UP/creative-assets/2026-09-30/criativo ação.png" && echo 1 || echo 0)"
@@ -74,6 +77,9 @@ check "--only-files repõe só o que falta" "0,1" "$r,$(grep -c 'arquivos: 1 cop
 q "UPDATE app_credentials SET value = 'enc:v2:AAAA:BBBB:CCCC' WHERE key = 'OPENAI_API_KEY'" >/dev/null
 imp "$TMP/o10" --expect-db $DB --verify && r=0 || r=$?
 check "verificação acusa credencial ilegível" "1,1" "$r,$(grep -c 'credenciais ilegíveis: 1' "$TMP/o10")"
+q "INSERT INTO publishing_jobs(workspace_id, channel, target, status, run_at) VALUES ('$WS','instagram_organic','instagram','pending', now() - interval '1 hour')" >/dev/null
+imp "$TMP/o11" --expect-db $DB --verify && r=0 || r=$?
+check "verificação acusa publicação vencida ainda na fila" "1,1" "$r,$(grep -c 'publicações/posts vencidos ainda pendentes: 1' "$TMP/o11")"
 
 echo; echo "$OK ok, $FAIL falha(s)"
 docker exec $C psql -U meufunil -d postgres -qc "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null

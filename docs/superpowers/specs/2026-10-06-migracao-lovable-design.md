@@ -89,14 +89,23 @@ A pasta de exportação chega ao contêiner por um bind mount só-leitura (`./lo
   salvo `--skip-credentials` (as credenciais `enc:v1` não são importadas e o relatório conta quantas). Falha ao decifrar → aborta.
 - **Travas zeradas**: `ig_posts.lease_until`, `publishing_jobs.locked_at`, `ig_auto_runs.locked_until` = nulo.
 - **Vencidos** (relativos ao momento da importação):
-  - `publishing_jobs` `queued`/`processing` com `run_at` no passado → `cancelled`; o `ig_post` ligado → `failed`, `failure_kind` `publish`,
-    `last_error` "O horário passou durante a mudança de sistema. Reagende pela tela." Futuros seguem normalmente.
+  - `publishing_jobs` do canal `instagram_organic` em `pending`/`running` (os status reais da fila — o protótipo e o `PublishingService`
+    enfileiram `pending` e travam como `running`) com `run_at` no passado → `cancelled` (mensagem acrescentada ao `log`); o `ig_post` ligado →
+    `failed`, `failure_kind` `publish`, `last_error` "O horário passou durante a mudança de sistema. Reagende pela tela." `running` com horário
+    futuro volta a `pending`. Futuros seguem normalmente.
+  - Posts automáticos (`automation` não nulo) em `ready`/`approved`/`needs_review` com horário vencido → `failed` com a mesma mensagem (senão o
+    `autoCalendarTick` os publicaria "agora").
+  - Duplicatas que as nossas migrações proibiram (o banco vazio não passou por elas): uma matrícula por (cadência, lead), fica a mais recente
+    (`crm_cadence_events.run_id` das descartadas → nulo); (pai, versão) de `campaign_strategies`/`copies`/`creative_versions` renumerado 1..n
+    na ordem (version, created_at, id). O relatório conta as duas coisas.
+  - Credencial `enc:v1` que decifra para vazio (o protótipo cifrava `META_TOKEN_EXPIRES_AT` vazio) fica `''`, como o texto puro vazio.
   - `crm_cadence_runs` `running`: `next_run_at` vencido há até 3 dias segue (sai nos próximos ciclos); há mais de 3 dias → `stopped`.
   - Qualquer outra tabela com `status` pendente e horário vencido que o ensaio revelar entra no relatório para decisão antes da virada.
 
 **`--verify`** (sem gravar): contagem por tabela no destino = manifesto − puladas − contas filtradas; linhas órfãs (colunas `*_id`/`user_id`/
 `owner_id`/`created_by` que apontam para conta/empresa inexistente); arquivos exportados ausentes em disco; links do Storage do Lovable restantes;
-credenciais que não decifram com a chave atual. Sai 1 se houver diferença de contagem, órfão, arquivo ausente ou credencial ilegível;
+credenciais que não decifram com a chave atual; publicação da fila ou post automático vencido ainda pendente. Sai 1 se houver diferença de
+contagem, órfão, arquivo ausente, credencial ilegível ou vencido pendente;
 links do Lovable restantes só são avisados (já listados pela carga como arquivo que não veio).
 
 **Relatório** (saída do comando e `<export>/relatorio-<modo>.json`): só contagens, ids, nomes de tabela/coluna e caminhos de arquivo — nunca

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FilesService } from '../../../modules/files/files.service';
 import { copyExportedFiles } from '../copy-files';
-import { assertObjects, exportedFilePath, Manifest, readManifest, readTable, tableKeys } from '../export-reader';
+import { assertObjects, exportedFilePath, Manifest, readCheckedTable, readManifest, readTable, tableKeys } from '../export-reader';
 
 const BUCKETS = ['creative-assets', 'ig-media'];
 const dirs: string[] = [];
@@ -36,6 +36,16 @@ describe('export-reader', () => {
   it('tabela ausente na pasta aborta', () => {
     const { dir } = fixture();
     expect(() => readTable(dir, 'public', 'nao_existe')).toThrow('falta tables/public.nao_existe.json');
+  });
+
+  it('tabela com linhas diferentes do manifesto (ou fora dele) aborta — inclusive auth.*', () => {
+    const { dir, m } = fixture();
+    expect(readCheckedTable(dir, m, 'public', 'brands')).toEqual([{ id: 'b1' }]);
+    m.counts['public.brands'] = 2;
+    expect(() => readCheckedTable(dir, m, 'public', 'brands')).toThrow('tem 1 linha(s); o manifesto diz 2');
+    writeFileSync(join(dir, 'tables', 'auth.users.json'), JSON.stringify([{ id: 'u1' }]));
+    expect(() => readCheckedTable(dir, m, 'auth', 'users')).toThrow('tem 1 linha(s); o manifesto diz 0');
+    expect(() => readCheckedTable(dir, m, 'auth', 'identities')).toThrow('não está no manifesto');
   });
 
   it('caminho que tenta sair da pasta aborta', () => {

@@ -61,23 +61,35 @@ const tables = {
     { id: id(5), workspace_id: WS, title: 'Criativo sem arquivo', preview_url: `${SB}/sign/creative-assets/sumiu/arquivo.png?token=t2`, extras: {} },
   ],
   'public.ig_posts': [
-    { id: id(6), workspace_id: WS, format: 'feed_image', status: 'scheduled', scheduled_at: at(-2 * D), media: [{ url: `${SB}/sign/ig-media/posts/${WS}/p1.jpg?token=t3`, type: 'image' }], lease_until: at(H) },
-    { id: id(7), workspace_id: WS, format: 'feed_image', status: 'scheduled', scheduled_at: at(2 * D), media: [], lease_until: null },
+    { id: id(6), workspace_id: WS, format: 'feed_image', status: 'scheduled', scheduled_at: at(-2 * D), media: [{ url: `${SB}/sign/ig-media/posts/${WS}/p1.jpg?token=t3`, type: 'image' }], lease_until: at(H), automation: null },
+    { id: id(7), workspace_id: WS, format: 'feed_image', status: 'scheduled', scheduled_at: at(2 * D), media: [], lease_until: null, automation: null },
+    // publicação interrompida (job running vencido) e publicação em andamento com horário futuro
+    { id: id(21), workspace_id: WS, format: 'feed_image', status: 'publishing', scheduled_at: at(-D), media: [], lease_until: null, automation: null },
+    { id: id(23), workspace_id: WS, format: 'feed_image', status: 'publishing', scheduled_at: at(3 * D), media: [], lease_until: null, automation: null },
+    // modo automático: aprovado com horário vencido (sairia "publicando agora") e pronto com horário futuro
+    { id: id(24), workspace_id: WS, format: 'feed_image', status: 'approved', scheduled_at: at(-3 * H), media: [], lease_until: null, automation: 'publish' },
+    { id: id(25), workspace_id: WS, format: 'feed_image', status: 'ready', scheduled_at: at(5 * H), media: [], lease_until: null, automation: 'publish' },
   ],
   'public.publishing_jobs': [
-    { id: id(8), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'queued', run_at: at(-2 * D), ig_post_id: id(6), locked_at: at(-H) },
-    { id: id(9), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'queued', run_at: at(2 * D), ig_post_id: id(7), locked_at: null },
+    // status reais da fila do Instagram (protótipo e PublishingService): pending → running
+    { id: id(8), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'pending', run_at: at(-2 * D), ig_post_id: id(6), locked_at: null, log: 'agendado' },
+    { id: id(9), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'pending', run_at: at(2 * D), ig_post_id: id(7), locked_at: null, log: null },
+    { id: id(20), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'running', run_at: at(-D), ig_post_id: id(21), locked_at: at(-D), log: null },
+    { id: id(22), workspace_id: WS, channel: 'instagram_organic', target: 'instagram', status: 'running', run_at: at(3 * D), ig_post_id: id(23), locked_at: at(-H), log: null },
   ],
   'public.crm_leads': [{ id: id(10), workspace_id: WS, name: 'Lead E2E' }, { id: id(19), workspace_id: WS, name: 'Lead E2E 2' }],
   'public.crm_cadences': [{ id: id(11), workspace_id: WS, name: 'Cadência E2E' }],
   'public.crm_cadence_runs': [
-    { id: id(12), workspace_id: WS, cadence_id: id(11), lead_id: id(10), status: 'running', next_run_at: at(-D), lease_token: id(18), lease_until: at(H) },
-    { id: id(13), workspace_id: WS, cadence_id: id(11), lead_id: id(19), status: 'running', next_run_at: at(-5 * D), lease_token: null, lease_until: null },
+    { id: id(12), workspace_id: WS, cadence_id: id(11), lead_id: id(10), status: 'running', next_run_at: at(-D), lease_token: id(18), lease_until: at(H), created_at: at(-10 * D) },
+    { id: id(13), workspace_id: WS, cadence_id: id(11), lead_id: id(19), status: 'running', next_run_at: at(-5 * D), lease_token: null, lease_until: null, created_at: at(-10 * D) },
+    // o protótipo não tinha a restrição (cadência, lead): duplicata mais antiga — a carga fica com a mais recente
+    { id: id(27), workspace_id: WS, cadence_id: id(11), lead_id: id(10), status: 'running', next_run_at: at(-2 * D), lease_token: null, lease_until: null, created_at: at(-20 * D) },
   ],
   'public.app_credentials': [
     { id: id(14), workspace_id: null, key: 'META_APP_SECRET', value: await encV1('segredo-meta-e2e', SECRET), updated_at: at(-D) },
     { id: id(15), workspace_id: WS, key: 'OPENAI_API_KEY', value: 'sk-texto-puro-e2e', updated_at: at(-D) },
     { id: id(16), workspace_id: WS, key: 'RESEND_API_KEY', value: '', updated_at: at(-D) },
+    { id: id(26), workspace_id: WS, key: 'META_TOKEN_EXPIRES_AT', value: await encV1('', SECRET), updated_at: at(-D) },
   ],
   'public.mcp_connections': [
     { id: id(17), workspace_id: WS, provider: 'canva', server_url: 'https://mcp.canva.com/mcp', access_token: 'token-puro-e2e', status: 'connected' },

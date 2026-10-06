@@ -1,6 +1,6 @@
 import { verdict, VerifyFindings } from '../verify';
 
-const clean = (): VerifyFindings => ({ countMismatches: [], orphans: [], missingFiles: [], remainingLinks: [], unreadableCredentials: 0 });
+const clean = (): VerifyFindings => ({ countMismatches: [], orphans: [], missingFiles: [], remainingLinks: [], unreadableCredentials: 0, overduePending: 0 });
 
 describe('verdict', () => {
   it('tudo limpo: ok', () => {
@@ -13,6 +13,12 @@ describe('verdict', () => {
     const v = verdict(f);
     expect(v.ok).toBe(true);
     expect(v.lines).toContain('aviso: links do Lovable restantes em creatives.preview_url: 1');
+  });
+
+  it('publicação ou post vencido ainda pendente reprova (sairia sozinho ao subir a API)', () => {
+    const f = clean();
+    f.overduePending = 3;
+    expect(verdict(f)).toEqual({ ok: false, lines: ['publicações/posts vencidos ainda pendentes: 3', 'verificação: PENDÊNCIAS'] });
   });
 
   it('contagem menor, órfão, arquivo ausente ou credencial ilegível reprovam', () => {

@@ -3,7 +3,8 @@ import { AuthIdentity, AuthUser, mapUsers } from './auth-map';
 import { planColumns, quoteIdent } from './columns';
 import { copyExportedFiles, FileTarget } from './copy-files';
 import { assertTarget, CONNECTION_SECRET_COLUMNS, Db, readSchema, SchemaInfo, SKIP_TABLES, TEXTUAL_TYPES } from './db';
-import { assertObjects, Manifest, readManifest, readTable, tableKeys } from './export-reader';
+import { prepareRows } from './dedupe';
+import { assertObjects, Manifest, readCheckedTable, readManifest, readTable, tableKeys } from './export-reader';
 import { decryptLegacy, isLegacyEncrypted, isOurEncrypted } from './legacy-crypto';
 import { emptyReport, ImportReport, Mode } from './report';
 import { LinkResolver, rewriteLinks, STORAGE_LIKE } from './storage-links';
@@ -23,7 +24,12 @@ export const OVERDUE_POST_MESSAGE = 'O horário passou durante a mudança de sis
 export const CADENCE_STOP_AFTER_MS = 3 * 86400e3;
 export const CADENCE_STOP_REASON = 'Parada na mudança de sistema: o próximo passo venceu há mais de 3 dias.';
 const USER_COLUMNS = ['id', 'email', 'password_hash', 'google_sub', 'token_version', 'created_at'];
-const PENDING_STATUSES = ['queued', 'pending', 'scheduled', 'running', 'processing'];
+/** Só para o relatório de pendências vencidas que a importação não tratou (decidir antes da virada). */
+const PENDING_STATUSES = ['queued', 'pending', 'scheduled', 'running', 'processing', 'publishing', 'ready', 'approved', 'needs_review'];
+/** Status da fila do Instagram (PublishingService: enfileira `pending`, trava como `running`). */
+const LIVE_JOB_STATUSES = ['pending', 'running'];
+/** Post automático nestes status com horário vencido seria publicado "agora" pelo autoCalendarTick/scheduleAutomated. */
+const AUTOMATED_OVERDUE_STATUSES = ['ready', 'approved', 'needs_review'];
 const TIME_COLUMNS = ['scheduled_at', 'run_at', 'next_run_at', 'send_at'];
 
 class DryRunRollback extends Error {}
@@ -46,6 +52,7 @@ async function insertRows(db: Db, schema: SchemaInfo, table: string, columns: st
 
 async function loadTables(db: Db, schema: SchemaInfo, dir: string, manifest: Manifest, report: ImportReport): Promise<string[]> {
   const loaded: string[] = [];
+  const droppedRuns: string[] = [];
   for (const { schema: s, table, count } of tableKeys(manifest)) {
     if (s !== 'public') continue;
     if (SKIP_TABLES.has(table)) {
@@ -54,13 +61,21 @@ async function loadTables(db: Db, schema: SchemaInfo, dir: string, manifest: Man
     }
     const info = schema.get(table);
     if (!info) throw new Error(`A tabela ${table} da exportação não existe no banco novo. Nada foi gravado.`);
-    const rows = readTable(dir, 'public', table);
-    if (rows.length !== count) throw new Error(`tables/public.${table}.json tem ${rows.length} linha(s); o manifesto diz ${count}. Refaça o pull.`);
+    void count; // conferido pelo readCheckedTable
+    const prepared = prepareRows(table, readCheckedTable(dir, manifest, 'public', table));
+    const rows = prepared.rows;
+    report.dedupe.cadenceRunsDropped += prepared.droppedIds.length;
+    report.dedupe.versionsRenumbered += prepared.renumbered;
+    droppedRuns.push(...prepared.droppedIds);
     const plan = planColumns(rows, info.columns);
     if (plan.missingRequired.length) throw new Error(`${table}: coluna(s) obrigatória(s) sem valor na exportação: ${plan.missingRequired.join(', ')}. Nada foi gravado.`);
     await insertRows(db, schema, table, plan.insert, rows);
     report.tables.push({ table, rows: rows.length, sourceOnly: plan.sourceOnly });
     loaded.push(table);
+  }
+  // Matrículas descartadas: os eventos delas ficam sem matrícula (o ON DELETE SET NULL não roda em modo replica).
+  if (droppedRuns.length && columnsOf(schema, 'crm_cadence_events').has('run_id')) {
+    await db.$executeRawUnsafe('UPDATE public.crm_cadence_events SET run_id = NULL WHERE run_id = ANY($1::uuid[])', droppedRuns);
   }
   return loaded;
 }
@@ -114,6 +129,12 @@ async function migrateCredentials(db: Db, schema: SchemaInfo, deps: ImportDeps, 
         continue;
       }
       plain = decryptOrFail(c.value, deps.legacySecret, `A credencial ${c.id}`);
+      if (!plain.trim()) {
+        // O protótipo cifrava valores vazios (ex.: META_TOKEN_EXPIRES_AT): fica vazio, como o texto puro vazio.
+        await db.$executeRawUnsafe(`UPDATE public.app_credentials SET value = '' WHERE id = $1::uuid`, c.id);
+        report.credentials.blank++;
+        continue;
+      }
       report.credentials.reencrypted++;
     } else {
       report.credentials.encryptedPlain++;
@@ -136,6 +157,11 @@ async function migrateCredentials(db: Db, schema: SchemaInfo, deps: ImportDeps, 
           continue;
         }
         plain = decryptOrFail(r.v, deps.legacySecret, `O token ${col} da conexão ${r.id}`);
+        if (!plain.trim()) {
+          await db.$executeRawUnsafe(`UPDATE public.mcp_connections SET ${c} = NULL WHERE id = $1::uuid`, r.id);
+          report.credentials.blank++;
+          continue;
+        }
       }
       await db.$executeRawUnsafe(`UPDATE public.mcp_connections SET ${c} = $1 WHERE id = $2::uuid`, deps.vault.encryptValue(plain), r.id);
       report.credentials.connectionsEncrypted++;
@@ -161,10 +187,17 @@ async function clearLeases(db: Db, schema: SchemaInfo, tables: string[]): Promis
 
 async function applyOverdue(db: Db, schema: SchemaInfo, tables: string[], now: Date, report: ImportReport) {
   const nowIso = now.toISOString();
+  // Fila do Instagram (PublishingService): vencidos `pending`/`running` saem da fila, com o histórico do job preservado.
   const jobs = await db.$queryRawUnsafe<{ ig_post_id: string | null }[]>(
-    `UPDATE public.publishing_jobs SET status = 'cancelled', locked_at = NULL, log = $1
-      WHERE status IN ('queued','processing') AND run_at < $2::timestamptz RETURNING ig_post_id::text AS ig_post_id`,
+    `UPDATE public.publishing_jobs SET status = 'cancelled', locked_at = NULL, log = concat_ws(E'\n', NULLIF(log, ''), $1::text)
+      WHERE channel = 'instagram_organic' AND status = ANY($2::text[]) AND run_at < $3::timestamptz RETURNING ig_post_id::text AS ig_post_id`,
     OVERDUE_POST_MESSAGE,
+    LIVE_JOB_STATUSES,
+    nowIso,
+  );
+  // `running` com horário futuro = execução interrompida no Lovable: volta para a fila (a trava foi zerada, o varredor de 15 min não o veria).
+  await db.$executeRawUnsafe(
+    `UPDATE public.publishing_jobs SET status = 'pending', locked_at = NULL WHERE channel = 'instagram_organic' AND status = 'running' AND run_at >= $1::timestamptz`,
     nowIso,
   );
   report.overdue.jobsCancelled = jobs.length;
@@ -177,6 +210,14 @@ async function applyOverdue(db: Db, schema: SchemaInfo, tables: string[], now: D
         ids,
       )
     : 0;
+  // Post automático pronto/aprovado/em revisão com horário vencido sairia "publicando agora": também não sai sozinho.
+  report.overdue.postsFailed += await db.$executeRawUnsafe(
+    `UPDATE public.ig_posts SET status = 'failed', failure_kind = 'publish', last_error = $1
+      WHERE automation IS NOT NULL AND status = ANY($2::text[]) AND scheduled_at < $3::timestamptz`,
+    OVERDUE_POST_MESSAGE,
+    AUTOMATED_OVERDUE_STATUSES,
+    nowIso,
+  );
   report.overdue.cadencesStopped = await db.$executeRawUnsafe(
     `UPDATE public.crm_cadence_runs SET status = 'stopped', stop_reason = $1 WHERE status = 'running' AND next_run_at < $2::timestamptz`,
     CADENCE_STOP_REASON,
@@ -189,7 +230,7 @@ async function applyOverdue(db: Db, schema: SchemaInfo, tables: string[], now: D
   report.overdue.cadencesKept = kept?.n ?? 0;
   const all = new Set(schema.keys());
   for (const table of tables) {
-    if (table === 'publishing_jobs' || table === 'crm_cadence_runs') continue;
+    if (table === 'crm_cadence_runs') continue; // cadências vencidas há até 3 dias seguem de propósito (contadas acima)
     const allowed = columnsOf(schema, table);
     if (!allowed.has('status')) continue;
     for (const col of TIME_COLUMNS) {
@@ -216,7 +257,11 @@ export async function runImport(opts: ImportOptions, deps: ImportDeps): Promise<
   const db: Db = deps.prisma;
   const manifest = readManifest(opts.exportDir);
   const usersPlan = () =>
-    mapUsers(readTable(opts.exportDir, 'auth', 'users') as AuthUser[], readTable(opts.exportDir, 'auth', 'identities') as AuthIdentity[], opts.now);
+    mapUsers(
+      readCheckedTable(opts.exportDir, manifest, 'auth', 'users') as AuthUser[],
+      readCheckedTable(opts.exportDir, manifest, 'auth', 'identities') as AuthIdentity[],
+      opts.now,
+    );
 
   if (opts.mode === 'verify') {
     const database = await assertTarget(db, opts.expectDb, false);
@@ -228,6 +273,7 @@ export async function runImport(opts: ImportOptions, deps: ImportDeps): Promise<
       exportDir: opts.exportDir,
       files: deps.files,
       decrypt: (v) => deps.vault.decryptValue(v),
+      now: opts.now,
     });
     return { report: emptyReport('verify', database), verify: verdict(findings) };
   }
