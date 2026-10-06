@@ -24,6 +24,7 @@ import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedPerformanceRouteImport } from './routes/_authenticated/performance'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedStudioRouteImport } from './routes/_authenticated/studio'
+import { Route as ApiExportFileRouteImport } from './routes/api/export-file'
 import { Route as AuthenticatedBrandsIndexRouteImport } from './routes/_authenticated/brands.index'
 import { Route as AuthenticatedBrandsIdRouteImport } from './routes/_authenticated/brands.$id'
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns.index'
@@ -128,6 +129,11 @@ const AuthenticatedStudioRoute = AuthenticatedStudioRouteImport.update({
   id: '/studio',
   path: '/studio',
   getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const ApiExportFileRoute = ApiExportFileRouteImport.update({
+  id: '/api/export-file',
+  path: '/api/export-file',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedBrandsIndexRoute =
   AuthenticatedBrandsIndexRouteImport.update({
@@ -303,6 +309,7 @@ export interface FileRoutesByFullPath {
   '/performance': typeof AuthenticatedPerformanceRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/studio': typeof AuthenticatedStudioRoute
+  '/api/export-file': typeof ApiExportFileRoute
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
@@ -346,6 +353,7 @@ export interface FileRoutesByTo {
   '/performance': typeof AuthenticatedPerformanceRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/studio': typeof AuthenticatedStudioRoute
+  '/api/export-file': typeof ApiExportFileRoute
   '/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/campaigns/new': typeof AuthenticatedCampaignsNewRoute
@@ -392,6 +400,7 @@ export interface FileRoutesById {
   '/_authenticated/performance': typeof AuthenticatedPerformanceRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/studio': typeof AuthenticatedStudioRoute
+  '/api/export-file': typeof ApiExportFileRoute
   '/_authenticated/brands/$id': typeof AuthenticatedBrandsIdRoute
   '/_authenticated/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/_authenticated/campaigns/new': typeof AuthenticatedCampaignsNewRoute
@@ -438,6 +447,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/settings'
     | '/studio'
+    | '/api/export-file'
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
@@ -481,6 +491,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/settings'
     | '/studio'
+    | '/api/export-file'
     | '/brands/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
@@ -526,6 +537,7 @@ export interface FileRouteTypes {
     | '/_authenticated/performance'
     | '/_authenticated/settings'
     | '/_authenticated/studio'
+    | '/api/export-file'
     | '/_authenticated/brands/$id'
     | '/_authenticated/campaigns/$id'
     | '/_authenticated/campaigns/new'
@@ -560,6 +572,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiExportFileRoute: typeof ApiExportFileRoute
   ApiPublicCronAdsRoute: typeof ApiPublicCronAdsRoute
   ApiPublicCronCrmCadencesRoute: typeof ApiPublicCronCrmCadencesRoute
   ApiPublicCronCrmDailyRoute: typeof ApiPublicCronCrmDailyRoute
@@ -682,6 +695,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/studio'
       preLoaderRoute: typeof AuthenticatedStudioRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/api/export-file': {
+      id: '/api/export-file'
+      path: '/api/export-file'
+      fullPath: '/api/export-file'
+      preLoaderRoute: typeof ApiExportFileRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/brands/': {
       id: '/_authenticated/brands/'
@@ -956,6 +976,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiExportFileRoute: ApiExportFileRoute,
   ApiPublicCronAdsRoute: ApiPublicCronAdsRoute,
   ApiPublicCronCrmCadencesRoute: ApiPublicCronCrmCadencesRoute,
   ApiPublicCronCrmDailyRoute: ApiPublicCronCrmDailyRoute,
