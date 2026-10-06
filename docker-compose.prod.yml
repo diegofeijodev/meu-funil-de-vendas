@@ -1,0 +1,53 @@
+# Produção do Meu Funil no EC2 do Freela (mesma máquina do api-freela e do gestao-de-time).
+# Sobe em /opt/meu-funil:  docker compose -f docker-compose.prod.yml up -d --build
+# Segredos e chaves vêm do .env ao lado (nunca versionado; modelo em docs/deploy/.env.prod.example).
+# A API só escuta em 127.0.0.1:3015; quem expõe é o nginx (docs/deploy/nginx-api-meufunil.conf).
+# Tetos de memória: a máquina é dividida com o Freela de produção — o Meu Funil nunca pode sufocá-lo
+# (estourou o teto = o contêiner reinicia sozinho, o resto da máquina segue).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: meufunil-postgres
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      POSTGRES_USER: meufunil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: meufunil
+    volumes:
+      - meufunil_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U meufunil -d meufunil']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    image: meufunil-api:${IMAGE_TAG:-latest}
+    container_name: meufunil-api
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3015
+      NODE_OPTIONS: --max-old-space-size=768
+      DATABASE_URL: postgresql://meufunil:${POSTGRES_PASSWORD}@meufunil-postgres:5432/meufunil?schema=public
+      UPLOADS_DIR: /data/uploads
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      # Navegador -> nginx -> API: 1 salto confiável (o nginx sobrescreve o X-Forwarded-For com o IP real).
+      TRUST_PROXY: '1'
+      # Uma instância só (os jobs do agendador rodam aqui).
+      SCHEDULER_ENABLED: 'true'
+    ports:
+      - '127.0.0.1:3015:3015'
+    volumes:
+      - meufunil_uploads:/data/uploads
+
+volumes:
+  meufunil_pgdata:
+  meufunil_uploads:
