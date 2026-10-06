@@ -63,6 +63,18 @@ echo "== segunda carga"
 imp "$TMP/o6" --expect-db $DB && r=0 || r=$?
 check "banco não vazio recusa a segunda carga" "1,1" "$r,$(grep -c 'não está vazio' "$TMP/o6")"
 
+echo "== verificação e só-arquivos"
+imp "$TMP/o7" --expect-db $DB --verify && r=0 || { r=$?; cat "$TMP/o7"; }
+check "verificação limpa (o link do arquivo que não veio só avisa)" "0,1,1" "$r,$(grep -c 'verificação: ok' "$TMP/o7"),$(grep -c 'aviso: links do Lovable restantes em creatives.preview_url: 1' "$TMP/o7")"
+rm -f "$UP/ig-media/posts/$WS/p1.jpg"
+imp "$TMP/o8" --expect-db $DB --verify && r=0 || r=$?
+check "verificação acusa arquivo ausente" "1,1" "$r,$(grep -c "ig-media/posts/$WS/p1.jpg" "$TMP/o8")"
+imp "$TMP/o9" --expect-db $DB --only-files && r=0 || r=$?
+check "--only-files repõe só o que falta" "0,1" "$r,$(grep -c 'arquivos: 1 copiados, 2 já estavam' "$TMP/o9")"
+q "UPDATE app_credentials SET value = 'enc:v2:AAAA:BBBB:CCCC' WHERE key = 'OPENAI_API_KEY'" >/dev/null
+imp "$TMP/o10" --expect-db $DB --verify && r=0 || r=$?
+check "verificação acusa credencial ilegível" "1,1" "$r,$(grep -c 'credenciais ilegíveis: 1' "$TMP/o10")"
+
 echo; echo "$OK ok, $FAIL falha(s)"
 docker exec $C psql -U meufunil -d postgres -qc "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null
 [[ $FAIL -eq 0 ]]
