@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { awaitsHuman } from "@/lib/instagram/production";
 
 /** Lista de posts do Instagram aguardando aprovação — usada na aba Instagram e em Aprovações. */
 export function IgApprovalList({
@@ -28,7 +29,7 @@ export function IgApprovalList({
   const [busy, setBusy] = useState(false);
   const approve = useServerFn(approvePost);
   const reject = useServerFn(rejectPost);
-  const pending = posts.filter((p) => p.status === "pending_approval" || p.status === "needs_review");
+  const pending = posts.filter(awaitsHuman);
 
   const act = async (ids: string[], kind: "approve" | "reject") => {
     let reason = "";

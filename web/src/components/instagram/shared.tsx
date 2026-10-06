@@ -30,6 +30,9 @@ export type IgPost = {
   /** Posts da programação com estratégia: motivo/nota da revisão (`needs_review`). */
   review_reason?: string | null;
   review_score?: number | null;
+  /** Programação com IA: modo ("publish" | "approval") e a execução de origem. */
+  automation?: string | null;
+  run_id?: string | null;
 };
 
 export const FORMATS: Record<

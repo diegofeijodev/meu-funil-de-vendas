@@ -32,7 +32,8 @@ import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, type IgPost } from "./shared";
 import { PickFromLibrary } from "@/components/media/media-picker";
 import { ArtDirectionPanel } from "@/components/creative/art-direction-panel";
-import type { TextLayout } from "@/lib/creative/visual-style";
+import { VideoDirectionPanel } from "@/components/creative/video-direction-panel";
+import { effectiveLayout, videoBriefPatch } from "@/lib/instagram/production";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const toLocal = (iso: string | null) => {
@@ -234,11 +235,29 @@ export function PostEditor({
             />
           </div>
 
-          {post.format !== "reel" && post.format !== "story_video" && (
+          {post.format === "reel" || post.format === "story_video" ? (
+            <VideoDirectionPanel
+              key={post.id}
+              brief={post.creative_brief}
+              busy={busy === "gen"}
+              onSave={(prompt, audio) =>
+                run(
+                  "save",
+                  async () => {
+                    await patchIgPost(workspaceId, post.id, { creative_brief: videoBriefPatch(post.creative_brief, prompt, audio) });
+                  },
+                  "Roteiro e áudio salvos. Clique em Regenerar vídeo para usar.",
+                )
+              }
+              onRegenerate={() =>
+                run("gen", () => fns.gen({ data: { workspaceId, postId: post.id, provider: "auto" } }), "Vídeo enviado para geração: ele aparece aqui quando ficar pronto.")
+              }
+            />
+          ) : (
             <ArtDirectionPanel
               key={post.id}
               prompt={post.creative_brief?.visual_prompt_override ?? post.creative_brief?.visual_prompt ?? ""}
-              layout={(post.creative_brief?.layout ?? "limpo") as TextLayout}
+              layout={effectiveLayout(post.creative_brief)}
               variations={post.creative_brief?.variations ?? []}
               busy={busy === "gen"}
               showLayout={post.format !== "feed_carousel"}

@@ -30,6 +30,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { cn } from "@/lib/utils";
 import { FORMATS, useIgAccount } from "./shared";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { AUDIO_INSTRUCTIONS_MAX, AUDIO_MODES, periodCounts, type AudioMode } from "@/lib/instagram/production";
 
 const WEEK = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MAIN_FORMATS = ["feed_image", "feed_carousel", "reel"] as const;
@@ -167,11 +168,25 @@ export function IgAutoCalendar({ workspaceId, presetDate, onPresetUsed }: { work
                 {r.strategy && <StrategySummary run={r} canEdit={canEdit} onChanged={() => { refresh(); if (r.status === "planning") void drive(r.id); }} />}
                 {r.status === "planning" && !r.strategy && <p className="text-xs text-muted-foreground">Montando a estratégia do período…</p>}
                 <p className="text-xs">
-                  {r.counts.total} conteúdos · {r.counts.media} criativos · {r.counts.waiting > 0 && `${r.counts.waiting} aguardando aprovação · `}
-                  {r.counts.scheduled} agendados · {r.counts.published} publicados
+                  {periodCounts(r.counts)}
+                  {r.counts.waiting > 0 && ` · ${r.counts.waiting} aguardando aprovação`}
                   {r.counts.failed > 0 && <span className="text-destructive"> · {r.counts.failed} com falha</span>}
+                  {r.counts.rewriting > 0 && <span className="text-warning"> · {r.counts.rewriting} sendo reescritos pela IA</span>}
                   {r.counts.review > 0 && <span className="text-destructive"> · {r.counts.review} precisam de revisão (veja Aprovações)</span>}
                 </p>
+                {r.skipped_posts?.length > 0 && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer font-medium text-warning">Pulados ({r.skipped_posts.length})</summary>
+                    <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                      {r.skipped_posts.map((p: any) => (
+                        <li key={p.id}>
+                          {p.theme ?? "Post"}
+                          {p.scheduled_at ? ` · ${dayLabel(p.scheduled_at)}` : ""} — {p.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {r.last_error && <p className="text-xs text-destructive">Último erro: {r.last_error}</p>}
               </div>
               {canEdit && (
@@ -276,6 +291,8 @@ function AutoCalendarDialog({
   const [focus, setFocus] = useState("");
   const [mode, setMode] = useState<"publish" | "approval">(canPublish ? "publish" : "approval");
   const [recurring, setRecurring] = useState(false);
+  const [audioMode, setAudioMode] = useState<AudioMode>("ambiente_trilha");
+  const [audioText, setAudioText] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -314,6 +331,7 @@ function AutoCalendarDialog({
           focus,
           mode,
           recurring,
+          videoAudio: { modo: audioMode, instrucoes: audioText.trim() },
         },
       });
       toast.success(`Programação criada: ${r.total} posts.${r.skipped ? ` ${r.skipped} horário(s) que já passaram foram ignorados.` : ""}`);
@@ -437,6 +455,25 @@ function AutoCalendarDialog({
               </label>
             )}
           </Field>
+          {allFormats.some((f) => f === "reel" || f === "story_video") && (
+            <Field label="Áudio dos vídeos (Reels e stories em vídeo)">
+              <div className="grid gap-2 sm:grid-cols-3">
+                {(Object.keys(AUDIO_MODES) as AudioMode[]).map((k) => (
+                  <ModeCard key={k} active={audioMode === k} title={AUDIO_MODES[k].label} text={AUDIO_MODES[k].hint} onClick={() => setAudioMode(k)} />
+                ))}
+              </div>
+              {audioMode !== "sem_audio" && (
+                <Textarea
+                  className="mt-2"
+                  rows={2}
+                  maxLength={AUDIO_INSTRUCTIONS_MAX}
+                  value={audioText}
+                  onChange={(e) => setAudioText(e.target.value)}
+                  placeholder='Instruções (opcional): "trilha animada", "sem música", "voz feminina calma"…'
+                />
+              )}
+            </Field>
+          )}
 
           {start === today && (
             <label className="flex items-center gap-2">
@@ -475,6 +512,12 @@ function AutoCalendarDialog({
             <label className="mt-3 flex items-center gap-2">
               <Switch checked={recurring} onCheckedChange={setRecurring} /> Repetir toda semana com estas configurações
             </label>
+            {mode === "publish" && (
+              <p className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-2 text-xs text-muted-foreground">
+                Sem cliques depois de criar: a estratégia é aprovada sozinha, cada criativo é produzido a partir de 48 h antes do horário (meta: pronto 24 h antes) e
+                publicado na hora marcada. Post reprovado na revisão é refeito pela IA até 2 vezes; se ainda não passar, o horário é pulado e o aviso aparece no painel.
+              </p>
+            )}
           </Field>
 
           {account?.status !== "connected" && (

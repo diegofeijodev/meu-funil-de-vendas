@@ -11,6 +11,7 @@ import {
   Sparkles,
   RefreshCw,
   ShieldAlert,
+  Clapperboard,
 } from "lucide-react";
 import { listIgEvents, listIgPlans } from "@/modules/instagram/infrastructure/instagram.api";
 import { Section, StatusPill, EmptyState } from "@/components/ui-bits";
@@ -26,6 +27,11 @@ const KIND: Record<string, { label: string; icon: any }> = {
   reschedule: { label: "Reagendado", icon: RefreshCw },
   optimize: { label: "Otimização", icon: Bot },
   guardrail: { label: "Proteção", icon: ShieldAlert },
+  // Produção automática (programações com IA).
+  strategy_auto_approved: { label: "Estratégia aprovada", icon: CheckCircle2 },
+  post_rewritten: { label: "Reescrito pela IA", icon: RefreshCw },
+  post_skipped: { label: "Pulado", icon: AlertTriangle },
+  video_regenerated: { label: "Vídeo refeito", icon: Clapperboard },
 };
 
 /** Próximo domingo 18h em São Paulo (UTC-3 → 21h UTC). */
@@ -56,7 +62,7 @@ export function IgAutopilotPanel({ workspaceId }: { workspaceId: string }) {
   return (
     <Section
       title="Piloto automático"
-      description="Gera, agenda e publica sozinho conforme o plano de conteúdo."
+      description="Gera, agenda e publica sozinho conforme o plano de conteúdo e as programações com IA."
     >
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-border p-3">

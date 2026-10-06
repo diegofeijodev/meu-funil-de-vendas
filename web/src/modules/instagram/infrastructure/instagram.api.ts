@@ -53,6 +53,8 @@ const post = z
     funnel_stage: str,
     review_reason: str,
     review_score: nullNum,
+    review_attempts: nullNum,
+    failure_kind: str,
   })
   .passthrough();
 
@@ -102,7 +104,13 @@ const run = z
     strategy_status: z.string().default("pending"),
     paused_reason: str,
     weeks: z.coerce.number(),
-    counts: z.object({ total: z.number(), media: z.number(), waiting: z.number(), scheduled: z.number(), published: z.number(), failed: z.number(), review: z.number().default(0) }),
+    counts: z.object({
+      total: z.number(), media: z.number(), waiting: z.number(), scheduled: z.number(), published: z.number(), failed: z.number(), review: z.number().default(0),
+      // Painel do período (produção automática).
+      produced: z.number().default(0), producing: z.number().default(0), queued: z.number().default(0), rewriting: z.number().default(0), skipped: z.number().default(0),
+    }),
+    skipped_posts: z.array(z.object({ id: z.string(), theme: str, scheduled_at: str, reason: z.string() })).default([]),
+    video_audio: z.any().nullish().transform((v) => v ?? null),
   })
   .passthrough();
 

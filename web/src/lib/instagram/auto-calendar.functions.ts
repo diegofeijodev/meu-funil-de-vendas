@@ -5,7 +5,17 @@ type Schedule = { startDate: string; endDate: string; weekdays: number[]; times:
 
 /** `POST /v1/instagram/create-auto-calendar` — "publica sozinho" só dono/admin; com aprovação, quem edita. */
 export const createAutoCalendar = serverFnPost<
-  Schedule & { workspaceId: string; planId?: string | null; brandId?: string | null; campaignId?: string | null; focus: string; mode: "publish" | "approval"; recurring?: boolean },
+  Schedule & {
+    workspaceId: string;
+    planId?: string | null;
+    brandId?: string | null;
+    campaignId?: string | null;
+    focus: string;
+    mode: "publish" | "approval";
+    recurring?: boolean;
+    /** Áudio dos vídeos (Reels e stories em vídeo); sem ele, o padrão do banco. */
+    videoAudio?: { modo: "ambiente_trilha" | "narracao" | "sem_audio"; instrucoes?: string };
+  },
   { runId: string; planId: string; total: number; skipped: number }
 >("/v1/instagram/create-auto-calendar");
 
