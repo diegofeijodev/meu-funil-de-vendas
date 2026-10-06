@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791318926760,
+      "tag": "0000_export_meufunil_temp",
+      "breakpoints": true
+    }
+  ]
+}
