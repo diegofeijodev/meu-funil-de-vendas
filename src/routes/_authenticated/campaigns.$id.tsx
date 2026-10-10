@@ -23,6 +23,8 @@ import { CampaignChannels } from "@/components/campaign-channels";
 import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { joinList, normalizeCopy, normalizeStrategy } from "@/lib/ai/strategy-normalize";
+import { SectionErrorBoundary } from "@/components/section-error-boundary";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$id")({
   head: () => ({
@@ -66,10 +68,11 @@ function CampaignDetail() {
         supabase.from("performance_daily").select("*").eq("campaign_id", id).neq("source", "demo"),
         supabase.from("campaign_costs").select("*").eq("campaign_id", id),
       ]);
+      // A IA pode omitir listas (públicos, ângulos, formatos...): normaliza antes de renderizar.
       return {
         campaign,
-        strategy: strategy.data,
-        copy: copy.data,
+        strategy: strategy.data ? { ...strategy.data, content: normalizeStrategy(strategy.data.content) } : null,
+        copy: copy.data ? { ...copy.data, content: normalizeCopy(copy.data.content) } : null,
         creatives: creatives.data ?? [],
         perf: (perf.data ?? []) as unknown as PerformanceRow[],
         costs: costs.data ?? [],
@@ -82,9 +85,9 @@ function CampaignDetail() {
   const brand = c.brands;
   const extra = data.costs.reduce((s, x) => s + Number(x.amount), 0);
   const k = computeKpis(data.perf, extra);
-  const strategy = data.strategy?.content as unknown as FullStrategy | undefined;
+  const strategy = (data.strategy?.content ?? undefined) as FullStrategy | undefined;
   const strategyApproved = data.strategy?.status === "approved";
-  const copy = data.copy?.content as unknown as CopyContent | undefined;
+  const copy = (data.copy?.content ?? undefined) as CopyContent | undefined;
 
   const brief = (): CampaignBrief => ({
     name: c.name,
@@ -216,7 +219,7 @@ function CampaignDetail() {
       if (!st.configured) {
         // Sem Meta conectada não existe publicação: nada de simular nem marcar como ativa.
         throw new Error(
-          `Conecte a Meta antes de publicar (faltando: ${(st.missing ?? []).join(", ") || "credenciais"}). Vá em Integrações → Meta Ads.`,
+          `Conecte a Meta antes de publicar (faltando: ${joinList(st.missing) || "credenciais"}). Vá em Integrações → Meta Ads.`,
         );
       }
       setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
@@ -252,7 +255,7 @@ function CampaignDetail() {
     setBusy("recos");
     try {
       const r = await runRecos({ data: { workspaceId, campaignId: id } });
-      if (r.errors.length) toast.warning(r.errors.join(" · "));
+      if (r.errors.length) toast.warning(joinList(r.errors, " · "));
       if (r.created) toast.success(`${r.created} recomendações da IA em AI Insights.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível gerar recomendações.");
@@ -370,6 +373,7 @@ function CampaignDetail() {
               )
             }
           >
+            <SectionErrorBoundary resetKey={data.strategy?.id} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {!strategy ? (
               <p className="text-sm text-muted-foreground">Nenhuma estratégia gerada ainda.</p>
             ) : (
@@ -404,7 +408,7 @@ function CampaignDetail() {
                       {strategy.publicos_meta.map((p) => (
                         <li key={p.nome}>
                           <span className="text-foreground">{p.nome}</span> ({p.tipo}) — {p.descricao}
-                          {p.interesses.length ? ` · Interesses: ${p.interesses.join(", ")}` : ""}
+                          {p.interesses?.length ? ` · Interesses: ${joinList(p.interesses)}` : ""}
                         </li>
                       ))}
                     </ul>
@@ -414,7 +418,7 @@ function CampaignDetail() {
                   <Block title="Briefing para o designer">
                     <p>{strategy.briefing_criativo.direcao_visual}</p>
                     <p className="mt-1 text-xs">
-                      Formatos: {strategy.briefing_criativo.formatos.join(", ")} · {strategy.briefing_criativo.quantidade_por_angulo} por ângulo · CTA: {strategy.briefing_criativo.cta}
+                      Formatos: {joinList(strategy.briefing_criativo.formatos)} · {strategy.briefing_criativo.quantidade_por_angulo} por ângulo · CTA: {strategy.briefing_criativo.cta}
                     </p>
                   </Block>
                 )}
@@ -469,6 +473,7 @@ function CampaignDetail() {
                 </Block>
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
@@ -491,6 +496,7 @@ function CampaignDetail() {
               )
             }
           >
+            <SectionErrorBoundary resetKey={data.copy?.id} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {!copy ? (
               <p className="text-sm text-muted-foreground">Nenhuma copy gerada ainda.</p>
             ) : (
@@ -514,17 +520,19 @@ function CampaignDetail() {
                 <Block title="Quiz">
                   <ul className="space-y-1">
                     {copy.quiz.map((q) => (
-                      <li key={q.pergunta}>{q.pergunta} <span className="text-muted-foreground">({q.opcoes.join(" · ")})</span></li>
+                      <li key={q.pergunta}>{q.pergunta} <span className="text-muted-foreground">({joinList(q.opcoes, " · ")})</span></li>
                     ))}
                   </ul>
                 </Block>
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
         <TabsContent value="criativos">
           <Section title="Criativos da campanha" actions={<Button size="sm" variant="outline" asChild><Link to="/studio">Abrir Creative Studio</Link></Button>}>
+            <SectionErrorBoundary resetKey={data.creatives.length} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {data.creatives.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhum criativo gerado para esta campanha.</p>
             ) : (
@@ -549,6 +557,7 @@ function CampaignDetail() {
                 ))}
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
@@ -603,7 +612,7 @@ function CampaignDetail() {
               <Item label="Ticket médio" value={brl(c.avg_ticket)} />
               <Item label="Margem" value={`${num(c.margin_percent)}%`} />
               <Item label="CAC máximo" value={brl(c.max_cac)} />
-              <Item label="Formatos" value={c.formats.map((f) => FORMATS[f] ?? f).join(", ")} />
+              <Item label="Formatos" value={joinList((Array.isArray(c.formats) ? c.formats : []).map((f) => FORMATS[f] ?? f))} />
               <Item label="Público" value={Object.entries((c.audience ?? {}) as Record<string, string>).map(([a, b]) => `${a}: ${b}`).join(" · ")} />
             </dl>
           </Section>

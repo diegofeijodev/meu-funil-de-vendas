@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { EDITORS, requireRole } from "@/lib/membership";
+import { strategySchema } from "./strategy-normalize";
+import type { FullStrategy } from "./strategy-types";
 
 const byCampaign = z.object({ campaignId: z.string().uuid() });
 
@@ -19,7 +21,8 @@ export const generateCampaignStrategy = createServerFn({ method: "POST" })
     const c = await campaignOf(context, data.campaignId);
     await requireRole(context, c.workspace_id, EDITORS);
     const { generateStrategyAI } = await import("./strategist.server");
-    const content = await generateStrategyAI(context.supabase, c.id);
+    // Valida o JSON da IA e preenche listas ausentes com [] para nunca gravar estratégia incompleta.
+    const content = strategySchema.parse(await generateStrategyAI(context.supabase, c.id)) as FullStrategy;
     const { data: last } = await context.supabase
       .from("campaign_strategies")
       .select("version")

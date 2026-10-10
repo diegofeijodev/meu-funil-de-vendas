@@ -73,6 +73,7 @@ const SCHEMA = obj({
 });
 
 import type { FullStrategy, StrategyAngle, StrategyAudience } from "./strategy-types";
+import { normalizeStrategy } from "./strategy-normalize";
 export type { FullStrategy, StrategyAngle, StrategyAudience };
 
 /** Resultados anteriores da marca (campanhas já veiculadas) para a IA aprender com eles. */
@@ -226,7 +227,7 @@ export async function currentStrategy(db: DB, campaignId: string | null | undefi
     .order("version", { ascending: false })
     .limit(10);
   const rows = (data ?? []) as { content: FullStrategy; status: string }[];
-  return (rows.find((r) => r.status === "approved") ?? rows[0])?.content ?? null;
+  return normalizeStrategy((rows.find((r) => r.status === "approved") ?? rows[0])?.content);
 }
 
 /** Resumo curto da estratégia para orientar copy, diretor de arte e vídeo. */

@@ -16,6 +16,7 @@ import { Link } from "@tanstack/react-router";
 import { TARGET_FORMATS, TARGET_FORMAT_KEYS, aspectFor, type TargetFormat } from "@/lib/media/formats";
 import type { CreativeType } from "@/lib/providers/creative-provider";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
+import { normalizeCopy, normalizeStrategy } from "@/lib/ai/strategy-normalize";
 import type { CopyContent } from "@/lib/ai/agents";
 import { useServerFn } from "@tanstack/react-start";
 import { capcutPackage, generateCreative, newCreativeVersion, previewVisualPrompt, retryCreativeJob } from "@/lib/creative.functions";
@@ -121,9 +122,9 @@ function Studio() {
       ]);
       const sRows = strategies.data ?? [];
       const cRows = copies.data ?? [];
-      const strategy = (sRows.find((r) => r.status === "approved") ?? sRows[0])?.content as unknown as FullStrategy | undefined;
-      const copy = (cRows.find((r) => r.status === "approved") ?? cRows[0])?.content as unknown as CopyContent | undefined;
-      return { strategy: strategy ?? null, copy: copy ?? null };
+      const strategy: FullStrategy | null = normalizeStrategy((sRows.find((r) => r.status === "approved") ?? sRows[0])?.content);
+      const copy: CopyContent | null = normalizeCopy((cRows.find((r) => r.status === "approved") ?? cRows[0])?.content);
+      return { strategy, copy };
     },
   });
   const angles = campaignBrief?.strategy?.angulos_detalhados ?? [];
