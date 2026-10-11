@@ -72,8 +72,82 @@ const SCHEMA = obj({
   }),
 });
 
+import { z } from "zod";
 import type { FullStrategy, StrategyAngle, StrategyAudience } from "./strategy-types";
 import { normalizeStrategy } from "./strategy-normalize";
+
+/**
+ * Validação estrita da resposta da IA (espelha o SCHEMA acima). Mesmo com structured output,
+ * provedores sem `strict` (chave própria Gemini/OpenAI) podem omitir campos; nesse caso a geração
+ * é refeita uma vez antes de desistir.
+ */
+const zStr = z.string();
+const zList = z.array(z.string());
+const RESPONSE = z.object({
+  resumo_executivo: zStr.min(1),
+  problema: zStr,
+  objetivo_smart: zStr.min(1),
+  icp: zStr,
+  oferta: zStr,
+  big_idea: zStr.min(1),
+  mensagem_principal: zStr,
+  funil: zStr,
+  canais: zStr,
+  plano_testes: zStr,
+  cronograma: zStr,
+  hipoteses: zList,
+  recomendacoes: zList,
+  objecoes: z.array(z.object({ objecao: zStr, resposta: zStr })),
+  distribuicao_verba: z.array(z.object({ destino: zStr, percentual: z.coerce.number() })),
+  kpis: z.array(z.object({ nome: zStr, meta: z.coerce.string() })),
+  angulos_detalhados: z
+    .array(
+      z.object({
+        nome: zStr.min(1),
+        dor_ou_desejo: zStr,
+        mensagem: zStr,
+        gancho: zStr,
+        formato_sugerido: zStr,
+        etapa_funil: zStr,
+      }),
+    )
+    .min(1),
+  publicos_meta: z.array(
+    z.object({
+      nome: zStr.min(1),
+      tipo: z.enum(["frio", "interesses", "lookalike", "remarketing", "lista_clientes"]),
+      interesses: zList,
+      descricao: zStr,
+    }),
+  ),
+  briefing_criativo: z.object({
+    direcao_visual: zStr,
+    formatos: zList,
+    quantidade_por_angulo: z.coerce.number(),
+    cta: zStr,
+  }),
+  briefing_video: z.object({
+    duracao_segundos: z.coerce.number(),
+    roteiro: zStr,
+    cenas: zList,
+  }),
+  plano_instagram: z.object({
+    pilares: z.array(z.object({ nome: zStr, peso: z.coerce.number() })),
+    temas: zList,
+    frequencia: z.object({
+      feed: z.coerce.number(),
+      reels: z.coerce.number(),
+      stories: z.coerce.number(),
+    }),
+  }),
+});
+type StrategyResponse = z.infer<typeof RESPONSE>;
+
+const issuesText = (e: z.ZodError) =>
+  e.issues
+    .slice(0, 8)
+    .map((i) => `${i.path.join(".") || "(raiz)"}: ${i.message}`)
+    .join("; ");
 export type { FullStrategy, StrategyAngle, StrategyAudience };
 
 /** Resultados anteriores da marca (campanhas já veiculadas) para a IA aprender com eles. */
@@ -182,10 +256,24 @@ export async function generateStrategyAI(db: DB, campaignId: string): Promise<Fu
     `RESULTADOS ANTERIORES: ${JSON.stringify(history)}`,
   ].join("\n");
 
-  const raw = (await jsonLLM(c.workspace_id, prompt, SCHEMA, "campaign_strategy")) as any;
-  const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
-  const angles = list<StrategyAngle>(raw.angulos_detalhados);
-  if (!raw.big_idea || !angles.length) throw new Error("A IA não devolveu uma estratégia completa. Tente de novo.");
+  // Structured output + validação; se a resposta vier incompleta, tenta de novo uma vez.
+  let raw: StrategyResponse | null = null;
+  let lastIssues = "";
+  for (let attempt = 1; attempt <= 2 && !raw; attempt++) {
+    const res = await jsonLLM(c.workspace_id, prompt, SCHEMA, "campaign_strategy");
+    const parsed = RESPONSE.safeParse(res);
+    if (parsed.success) raw = parsed.data;
+    else {
+      lastIssues = issuesText(parsed.error);
+      console.warn(`[strategist] resposta inválida da IA (tentativa ${attempt}/2): ${lastIssues}`);
+    }
+  }
+  if (!raw) {
+    throw new Error(
+      `A IA não devolveu uma estratégia completa (${lastIssues.slice(0, 160)}). Tente de novo.`,
+    );
+  }
+  const angles: StrategyAngle[] = raw.angulos_detalhados;
 
   return {
     resumo_executivo: String(raw.resumo_executivo ?? ""),
@@ -197,18 +285,18 @@ export async function generateStrategyAI(db: DB, campaignId: string): Promise<Fu
     angulos: angles.map((a) => `${a.nome}: ${a.mensagem}`),
     funil: String(raw.funil ?? ""),
     mensagem_principal: String(raw.mensagem_principal ?? ""),
-    objecoes: list<{ objecao: string; resposta: string }>(raw.objecoes),
+    objecoes: raw.objecoes,
     canais: String(raw.canais ?? ""),
     distribuicao_verba: Object.fromEntries(
-      list<{ destino: string; percentual: number }>(raw.distribuicao_verba).map((d) => [d.destino, Number(d.percentual) || 0]),
+      raw.distribuicao_verba.map((d) => [d.destino, Number(d.percentual) || 0]),
     ),
-    kpis: Object.fromEntries(list<{ nome: string; meta: string }>(raw.kpis).map((k) => [k.nome, k.meta])),
-    hipoteses: list<string>(raw.hipoteses),
+    kpis: Object.fromEntries(raw.kpis.map((k) => [k.nome, k.meta])),
+    hipoteses: raw.hipoteses,
     plano_testes: String(raw.plano_testes ?? ""),
     cronograma: String(raw.cronograma ?? ""),
-    recomendacoes: list<string>(raw.recomendacoes),
+    recomendacoes: raw.recomendacoes,
     angulos_detalhados: angles,
-    publicos_meta: list<StrategyAudience>(raw.publicos_meta),
+    publicos_meta: raw.publicos_meta as StrategyAudience[],
     briefing_criativo: raw.briefing_criativo,
     briefing_video: raw.briefing_video,
     plano_instagram: raw.plano_instagram,

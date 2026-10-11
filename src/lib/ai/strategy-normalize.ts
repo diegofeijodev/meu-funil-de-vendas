@@ -189,3 +189,6 @@ export function normalizeCopy(copy: unknown): CopyContent | null {
   if (copy == null || copy === "") return null;
   return copySchema.parse(copy) as CopyContent;
 }
+
+/** Array seguro para render: qualquer não-array (undefined, null, string, objeto) vira []. */
+export const asList = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
