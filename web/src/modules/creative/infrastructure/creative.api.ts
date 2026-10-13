@@ -2,6 +2,7 @@ import { z } from "zod";
 import { api } from "@/modules/shared/infrastructure/http";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
 import type { CopyContent } from "@/lib/ai/agents";
+import { normalizeCopy, normalizeStrategy } from "@/lib/ai/strategy-normalize";
 
 const num = z.coerce.number();
 
@@ -65,7 +66,8 @@ export async function getCampaignBrief(ws: string, campaignId: string): Promise<
   const parsed = z.object({ strategies: z.array(versioned), copies: z.array(versioned) }).parse(data);
   const pick = (rows: z.infer<typeof versioned>[]) => (rows.find((r) => r.status === "approved") ?? rows[0])?.content;
   return {
-    strategy: (pick(parsed.strategies) as FullStrategy | undefined) ?? null,
-    copy: (pick(parsed.copies) as CopyContent | undefined) ?? null,
+    // A IA pode omitir listas: normaliza antes de a tela usar (nunca lança).
+    strategy: normalizeStrategy(pick(parsed.strategies)),
+    copy: normalizeCopy(pick(parsed.copies)),
   };
 }

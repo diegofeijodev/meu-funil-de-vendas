@@ -3,6 +3,7 @@
 import { Link, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import axios from "axios";
 import { toast } from "sonner";
 import { Rocket, Sparkles } from "lucide-react";
 import {
@@ -30,6 +31,8 @@ import { CampaignChannels } from "@/components/campaign-channels";
 import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
+import { asList, joinList, normalizeCopy, normalizeStrategy } from "@/lib/ai/strategy-normalize";
+import { SectionErrorBoundary } from "@/components/section-error-boundary";
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -50,20 +53,46 @@ export function CampaignDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
 
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["campaign", id],
     enabled: !!workspaceId,
-    queryFn: () => getCampaignDetail(workspaceId!, id),
+    // Falha ao carregar sobe para `error.tsx` da rota (mensagem amigável + "Tentar de novo" + "Voltar para campanhas").
+    throwOnError: true,
+    queryFn: async () => {
+      let detail;
+      try {
+        detail = await getCampaignDetail(workspaceId!, id);
+      } catch (e) {
+        // Campanha inexistente / de outro workspace: tela "não encontrada", não carregamento eterno.
+        if (axios.isAxiosError(e) && e.response?.status === 404) return null;
+        throw e;
+      }
+      // A IA pode omitir listas (públicos, ângulos, formatos...): normaliza antes de renderizar.
+      return {
+        ...detail,
+        strategy: detail.strategy ? { ...detail.strategy, content: normalizeStrategy(detail.strategy.content) } : null,
+        copy: detail.copy ? { ...detail.copy, content: normalizeCopy(detail.copy.content) } : null,
+      };
+    },
   });
 
-  if (!data?.campaign) return <div className="panel h-64 animate-pulse" />;
+  if (isPending) return <div className="panel h-64 animate-pulse" />;
+  if (!data?.campaign)
+    return (
+      <div className="panel mx-auto mt-10 flex max-w-lg flex-col items-center gap-4 p-8 text-center">
+        <p className="text-sm text-muted-foreground">Campanha não encontrada ou sem acesso neste workspace.</p>
+        <Button asChild>
+          <Link to="/campaigns">Voltar para campanhas</Link>
+        </Button>
+      </div>
+    );
   const c = data.campaign;
   const brand = c.brands;
   const extra = data.costs.reduce((s, x) => s + Number(x.amount), 0);
   const k = computeKpis(data.perf, extra);
-  const strategy = data.strategy?.content as unknown as FullStrategy | undefined;
+  const strategy = (data.strategy?.content ?? undefined) as FullStrategy | undefined;
   const strategyApproved = data.strategy?.status === "approved";
-  const copy = data.copy?.content as unknown as CopyContent | undefined;
+  const copy = (data.copy?.content ?? undefined) as CopyContent | undefined;
 
   const brief = (): CampaignBrief => ({
     name: c.name,
@@ -181,7 +210,7 @@ export function CampaignDetail() {
       if (!st.configured) {
         // Sem Meta conectada não existe publicação: nada de simular nem marcar como ativa.
         throw new Error(
-          `Conecte a Meta antes de publicar (faltando: ${(st.missing ?? []).join(", ") || "credenciais"}). Vá em Integrações → Meta Ads.`,
+          `Conecte a Meta antes de publicar (faltando: ${joinList(st.missing) || "credenciais"}). Vá em Integrações → Meta Ads.`,
         );
       }
       setSteps([{ key: "meta", label: "Enviando para a Meta (tudo pausado)", status: "pending", detail: c.name }]);
@@ -217,7 +246,7 @@ export function CampaignDetail() {
     setBusy("recos");
     try {
       const r = await runRecos({ data: { workspaceId, campaignId: id } });
-      if (r.errors.length) toast.warning(r.errors.join(" · "));
+      if (r.errors.length) toast.warning(joinList(r.errors, " · "));
       if (r.created) toast.success(`${r.created} recomendações da IA em AI Insights.`);
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível gerar recomendações."));
@@ -335,6 +364,7 @@ export function CampaignDetail() {
               )
             }
           >
+            <SectionErrorBoundary resetKey={data.strategy?.id} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {!strategy ? (
               <p className="text-sm text-muted-foreground">Nenhuma estratégia gerada ainda.</p>
             ) : (
@@ -346,30 +376,34 @@ export function CampaignDetail() {
                 <Block title="Oferta">{strategy.oferta}</Block>
                 <Block title="Big idea">{strategy.big_idea}</Block>
                 <Block title="Ângulos criativos">
-                  {strategy.angulos_detalhados?.length ? (
+                  {asList(strategy.angulos_detalhados).length ? (
                     <div className="grid gap-2 md:grid-cols-2">
-                      {strategy.angulos_detalhados.map((a) => (
-                        <div key={a.nome} className="rounded-md border border-border/60 p-3">
-                          <p className="font-medium text-foreground">{a.nome}</p>
-                          <p className="mt-1">Gancho: &quot;{a.gancho}&quot;</p>
-                          <p className="mt-1">{a.mensagem}</p>
-                          <p className="mt-1 text-xs">
-                            {a.formato_sugerido} · {a.etapa_funil} · {a.dor_ou_desejo}
-                          </p>
+                      {asList(strategy.angulos_detalhados).map((a, i) => (
+                        <div key={`${a?.nome}-${i}`} className="rounded-md border border-border/60 p-3">
+                          <p className="font-medium text-foreground">{a?.nome || "—"}</p>
+                          {a?.gancho && <p className="mt-1">Gancho: &quot;{a.gancho}&quot;</p>}
+                          {a?.mensagem && <p className="mt-1">{a.mensagem}</p>}
+                          {joinList([a?.formato_sugerido, a?.etapa_funil, a?.dor_ou_desejo].filter(Boolean), " · ") && (
+                            <p className="mt-1 text-xs">
+                              {joinList([a?.formato_sugerido, a?.etapa_funil, a?.dor_ou_desejo].filter(Boolean), " · ")}
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <ul className="list-disc pl-5">{strategy.angulos.map((a) => <li key={a}>{a}</li>)}</ul>
+                    <BulletList items={strategy.angulos} />
                   )}
                 </Block>
-                {!!strategy.publicos_meta?.length && (
+                {asList(strategy.publicos_meta).length > 0 && (
                   <Block title="Públicos para a Meta">
                     <ul className="space-y-1">
-                      {strategy.publicos_meta.map((p) => (
-                        <li key={p.nome}>
-                          <span className="text-foreground">{p.nome}</span> ({p.tipo}) — {p.descricao}
-                          {p.interesses.length ? ` · Interesses: ${p.interesses.join(", ")}` : ""}
+                      {asList(strategy.publicos_meta).map((p, i) => (
+                        <li key={`${p?.nome}-${i}`}>
+                          <span className="text-foreground">{p?.nome || "—"}</span>
+                          {p?.tipo ? ` (${p.tipo})` : ""}
+                          {p?.descricao ? ` — ${p.descricao}` : ""}
+                          {asList(p?.interesses).length ? ` · Interesses: ${joinList(p?.interesses)}` : ""}
                         </li>
                       ))}
                     </ul>
@@ -377,63 +411,72 @@ export function CampaignDetail() {
                 )}
                 {strategy.briefing_criativo && (
                   <Block title="Briefing para o designer">
-                    <p>{strategy.briefing_criativo.direcao_visual}</p>
+                    <p>{strategy.briefing_criativo?.direcao_visual || "—"}</p>
                     <p className="mt-1 text-xs">
-                      Formatos: {strategy.briefing_criativo.formatos.join(", ")} · {strategy.briefing_criativo.quantidade_por_angulo} por ângulo · CTA: {strategy.briefing_criativo.cta}
+                      Formatos: {joinList(strategy.briefing_criativo?.formatos) || "—"} · {strategy.briefing_criativo?.quantidade_por_angulo || "—"} por ângulo · CTA: {strategy.briefing_criativo?.cta || "—"}
                     </p>
                   </Block>
                 )}
                 {strategy.briefing_video && (
-                  <Block title={`Roteiro de vídeo (${strategy.briefing_video.duracao_segundos}s)`}>
-                    <p>{strategy.briefing_video.roteiro}</p>
-                    <ol className="mt-1 list-decimal pl-5">{strategy.briefing_video.cenas.map((c2) => <li key={c2}>{c2}</li>)}</ol>
+                  <Block title={`Roteiro de vídeo${strategy.briefing_video?.duracao_segundos ? ` (${strategy.briefing_video.duracao_segundos}s)` : ""}`}>
+                    <p>{strategy.briefing_video?.roteiro || "—"}</p>
+                    {asList(strategy.briefing_video?.cenas).length > 0 && (
+                      <ol className="mt-1 list-decimal pl-5">{asList(strategy.briefing_video?.cenas).map((c2, i) => <li key={i}>{c2}</li>)}</ol>
+                    )}
                   </Block>
                 )}
                 {strategy.plano_instagram && (
                   <Block title="Plano para o Instagram">
                     <div className="flex flex-wrap gap-2">
-                      {strategy.plano_instagram.pilares.map((p) => (
-                        <span key={p.nome} className="rounded-full border border-border px-2.5 py-0.5 text-xs">
-                          {p.nome} · {Math.round(p.peso * 100)}%
+                      {asList(strategy.plano_instagram?.pilares).map((p, i) => (
+                        <span key={`${p?.nome}-${i}`} className="rounded-full border border-border px-2.5 py-0.5 text-xs">
+                          {p?.nome} · {Math.round((Number(p?.peso) || 0) * 100)}%
                         </span>
                       ))}
                     </div>
-                    <ul className="mt-2 list-disc pl-5">{strategy.plano_instagram.temas.map((t) => <li key={t}>{t}</li>)}</ul>
+                    {asList(strategy.plano_instagram?.temas).length > 0 && (
+                      <ul className="mt-2 list-disc pl-5">{asList(strategy.plano_instagram?.temas).map((t, i) => <li key={i}>{t}</li>)}</ul>
+                    )}
                   </Block>
                 )}
                 <Block title="Funil">{strategy.funil}</Block>
                 <Block title="Objeções e respostas">
-                  <ul className="space-y-1">
-                    {strategy.objecoes.map((o) => (
-                      <li key={o.objecao}><span className="text-foreground">{o.objecao}</span> — {o.resposta}</li>
-                    ))}
-                  </ul>
+                  {asList(strategy.objecoes).length ? (
+                    <ul className="space-y-1">
+                      {asList(strategy.objecoes).map((o, i) => (
+                        <li key={i}><span className="text-foreground">{o?.objecao}</span>{o?.resposta ? ` — ${o.resposta}` : ""}</li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </Block>
                 <Block title="Canais e distribuição de verba">
-                  {strategy.canais}
+                  {strategy.canais || "—"}
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {Object.entries(strategy.distribuicao_verba).map(([k2, v]) => (
+                    {Object.entries(strategy.distribuicao_verba ?? {}).map(([k2, v]) => (
                       <span key={k2} className="rounded-full border border-border px-2.5 py-0.5 text-xs">{k2}: {v}%</span>
                     ))}
                   </div>
                 </Block>
                 <Block title="KPIs">
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(strategy.kpis).map(([k2, v]) => (
-                      <span key={k2} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">{k2} {v}</span>
-                    ))}
-                  </div>
+                  {Object.keys(strategy.kpis ?? {}).length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(strategy.kpis ?? {}).map(([k2, v]) => (
+                        <span key={k2} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">{k2} {v}</span>
+                      ))}
+                    </div>
+                  ) : null}
                 </Block>
                 <Block title="Hipóteses e plano de testes">
-                  <ul className="list-disc pl-5">{strategy.hipoteses.map((h) => <li key={h}>{h}</li>)}</ul>
-                  <p className="mt-2">{strategy.plano_testes}</p>
+                  <BulletList items={strategy.hipoteses} />
+                  {strategy.plano_testes && <p className="mt-2">{strategy.plano_testes}</p>}
                 </Block>
                 <Block title="Cronograma">{strategy.cronograma}</Block>
                 <Block title="Recomendações">
-                  <ul className="list-disc pl-5">{strategy.recomendacoes.map((r) => <li key={r}>{r}</li>)}</ul>
+                  <BulletList items={strategy.recomendacoes} />
                 </Block>
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
@@ -456,13 +499,14 @@ export function CampaignDetail() {
               )
             }
           >
+            <SectionErrorBoundary resetKey={data.copy?.id} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {!copy ? (
               <p className="text-sm text-muted-foreground">Nenhuma copy gerada ainda.</p>
             ) : (
               <div className="space-y-5 text-sm">
                 <Block title="Headline principal">{copy.headline}</Block>
                 <Block title="Variações de headline">
-                  <ul className="list-disc pl-5">{copy.headline_variacoes.map((h) => <li key={h}>{h}</li>)}</ul>
+                  <BulletList items={copy.headline_variacoes} />
                 </Block>
                 <Block title="Texto curto">{copy.texto_curto}</Block>
                 <Block title="Texto longo">{copy.texto_longo}</Block>
@@ -474,22 +518,26 @@ export function CampaignDetail() {
                 <Block title="Script UGC">{copy.script_ugc}</Block>
                 <Block title="Script institucional">{copy.script_institucional}</Block>
                 <Block title="Carrossel">
-                  <ul className="list-disc pl-5">{copy.carrossel.map((s) => <li key={s}>{s}</li>)}</ul>
+                  <BulletList items={copy.carrossel} />
                 </Block>
                 <Block title="Quiz">
-                  <ul className="space-y-1">
-                    {copy.quiz.map((q) => (
-                      <li key={q.pergunta}>{q.pergunta} <span className="text-muted-foreground">({q.opcoes.join(" · ")})</span></li>
-                    ))}
-                  </ul>
+                  {asList(copy.quiz).length ? (
+                    <ul className="space-y-1">
+                      {asList(copy.quiz).map((q, i) => (
+                        <li key={i}>{q?.pergunta} <span className="text-muted-foreground">({joinList(q?.opcoes, " · ")})</span></li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </Block>
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
         <TabsContent value="criativos">
           <Section title="Criativos da campanha" actions={<Button size="sm" variant="outline" asChild><Link to="/studio">Abrir Creative Studio</Link></Button>}>
+            <SectionErrorBoundary resetKey={data.creatives.length} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {data.creatives.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhum criativo gerado para esta campanha.</p>
             ) : (
@@ -514,6 +562,7 @@ export function CampaignDetail() {
                 ))}
               </div>
             )}
+            </SectionErrorBoundary>
           </Section>
         </TabsContent>
 
@@ -568,8 +617,8 @@ export function CampaignDetail() {
               <Item label="Ticket médio" value={brl(c.avg_ticket)} />
               <Item label="Margem" value={`${num(c.margin_percent)}%`} />
               <Item label="CAC máximo" value={brl(c.max_cac)} />
-              <Item label="Formatos" value={c.formats.map((f) => FORMATS[f] ?? f).join(", ")} />
-              <Item label="Público" value={Object.entries((c.audience ?? {}) as Record<string, string>).map(([a, b]) => `${a}: ${b}`).join(" · ")} />
+              <Item label="Formatos" value={joinList((Array.isArray(c.formats) ? c.formats : []).map((f) => FORMATS[f] ?? f))} />
+              <Item label="Público" value={c.audience && typeof c.audience === "object" ? Object.entries(c.audience as Record<string, string>).map(([a, b]) => `${a}: ${b}`).join(" · ") || "-" : "-"} />
             </dl>
           </Section>
         </TabsContent>
@@ -578,13 +627,24 @@ export function CampaignDetail() {
   );
 }
 
+/** Campo vazio (texto em branco, lista vazia, null) aparece como "—" em vez de quebrar ou sumir sem aviso. */
+const isEmptyNode = (n: React.ReactNode): boolean =>
+  n == null || n === false || (typeof n === "string" && !n.trim()) || (Array.isArray(n) && n.every(isEmptyNode));
+
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-wider text-primary">{title}</p>
-      <div className="mt-1 text-muted-foreground">{children}</div>
+      <div className="mt-1 text-muted-foreground">{isEmptyNode(children) ? "—" : children}</div>
     </div>
   );
+}
+
+/** Lista de textos da IA: aceita qualquer valor (não-array vira vazio) e mostra "—" quando vazia. */
+function BulletList({ items }: { items: unknown }) {
+  const list = asList(items as unknown[]).filter((x) => typeof x === "string" && x.trim()) as string[];
+  if (!list.length) return <>—</>;
+  return <ul className="list-disc pl-5">{list.map((x, i) => <li key={i}>{x}</li>)}</ul>;
 }
 
 function Item({ label, value }: { label: string; value: string }) {

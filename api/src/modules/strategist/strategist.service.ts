@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createWithNextVersion } from '../../common/database/next-version';
 import { PrismaService } from '../../common/database/prisma.service';
@@ -11,6 +11,7 @@ import { AiService } from '../ai/ai.service';
 import { CampaignGuardsService } from '../campaigns/campaign-guards.service';
 import { OBJECTIVES } from '../campaigns/campaign-labels';
 import { buildStrategyPrompt, normalizeStrategy, STRATEGY_SCHEMA } from './strategist.prompt';
+import { normalizeStoredStrategy, strategyResponseSchema } from './strategy-normalize';
 import { FullStrategy } from './strategy-types';
 
 /**
@@ -18,8 +19,12 @@ import { FullStrategy } from './strategy-types';
  * Gera a estratégia da campanha com IA real, guarda versões (`campaign_strategies`), aprova uma versão
  * (as aprovadas anteriores viram `superseded`) e cria o plano do Instagram a partir dela.
  */
+const MAX_GENERATION_ATTEMPTS = 2;
+
 @Injectable()
 export class StrategistService {
+  private readonly logger = new Logger(StrategistService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AiService,
@@ -101,8 +106,17 @@ export class StrategistService {
       toWire(campaign) as Record<string, any>, toWire(brand) as Record<string, any>,
       toWire(personas) as unknown[], toWire(products) as unknown[], toWire(learnings) as unknown[], history,
     );
-    const raw = await this.ai.json<Record<string, any>>(workspaceId, { prompt, schema: STRATEGY_SCHEMA, name: 'campaign_strategy' });
-    const strategy = normalizeStrategy(raw);
+    // Structured output + validação (todos os campos); se a resposta vier incompleta, gera de novo UMA vez antes do erro.
+    let strategy: FullStrategy | null = null;
+    for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS && !strategy; attempt++) {
+      const raw = await this.ai.json<Record<string, any>>(workspaceId, { prompt, schema: STRATEGY_SCHEMA, name: 'campaign_strategy' });
+      const parsed = strategyResponseSchema.safeParse(raw);
+      if (parsed.success) strategy = normalizeStrategy(parsed.data);
+      else {
+        const issues = parsed.error.issues.slice(0, 8).map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`).join('; ');
+        this.logger.warn(`resposta inválida da IA (tentativa ${attempt}/${MAX_GENERATION_ATTEMPTS}): ${issues}`);
+      }
+    }
     if (!strategy) throw new AiError('A IA não devolveu uma estratégia completa. Tente de novo.');
     return strategy;
   }
@@ -116,13 +130,15 @@ export class StrategistService {
       orderBy: { version: 'desc' },
       take: 10,
     });
-    return ((rows.find((r) => r.status === 'approved') ?? rows[0])?.content as unknown as FullStrategy | undefined) ?? null;
+    // Linhas antigas/da IA podem não ter listas: normaliza antes de qualquer consumidor (Meta, Instagram, copy, criativos).
+    return normalizeStoredStrategy((rows.find((r) => r.status === 'approved') ?? rows[0])?.content);
   }
 
   /** 1.1 Gera (ou regera) a estratégia e salva uma nova versão em rascunho. */
   async generate(userId: string, campaignId: string) {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
-    const content = await this.generateStrategyAI(c.workspace_id, c.id);
+    // Valida/normaliza antes de gravar: nunca salva estratégia com lista faltando.
+    const content = normalizeStoredStrategy(await this.generateStrategyAI(c.workspace_id, c.id))!;
     // A versão é calculada DEPOIS da geração (até ~1 min), como no protótipo.
     const { version } = await createWithNextVersion(
       async () => (await this.prisma.campaign_strategies.findFirst({

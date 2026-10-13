@@ -105,6 +105,37 @@ describe('StrategistService.generate', () => {
     }
   });
 
+  it('resposta inválida na 1ª vez → gera de novo UMA vez e salva a 2ª (campo de lista ausente/formatos como string)', async () => {
+    const bad = { ...RAW, publicos_meta: undefined, briefing_criativo: { ...RAW.briefing_criativo, formatos: 'story' } };
+    let n = 0;
+    const { w, svc } = setup({ json: async () => (++n === 1 ? bad : RAW) });
+    const { campaign } = await seedCampaign(w);
+    const r = await svc.generate(OWNER, campaign.id);
+    expect(n).toBe(2);
+    expect(r.content.big_idea).toBe('Chopp que une');
+    expect(w.t.campaign_strategies.rows).toHaveLength(1);
+  });
+
+  it('duas respostas inválidas → exatamente 2 chamadas, AiError pt-BR e nada salvo', async () => {
+    let n = 0;
+    const { w, svc } = setup({ json: async () => { n++; return { ...RAW, hipoteses: undefined }; } });
+    const { campaign } = await seedCampaign(w);
+    const e: any = await svc.generate(OWNER, campaign.id).catch((x) => x);
+    expect(n).toBe(2);
+    expect(e).toBeInstanceOf(AiError);
+    expect(e.getResponse()).toEqual({ code: 'AI_ERROR', message: 'A IA não devolveu uma estratégia completa. Tente de novo.' });
+    expect(w.t.campaign_strategies.rows).toHaveLength(0);
+  });
+
+  it('o que é salvo passa pelo schema: listas sempre arrays', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    await svc.generate(OWNER, campaign.id);
+    const saved: any = w.t.campaign_strategies.rows[0]!.content;
+    for (const k of ['angulos', 'objecoes', 'hipoteses', 'recomendacoes', 'angulos_detalhados', 'publicos_meta']) expect(Array.isArray(saved[k])).toBe(true);
+    expect(saved.publicos_meta[0].interesses).toEqual(['bar']);
+  });
+
   it('erro da IA (créditos/config) sobe com a mensagem original', async () => {
     const { w, svc } = setup({ json: async () => { throw new AiError('IA do app não configurada.', 'AI_NOT_CONFIGURED'); } });
     const { campaign } = await seedCampaign(w);
@@ -172,6 +203,20 @@ describe('StrategistService.currentStrategy / createIgPlan', () => {
     expect(await svc.currentStrategy(WS_A, null)).toBeNull();
     w.t.campaign_strategies.rows[0]!.status = 'superseded';
     expect((await svc.currentStrategy(WS_A, campaign.id))!.big_idea).toBe('v2');
+  });
+
+  it('linha antiga com listas ausentes é normalizada na leitura (Meta, Instagram, copy, criativos)', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    await w.t.campaign_strategies.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, version: 1, status: 'approved', content: { big_idea: 'x', hipoteses: 'uma', publicos_meta: [{ nome: 'Frio' }], briefing_criativo: { cta: 'Venha' } } } });
+    const s = (await svc.currentStrategy(WS_A, campaign.id))!;
+    expect(s.hipoteses).toEqual(['uma']);
+    expect(s.objecoes).toEqual([]);
+    expect(s.publicos_meta![0]!.interesses).toEqual([]);
+    expect(s.briefing_criativo!.formatos).toEqual([]);
+    const brief = strategyBrief(s)!;
+    expect(brief.angulos).toEqual([]);
+    expect(brief.objecoes).toEqual([]);
   });
 
   it('cria o plano do Instagram: pesos normalizados, frequência derivada, tom da marca, rascunho com aprovação', async () => {
