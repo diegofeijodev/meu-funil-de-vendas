@@ -12,7 +12,7 @@ export type StrategyAngle = {
 
 export type StrategyAudience = {
   nome: string;
-  tipo: "frio" | "interesses" | "lookalike" | "remarketing" | "lista_clientes";
+  tipo: "frio" | "interesses" | "lookalike" | "remarketing" | "lista_clientes" | (string & {});
   interesses: string[];
   descricao: string;
 };
@@ -20,8 +20,8 @@ export type StrategyAudience = {
 export type FullStrategy = StrategyContent & {
   angulos_detalhados?: StrategyAngle[];
   publicos_meta?: StrategyAudience[];
-  briefing_criativo?: { direcao_visual: string; formatos: string[]; quantidade_por_angulo: number; cta: string };
-  briefing_video?: { duracao_segundos: number; roteiro: string; cenas: string[] };
+  briefing_criativo?: { direcao_visual: string; formatos: string[]; quantidade_por_angulo?: number; cta: string };
+  briefing_video?: { duracao_segundos?: number; roteiro: string; cenas: string[] };
   plano_instagram?: {
     pilares: { nome: string; peso: number }[];
     temas: string[];

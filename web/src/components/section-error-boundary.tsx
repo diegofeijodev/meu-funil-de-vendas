@@ -11,6 +11,9 @@ type Props = {
   /** Ação do botão "Regenerar estratégia"; sem ela, mostra só a mensagem. */
   onRegenerate?: (() => void | Promise<void>) | undefined;
   regenerating?: boolean | undefined;
+  /** Texto do botão (padrão: "Regenerar estratégia"). */
+  regenerateLabel?: string;
+  regeneratingLabel?: string;
 };
 
 type State = { error: Error | null };
@@ -33,7 +36,7 @@ export class SectionErrorBoundary extends Component<Props, State> {
 
   override render() {
     if (!this.state.error) return this.props.children;
-    const { onRegenerate, regenerating } = this.props;
+    const { onRegenerate, regenerating, regenerateLabel = "Regenerar estratégia", regeneratingLabel = "Gerando (até 1 min)..." } = this.props;
     return (
       <div className="flex flex-col items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
         <p className="flex items-center gap-2 font-medium">
@@ -43,7 +46,7 @@ export class SectionErrorBoundary extends Component<Props, State> {
         {onRegenerate && (
           <Button size="sm" variant="outline" onClick={() => void onRegenerate()} disabled={regenerating}>
             <Sparkles className="mr-1 size-3.5" />
-            {regenerating ? "Gerando (até 1 min)..." : "Regenerar estratégia"}
+            {regenerating ? regeneratingLabel : regenerateLabel}
           </Button>
         )}
       </div>

@@ -3,7 +3,7 @@
  * A IA às vezes omite campos de lista (públicos, ângulos, formatos, interesses, cenas...) ou devolve
  * string/null no lugar do array. Este schema (zod) garante o formato completo: todo campo de lista
  * vira array, todo texto vira string. Nunca lança — campo inválido cai no default.
- * Usado no servidor (antes de gravar e ao ler) e na tela de detalhe da campanha (antes de renderizar).
+ * Usado na tela de detalhe da campanha e no Studio (antes de renderizar); o servidor tem o gêmeo em `api/.../strategist/strategy-normalize.ts`.
  */
 import { z } from 'zod';
 import type { FullStrategy } from './strategy-types';
@@ -44,6 +44,8 @@ export const toList = (v: unknown): unknown[] => {
 export const joinList = (v: unknown, sep = ', '): string => (Array.isArray(v) ? v : []).join(sep);
 
 const text = z.unknown().transform(toText);
+/** Número válido ou `undefined` (a tela mostra "—"; nada de valor inventado). */
+const optNum = z.unknown().transform((v) => (v !== null && v !== '' && v !== undefined && Number.isFinite(Number(v)) ? Number(v) : undefined));
 const num = (fallback: number) =>
   z
     .unknown()
@@ -64,10 +66,10 @@ function objList<T extends z.ZodTypeAny>(item: T, stringKey: string) {
 
 /** Objeto (pode vir ausente): entrada que não é objeto vira {}. */
 function obj<S extends z.ZodRawShape>(shape: S) {
-  return z.preprocess(
-    (v) => (isObj(parseMaybeJson(v)) ? parseMaybeJson(v) : {}),
-    z.object(shape).passthrough(),
-  );
+  return z.preprocess((v) => {
+    const parsed = parseMaybeJson(v);
+    return isObj(parsed) ? parsed : {};
+  }, z.object(shape).passthrough());
 }
 
 /** Bloco opcional: ausente continua ausente (a tela esconde a seção); presente é normalizado. */
@@ -99,20 +101,10 @@ const angleSchema = obj({
   etapa_funil: text,
 });
 
-const AUDIENCE_TYPES = [
-  'frio',
-  'interesses',
-  'lookalike',
-  'remarketing',
-  'lista_clientes',
-] as const;
 const audienceSchema = obj({
   nome: text,
-  tipo: z
-    .unknown()
-    .transform((v) =>
-      AUDIENCE_TYPES.includes(v as never) ? (v as (typeof AUDIENCE_TYPES)[number]) : 'interesses',
-    ),
+  // Tipo desconhecido fica como veio (só exibição); quem filtra (Meta) compara com remarketing/lista_clientes.
+  tipo: text,
   interesses: textList,
   descricao: text,
 });
@@ -144,11 +136,11 @@ export const strategySchema = obj({
   briefing_criativo: optionalObj({
     direcao_visual: text,
     formatos: textList,
-    quantidade_por_angulo: num(1),
+    quantidade_por_angulo: optNum,
     cta: text,
   }),
   briefing_video: optionalObj({
-    duracao_segundos: num(15),
+    duracao_segundos: optNum,
     roteiro: text,
     cenas: textList,
   }),
@@ -164,61 +156,11 @@ export const strategySchema = obj({
 /** Estratégia com todos os campos de lista garantidos como array. `null` quando não há estratégia. */
 export function normalizeStoredStrategy(strategy: unknown): FullStrategy | null {
   if (strategy == null || strategy === '') return null;
-  return strategySchema.parse(strategy) as FullStrategy;
+  const s = strategySchema.parse(strategy) as FullStrategy;
+  // Lixo (texto que não é JSON, array, objeto sem big_idea nem ângulos): "sem estratégia".
+  if (!s.big_idea.trim() && !(s.angulos_detalhados ?? []).length) return null;
+  return s;
 }
 
 /** Array seguro para render: qualquer não-array (undefined, null, string, objeto) vira []. */
 export const asList = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
-
-/**
- * Validação estrita da resposta da IA (espelha STRATEGY_SCHEMA): todos os campos obrigatórios; listas como string[].
- * Mesmo com structured output, provedores sem `strict` (chave própria) podem omitir campos: nesse caso o serviço
- * gera de novo uma vez antes de devolver o erro.
- */
-const zStr = z.string();
-const zList = z.array(z.string());
-export const strategyResponseSchema = z.object({
-  resumo_executivo: zStr.min(1),
-  problema: zStr,
-  objetivo_smart: zStr.min(1),
-  icp: zStr,
-  oferta: zStr,
-  big_idea: zStr.min(1),
-  mensagem_principal: zStr,
-  funil: zStr,
-  canais: zStr,
-  plano_testes: zStr,
-  cronograma: zStr,
-  hipoteses: zList,
-  recomendacoes: zList,
-  objecoes: z.array(z.object({ objecao: zStr, resposta: zStr })),
-  distribuicao_verba: z.array(z.object({ destino: zStr, percentual: z.coerce.number() })),
-  kpis: z.array(z.object({ nome: zStr, meta: z.coerce.string() })),
-  angulos_detalhados: z
-    .array(
-      z.object({
-        nome: zStr.min(1),
-        dor_ou_desejo: zStr,
-        mensagem: zStr,
-        gancho: zStr,
-        formato_sugerido: zStr,
-        etapa_funil: zStr,
-      }),
-    )
-    .min(1),
-  publicos_meta: z.array(
-    z.object({
-      nome: zStr.min(1),
-      tipo: z.enum(['frio', 'interesses', 'lookalike', 'remarketing', 'lista_clientes']),
-      interesses: zList,
-      descricao: zStr,
-    }),
-  ),
-  briefing_criativo: z.object({ direcao_visual: zStr, formatos: zList, quantidade_por_angulo: z.coerce.number(), cta: zStr }),
-  briefing_video: z.object({ duracao_segundos: z.coerce.number(), roteiro: zStr, cenas: zList }),
-  plano_instagram: z.object({
-    pilares: z.array(z.object({ nome: zStr, peso: z.coerce.number() })),
-    temas: zList,
-    frequencia: z.object({ feed: z.coerce.number(), reels: z.coerce.number(), stories: z.coerce.number() }),
-  }),
-});

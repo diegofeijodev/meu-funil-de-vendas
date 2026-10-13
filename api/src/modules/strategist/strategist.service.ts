@@ -10,8 +10,8 @@ import { AiError } from '../ai/ai-error';
 import { AiService } from '../ai/ai.service';
 import { CampaignGuardsService } from '../campaigns/campaign-guards.service';
 import { OBJECTIVES } from '../campaigns/campaign-labels';
-import { buildStrategyPrompt, normalizeStrategy, STRATEGY_SCHEMA } from './strategist.prompt';
-import { normalizeStoredStrategy, strategyResponseSchema } from './strategy-normalize';
+import { buildStrategyPrompt, STRATEGY_SCHEMA } from './strategist.prompt';
+import { normalizeStoredStrategy } from './strategy-normalize';
 import { FullStrategy } from './strategy-types';
 
 /**
@@ -106,15 +106,23 @@ export class StrategistService {
       toWire(campaign) as Record<string, any>, toWire(brand) as Record<string, any>,
       toWire(personas) as unknown[], toWire(products) as unknown[], toWire(learnings) as unknown[], history,
     );
-    // Structured output + validação (todos os campos); se a resposta vier incompleta, gera de novo UMA vez antes do erro.
+    // Validação mínima (o que o app precisa para funcionar): big_idea e ao menos um ângulo com nome. O resto é normalizado
+    // (a chave própria do cliente responde sem o schema estrito). Se faltar o mínimo, gera de novo UMA vez antes do erro.
     let strategy: FullStrategy | null = null;
     for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS && !strategy; attempt++) {
       const raw = await this.ai.json<Record<string, any>>(workspaceId, { prompt, schema: STRATEGY_SCHEMA, name: 'campaign_strategy' });
-      const parsed = strategyResponseSchema.safeParse(raw);
-      if (parsed.success) strategy = normalizeStrategy(parsed.data);
-      else {
-        const issues = parsed.error.issues.slice(0, 8).map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`).join('; ');
-        this.logger.warn(`resposta inválida da IA (tentativa ${attempt}/${MAX_GENERATION_ATTEMPTS}): ${issues}`);
+      const stored = normalizeStoredStrategy(raw);
+      const angles = (stored?.angulos_detalhados ?? []).filter((a) => a.nome.trim());
+      if (stored && stored.big_idea.trim() && angles.length) {
+        strategy = {
+          ...stored,
+          angulos: angles.map((a) => `${a.nome}: ${a.mensagem}`),
+          angulos_detalhados: angles,
+          gerado_por: 'IA',
+          gerado_em: new Date().toISOString(),
+        };
+      } else {
+        this.logger.warn(`resposta incompleta da IA (tentativa ${attempt}/${MAX_GENERATION_ATTEMPTS}): sem big_idea ou sem ângulo com nome`);
       }
     }
     if (!strategy) throw new AiError('A IA não devolveu uma estratégia completa. Tente de novo.');

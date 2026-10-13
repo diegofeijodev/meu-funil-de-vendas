@@ -3,7 +3,7 @@
  * A IA às vezes omite campos de lista (públicos, ângulos, formatos, interesses, cenas...) ou devolve
  * string/null no lugar do array. Este schema (zod) garante o formato completo: todo campo de lista
  * vira array, todo texto vira string. Nunca lança — campo inválido cai no default.
- * Usado no servidor (antes de gravar e ao ler) e na tela de detalhe da campanha (antes de renderizar).
+ * Usado na tela de detalhe da campanha e no Studio (antes de renderizar); o servidor tem o gêmeo em `api/.../strategist/strategy-normalize.ts`.
  */
 import { z } from "zod";
 import type { CopyContent } from "./agents";
@@ -45,6 +45,8 @@ export const toList = (v: unknown): unknown[] => {
 export const joinList = (v: unknown, sep = ", "): string => (Array.isArray(v) ? v : []).join(sep);
 
 const text = z.unknown().transform(toText);
+/** Número válido ou `undefined` (a tela mostra "—"; nada de valor inventado). */
+const optNum = z.unknown().transform((v) => (v !== null && v !== "" && v !== undefined && Number.isFinite(Number(v)) ? Number(v) : undefined));
 const num = (fallback: number) =>
   z
     .unknown()
@@ -65,10 +67,10 @@ function objList<T extends z.ZodTypeAny>(item: T, stringKey: string) {
 
 /** Objeto (pode vir ausente): entrada que não é objeto vira {}. */
 function obj<S extends z.ZodRawShape>(shape: S) {
-  return z.preprocess(
-    (v) => (isObj(parseMaybeJson(v)) ? parseMaybeJson(v) : {}),
-    z.object(shape).passthrough(),
-  );
+  return z.preprocess((v) => {
+    const parsed = parseMaybeJson(v);
+    return isObj(parsed) ? parsed : {};
+  }, z.object(shape).passthrough());
 }
 
 /** Bloco opcional: ausente continua ausente (a tela esconde a seção); presente é normalizado. */
@@ -100,20 +102,10 @@ const angleSchema = obj({
   etapa_funil: text,
 });
 
-const AUDIENCE_TYPES = [
-  "frio",
-  "interesses",
-  "lookalike",
-  "remarketing",
-  "lista_clientes",
-] as const;
 const audienceSchema = obj({
   nome: text,
-  tipo: z
-    .unknown()
-    .transform((v) =>
-      AUDIENCE_TYPES.includes(v as never) ? (v as (typeof AUDIENCE_TYPES)[number]) : "interesses",
-    ),
+  // Tipo desconhecido fica como veio (só exibição); quem filtra (Meta) compara com remarketing/lista_clientes.
+  tipo: text,
   interesses: textList,
   descricao: text,
 });
@@ -145,11 +137,11 @@ export const strategySchema = obj({
   briefing_criativo: optionalObj({
     direcao_visual: text,
     formatos: textList,
-    quantidade_por_angulo: num(1),
+    quantidade_por_angulo: optNum,
     cta: text,
   }),
   briefing_video: optionalObj({
-    duracao_segundos: num(15),
+    duracao_segundos: optNum,
     roteiro: text,
     cenas: textList,
   }),
@@ -181,7 +173,10 @@ export const copySchema = obj({
 /** Estratégia com todos os campos de lista garantidos como array. `null` quando não há estratégia. */
 export function normalizeStrategy(strategy: unknown): FullStrategy | null {
   if (strategy == null || strategy === "") return null;
-  return strategySchema.parse(strategy) as FullStrategy;
+  const s = strategySchema.parse(strategy) as FullStrategy;
+  // Lixo (texto que não é JSON, array, objeto sem big_idea nem ângulos): "sem estratégia" em vez de um mural de "—".
+  if (!s.big_idea.trim() && !(s.angulos_detalhados ?? []).length) return null;
+  return s;
 }
 
 /** Copy com todos os campos de lista garantidos como array. `null` quando não há copy. */

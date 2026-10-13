@@ -56,15 +56,16 @@ export function CampaignDetail() {
   const { data, isPending } = useQuery({
     queryKey: ["campaign", id],
     enabled: !!workspaceId,
-    // Falha ao carregar sobe para `error.tsx` da rota (mensagem amigável + "Tentar de novo" + "Voltar para campanhas").
-    throwOnError: true,
+    // Só a PRIMEIRA carga com falha vai para `error.tsx` (Tentar de novo / Voltar para campanhas); erro em refetch de
+    // fundo (foco, invalidate, deploy reiniciando) mantém a página já carregada.
+    throwOnError: (_err, q) => q.state.data === undefined,
     queryFn: async () => {
       let detail;
       try {
         detail = await getCampaignDetail(workspaceId!, id);
       } catch (e) {
-        // Campanha inexistente / de outro workspace: tela "não encontrada", não carregamento eterno.
-        if (axios.isAxiosError(e) && e.response?.status === 404) return null;
+        // Campanha inexistente (404) / sem acesso (403): tela "não encontrada", não carregamento eterno.
+        if (axios.isAxiosError(e) && (e.response?.status === 404 || e.response?.status === 403)) return null;
         throw e;
       }
       // A IA pode omitir listas (públicos, ângulos, formatos...): normaliza antes de renderizar.
@@ -499,7 +500,7 @@ export function CampaignDetail() {
               )
             }
           >
-            <SectionErrorBoundary resetKey={data.copy?.id} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
+            <SectionErrorBoundary resetKey={`${data.copy?.id}:${data.copy?.version}`} onRegenerate={canEdit ? regenCopy : undefined} regenerating={busy === "copy"} regenerateLabel="Gerar variação" regeneratingLabel="Gerando...">
             {!copy ? (
               <p className="text-sm text-muted-foreground">Nenhuma copy gerada ainda.</p>
             ) : (

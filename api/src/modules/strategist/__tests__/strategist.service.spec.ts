@@ -105,10 +105,9 @@ describe('StrategistService.generate', () => {
     }
   });
 
-  it('resposta inválida na 1ª vez → gera de novo UMA vez e salva a 2ª (campo de lista ausente/formatos como string)', async () => {
-    const bad = { ...RAW, publicos_meta: undefined, briefing_criativo: { ...RAW.briefing_criativo, formatos: 'story' } };
+  it('resposta sem big_idea/ângulo na 1ª vez → gera de novo UMA vez e salva a 2ª', async () => {
     let n = 0;
-    const { w, svc } = setup({ json: async () => (++n === 1 ? bad : RAW) });
+    const { w, svc } = setup({ json: async () => (++n === 1 ? { ...RAW, big_idea: '' } : RAW) });
     const { campaign } = await seedCampaign(w);
     const r = await svc.generate(OWNER, campaign.id);
     expect(n).toBe(2);
@@ -116,15 +115,41 @@ describe('StrategistService.generate', () => {
     expect(w.t.campaign_strategies.rows).toHaveLength(1);
   });
 
-  it('duas respostas inválidas → exatamente 2 chamadas, AiError pt-BR e nada salvo', async () => {
+  it('chave própria (sem schema): todas as chaves de topo, campos aninhados ausentes → aceita na 1ª tentativa, salva normalizada, 1 chamada', async () => {
     let n = 0;
-    const { w, svc } = setup({ json: async () => { n++; return { ...RAW, hipoteses: undefined }; } });
+    const own = {
+      resumo_executivo: '', problema: 'P', objetivo_smart: '', icp: 'I', oferta: 'F', big_idea: 'Chopp que une', mensagem_principal: 'M',
+      funil: 'Fu', canais: 'Meta', plano_testes: 'T', cronograma: 'C', hipoteses: ['h'], recomendacoes: ['r'],
+      objecoes: [{ objecao: 'caro' }], distribuicao_verba: [{ destino: 'Meta', percentual: 100 }], kpis: [{ nome: 'CPL', meta: 'R$ 10' }],
+      angulos_detalhados: [{ nome: 'Promo', mensagem: 'Chopp em dobro' }],
+      publicos_meta: [{ nome: 'Frio', tipo: 'amplo' }],
+      briefing_criativo: { cta: 'Venha' }, briefing_video: { roteiro: 'rot' }, plano_instagram: { pilares: [{ nome: 'A', peso: 1 }] },
+    };
+    const { w, svc } = setup({ json: async () => { n++; return own; } });
     const { campaign } = await seedCampaign(w);
-    const e: any = await svc.generate(OWNER, campaign.id).catch((x) => x);
-    expect(n).toBe(2);
-    expect(e).toBeInstanceOf(AiError);
-    expect(e.getResponse()).toEqual({ code: 'AI_ERROR', message: 'A IA não devolveu uma estratégia completa. Tente de novo.' });
-    expect(w.t.campaign_strategies.rows).toHaveLength(0);
+    const r = await svc.generate(OWNER, campaign.id);
+    expect(n).toBe(1);
+    const saved: any = w.t.campaign_strategies.rows[0]!.content;
+    expect(saved.publicos_meta[0]).toMatchObject({ nome: 'Frio', tipo: 'amplo', interesses: [], descricao: '' });
+    expect(saved.briefing_criativo.formatos).toEqual([]);
+    expect(saved.briefing_video.cenas).toEqual([]);
+    expect(saved.plano_instagram.temas).toEqual([]);
+    expect(saved.angulos).toEqual(['Promo: Chopp em dobro']);
+    expect(saved.gerado_por).toBe('IA');
+    expect(r.content.big_idea).toBe('Chopp que une');
+  });
+
+  it('duas respostas sem big_idea ou sem ângulo com nome → exatamente 2 chamadas, AiError pt-BR e nada salvo', async () => {
+    for (const bad of [{ ...RAW, big_idea: ' ' }, { ...RAW, angulos_detalhados: [{ nome: '' }] }]) {
+      let n = 0;
+      const { w, svc } = setup({ json: async () => { n++; return bad; } });
+      const { campaign } = await seedCampaign(w);
+      const e: any = await svc.generate(OWNER, campaign.id).catch((x) => x);
+      expect(n).toBe(2);
+      expect(e).toBeInstanceOf(AiError);
+      expect(e.getResponse()).toEqual({ code: 'AI_ERROR', message: 'A IA não devolveu uma estratégia completa. Tente de novo.' });
+      expect(w.t.campaign_strategies.rows).toHaveLength(0);
+    }
   });
 
   it('o que é salvo passa pelo schema: listas sempre arrays', async () => {
