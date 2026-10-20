@@ -160,3 +160,8 @@ export async function createCopy(ws: string, campaignId: string, content: unknow
 export async function requestCampaignApproval(ws: string, campaignId: string): Promise<void> {
   await api.post(`${base(ws)}/${campaignId}/request-approval`, {});
 }
+
+/** Define a página de destino (campanhas criadas sem URL ficavam presas ao publicar na Meta). */
+export async function setCampaignLandingUrl(ws: string, campaignId: string, landingUrl: string): Promise<void> {
+  await api.patch(`${base(ws)}/${campaignId}/landing-url`, { landing_url: landingUrl });
+}

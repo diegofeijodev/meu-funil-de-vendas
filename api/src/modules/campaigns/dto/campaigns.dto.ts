@@ -32,3 +32,8 @@ export class CreateCampaignDto {
 export class CreateCopyDto {
   @IsObject() content!: Record<string, unknown>;
 }
+
+/** Corpo de `PATCH :id/landing-url` (a validação de http(s) fica no serviço, com mensagem em português). */
+export class SetLandingUrlDto {
+  @IsString() @MaxLength(2000) landing_url!: string;
+}

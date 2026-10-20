@@ -131,3 +131,33 @@ describe('CampaignsService.requestApproval', () => {
     expect(await status(svc.requestApproval(OWNER, WS_B, campaign.id))).toBe('404:Campanha não encontrada.');
   });
 });
+
+describe('CampaignsService.setLandingUrl', () => {
+  it('grava a URL (trim), registra a atividade e libera a publicação que exige o destino', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'approved', landing_url: null });
+    const c = await svc.setLandingUrl(OWNER, WS_A, campaign.id, '  https://www.freelaservicosapp.com.br/cadastro-contratante  ');
+    expect(c.landing_url).toBe('https://www.freelaservicosapp.com.br/cadastro-contratante');
+    expect(w.t.campaigns.rows[0]!.landing_url).toBe('https://www.freelaservicosapp.com.br/cadastro-contratante');
+    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.landing_updated', 'campaign', { campaign_id: campaign.id }]);
+  });
+
+  it('só http/https válido: vazio, texto solto e esquemas perigosos → 400', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    const msg = '400:Informe uma URL válida, começando com http:// ou https://.';
+    for (const bad of ['', '   ', 'freelaservicosapp.com.br', 'javascript:alert(1)', 'ftp://x.com', 'https://']) {
+      expect(await status(svc.setLandingUrl(OWNER, WS_A, campaign.id, bad))).toBe(msg);
+    }
+    expect(w.t.campaigns.rows[0]!.landing_url ?? null).toBeNull();
+  });
+
+  it('com o anúncio já no ar (status active) não muda; campanha de outro workspace → 404', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'active' });
+    expect(await status(svc.setLandingUrl(OWNER, WS_A, campaign.id, 'https://exemplo.com'))).toBe(
+      '400:A campanha já foi publicada: mude o destino direto na Meta.',
+    );
+    expect(await status(svc.setLandingUrl(OWNER, WS_B, campaign.id, 'https://exemplo.com'))).toBe('404:Campanha não encontrada.');
+  });
+});

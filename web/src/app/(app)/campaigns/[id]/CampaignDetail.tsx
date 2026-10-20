@@ -10,11 +10,13 @@ import {
   createCopy,
   getCampaignDetail,
   requestCampaignApproval,
+  setCampaignLandingUrl,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, Section, StatCard, StatusPill, SandboxBadge } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
@@ -52,6 +54,7 @@ export function CampaignDetail() {
   
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
+  const [landing, setLanding] = useState("");
 
   const { data, isPending } = useQuery({
     queryKey: ["campaign", id],
@@ -114,6 +117,21 @@ export function CampaignDetail() {
     max_cac: c.max_cac,
     formats: c.formats,
   });
+
+  const saveLanding = async () => {
+    if (!workspaceId) return;
+    setBusy("landing");
+    try {
+      await setCampaignLandingUrl(workspaceId, id, landing);
+      setLanding("");
+      await qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success("Página de destino salva. Já dá para publicar na Meta.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar o destino"));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const regenStrategy = async () => {
     if (!workspaceId) return;
@@ -203,6 +221,7 @@ export function CampaignDetail() {
     setBusy("publish");
     setSteps([]);
     try {
+      if (!c.landing_url) throw new Error("Preencha a página de destino (URL) da campanha, no aviso acima das abas, antes de publicar.");
       const approved = c.status === "approved" || c.status === "active";
       if (!approved) {
         throw new Error("Publicação bloqueada: a campanha precisa de aprovação humana antes de ir ao ar.");
@@ -220,6 +239,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
     } catch (e) {
+      setSteps([]); // some o "Enviando para a Meta" que ficaria preso depois da falha
       toast.error(apiErrorMessage(e, "Falha ao publicar"));
     } finally {
       setBusy(null);
@@ -306,6 +326,35 @@ export function CampaignDetail() {
         <StatCard label="Leads" value={num(k.leads)} hint={`CPL ${brl(k.cpl)}`} tone="accent" />
         <StatCard label="ROAS" value={`${num(k.roas, 2)}x`} hint={`ROI ${num(k.roi, 1)}%`} tone={k.roas >= 3 ? "positive" : "negative"} />
       </div>
+
+      {canEdit && !c.landing_url && ["draft", "pending_approval", "approved"].includes(c.status) && (
+        <div className="panel mb-6 border-amber-500/40 p-5">
+          <p className="text-sm font-semibold">Falta a página de destino</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Para onde o anúncio leva quem clicar (ex.: a página de cadastro). Sem ela a Meta não aceita a publicação.
+          </p>
+          <form
+            className="mt-3 flex flex-col gap-2 sm:flex-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveLanding();
+            }}
+          >
+            <Input
+              type="url"
+              inputMode="url"
+              placeholder="https://www.seusite.com.br/pagina"
+              value={landing}
+              onChange={(e) => setLanding(e.target.value)}
+              aria-label="Página de destino (URL)"
+              className="sm:max-w-xl"
+            />
+            <Button type="submit" disabled={busy === "landing" || !landing.trim()}>
+              {busy === "landing" ? "Salvando..." : "Salvar destino"}
+            </Button>
+          </form>
+        </div>
+      )}
 
       {steps.length > 0 && (
         <div className="panel mb-6 p-5">

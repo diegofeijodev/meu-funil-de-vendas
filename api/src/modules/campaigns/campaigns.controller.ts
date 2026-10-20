@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CampaignsService } from './campaigns.service';
-import { CreateCampaignDto, CreateCopyDto } from './dto/campaigns.dto';
+import { CreateCampaignDto, CreateCopyDto, SetLandingUrlDto } from './dto/campaigns.dto';
 
 /** GET = read, o resto = write (viewer só lê). Rotas estáticas antes das `:id`. */
 @ApiTags('Campaigns')
@@ -38,6 +38,14 @@ export class CampaignsController {
   @Get(':id/detail')
   detail(@Param('workspaceId', ParseUuidPipe) ws: string, @Param('id', ParseUuidPipe) id: string) {
     return this.campaigns.detail(ws, id);
+  }
+
+  @Patch(':id/landing-url')
+  setLandingUrl(
+    @CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string,
+    @Param('id', ParseUuidPipe) id: string, @Body() dto: SetLandingUrlDto,
+  ) {
+    return this.campaigns.setLandingUrl(user.id, ws, id, dto.landing_url);
   }
 
   @Post(':id/copies')

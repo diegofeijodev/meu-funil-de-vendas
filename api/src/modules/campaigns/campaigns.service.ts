@@ -11,6 +11,19 @@ const notFound = (message = 'Campanha não encontrada.') => new NotFoundExceptio
 const MAX_JSON_CHARS = 50_000;
 const toDate = (v: string | null | undefined): Date | null => (v ? new Date(v.length === 10 ? `${v}T00:00:00.000Z` : v) : null);
 const jsonLen = (v: unknown) => JSON.stringify(v ?? null).length;
+/** Destino do anúncio: só http(s) com host (a Meta recusa o resto e `javascript:` nunca deve virar link). */
+const cleanLandingUrl = (raw: string): string | null => {
+  const v = (raw ?? '').trim();
+  if (!v || v.length > 2000) return null;
+  try {
+    const u = new URL(v);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.hostname ? v : null;
+  } catch {
+    return null;
+  }
+};
+/** Estados em que o destino ainda pode mudar aqui (depois de publicada, o anúncio vive na Meta). */
+const LANDING_EDITABLE = ['draft', 'pending_approval', 'approved'];
 
 /**
  * Campanhas: as leituras/escritas diretas das telas `/campaigns`, `/campaigns/new` e `/campaigns/$id`
@@ -93,6 +106,23 @@ export class CampaignsService {
     });
     await this.activity.log(workspaceId, userId, 'campaign.created', 'campaign', { campaign_id: campaign.id, name });
     return campaign;
+  }
+
+  /**
+   * Define/troca a página de destino. A criação aceitava `landing_url`, mas nada editava depois: campanha criada sem
+   * a URL ficava presa em "Preencha a página de destino" ao publicar na Meta.
+   */
+  async setLandingUrl(userId: string, workspaceId: string, campaignId: string, landingUrl: string) {
+    const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: workspaceId }, select: { id: true, status: true } });
+    if (!c) throw notFound();
+    const url = cleanLandingUrl(landingUrl);
+    if (!url) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe uma URL válida, começando com http:// ou https://.' });
+    if (!LANDING_EDITABLE.includes(c.status)) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'A campanha já foi publicada: mude o destino direto na Meta.' });
+    }
+    const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { landing_url: url } });
+    await this.activity.log(workspaceId, userId, 'campaign.landing_updated', 'campaign', { campaign_id: campaignId });
+    return updated;
   }
 
   /** INSERT em `copies` (versão = anterior + 1) + atividade `campaign.copy_generated`. */
