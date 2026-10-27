@@ -90,8 +90,15 @@ export function CampaignDetail() {
         throw e;
       }
       // A IA pode omitir listas (públicos, ângulos, formatos...): normaliza antes de renderizar.
+      // Campos que versões antigas gravaram como "[object Object]": a tela sugere gerar de novo (só nesses).
+      const raw = detail.strategy?.content as Record<string, unknown> | null | undefined;
+      const junk =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? Object.entries(raw).filter(([, v]) => typeof v === "string" && v.trim() === "[object Object]").map(([k]) => k)
+          : [];
       return {
         ...detail,
+        strategyJunk: junk,
         strategy: detail.strategy ? { ...detail.strategy, content: normalizeStrategy(detail.strategy.content) } : null,
         copy: detail.copy ? { ...detail.copy, content: normalizeCopy(detail.copy.content) } : null,
       };
@@ -113,6 +120,7 @@ export function CampaignDetail() {
   const extra = data.costs.reduce((s, x) => s + Number(x.amount), 0);
   const k = computeKpis(data.perf, extra);
   const strategy = (data.strategy?.content ?? undefined) as FullStrategy | undefined;
+  const junk = (key: string) => data.strategyJunk.includes(key);
   const strategyApproved = data.strategy?.status === "approved";
   const copy = (data.copy?.content ?? undefined) as CopyContent | undefined;
 
@@ -201,7 +209,7 @@ export function CampaignDetail() {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       toast.success(`Novas copies geradas com ${engine}.`);
     } catch (e) {
-      toast.error(`Copy não gerada: ${apiErrorMessage(e, "erro")}`);
+      toast.error(`Copy não gerada. ${apiErrorMessage(e, "Tente de novo em instantes.")}`);
     } finally {
       setBusy(null);
     }
@@ -506,12 +514,12 @@ export function CampaignDetail() {
               <p className="text-sm text-muted-foreground">Nenhuma estratégia gerada ainda.</p>
             ) : (
               <div className="space-y-5 text-sm">
-                <Block title="Resumo executivo">{strategy.resumo_executivo}</Block>
-                <Block title="Problema">{strategy.problema}</Block>
-                <Block title="Objetivo SMART">{strategy.objetivo_smart}</Block>
-                <Block title="ICP">{strategy.icp}</Block>
-                <Block title="Oferta">{strategy.oferta}</Block>
-                <Block title="Big idea">{strategy.big_idea}</Block>
+                <Block title="Resumo executivo" regen={junk("resumo_executivo")}>{strategy.resumo_executivo}</Block>
+                <Block title="Problema" regen={junk("problema")}>{strategy.problema}</Block>
+                <Block title="Objetivo SMART" regen={junk("objetivo_smart")}>{strategy.objetivo_smart}</Block>
+                <Block title="ICP" regen={junk("icp")}>{strategy.icp}</Block>
+                <Block title="Oferta" regen={junk("oferta")}>{strategy.oferta}</Block>
+                <Block title="Big idea" regen={junk("big_idea")}>{strategy.big_idea}</Block>
                 <Block title="Ângulos criativos">
                   {asList(strategy.angulos_detalhados).length ? (
                     <div className="grid gap-2 md:grid-cols-2">
@@ -524,7 +532,7 @@ export function CampaignDetail() {
                               {a?.gancho && <p className="mt-1">Gancho: &quot;{a.gancho}&quot;</p>}
                             </>
                           ) : (
-                            <p className="font-medium text-foreground">{a?.gancho ? <>&quot;{a.gancho}&quot;</> : "—"}</p>
+                            <p className="font-medium text-foreground">{a?.gancho ? <>&quot;{a.gancho}&quot;</> : `Ângulo ${i + 1}`}</p>
                           )}
                           {a?.mensagem && <p className="mt-1">{a.mensagem}</p>}
                           {joinList([a?.formato_sugerido, a?.etapa_funil, a?.dor_ou_desejo].filter(Boolean), " · ") && (
@@ -583,7 +591,7 @@ export function CampaignDetail() {
                     )}
                   </Block>
                 )}
-                <Block title="Funil">{strategy.funil}</Block>
+                <Block title="Funil" regen={junk("funil")}>{strategy.funil}</Block>
                 <Block title="Objeções e respostas">
                   {asList(strategy.objecoes).length ? (
                     <ul className="space-y-1">
@@ -614,7 +622,7 @@ export function CampaignDetail() {
                   <BulletList items={strategy.hipoteses} />
                   {strategy.plano_testes && <p className="mt-2">{strategy.plano_testes}</p>}
                 </Block>
-                <Block title="Cronograma">{strategy.cronograma}</Block>
+                <Block title="Cronograma" regen={junk("cronograma")}>{strategy.cronograma}</Block>
                 <Block title="Recomendações">
                   <BulletList items={strategy.recomendacoes} />
                 </Block>
@@ -775,12 +783,15 @@ export function CampaignDetail() {
 const isEmptyNode = (n: React.ReactNode): boolean =>
   n == null || n === false || (typeof n === "string" && !n.trim()) || (Array.isArray(n) && n.every(isEmptyNode));
 
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+function Block({ title, children, regen = false }: { title: string; children: React.ReactNode; regen?: boolean }) {
+  const empty = isEmptyNode(children);
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-wider text-primary">{title}</p>
       {/* pre-line: campo que a IA mandou como objeto/lista chega em linhas ("Chave: valor"). */}
-      <div className="mt-1 whitespace-pre-line text-muted-foreground">{isEmptyNode(children) ? "—" : children}</div>
+      <div className="mt-1 whitespace-pre-line text-muted-foreground">
+        {empty ? (regen ? <>— <span className="text-xs">Gere de novo para ver este campo.</span></> : "—") : children}
+      </div>
     </div>
   );
 }

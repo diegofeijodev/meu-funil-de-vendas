@@ -24,16 +24,32 @@ const parseMaybeJson = (v: unknown): unknown => {
 /** Texto gravado por versões antigas quando a IA devolvia objeto no lugar de texto (`String({})`). */
 const OBJECT_JUNK = '[object Object]';
 
-/** Chave da IA em texto legível: `dor_principal` → "Dor principal". */
+/** Palavras das chaves da IA sem acento (snake_case) → com acento, para o rótulo ficar em português de verdade. */
+const KEY_WORDS: Record<string, string> = {
+  especifico: 'específico', especificos: 'específicos', mensuravel: 'mensurável', atingivel: 'atingível', alcancavel: 'alcançável',
+  temporal: 'temporal', prazo: 'prazo', metrica: 'métrica', metricas: 'métricas', criterio: 'critério', criterios: 'critérios',
+  publico: 'público', descricao: 'descrição', etaria: 'etária', genero: 'gênero', regiao: 'região', localizacao: 'localização',
+  ocupacao: 'ocupação', habitos: 'hábitos', motivacoes: 'motivações', motivacao: 'motivação', objecao: 'objeção', objecoes: 'objeções',
+  caracteristicas: 'características', solucao: 'solução', solucoes: 'soluções', orcamento: 'orçamento', preco: 'preço',
+  beneficio: 'benefício', beneficios: 'benefícios', decisao: 'decisão', comunicacao: 'comunicação', situacao: 'situação',
+  frequencia: 'frequência', experiencia: 'experiência', conteudo: 'conteúdo', estrategia: 'estratégia', acao: 'ação', acoes: 'ações',
+  numero: 'número', periodo: 'período', unico: 'único', proposito: 'propósito',
+};
+
+/** Chave da IA em texto legível: `dor_principal` → "Dor principal", `mensuravel` → "Mensurável". */
 const readableKey = (k: string): string => {
-  const t = k.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  const t = k
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => KEY_WORDS[w.toLowerCase()] ?? w)
+    .join(' ');
   return t ? t[0]!.toUpperCase() + t.slice(1) : '';
 };
 
 /**
  * Valor da IA → texto para a tela. Com chave própria (modo JSON sem schema estrito) a IA às vezes devolve objeto/lista no lugar
  * de texto (ex.: `objetivo_smart: { especifico, mensuravel, ... }`). Texto → sem espaços nas pontas; número/bool → String;
- * lista → um item por linha; objeto → linhas "Chave legível: valor". Dentro de objeto/lista, os valores aninhados ficam numa linha
+ * lista → um item por linha; objeto → linhas "Chave legível: valor" (sim/não para booleanos). Dentro de objeto/lista, os valores aninhados ficam numa linha
  * só ("a, b" / "Chave: valor; Outra: valor"). Nunca devolve "[object Object]" (nem o texto gravado assim por versões antigas).
  */
 export function aiText(v: unknown, nested = false): string {
@@ -43,7 +59,7 @@ export function aiText(v: unknown, nested = false): string {
     return t === OBJECT_JUNK ? '' : t;
   }
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
-  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'boolean') return v ? 'Sim' : 'Não';
   if (Array.isArray(v)) {
     const items = v.map((x) => aiText(x, true)).filter(Boolean);
     return items.join(nested ? ', ' : '\n');
@@ -157,6 +173,23 @@ const angleSchema = z.preprocess(
 /** Um ângulo da IA no formato oficial (sinônimos aceitos, todo campo vira texto). */
 export const normalizeAngle = (v: unknown): StrategyAngle => angleSchema.parse(isObj(parseMaybeJson(v)) ? v : { nome: v }) as StrategyAngle;
 
+/** 1ª string útil do objeto, fora das chaves dadas (ex.: a objeção que veio com outro nome de chave). */
+const firstText = (v: unknown, skip: string[] = []): string => {
+  if (!isObj(v)) return aiText(v, true);
+  for (const [k, x] of Object.entries(v)) if (!skip.includes(k) && typeof x === 'string' && aiText(x)) return aiText(x);
+  return '';
+};
+
+/** Objeção sem a chave `objecao` usa a 1ª string útil do item (não o objeto inteiro achatado). */
+const objectionSchema = z.preprocess(
+  (v) => (isObj(v) ? { objecao: aiText(v['objecao']) ? v['objecao'] : firstText(v, ['resposta']), resposta: v['resposta'] } : v),
+  obj({ objecao: text, resposta: text }),
+);
+
+/** Uma objeção da IA no formato oficial (sem `objecao`, usa a 1ª string útil do item). */
+export const normalizeObjection = (v: unknown): { objecao: string; resposta: string } =>
+  objectionSchema.parse(isObj(parseMaybeJson(v)) ? v : { objecao: v }) as { objecao: string; resposta: string };
+
 const audienceSchema = obj({
   nome: text,
   // Tipo desconhecido fica como veio (só exibição); quem filtra (Meta) compara com remarketing/lista_clientes.
@@ -175,7 +208,7 @@ export const strategySchema = obj({
   angulos: textList,
   funil: text,
   mensagem_principal: text,
-  objecoes: objList(obj({ objecao: text, resposta: text }), 'objecao'),
+  objecoes: objList(objectionSchema, 'objecao'),
   canais: text,
   distribuicao_verba: record(
     ['destino', 'nome', 'canal'],
@@ -187,7 +220,8 @@ export const strategySchema = obj({
   plano_testes: text,
   cronograma: text,
   recomendacoes: textList,
-  angulos_detalhados: objList(angleSchema, 'nome'),
+  // Ângulo sem nome, mensagem e gancho não conta (nem para "tem ao menos um ângulo").
+  angulos_detalhados: objList(angleSchema, 'nome').transform((list) => list.filter((a) => a.nome || a.mensagem || a.gancho)),
   publicos_meta: objList(audienceSchema, 'nome'),
   briefing_criativo: optionalObj({
     direcao_visual: text,

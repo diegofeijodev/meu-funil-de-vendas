@@ -189,13 +189,17 @@ describe('normalizeStrategy / strategyBrief', () => {
       oferta: 7,
       angulos_detalhados: [{ titulo: 'Promo', hook: 'Dobrou', message: 'Chopp em dobro' }, { hook: 'Sem nome', mensagem: 'm2' }],
     })!;
-    expect(s.objetivo_smart).toBe('Especifico: Gerar 200 leads\nMensuravel: CPL até R$ 10');
+    expect(s.objetivo_smart).toBe('Específico: Gerar 200 leads\nMensurável: CPL até R$ 10');
     expect(s.icp).toBe('Perfil: Donos de bar\nDores: pouco movimento, concorrência');
     expect(s.oferta).toBe('7');
     expect(s.angulos_detalhados![0]).toMatchObject({ nome: 'Promo', gancho: 'Dobrou', mensagem: 'Chopp em dobro' });
     expect(s.angulos).toEqual(['Promo: Chopp em dobro', 'm2']);
     expect(JSON.stringify(s)).not.toContain('[object Object]');
     expect(normalizeStrategy({ ...RAW, big_idea: { a: '' } })).toBeNull();
+    // Ângulo vazio (sem nome, mensagem e gancho) não conta; objeção sem a chave usa a 1ª string útil.
+    expect(normalizeStrategy({ ...RAW, angulos_detalhados: [{ formato_sugerido: 'reels' }, {}] })).toBeNull();
+    const o = normalizeStrategy({ ...RAW, objecoes: [{ pergunta: 'É caro?', resposta: 'Vale' }, { resposta: 'só resposta' }, {}] })!;
+    expect(o.objecoes).toEqual([{ objecao: 'É caro?', resposta: 'Vale' }, { objecao: '', resposta: 'só resposta' }]);
   });
 
   it('strategyBrief: sem ângulo traz todos; com ângulo traz só ele; limita objeções a 4', () => {

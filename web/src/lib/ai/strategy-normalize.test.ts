@@ -85,7 +85,8 @@ describe("strategy-normalize", () => {
     expect(aiText(" a ")).toBe("a");
     expect(aiText(3)).toBe("3");
     expect(aiText(["a", "b"])).toBe("a\nb");
-    expect(aiText({ especifico: "200 leads", prazo_final: "30 dias" })).toBe("Especifico: 200 leads\nPrazo final: 30 dias");
+    expect(aiText({ especifico: "200 leads", prazo_final: "30 dias" })).toBe("Específico: 200 leads\nPrazo final: 30 dias");
+    expect(aiText(false)).toBe("Não");
     expect(aiText({ perfil: "P", dores: ["d1", "d2"], sub: { x: "y" } })).toBe("Perfil: P\nDores: d1, d2\nSub: X: y");
     expect(aiText("[object Object]")).toBe("");
     expect(aiText([{ a: {} }])).toBe("");

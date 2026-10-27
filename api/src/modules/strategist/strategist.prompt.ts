@@ -1,6 +1,6 @@
 import { OBJECTIVES } from '../campaigns/campaign-labels';
 import { FullStrategy, StrategyAudience } from './strategy-types';
-import { aiText, normalizeAngle } from './strategy-normalize';
+import { aiText, normalizeAngle, normalizeObjection } from './strategy-normalize';
 
 const str = { type: 'string' };
 const arr = (items: Record<string, unknown>) => ({ type: 'array', items });
@@ -111,7 +111,8 @@ const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 /** Normaliza a resposta da IA para `FullStrategy`; lança `null` quando faltar big_idea ou ângulo. Todo texto passa por `aiText`. */
 export function normalizeStrategy(raw: Any, now = new Date()): FullStrategy | null {
-  const angles = list<unknown>(raw.angulos_detalhados).map(normalizeAngle);
+  // Ângulo sem nome, mensagem e gancho não conta para "tem ao menos um ângulo".
+  const angles = list<unknown>(raw.angulos_detalhados).map(normalizeAngle).filter((a) => a.nome || a.mensagem || a.gancho);
   const bigIdea = aiText(raw.big_idea);
   if (!bigIdea || !angles.length) return null;
   return {
@@ -124,7 +125,7 @@ export function normalizeStrategy(raw: Any, now = new Date()): FullStrategy | nu
     angulos: angles.map((a) => (a.nome ? `${a.nome}: ${a.mensagem}` : a.mensagem)).filter(Boolean),
     funil: aiText(raw.funil),
     mensagem_principal: aiText(raw.mensagem_principal),
-    objecoes: list<Any>(raw.objecoes).map((o) => ({ objecao: aiText(o?.objecao ?? o), resposta: aiText(o?.resposta) })),
+    objecoes: list<unknown>(raw.objecoes).map(normalizeObjection).filter((o) => o.objecao || o.resposta),
     canais: aiText(raw.canais),
     distribuicao_verba: Object.fromEntries(
       list<{ destino: unknown; percentual: number }>(raw.distribuicao_verba).map((d) => [aiText(d.destino), Number(d.percentual) || 0]),
