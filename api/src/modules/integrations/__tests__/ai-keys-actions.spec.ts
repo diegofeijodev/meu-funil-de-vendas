@@ -68,7 +68,7 @@ describe('AiKeysActionsService — só a dica sai, o segredo fica no cofre', () 
     expect(raw.startsWith('enc:v2:')).toBe(true);
     expect(raw).not.toContain(GOOD);
     const st = await svc.status(VIEWER, WS_A);
-    expect(st).toEqual({ openai: { connected: true, hint: '••••WXYZ' }, gemini: { connected: false, hint: null } });
+    expect(st).toEqual({ openai: { connected: true, hint: '••••WXYZ' }, gemini: { connected: false, hint: null }, hasGateway: false });
     expect(JSON.stringify(st)).not.toContain(GOOD);
     expect(keyHint(GOOD)).toBe('••••WXYZ');
   });

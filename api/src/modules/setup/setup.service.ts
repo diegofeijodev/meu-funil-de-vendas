@@ -80,7 +80,7 @@ export class SetupService {
       detail: appAi
         ? 'Disponível para estratégia, copy, imagens e SDR.'
         : ownText
-          ? 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).'
+          ? 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).'
           : 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.',
       link: '/integrations', required: appAi || !ownText,
     });

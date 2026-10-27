@@ -95,7 +95,7 @@ describe('AiService.json', () => {
     expect(f.calls).toHaveLength(0);
   });
 
-  it('sem gateway: chave própria que falha devolve o motivo REAL da chave (não "IA do app não configurada")', async () => {
+  it('sem gateway: chave própria que falha devolve o motivo REAL da chave, em frases simples (não "nenhuma IA")', async () => {
     const f = fakeFetch([
       ['api.openai.com', () => new Response('no', { status: 401 })],
       ['generativelanguage', () => new Response('no', { status: 429 })],
@@ -105,7 +105,8 @@ describe('AiService.json', () => {
       status: 502,
       response: {
         code: 'AI_ERROR',
-        message: 'Sua chave da OpenAI falhou: Chave da OpenAI inválida ou sem permissão. Sua chave do Gemini falhou: Sua conta Google Gemini está sem créditos ou atingiu o limite.',
+        message:
+          'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações. Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações. Confira as chaves em Integrações.',
       },
     };
     await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(both);
@@ -114,7 +115,7 @@ describe('AiService.json', () => {
     expect(f.calls.some((c) => c.url.includes('gw.test'))).toBe(false);
     // Só a OpenAI (motor escolhido) → só o motivo dela.
     await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n', engine: 'chatgpt' })).rejects.toMatchObject({
-      response: { message: 'Sua chave da OpenAI falhou: Chave da OpenAI inválida ou sem permissão.' },
+      response: { message: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.' },
     });
   });
 
@@ -122,7 +123,8 @@ describe('AiService.json', () => {
     const key = 'sk-cliente-ABCDEF0123456789';
     const f = fakeFetch([['api.openai.com', () => new Response(`Incorrect API key provided: ${key}`, { status: 500 })]]);
     const e = await setup(baseEnv, { openai: key }, f.fn).json(WS, { prompt: 'P', schema, name: 'n' }).catch((x) => x);
-    expect(e.getResponse().message).toMatch(/^Sua chave da OpenAI falhou: OpenAI respondeu 500: Incorrect API key provided: ••••\.$/);
+    // O corpo cru (que ecoa a chave) fica só no log, redigido; a tela recebe a frase simples.
+    expect(e.getResponse().message).toBe('A OpenAI não respondeu agora. Tente de novo em alguns minutos.');
     expect(e.getResponse().message).not.toContain('ABCDEF');
   });
 
@@ -191,7 +193,7 @@ describe('AiService.image / video / text', () => {
     const ai = setup(gwEnv, { openai: 'sk' }, f.fn);
     expect((await ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).cost).toBe(0);
     const bad = setup(gwEnv, { openai: 'sk' }, fakeFetch([['api.openai.com', () => new Response('x', { status: 401 })]]).fn);
-    await expect(bad.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toMatchObject({ response: { message: 'Chave da OpenAI inválida ou sem permissão.' } });
+    await expect(bad.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toMatchObject({ response: { message: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.' } });
   });
 
   it('imagem Gemini com chave do cliente lê inlineData', async () => {
@@ -219,11 +221,11 @@ describe('AiService.image / video / text', () => {
   it('sem gateway: imagem/vídeo pela chave própria que falha devolvem o motivo da chave', async () => {
     const o = setup(baseEnv, { openai: 'sk' }, fakeFetch([['api.openai.com', () => new Response('x', { status: 429 })]]).fn);
     await expect(o.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).rejects.toMatchObject({
-      response: { code: 'AI_ERROR', message: 'Sua chave da OpenAI falhou: Sua conta OpenAI está sem créditos ou atingiu o limite.' },
+      response: { code: 'AI_ERROR', message: 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.' },
     });
     const g = setup(baseEnv, { gemini: 'gk' }, fakeFetch([['generativelanguage', () => new Response('x', { status: 403 })]]).fn);
     await expect(g.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject({
-      response: { message: 'Sua chave do Gemini falhou: Chave da Google Gemini inválida ou sem permissão.' },
+      response: { message: 'A chave do Gemini (Google) foi recusada. Cole uma chave nova em Integrações.' },
     });
   });
 

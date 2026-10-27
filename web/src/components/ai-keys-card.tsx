@@ -57,7 +57,11 @@ export function AiKeysCard() {
   return (
     <Section
       title="IAs com a sua conta (ChatGPT e Gemini)"
-      description="Conecte sua própria chave para que criativos, vídeos e copies usem os seus créditos. Sem chave, usamos os créditos de IA do app."
+      description={
+        data?.hasGateway === false
+          ? "Conecte sua própria chave para que criativos, vídeos e copies usem os créditos da sua conta. Sem nenhuma chave, a IA não funciona nesta empresa."
+          : "Conecte sua própria chave para que criativos, vídeos e copies usem os seus créditos. Sem chave, usamos os créditos de IA do app."
+      }
     >
       <div className="grid gap-4 md:grid-cols-2">
         {(["openai", "gemini"] as Vendor[]).map((v) => (

@@ -5,7 +5,8 @@ type Vendor = "openai" | "gemini";
 /** `POST /v1/ai-keys/ai-keys-status` — quais chaves próprias existem (só `••••` + 4 últimos caracteres; qualquer membro). */
 export const aiKeysStatus = serverFnPost<
   { workspaceId: string },
-  { openai: { connected: boolean; hint: string | null }; gemini: { connected: boolean; hint: string | null } }
+  // `hasGateway`: o servidor tem IA própria (gateway)? Sem ela, a chave da empresa é a única IA.
+  { openai: { connected: boolean; hint: string | null }; gemini: { connected: boolean; hint: string | null }; hasGateway?: boolean }
 >("/v1/ai-keys/ai-keys-status");
 
 /** `POST /v1/ai-keys/ai-keys-save` — testa no provedor e só então guarda no cofre (dono/admin). Recusa volta como `{ ok:false, error }`. */

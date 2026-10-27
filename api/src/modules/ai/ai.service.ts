@@ -39,8 +39,21 @@ export const NO_AI_MESSAGE = 'Nenhuma IA disponível: cadastre a chave da OpenAI
 
 /** Chave própria que falhou (o motivo vai para a mensagem quando não há gateway para cair). */
 type KeyFailure = { vendor: AiVendor; error: unknown };
-const vendorName = (v: AiVendor) => (v === 'openai' ? 'da OpenAI' : 'do Gemini');
 const withPeriod = (t: string) => (/[.!?…]$/.test(t) ? t : `${t}.`);
+
+/** Mensagens das chaves próprias, por caso (texto final do design, 27/10/2026). */
+export const VENDOR_MSG: Record<AiVendor, { refused: string; noCredit: string; down: string }> = {
+  openai: {
+    refused: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.',
+    noCredit: 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.',
+    down: 'A OpenAI não respondeu agora. Tente de novo em alguns minutos.',
+  },
+  gemini: {
+    refused: 'A chave do Gemini (Google) foi recusada. Cole uma chave nova em Integrações.',
+    noCredit: 'Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações.',
+    down: 'O Gemini (Google) não respondeu agora. Tente de novo em alguns minutos.',
+  },
+};
 
 /** Extrai o primeiro objeto `{...}` do texto (a IA às vezes embrulha o JSON). Contrato do protótipo. */
 export function parseJsonLoose(text: string): any {
@@ -80,12 +93,13 @@ export class AiService {
 
   // ------------------------------------------------------------------ erros
 
+  /** Erro da chave própria em português simples, por caso; o corpo cru do provedor vai só para o log (sem a chave). */
   private async vendorError(vendor: AiVendor, res: Response): Promise<AiError> {
     const body = await res.text().catch(() => '');
-    const name = vendor === 'openai' ? 'OpenAI' : 'Google Gemini';
-    if (res.status === 401 || res.status === 403) return new AiError(`Chave da ${name} inválida ou sem permissão.`);
-    if (res.status === 429) return new AiError(`Sua conta ${name} está sem créditos ou atingiu o limite.`);
-    return new AiError(`${name} respondeu ${res.status}: ${body.slice(0, 300)}`);
+    this.logger.warn(`${vendor} respondeu ${res.status}: ${this.redact(body.slice(0, 300), [])}`);
+    if (res.status === 401 || res.status === 403) return new AiError(VENDOR_MSG[vendor].refused);
+    if (res.status === 429) return new AiError(VENDOR_MSG[vendor].noCredit);
+    return new AiError(VENDOR_MSG[vendor].down);
   }
 
   private async gatewayError(res: Response): Promise<AiError> {
@@ -110,14 +124,16 @@ export class AiService {
   }
 
   /**
-   * Antes de cair no gateway: se ele não existe, o erro final é o motivo REAL da chave da empresa ("Sua chave da OpenAI falhou:
-   * …"); sem chave nenhuma, "Nenhuma IA disponível…" (`AI_NOT_CONFIGURED`). Com gateway, segue para ele.
+   * Antes de cair no gateway: se ele não existe, o erro final é o motivo REAL da chave da empresa (as frases das que falharam,
+   * juntas, + "Confira as chaves em Integrações." quando são duas); sem chave nenhuma, "Nenhuma IA disponível…"
+   * (`AI_NOT_CONFIGURED`). Com gateway, segue para ele.
    */
   private requireGatewayOr(fails: KeyFailure[], keys: (string | null | undefined)[]): void {
     if (this.hasGateway()) return;
     if (!fails.length) throw new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED');
-    const parts = fails.map((f) => `Sua chave ${vendorName(f.vendor)} falhou: ${withPeriod(this.redact(f.error instanceof Error ? f.error.message : String(f.error), keys))}`);
-    throw new AiError(parts.join(' '));
+    // Erro nosso (AiError: recusa, sem crédito, formato…) vai como está; o resto (rede, timeout) vira "não respondeu agora".
+    const parts = fails.map((f) => withPeriod(f.error instanceof AiError ? this.redact(f.error.message, keys) : VENDOR_MSG[f.vendor].down));
+    throw new AiError(parts.length > 1 ? `${[...new Set(parts)].join(' ')} Confira as chaves em Integrações.` : parts[0]!);
   }
 
   /** A mensagem do provedor pode ecoar a chave: nada dela vai para a tela. */

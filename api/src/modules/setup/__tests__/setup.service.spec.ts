@@ -72,7 +72,7 @@ describe('SetupService.status', () => {
   it('sem gateway mas com chave própria (OpenAI ou Gemini): IA do app NÃO é erro — fica opcional com o motivo', async () => {
     for (const aiKeys of [{ openai: 'sk' }, { gemini: 'AIza' }] as Record<string, string>[]) {
       const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' }, aiKeys }).svc.status(USER, WS, NOW);
-      expect(byKey(items, 'app-ai')).toMatchObject({ status: 'optional', required: false, detail: 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).' });
+      expect(byKey(items, 'app-ai')).toMatchObject({ status: 'optional', required: false, detail: 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).' });
       expect(byKey(items, 'own-ai')).toMatchObject({ status: 'ok', required: true });
     }
     // Só Higgsfield (imagem/vídeo) não substitui a IA de texto.

@@ -1,4 +1,6 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { ENV } from '../../common/config/env.module';
+import { Env } from '../../common/config/env.validation';
 import { AiKeysService } from '../ai/ai-keys.service';
 import { AiVendor } from '../ai/ai.types';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -19,6 +21,7 @@ export class AiKeysActionsService {
   constructor(
     private readonly access: WorkspaceAccessService,
     private readonly keys: AiKeysService,
+    @Optional() @Inject(ENV) private readonly env?: Pick<Env, 'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY'>,
   ) {}
 
   /** `requireMember` do protótipo (mensagens próprias): membro lê; `manage` exige owner|admin. */
@@ -34,6 +37,8 @@ export class AiKeysActionsService {
     return {
       openai: o ? { connected: true, hint: keyHint(o) } : { connected: false, hint: null },
       gemini: g ? { connected: true, hint: keyHint(g) } : { connected: false, hint: null },
+      // Sem gateway no servidor, a chave da empresa é a ÚNICA IA (a tela muda o texto e esconde o teste com créditos do app).
+      hasGateway: !!(this.env?.AI_GATEWAY_URL?.trim() && this.env?.AI_GATEWAY_API_KEY?.trim()),
     };
   }
 

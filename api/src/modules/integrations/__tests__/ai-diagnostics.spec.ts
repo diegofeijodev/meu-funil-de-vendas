@@ -64,13 +64,18 @@ describe('AiDiagnosticsService — cada verificação', () => {
   it('gateway não configurado: com chave própria válida fica "Não usada" (neutro, no topo); sem chave nenhuma falha com o aviso', async () => {
     const noGw = { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' };
     const withKeys = await setup({ env: noGw, openai: 'sk-x', gemini: 'AIza' }).diagnose(OWNER, WS_A, false);
-    expect(withKeys.checks[0]).toEqual({ name: 'IA do app (texto)', ok: null, status: 'skip', detail: 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).' });
+    expect(withKeys.checks[0]).toEqual({ name: 'IA do app (texto)', ok: null, status: 'skip', detail: 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).' });
     // Chave sem o modelo de imagem (ok:false na linha dela) ainda serve para texto: a IA do app continua "Não usada".
     const partial = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-4o-mini'] }).diagnose(OWNER, WS_A, false);
     expect(by(partial, 'Chave OpenAI').ok).toBe(false);
     expect(by(partial, 'IA do app')).toMatchObject({ ok: null, status: 'skip' });
     const none = await setup({ env: noGw }).diagnose(OWNER, WS_A, false);
-    expect(none.checks[0]).toEqual({ name: 'IA do app (texto)', ok: false, status: 'fail', detail: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini abaixo.' });
+    expect(none.checks[0]).toEqual({ name: 'IA do app (texto)', ok: false, status: 'fail', detail: 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini no quadro "IAs com a sua conta", mais acima nesta página.' });
+    // Chave aceita mas SEM o modelo de texto configurado não serve para texto: não pode ficar "Não precisa".
+    const noText = await setup({ env: noGw, gemini: 'AIza', geminiModels: ['gemini-2.5-flash-image'] }).diagnose(OWNER, WS_A, false);
+    expect(by(noText, 'IA do app')).toMatchObject({ ok: false, status: 'fail' });
+    const noTextOpenai = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-image-1'] }).diagnose(OWNER, WS_A, false);
+    expect(by(noTextOpenai, 'IA do app').status).toBe('fail');
     const bad = await setup({ env: noGw, openai: 'sk-x', openaiStatus: 401 }).diagnose(OWNER, WS_A, false);
     expect(by(bad, 'IA do app')).toMatchObject({ ok: false, status: 'fail', detail: expect.stringMatching(/^Nenhuma IA disponível: as chaves da empresa falharam/) });
     // Teste de imagem com créditos do app também fica neutro (nenhuma chamada ao gateway).

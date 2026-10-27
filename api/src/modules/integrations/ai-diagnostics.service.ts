@@ -19,9 +19,9 @@ export interface DiagnosticCheck {
 }
 
 /** Sem gateway no servidor, as chaves da empresa fazem tudo: a linha da IA do app fica neutra ("Não usada"). */
-export const GATEWAY_UNUSED = 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).';
-export const NO_AI_DIAGNOSTIC = 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini abaixo.';
-const KEYS_FAILED_NO_GATEWAY = 'Nenhuma IA disponível: as chaves da empresa falharam (veja abaixo) e o servidor não tem IA própria.';
+export const GATEWAY_UNUSED = 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).';
+export const NO_AI_DIAGNOSTIC = 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini no quadro "IAs com a sua conta", mais acima nesta página.';
+const KEYS_FAILED_NO_GATEWAY = 'Nenhuma IA disponível: as chaves da empresa falharam ou não têm o modelo de texto (veja abaixo) e o servidor não tem IA própria.';
 
 type Check = Omit<DiagnosticCheck, 'status'> & { status?: DiagnosticCheck['status'] };
 const withStatus = (c: Check): DiagnosticCheck => ({ ...c, status: c.status ?? (c.ok === true ? 'ok' : c.ok === false ? 'fail' : 'optional') });
@@ -82,7 +82,7 @@ export class AiDiagnosticsService {
       }
     };
     const gateway = !!(this.env.AI_GATEWAY_URL?.trim() && this.env.AI_GATEWAY_API_KEY?.trim());
-    /** Chave própria aceita pelo provedor (a lista de modelos respondeu): serve para texto mesmo sem algum modelo de imagem/vídeo. */
+    /** Chave própria aceita pelo provedor COM o modelo de texto configurado: serve para texto mesmo sem algum modelo de imagem/vídeo. */
     let validKey = false;
 
     const [openai, gemini] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
@@ -92,8 +92,9 @@ export class AiDiagnosticsService {
       await run('Chave OpenAI', async () => {
         const r = await this.get(`${this.keys.baseUrl('openai')}/models`, { Authorization: `Bearer ${openai}` });
         if (!r.ok) throw new Error(`OpenAI respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
-        validKey = true;
         const ids = new Set(((await r.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? []);
+        // "Serve para texto" só com o modelo de texto configurado acessível (senão a IA do app não pode ficar "Não precisa").
+        if (ids.has(this.env.AI_BYO_OPENAI_TEXT_MODEL)) validKey = true;
         const need = [this.env.AI_MODEL_IMAGE_OPENAI, this.env.AI_BYO_OPENAI_TEXT_MODEL, 'whisper-1'];
         const missing = need.filter((m) => !ids.has(m));
         return {
@@ -109,8 +110,8 @@ export class AiDiagnosticsService {
       await run('Chave Gemini', async () => {
         const r = await this.get(`${this.keys.baseUrl('gemini')}/models?pageSize=1000`, { 'x-goog-api-key': gemini });
         if (!r.ok) throw new Error(`Gemini respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
-        validKey = true;
         const names = ((await r.json()) as { models?: { name: string }[] }).models?.map((m) => m.name.replace('models/', '')) ?? [];
+        if (names.some((n) => n.startsWith(this.env.AI_BYO_GEMINI_TEXT_MODEL))) validKey = true;
         const want: [string, string][] = [
           [this.env.AI_MODEL_IMAGE_GEMINI, 'imagem'],
           [this.env.AI_MODEL_VIDEO, 'vídeo Veo'],
