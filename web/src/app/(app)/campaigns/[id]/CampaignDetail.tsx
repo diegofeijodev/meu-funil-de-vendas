@@ -55,6 +55,12 @@ export function CampaignDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
   const [landing, setLanding] = useState("");
+  // Aba controlada: mensagens de erro podem levar direto à aba certa (ex.: "Ver criativos").
+  const [tab, setTab] = useState("estrategia");
+  const showTab = (value: string) => {
+    setTab(value);
+    document.getElementById("campaign-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const { data, isPending } = useQuery({
     queryKey: ["campaign", id],
@@ -240,7 +246,10 @@ export function CampaignDetail() {
       toast.success("Campanha criada na Meta, pausada. Clique em Ativar na Meta quando quiser veicular.");
     } catch (e) {
       setSteps([]); // some o "Enviando para a Meta" que ficaria preso depois da falha
-      toast.error(apiErrorMessage(e, "Falha ao publicar"));
+      const msg = apiErrorMessage(e, "Falha ao publicar");
+      // Sem criativo aprovado: o aviso leva direto à aba Criativos.
+      if (/criativo/i.test(msg)) toast.error(msg, { action: { label: "Ver criativos", onClick: () => showTab("criativos") } });
+      else toast.error(msg);
     } finally {
       setBusy(null);
     }
@@ -374,8 +383,8 @@ export function CampaignDetail() {
         </div>
       )}
 
-      <Tabs defaultValue="estrategia">
-        <TabsList className="mb-6">
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList id="campaign-tabs" className="mb-6 scroll-mt-20">
           <TabsTrigger value="estrategia">Estratégia</TabsTrigger>
           <TabsTrigger value="copies">Copies</TabsTrigger>
           <TabsTrigger value="criativos">Criativos</TabsTrigger>
