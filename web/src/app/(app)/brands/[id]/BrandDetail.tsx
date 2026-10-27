@@ -2,7 +2,7 @@
 
 import { Link, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2, Upload } from "lucide-react";
 
@@ -134,6 +134,7 @@ export function BrandDetail() {
   };
 
   const [uploading, setUploading] = useState<string | null>(null);
+  const hasLogoAsset = assets.some((a) => a.kind === "logo");
   const [refTag, setRefTag] = useState("produto");
   const uploadAssets = async (kind: string, files: FileList | null) => {
     if (!workspaceId || !files?.length) return;
@@ -143,6 +144,10 @@ export function BrandDetail() {
       const isFont = /\.(ttf|otf)$/i.test(file.name);
       if (kind === "font" && !isFont) {
         toast.error(`${file.name}: envie uma fonte .ttf ou .otf.`);
+        continue;
+      }
+      if (kind === "logo" && !LOGO_ACCEPT.split(",").includes(file.type)) {
+        toast.error(`${file.name}: ${LOGO_HINT}`);
         continue;
       }
       if (kind !== "font" && !file.type.startsWith("image/") && file.type !== "application/pdf") {
@@ -297,27 +302,20 @@ export function BrandDetail() {
                     ))}
                   </select>
                   {ASSET_KINDS.map((k) => (
-                    <Button key={k.kind} size="sm" variant="outline" asChild disabled={!!uploading}>
-                      <label className="cursor-pointer">
-                        <Upload className="mr-1 size-3.5" />
-                        {uploading === k.kind ? "Enviando..." : k.label}
-                        <input
-                          type="file"
-                          accept={k.kind === "font" ? ".ttf,.otf" : "image/*,application/pdf"}
-                          multiple={k.kind !== "logo"}
-                          className="hidden"
-                          onChange={(e) => {
-                            void uploadAssets(k.kind, e.target.files);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    </Button>
+                    <UploadButton
+                      key={k.kind}
+                      label={uploading === k.kind ? "Enviando..." : k.kind === "logo" ? (hasLogoAsset ? "Trocar logo" : "Enviar logo") : k.label}
+                      accept={k.kind === "font" ? ".ttf,.otf" : k.kind === "logo" ? LOGO_ACCEPT : "image/*,application/pdf"}
+                      multiple={k.kind !== "logo"}
+                      disabled={!!uploading}
+                      onFiles={(files) => uploadAssets(k.kind, files)}
+                    />
                   ))}
                 </div>
               )
             }
           >
+            {canEdit && <p className="mb-3 text-xs text-muted-foreground">{LOGO_HINT}</p>}
             {assets.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhum arquivo enviado ainda.</p>
             ) : (
@@ -529,6 +527,48 @@ const GUIDE_LISTS: { key: keyof VisualStyle; label: string; placeholder: string 
   { key: "elementos_proibidos", label: "Elementos proibidos", placeholder: "pessoas com rosto visível, texto gerado pela IA, marcas de concorrentes" },
 ];
 
+/** Formatos da logo que entram nos criativos (SVG/PDF não são compostos). */
+const LOGO_ACCEPT = "image/png,image/jpeg,image/webp";
+const LOGO_HINT = "Envie a logo em PNG ou JPG (SVG e PDF não entram nos criativos).";
+
+/** Botão de envio acessível (Tab/Enter, `disabled` de verdade): o input fica escondido e o botão o aciona. */
+function UploadButton({
+  label,
+  accept,
+  multiple = false,
+  disabled = false,
+  onFiles,
+}: {
+  label: string;
+  accept: string;
+  multiple?: boolean;
+  disabled?: boolean;
+  onFiles: (files: FileList | null) => void | Promise<void>;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => ref.current?.click()}>
+        <Upload className="mr-1 size-3.5" />
+        {label}
+      </Button>
+      <input
+        ref={ref}
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(e) => {
+          void onFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </>
+  );
+}
+
 /** Sem posição escolhida no guia, a logo enviada entra no canto inferior direito (igual à API). */
 const DEFAULT_LOGO_POSITION: LogoPosition = "bottom_right";
 
@@ -647,26 +687,15 @@ function VisualGuide({
           {(!logoName || /\.(svg|pdf)$/i.test(logoName)) && (vs.posicao_logo ?? DEFAULT_LOGO_POSITION) !== "none" && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
               <span className="min-w-0 flex-1">
-                {logoName
-                  ? "A logo em SVG ou PDF não entra nos criativos. Envie a logo em PNG ou JPG."
-                  : "Envie a logo da marca para ela aparecer nos criativos."}
+                {logoName ? LOGO_HINT : "Envie a logo da marca para ela aparecer nos criativos."}
               </span>
               {canEdit && (
-                <Button size="sm" variant="outline" asChild disabled={uploadingLogo}>
-                  <label className="cursor-pointer">
-                    <Upload className="mr-1 size-3.5" />
-                    {uploadingLogo ? "Enviando..." : "Enviar logo"}
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      className="hidden"
-                      onChange={(e) => {
-                        void onUploadLogo(e.target.files);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
-                </Button>
+                <UploadButton
+                  label={uploadingLogo ? "Enviando..." : logoName ? "Trocar logo" : "Enviar logo"}
+                  accept={LOGO_ACCEPT}
+                  disabled={uploadingLogo}
+                  onFiles={onUploadLogo}
+                />
               )}
             </div>
           )}
