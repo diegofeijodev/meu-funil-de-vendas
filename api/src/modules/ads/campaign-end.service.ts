@@ -37,13 +37,17 @@ const providerMessage = (e: unknown): string =>
       ? e.message
       : 'erro inesperado. Tente de novo em instantes.';
 
-/** "3 posts agendados do Instagram foram cancelados." / "1 post agendado do Instagram foi cancelado." (+ o que já estava saindo). */
+/** "3 posts agendados do Instagram foram cancelados." / "1 post agendado…" (+ o que já estava saindo; sem "0 posts"). */
 export function instagramSummary(r: CampaignIgCancel): string {
   const n = r.cancelledPosts;
-  const done = n === 1 ? '1 post agendado do Instagram foi cancelado.' : `${n} posts agendados do Instagram foram cancelados.`;
   const now = r.publishingNow;
-  const going = !now ? '' : now === 1 ? ' 1 post já estava sendo publicado e vai sair normalmente.' : ` ${now} posts já estavam sendo publicados e vão sair normalmente.`;
-  return `${done}${going}`;
+  const done = !n ? '' : n === 1 ? '1 post agendado do Instagram foi cancelado.' : `${n} posts agendados do Instagram foram cancelados.`;
+  const going = !now
+    ? ''
+    : now === 1
+      ? '1 post do Instagram já estava sendo publicado e vai sair normalmente.'
+      : `${now} posts do Instagram já estavam sendo publicados e vão sair normalmente.`;
+  return [done, going].filter(Boolean).join(' ');
 }
 
 @Injectable()
@@ -115,7 +119,7 @@ export class CampaignEndService {
       if (instagram.cancelledPosts || instagram.publishingNow) channels.push({ channel: 'instagram', ok: true, message: instagramSummary(instagram) });
     } catch (e) {
       this.logger.error(`[campaign-end] instagram da campanha ${c.id}: ${e instanceof Error ? e.message : e}`);
-      channels.push({ channel: 'instagram', ok: false, message: 'Não foi possível cancelar os posts agendados do Instagram. Tente encerrar de novo.' });
+      channels.push({ channel: 'instagram', ok: false, message: 'Não foi possível cancelar os posts agendados do Instagram.' });
     }
 
     // 3) Pendências da campanha: recomendações da IA dispensadas e pedidos de aprovação cancelados (não reabrem nada depois).

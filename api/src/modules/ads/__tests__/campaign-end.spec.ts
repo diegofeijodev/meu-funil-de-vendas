@@ -2,6 +2,8 @@ import { MetaError } from '../../instagram/meta-graph';
 import { status } from '../../media/__tests__/mem';
 import { AdsProviderError } from '../ads-errors';
 import { MSG_CAMPAIGN_ENDED } from '../campaign-end.service';
+import { IgCampaignService } from '../../instagram/ig-campaign.service';
+import { IgStore } from '../../instagram/ig-store.service';
 import { adsWorld, AdsWorld, ADMIN, MARKETING, OWNER, STRANGER, uid, VIEWER, WS_A, WS_B } from './harness';
 
 /** Campanha publicada nos três canais (Meta com conjuntos/anúncios conhecidos, Google e TikTok). */
@@ -62,7 +64,7 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
       { channel: 'meta', ok: true, message: 'Anúncios pausados na Meta.' },
       { channel: 'google', ok: true, message: 'Anúncios pausados no Google Ads.' },
       { channel: 'tiktok', ok: true, message: 'Anúncios pausados no TikTok Ads.' },
-      { channel: 'instagram', ok: true, message: '3 posts agendados do Instagram foram cancelados. 1 post já estava sendo publicado e vai sair normalmente.' },
+      { channel: 'instagram', ok: true, message: '3 posts agendados do Instagram foram cancelados. 1 post do Instagram já estava sendo publicado e vai sair normalmente.' },
     ]);
     expect(metaPaused(w)).toEqual(['/9001', '/9101', '/9102', '/9301', '/9302']);
     expect(w.google.setStatus).toHaveBeenCalledWith(WS_A, '4242', 'PAUSED');
@@ -87,6 +89,19 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
       [ig.run.plan_id, 'Campanha encerrada: 2 posts retirados da fila.'],
     ].sort());
     expect(w.activity.log).toHaveBeenCalledWith(WS_A, OWNER, 'campaign.ended', 'campaign', expect.objectContaining({ campaign_id: c.id, already_ended: false, ig_posts_cancelled: 3 }));
+  });
+
+  it('critério único (contagem do detalhe = cancelamento): semanas recorrentes entram, posts de outra programação no mesmo plano não', async () => {
+    const w = adsWorld();
+    const c = published(w);
+    const ig = instagram(w, c.id);
+    const svc = new IgCampaignService(new IgStore(w.prisma));
+    expect(await svc.pendingForCampaign(WS_A, c.id)).toEqual({ linked: true, pending: 3, publishingNow: 1 });
+    expect(await svc.pendingForCampaign(WS_A, uid())).toEqual({ linked: false, pending: 0, publishingNow: 0 });
+    const r = await svc.cancelForCampaign(WS_A, c.id);
+    expect(r.cancelledPosts).toBe(3);
+    expect(ig.posts.otherRunInPlan.status).toBe('scheduled');
+    expect(await svc.pendingForCampaign(WS_A, c.id)).toEqual({ linked: true, pending: 0, publishingNow: 1 });
   });
 
   it('pendências: recomendações da IA pendentes viram dispensadas e pedidos de aprovação pendentes são cancelados', async () => {
@@ -127,6 +142,9 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
     const again = await w.ending.end(OWNER, WS_A, c.id);
     expect(again).toMatchObject({ ok: true, status: 'finished', alreadyEnded: true, instagram: { cancelledPosts: 0, cancelledJobs: 0, publishingNow: 1 } });
     expect(again.channels.map((x) => [x.channel, x.ok])).toEqual([['meta', true], ['instagram', true]]);
+    // Sem "0 posts": só o que já está saindo; e nenhum evento novo de "0 retirados".
+    expect(again.channels[1]!.message).toBe('1 post do Instagram já estava sendo publicado e vai sair normalmente.');
+    expect(w.t['ig_autopilot_events']!.rows.filter((e) => /0 posts? retirad/.test(e.message))).toHaveLength(0);
     expect(c.status).toBe('finished');
     expect(ig.posts.published.status).toBe('published');
   });

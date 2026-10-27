@@ -374,6 +374,16 @@ export class PublishingService {
     // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
     if (!acc) throw new Guardrail(NO_ACCOUNT_GUARDRAIL);
 
+    // Post de programação cancelada ou de campanha encerrada não sai (ficou na fila por um instante, ou foi agendado antes):
+    // cancela o post e o job em vez de criar container.
+    const gone = await this.cancelledOrigin(post);
+    if (gone) {
+      await this.prisma.ig_posts.updateMany({ where: { id: postId, status: { notIn: ['published'] } }, data: { status: 'cancelled', ig_creation_id: null } });
+      await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
+      await this.store.logEvent({ workspace_id: ws, plan_id: post.plan_id, post_id: postId, kind: 'guardrail', level: 'warn', message: `Post cancelado: ${gone}` });
+      throw new PublishClaimLost(`Post cancelado: ${gone}`);
+    }
+
     const ig = acc.ig_user_id as string;
     const limit = await this.graph.graph<{ data?: { quota_usage?: number }[] }>(ws, `/${ig}/content_publishing_limit`, { params: { fields: 'quota_usage' } }).catch((e) => {
       if (e instanceof MetaError && e.code === 190) throw e;
@@ -552,7 +562,7 @@ export class PublishingService {
             message: retry
               ? `Não foi possível publicar: ${withPeriod(msg)} Vamos tentar de novo às ${hhmmSp(new Date(Date.now() + delay))}.`
               : !blocked && !tokenExpired && attempts >= MAX_ATTEMPTS
-                ? `Não foi possível publicar depois de ${attempts} tentativas: ${msg}`
+                ? `Não foi possível publicar depois de ${attempts} tentativas: ${withPeriod(msg)} Abra o post no calendário e clique em Publicar agora para tentar de novo.`
                 : `Não foi possível publicar: ${msg}`,
           });
         await this.prisma.publishing_jobs.update({

@@ -5,6 +5,7 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { brl, OBJECTIVES } from './campaign-labels';
 import { CampaignGuardsService } from './campaign-guards.service';
+import { igCampaignScope, IG_NOT_PENDING } from '../instagram/ig-campaign-scope';
 import { CreateCampaignDto, CreateCopyDto } from './dto/campaigns.dto';
 
 const notFound = (message = 'Campanha não encontrada.') => new NotFoundException({ code: 'NOT_FOUND', message });
@@ -75,22 +76,13 @@ export class CampaignsService {
   }
 
   /**
-   * Instagram ligado à campanha (para o diálogo "Encerrar campanha" dizer só o que existe): planos de "Criar plano no Instagram" +
-   * programações automáticas da campanha, e quantos posts deles ainda não saíram.
+   * Instagram ligado à campanha (para o diálogo e a faixa de "Encerrar campanha"): o mesmo critério do cancelamento
+   * (`igCampaignScope`) — programações da campanha e as semanas recorrentes, planos ligados — e quantos posts ainda vão sair.
    */
   private async instagramLinks(workspaceId: string, campaignId: string) {
-    const [plans, runs] = await Promise.all([
-      this.prisma.ig_content_plans.findMany({ where: { campaign_id: campaignId, workspace_id: workspaceId }, select: { id: true } }),
-      this.prisma.ig_auto_runs.findMany({ where: { campaign_id: campaignId, workspace_id: workspaceId }, select: { id: true } }),
-    ]);
-    if (!plans.length && !runs.length) return { linked: false, pending_posts: 0 };
-    const pending = await this.prisma.ig_posts.count({
-      where: {
-        workspace_id: workspaceId,
-        status: { notIn: ['published', 'publishing', 'cancelled'] },
-        OR: [...(plans.length ? [{ plan_id: { in: plans.map((p) => p.id) } }] : []), ...(runs.length ? [{ run_id: { in: runs.map((r) => r.id) } }] : [])],
-      },
-    });
+    const scope = await igCampaignScope(this.prisma, workspaceId, campaignId);
+    if (!scope.posts) return { linked: false, pending_posts: 0 };
+    const pending = await this.prisma.ig_posts.count({ where: { AND: [scope.posts, { status: { notIn: IG_NOT_PENDING } }] } });
     return { linked: true, pending_posts: pending };
   }
 

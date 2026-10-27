@@ -392,30 +392,54 @@ describe('PublishingService.runPublishingQueue (publishing_jobs, lock, retentati
     const fails = w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'failure');
     expect(fails.map((e) => e.level)).toEqual(['warn', 'warn', 'error']);
     expect(fails[0]!.message).toMatch(/^Não foi possível publicar: A Meta recusou\. Vamos tentar de novo às \d{2}h\d{2}\.$/);
-    expect(fails[2]!.message).toBe('Não foi possível publicar depois de 3 tentativas: A Meta recusou');
+    expect(fails[2]!.message).toBe('Não foi possível publicar depois de 3 tentativas: A Meta recusou. Abra o post no calendário e clique em Publicar agora para tentar de novo.');
   });
 
-  it('falha de post cuja programação foi cancelada ou cuja campanha foi encerrada: o job é cancelado, o post NÃO volta à agenda', async () => {
-    const { w, svc } = setup();
-    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new Error('A Meta recusou') : undefined));
+  it('guardrail: post de programação cancelada ou de campanha encerrada não cria container — post e job cancelados', async () => {
+    const { w, svc, created } = setup();
     const run = { id: uuid(), workspace_id: WS, status: 'cancelled', campaign_id: null };
     w.t['ig_auto_runs']!.rows.push(run);
     const camp = { id: uuid(), workspace_id: WS, status: 'finished' };
     w.t['campaigns']!.rows.push(camp);
     const plan = { id: uuid(), workspace_id: WS, campaign_id: camp.id, requires_approval: false };
     w.t['ig_content_plans']!.rows.push(plan);
-    const fromRun = seedPost(w, { run_id: run.id });
-    const fromPlan = seedPost(w, { plan_id: plan.id });
+    const fromRun = seedPost(w, { run_id: run.id, status: 'scheduled' });
+    const fromPlan = seedPost(w, { plan_id: plan.id, status: 'scheduled' });
     const j1 = job(w, fromRun.id);
     const j2 = job(w, fromPlan.id);
     const res = await svc.runPublishingQueue();
-    expect(res.map((r) => r.status)).toEqual(['cancelled', 'cancelled']);
+    expect(res.map((r) => r.status)).toEqual(['skipped', 'skipped']);
+    expect(created()).toHaveLength(0);
     expect([j1.status, j2.status]).toEqual(['cancelled', 'cancelled']);
     expect([fromRun.status, fromPlan.status]).toEqual(['cancelled', 'cancelled']);
     expect(w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'guardrail').map((e) => e.message)).toEqual([
-      'Publicação cancelada: a programação foi cancelada.',
-      'Publicação cancelada: a campanha foi encerrada.',
+      'Post cancelado: a programação foi cancelada.',
+      'Post cancelado: a campanha foi encerrada.',
     ]);
+    // "Publicar agora" também recusa.
+    const now = seedPost(w, { plan_id: plan.id });
+    expect((await err(svc.publishInstagramPost(now.id))).message).toBe('Post cancelado: a campanha foi encerrada.');
+    expect(now.status).toBe('cancelled');
+  });
+
+  it('campanha encerrada NO MEIO da publicação e a publicação falha: o job é cancelado e o post não volta à agenda', async () => {
+    const { w, svc } = setup();
+    const camp = { id: uuid(), workspace_id: WS, status: 'active' };
+    w.t['campaigns']!.rows.push(camp);
+    const plan = { id: uuid(), workspace_id: WS, campaign_id: camp.id, requires_approval: false };
+    w.t['ig_content_plans']!.rows.push(plan);
+    w.respond((path, opts) => {
+      if (path === `/${IG}/media` && opts.method === 'POST') {
+        camp.status = 'finished';
+        return new Error('A Meta recusou');
+      }
+      return undefined;
+    });
+    const p = seedPost(w, { plan_id: plan.id });
+    const j = job(w, p.id);
+    expect((await svc.runPublishingQueue()).map((r) => r.status)).toEqual(['cancelled']);
+    expect([j.status, p.status]).toEqual(['cancelled', 'cancelled']);
+    expect(w.t['ig_autopilot_events']!.rows.find((e) => e.kind === 'guardrail')!.message).toBe('Publicação cancelada: a campanha foi encerrada.');
   });
 
   it('Guardrail não repete: job failed na hora, evento "guardrail"', async () => {
