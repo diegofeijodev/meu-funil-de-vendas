@@ -40,7 +40,7 @@ function setup(w: World = {}) {
   return svc;
 }
 
-const by = (r: { checks: { name: string; ok: boolean | null; detail: string }[] }, name: string) => r.checks.find((c) => c.name.startsWith(name))!;
+const by = (r: { checks: { name: string; ok: boolean | null; status?: string; detail: string }[] }, name: string) => r.checks.find((c) => c.name.startsWith(name))!;
 
 describe('AiDiagnosticsService — forma e autorização', () => {
   it('qualquer membro roda; estranho → 403 "Você não tem acesso a esta empresa."', async () => {
