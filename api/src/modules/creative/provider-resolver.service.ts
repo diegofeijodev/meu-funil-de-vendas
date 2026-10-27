@@ -122,7 +122,8 @@ export class ProviderResolverService {
     // Sem conexões próprias: créditos de IA do app (gateway, ignorando chaves do workspace).
     const app = createAiProvider(this.ai, workspaceId, 'gemini', { hasOwnKey: false, appOnly: true, label: 'Créditos de IA do app', owns });
     if (!list.length) return app;
-    list.push(app);
-    return chainProviders(list, (m) => this.logger.warn(m));
+    // Sem gateway no servidor, o app não é tentado no fim da cadeia: o erro final é o da conexão da empresa (não "nenhuma IA").
+    if (this.ai.hasGateway()) list.push(app);
+    return list.length === 1 ? list[0]! : chainProviders(list, (m) => this.logger.warn(m));
   }
 }

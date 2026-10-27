@@ -34,6 +34,14 @@ export const REF_FALLBACK_NOTE = 'Gateway sem suporte a referência; gerado sem 
 /** Respostas do gateway que significam "não sei editar com imagens" (cai para a geração só com texto). */
 const EDIT_UNSUPPORTED = new Set([400, 404, 415, 422]);
 
+/** Sem gateway do app e sem chave própria: nenhuma IA disponível (código `AI_NOT_CONFIGURED`). */
+export const NO_AI_MESSAGE = 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.';
+
+/** Chave própria que falhou (o motivo vai para a mensagem quando não há gateway para cair). */
+type KeyFailure = { vendor: AiVendor; error: unknown };
+const vendorName = (v: AiVendor) => (v === 'openai' ? 'da OpenAI' : 'do Gemini');
+const withPeriod = (t: string) => (/[.!?…]$/.test(t) ? t : `${t}.`);
+
 /** Extrai o primeiro objeto `{...}` do texto (a IA às vezes embrulha o JSON). Contrato do protótipo. */
 export function parseJsonLoose(text: string): any {
   const m = text.match(/\{[\s\S]*\}/);
@@ -89,11 +97,34 @@ export class AiService {
 
   // ------------------------------------------------------------------ gateway
 
+  /** O gateway do app é opcional: em produção cada empresa pode usar só as próprias chaves (OpenAI/Gemini). */
+  hasGateway(): boolean {
+    return !!(this.env.AI_GATEWAY_URL?.trim() && this.env.AI_GATEWAY_API_KEY?.trim());
+  }
+
   private gateway(): { base: string; key: string } {
     const base = this.env.AI_GATEWAY_URL?.replace(/\/$/, '');
     const key = this.env.AI_GATEWAY_API_KEY;
-    if (!base || !key) throw new AiError('IA do app não configurada.', 'AI_NOT_CONFIGURED');
+    if (!base || !key) throw new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED');
     return { base, key };
+  }
+
+  /**
+   * Antes de cair no gateway: se ele não existe, o erro final é o motivo REAL da chave da empresa ("Sua chave da OpenAI falhou:
+   * …"); sem chave nenhuma, "Nenhuma IA disponível…" (`AI_NOT_CONFIGURED`). Com gateway, segue para ele.
+   */
+  private requireGatewayOr(fails: KeyFailure[], keys: (string | null | undefined)[]): void {
+    if (this.hasGateway()) return;
+    if (!fails.length) throw new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED');
+    const parts = fails.map((f) => `Sua chave ${vendorName(f.vendor)} falhou: ${withPeriod(this.redact(f.error instanceof Error ? f.error.message : String(f.error), keys))}`);
+    throw new AiError(parts.join(' '));
+  }
+
+  /** A mensagem do provedor pode ecoar a chave: nada dela vai para a tela. */
+  private redact(text: string, keys: (string | null | undefined)[]): string {
+    let out = text;
+    for (const k of keys) if (k && k.length >= 6) out = out.replaceAll(k, '••••');
+    return out.replace(/\b(?:sk-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{10,})/g, '••••');
   }
 
   private async gw(path: string, init: RequestInit & { json?: unknown }): Promise<Response> {
@@ -119,37 +150,45 @@ export class AiService {
   async text(workspaceId: string, req: AiTextRequest): Promise<string> {
     const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
     const prompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
+    const fails: KeyFailure[] = [];
     if (o) {
-      try { return await this.openaiText(o, prompt, false); } catch (e) { this.warn('chave OpenAI', e); }
+      try { return await this.openaiText(o, prompt, false); } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
-      try { return await this.geminiText(g, [{ text: prompt }], false); } catch (e) { this.warn('chave Gemini', e); }
+      try { return await this.geminiText(g, [{ text: prompt }], false); } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
+    this.requireGatewayOr(fails, [o, g]);
     const j = await this.gatewayChat(this.model(req.model), prompt);
     return String(j.choices?.[0]?.message?.content ?? '');
   }
 
   /**
    * JSON com schema estrito (texto ou visão). O gateway usa `json_schema` strict; as chaves próprias
-   * usam modo JSON. Em todos os casos o retorno passa pelo parser `{...}` tolerante (contrato do protótipo).
+   * usam modo JSON (a OpenAI também com imagens, como `image_url` em data URI). Em todos os casos o retorno passa pelo
+   * parser `{...}` tolerante (contrato do protótipo).
    */
   async json<T = any>(workspaceId: string, req: AiJsonRequest): Promise<T> {
     const images = req.images ?? [];
     const keysHint = req.schema['properties'] ? Object.keys(req.schema['properties'] as object) : [];
     const full = `${req.prompt}\nDevolva SOMENTE JSON com estas chaves: ${JSON.stringify(keysHint)}.`;
-    const [o, g] = await Promise.all([
-      images.length ? Promise.resolve(null) : this.keys.get(workspaceId, 'openai'),
-      this.keys.get(workspaceId, 'gemini'),
-    ]);
+    const visionText = `${req.prompt}\nDevolva SOMENTE JSON.`;
+    const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
+    const fails: KeyFailure[] = [];
     if (o) {
-      try { return parseJsonLoose(await this.openaiText(o, full, true)); } catch (e) { this.warn('chave OpenAI', e); }
+      try {
+        const content = images.length
+          ? [...images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${b64(i.bytes)}` } })), { type: 'text', text: visionText }]
+          : full;
+        return parseJsonLoose(await this.openaiText(o, content, true));
+      } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
       try {
-        const parts = [...images.map((i) => ({ inlineData: { mimeType: i.mime, data: b64(i.bytes) } })), { text: images.length ? `${req.prompt}\nDevolva SOMENTE JSON.` : full }];
+        const parts = [...images.map((i) => ({ inlineData: { mimeType: i.mime, data: b64(i.bytes) } })), { text: images.length ? visionText : full }];
         return parseJsonLoose(await this.geminiText(g, parts, true));
-      } catch (e) { this.warn('chave Gemini', e); }
+      } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
+    this.requireGatewayOr(fails, [o, g]);
     return this.gatewayJson<T>(req);
   }
 
@@ -165,16 +204,17 @@ export class AiService {
   ): Promise<{ content: T; engine: string }> {
     const engine = req.engine ?? 'auto';
     const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
-    const fails: string[] = [];
+    const fails: KeyFailure[] = [];
     if ((engine === 'chatgpt' || engine === 'auto') && o) {
       try { return { content: parseJsonLoose(await this.openaiText(o, req.prompt, true)), engine: 'Sua conta OpenAI' }; }
-      catch (e) { fails.push(`OpenAI: ${e instanceof Error ? e.message : 'falhou'}`); }
+      catch (e) { fails.push({ vendor: 'openai', error: e }); }
     }
     if ((engine === 'gemini' || engine === 'auto') && g) {
       try { return { content: parseJsonLoose(await this.geminiText(g, [{ text: req.prompt }], true)), engine: 'Sua conta Gemini' }; }
-      catch (e) { fails.push(`Gemini: ${e instanceof Error ? e.message : 'falhou'}`); }
+      catch (e) { fails.push({ vendor: 'gemini', error: e }); }
     }
-    if (fails.length) this.logger.warn(`chaves próprias falharam: ${fails.join(' | ')}`);
+    if (fails.length) this.logger.warn(this.redact(`chaves próprias falharam: ${fails.map((f) => `${f.vendor}: ${f.error instanceof Error ? f.error.message : 'falhou'}`).join(' | ')}`, [o, g]));
+    this.requireGatewayOr(fails, [o, g]);
     return { content: await this.gatewayJson<T>(req), engine: fails.length ? 'IA do app (sua chave falhou)' : 'IA do app' };
   }
 
@@ -209,7 +249,8 @@ export class AiService {
     return parseJsonLoose(String(out));
   }
 
-  private async openaiText(key: string, prompt: string, asJson: boolean): Promise<string> {
+  /** Chat da OpenAI com a chave do cliente. `content` = texto ou partes (`text` + `image_url` em data URI, para visão). */
+  private async openaiText(key: string, prompt: string | unknown[], asJson: boolean): Promise<string> {
     const res = await this.http(`${OPENAI}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -241,6 +282,7 @@ export class AiService {
 
   async image(workspaceId: string, req: AiImageRequest): Promise<AiImageResult> {
     const userKey = req.appOnly ? null : await this.keys.get(workspaceId, req.vendor);
+    const fails: KeyFailure[] = [];
     if (userKey) {
       try {
         const r = req.vendor === 'openai' ? await this.openaiDirectImage(userKey, req) : await this.geminiDirectImage(userKey, req);
@@ -248,8 +290,10 @@ export class AiService {
       } catch (e) {
         if (req.strict) throw e;
         this.warn(`chave própria ${req.vendor} (usando o gateway do app)`, e);
+        fails.push({ vendor: req.vendor, error: e });
       }
     }
+    this.requireGatewayOr(fails, [userKey]);
     const r = req.vendor === 'openai' ? await this.gatewayOpenaiImage(req) : await this.gatewayGeminiImage(req);
     return { ...r, cost: req.vendor === 'openai' ? AI_COST.chatgptImage : AI_COST.geminiImage, note: r.note };
   }
@@ -358,6 +402,7 @@ export class AiService {
   async video(workspaceId: string, req: AiVideoRequest): Promise<AiVideoResult> {
     const deadline = Date.now() + (req.maxWaitMs ?? 6 * 60_000);
     const userKey = req.appOnly ? null : await this.keys.get(workspaceId, 'gemini');
+    const fails: KeyFailure[] = [];
     if (userKey) {
       try {
         const r = await this.geminiDirectVideo(userKey, req, deadline);
@@ -366,8 +411,10 @@ export class AiService {
       } catch (e) {
         if (req.strict || e instanceof AiDownloadBlockedError) throw e; // bloqueio (SSRF/teto): nunca cai em silêncio no gateway pago
         this.warn('vídeo pela chave Gemini (usando o gateway do app)', e);
+        fails.push({ vendor: 'gemini', error: e });
       }
     }
+    this.requireGatewayOr(fails, [userKey]);
     const r = await this.gatewayVideo(req, deadline);
     if ('pending' in r) return { status: 'pending', jobId: `veo:${r.pending}`, cost: AI_COST.video, note: 'Vídeo pelo Veo do app, ainda gerando' };
     return { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId: r.id, cost: AI_COST.video, note: 'Vídeo pelo Veo do app' };
@@ -552,6 +599,6 @@ export class AiService {
   }
 
   private warn(what: string, e: unknown) {
-    this.logger.warn(`${what} falhou: ${e instanceof Error ? e.message : e}`);
+    this.logger.warn(`${what} falhou: ${this.redact(e instanceof Error ? e.message : String(e), [])}`);
   }
 }

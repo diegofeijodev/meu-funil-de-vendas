@@ -63,8 +63,20 @@ describe('SetupService.status', () => {
     expect(items.map((i) => i.group)).toEqual([...items.map((i) => i.group)].sort((a, b) => ['Começo', 'Conexões', 'CRM', 'Agendadores'].indexOf(a) - ['Começo', 'Conexões', 'CRM', 'Agendadores'].indexOf(b)));
   });
 
-  it('IA do app ausente → erro', async () => {
+  it('IA do app ausente e sem chave própria → erro com o que fazer; contas próprias viram passo obrigatório', async () => {
     const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' } }).svc.status(USER, WS, NOW);
+    expect(byKey(items, 'app-ai')).toMatchObject({ status: 'error', required: true, detail: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.' });
+    expect(byKey(items, 'own-ai')).toMatchObject({ status: 'pending', required: true });
+  });
+
+  it('sem gateway mas com chave própria (OpenAI ou Gemini): IA do app NÃO é erro — fica opcional com o motivo', async () => {
+    for (const aiKeys of [{ openai: 'sk' }, { gemini: 'AIza' }]) {
+      const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' }, aiKeys }).svc.status(USER, WS, NOW);
+      expect(byKey(items, 'app-ai')).toMatchObject({ status: 'optional', required: false, detail: 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).' });
+      expect(byKey(items, 'own-ai')).toMatchObject({ status: 'ok', required: true });
+    }
+    // Só Higgsfield (imagem/vídeo) não substitui a IA de texto.
+    const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' }, mcp: true }).svc.status(USER, WS, NOW);
     expect(byKey(items, 'app-ai').status).toBe('error');
   });
 

@@ -68,21 +68,31 @@ export class SetupService {
       link: '/campaigns', required: false,
     });
 
-    // Conexões
-    const appAi = !!(this.env.AI_GATEWAY_URL && this.env.AI_GATEWAY_API_KEY);
-    add({
-      key: 'app-ai', group: 'Conexões', label: 'IA do app', status: appAi ? 'ok' : 'error',
-      detail: appAi ? 'Disponível para estratégia, copy, imagens e SDR.' : 'AI_GATEWAY_URL / AI_GATEWAY_API_KEY não configuradas no servidor.',
-      link: '/integrations', required: true,
-    });
+    // Conexões. O gateway do app é opcional: sem ele, as chaves da empresa (OpenAI/Gemini) fazem texto, imagem e vídeo.
+    const appAi = !!(this.env.AI_GATEWAY_URL?.trim() && this.env.AI_GATEWAY_API_KEY?.trim());
     const [oKey, gKey, higgs, canva] = await Promise.all([
       this.aiKeys.get(ws, 'openai'), this.aiKeys.get(ws, 'gemini'), this.higgsfieldConnected(ws), this.canvaConnected(ws),
     ]);
+    const ownText = !!(oKey || gKey); // Higgsfield só gera imagem/vídeo: não substitui a IA de texto
+    add({
+      key: 'app-ai', group: 'Conexões', label: 'IA do app',
+      status: appAi ? 'ok' : ownText ? 'optional' : 'error',
+      detail: appAi
+        ? 'Disponível para estratégia, copy, imagens e SDR.'
+        : ownText
+          ? 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).'
+          : 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.',
+      link: '/integrations', required: appAi || !ownText,
+    });
     const own = [oKey && 'OpenAI', gKey && 'Gemini', higgs && 'Higgsfield'].filter(Boolean);
     add({
-      key: 'own-ai', group: 'Conexões', label: 'Contas de IA próprias ou da agência', status: own.length ? 'ok' : 'optional',
-      detail: own.length ? `Conectadas: ${own.join(', ')}.` : 'Opcional: conecte Higgsfield, OpenAI ou Gemini para gerar com a sua conta (sem gastar créditos do app).',
-      link: '/integrations', required: false,
+      key: 'own-ai', group: 'Conexões', label: 'Contas de IA próprias ou da agência', status: own.length ? 'ok' : appAi ? 'optional' : 'pending',
+      detail: own.length
+        ? `Conectadas: ${own.join(', ')}.`
+        : appAi
+          ? 'Opcional: conecte Higgsfield, OpenAI ou Gemini para gerar com a sua conta (sem gastar créditos do app).'
+          : 'Conecte a chave da OpenAI ou do Gemini: é ela que a IA usa para estratégia, copy e imagens.',
+      link: '/integrations', required: !appAi,
     });
     add({
       key: 'canva', group: 'Conexões', label: 'Canva', status: canva ? 'ok' : 'optional',

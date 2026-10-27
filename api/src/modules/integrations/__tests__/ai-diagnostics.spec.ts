@@ -53,16 +53,31 @@ describe('AiDiagnosticsService — forma e autorização', () => {
     expect(Object.keys(r).sort()).toEqual(['at', 'checks']);
     expect(new Date(r.at).toISOString()).toBe(r.at);
     expect(r.checks.map((c) => c.name)).toEqual(['IA do app (texto · gpt-4o)', 'Chave OpenAI', 'Chave Gemini', 'Canva', 'Higgsfield']);
-    for (const c of r.checks) expect(Object.keys(c).sort()).toEqual(['detail', 'name', 'ok']);
+    for (const c of r.checks) expect(Object.keys(c).sort()).toEqual(['detail', 'name', 'ok', 'status']);
     expect(r.checks.map((c) => c.ok)).toEqual([true, null, null, null, null]);
+    expect(r.checks.map((c) => c.status)).toEqual(['ok', 'optional', 'optional', 'optional', 'optional']);
     expect(by(r, 'Canva').detail).toBe('Não conectado (opcional).');
   });
 });
 
 describe('AiDiagnosticsService — cada verificação', () => {
-  it('gateway não configurado / fora do ar / resposta estranha', async () => {
-    const off = await setup({ env: { AI_GATEWAY_URL: undefined } }).diagnose(OWNER, WS_A, false);
-    expect(by(off, 'IA do app')).toMatchObject({ name: 'IA do app (texto)', ok: false });
+  it('gateway não configurado: com chave própria válida fica "Não usada" (neutro, no topo); sem chave nenhuma falha com o aviso', async () => {
+    const noGw = { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' };
+    const withKeys = await setup({ env: noGw, openai: 'sk-x', gemini: 'AIza' }).diagnose(OWNER, WS_A, false);
+    expect(withKeys.checks[0]).toEqual({ name: 'IA do app (texto)', ok: null, status: 'skip', detail: 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).' });
+    // Chave sem o modelo de imagem (ok:false na linha dela) ainda serve para texto: a IA do app continua "Não usada".
+    const partial = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-4o-mini'] }).diagnose(OWNER, WS_A, false);
+    expect(by(partial, 'Chave OpenAI').ok).toBe(false);
+    expect(by(partial, 'IA do app')).toMatchObject({ ok: null, status: 'skip' });
+    const none = await setup({ env: noGw }).diagnose(OWNER, WS_A, false);
+    expect(none.checks[0]).toEqual({ name: 'IA do app (texto)', ok: false, status: 'fail', detail: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini abaixo.' });
+    const bad = await setup({ env: noGw, openai: 'sk-x', openaiStatus: 401 }).diagnose(OWNER, WS_A, false);
+    expect(by(bad, 'IA do app')).toMatchObject({ ok: false, status: 'fail', detail: expect.stringMatching(/^Nenhuma IA disponível: as chaves da empresa falharam/) });
+    // Teste de imagem com créditos do app também fica neutro (nenhuma chamada ao gateway).
+    expect((await setup({ env: noGw, gemini: 'AIza', image: 'erro' }).diagnose(OWNER, WS_A, true)).checks.at(-1)).toMatchObject({ ok: null, status: 'skip' });
+  });
+
+  it('gateway fora do ar / resposta estranha', async () => {
     expect(by(await setup({ ping: 'erro' }).diagnose(OWNER, WS_A, false), 'IA do app')).toMatchObject({ ok: false, detail: 'Gateway fora do ar' });
     expect(by(await setup({ ping: 'bad' }).diagnose(OWNER, WS_A, false), 'IA do app')).toMatchObject({ ok: false, detail: 'Resposta inesperada.' });
   });

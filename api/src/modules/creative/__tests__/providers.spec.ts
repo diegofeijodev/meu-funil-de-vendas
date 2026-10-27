@@ -218,10 +218,10 @@ describe('cadeia de provedores', () => {
 });
 
 describe('ProviderResolverService', () => {
-  function build(opts: { openai?: boolean; gemini?: boolean; higgs?: boolean; ownsJob?: boolean } = {}) {
+  function build(opts: { openai?: boolean; gemini?: boolean; higgs?: boolean; ownsJob?: boolean; gateway?: boolean } = {}) {
     const ai = {
       image: jest.fn(async (_ws: string, r: any) => ({ bytes: png, mime: 'image/png', ext: 'png', cost: 1, note: null, ...r.__x })),
-      video: jest.fn(), videoStatus: jest.fn(),
+      video: jest.fn(), videoStatus: jest.fn(), hasGateway: jest.fn(() => opts.gateway !== false),
     };
     const keys = { get: jest.fn(async (_ws: string, v: string) => ((v === 'openai' && opts.openai) || (v === 'gemini' && opts.gemini) ? 'chave' : null)) };
     const mcp = {
@@ -263,6 +263,17 @@ describe('ProviderResolverService', () => {
     const log = providerLog(p);
     expect(log).toContain('ChatGPT (sua conta OpenAI): sem crédito → tentando o próximo');
     expect(log).toContain('Higgsfield (MCP):');
+  });
+
+  it('sem gateway no servidor: a cadeia para nas conexões da empresa e o erro final é o da chave (não "nenhuma IA")', async () => {
+    const { svc, ai } = build({ openai: true, gemini: true, gateway: false });
+    const vendors: string[] = [];
+    ai.image.mockImplementation(async (_ws: string, r: any) => { vendors.push(`${r.vendor}${r.appOnly ? '(app)' : ''}`); throw new AiError(`${r.vendor} sem saldo`); });
+    const p = await svc.resolve('ws', 'auto');
+    expect(await status(p.generateImage(req))).toBe('502:gemini sem saldo');
+    expect(vendors).toEqual(['openai', 'gemini']);
+    const one = await build({ gemini: true, gateway: false }).svc.resolve('ws', 'auto');
+    expect([one.id, one.label]).toEqual(['gemini', 'Gemini (sua conta Google)']);
   });
 
   it('vínculo com o workspace: getGenerationStatus/getAsset de um id que não é de job do workspace → failed/null, sem tocar o provedor', async () => {

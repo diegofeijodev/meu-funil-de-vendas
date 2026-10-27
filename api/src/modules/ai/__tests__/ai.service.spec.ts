@@ -83,9 +83,47 @@ describe('AiService.json', () => {
     expect(f.calls.map((c) => new URL(c.url).host)).toEqual(['api.openai.com', 'generativelanguage.googleapis.com', 'gw.test']);
   });
 
-  it('sem chave própria e sem gateway → "IA do app não configurada." (502)', async () => {
-    const ai = setup(baseEnv, {}, fakeFetch([]).fn);
-    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject({ status: 502, response: { code: 'AI_NOT_CONFIGURED', message: 'IA do app não configurada.' } });
+  it('sem chave própria e sem gateway → "Nenhuma IA disponível…" (502 AI_NOT_CONFIGURED), sem chamar ninguém', async () => {
+    const f = fakeFetch([]);
+    const ai = setup(baseEnv, {}, f.fn);
+    const none = { status: 502, response: { code: 'AI_NOT_CONFIGURED', message: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.' } };
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(none);
+    await expect(ai.text(WS, { prompt: 'P' })).rejects.toMatchObject(none);
+    await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(none);
+    await expect(ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).rejects.toMatchObject(none);
+    await expect(ai.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject(none);
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it('sem gateway: chave própria que falha devolve o motivo REAL da chave (não "IA do app não configurada")', async () => {
+    const f = fakeFetch([
+      ['api.openai.com', () => new Response('no', { status: 401 })],
+      ['generativelanguage', () => new Response('no', { status: 429 })],
+    ]);
+    const ai = setup(baseEnv, { openai: 'sk-cliente-0123456789', gemini: 'gk-cliente' }, f.fn);
+    const both = {
+      status: 502,
+      response: {
+        code: 'AI_ERROR',
+        message: 'Sua chave da OpenAI falhou: Chave da OpenAI inválida ou sem permissão. Sua chave do Gemini falhou: Sua conta Google Gemini está sem créditos ou atingiu o limite.',
+      },
+    };
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(both);
+    await expect(ai.text(WS, { prompt: 'P' })).rejects.toMatchObject(both);
+    await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(both);
+    expect(f.calls.some((c) => c.url.includes('gw.test'))).toBe(false);
+    // Só a OpenAI (motor escolhido) → só o motivo dela.
+    await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n', engine: 'chatgpt' })).rejects.toMatchObject({
+      response: { message: 'Sua chave da OpenAI falhou: Chave da OpenAI inválida ou sem permissão.' },
+    });
+  });
+
+  it('sem gateway: a mensagem do provedor que ecoa a chave sai sem a chave', async () => {
+    const key = 'sk-cliente-ABCDEF0123456789';
+    const f = fakeFetch([['api.openai.com', () => new Response(`Incorrect API key provided: ${key}`, { status: 500 })]]);
+    const e = await setup(baseEnv, { openai: key }, f.fn).json(WS, { prompt: 'P', schema, name: 'n' }).catch((x) => x);
+    expect(e.getResponse().message).toMatch(/^Sua chave da OpenAI falhou: OpenAI respondeu 500: Incorrect API key provided: ••••\.$/);
+    expect(e.getResponse().message).not.toContain('ABCDEF');
   });
 
   it('gateway 402/429 → mensagens do protótipo', async () => {
@@ -95,14 +133,46 @@ describe('AiService.json', () => {
     }
   });
 
-  it('visão: imagens vão como image_url (data URL) no gateway e a OpenAI própria é ignorada', async () => {
+  it('visão sem chave própria: imagens vão como image_url (data URL) no gateway', async () => {
     const f = fakeFetch([['gw.test', () => chat('{"a":"viu"}')]]);
-    const ai = setup(gwEnv, { openai: 'sk' }, f.fn);
+    const ai = setup(gwEnv, {}, f.fn);
     const out = await ai.vision(WS, { prompt: 'descreva', schema, name: 'v', images: [{ bytes: Buffer.from('IMG'), mime: 'image/png' }] });
     expect(out).toEqual({ a: 'viu' });
     const content = JSON.parse(String(f.calls[0]!.init!.body)).messages[0].content;
     expect(content[0]).toEqual({ type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from('IMG').toString('base64')}` } });
     expect(content[1]).toEqual({ type: 'text', text: 'descreva' });
+  });
+
+  it('visão com chave OpenAI própria: chat completions em modo JSON com as imagens em data URI; gateway não é chamado', async () => {
+    const f = fakeFetch([['api.openai.com/v1/chat/completions', () => chat('{"a":"byo"}')]]);
+    const ai = setup(baseEnv, { openai: 'sk-cliente', gemini: 'gk' }, f.fn);
+    const imgs = [{ bytes: Buffer.from('IMG1'), mime: 'image/png' }, { bytes: Buffer.from('IMG2'), mime: 'image/jpeg' }];
+    expect(await ai.vision(WS, { prompt: 'descreva', schema, name: 'v', images: imgs })).toEqual({ a: 'byo' });
+    expect(f.calls).toHaveLength(1);
+    expect((f.calls[0]!.init!.headers as any).Authorization).toBe('Bearer sk-cliente');
+    const body = JSON.parse(String(f.calls[0]!.init!.body));
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from('IMG1').toString('base64')}` } },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${Buffer.from('IMG2').toString('base64')}` } },
+          { type: 'text', text: 'descreva\nDevolva SOMENTE JSON.' },
+        ],
+      },
+    ]);
+  });
+
+  it('visão: OpenAI própria falha → Gemini própria (inlineData) → só então o gateway', async () => {
+    const f = fakeFetch([
+      ['api.openai.com', () => new Response('x', { status: 500 })],
+      ['generativelanguage', () => json({ candidates: [{ content: { parts: [{ text: '{"a":"gem"}' }] } }] })],
+    ]);
+    const ai = setup(gwEnv, { openai: 'sk', gemini: 'gk' }, f.fn);
+    expect(await ai.vision(WS, { prompt: 'd', schema, name: 'v', images: [{ bytes: Buffer.from('I'), mime: 'image/png' }] })).toEqual({ a: 'gem' });
+    expect(f.calls.map((c) => new URL(c.url).host)).toEqual(['api.openai.com', 'generativelanguage.googleapis.com']);
+    expect(JSON.parse(String(f.calls[1]!.init!.body)).contents[0].parts[0]).toEqual({ inlineData: { mimeType: 'image/png', data: Buffer.from('I').toString('base64') } });
   });
 });
 
@@ -144,6 +214,17 @@ describe('AiService.image / video / text', () => {
     expect(r).toMatchObject({ status: 'ready', mime: 'video/mp4', cost: 6 });
     expect(r.status === 'ready' && r.bytes.toString()).toBe('MP4');
     expect(JSON.parse(String(f.calls[0]!.init!.body)).model).toBe('veo-real');
+  });
+
+  it('sem gateway: imagem/vídeo pela chave própria que falha devolvem o motivo da chave', async () => {
+    const o = setup(baseEnv, { openai: 'sk' }, fakeFetch([['api.openai.com', () => new Response('x', { status: 429 })]]).fn);
+    await expect(o.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).rejects.toMatchObject({
+      response: { code: 'AI_ERROR', message: 'Sua chave da OpenAI falhou: Sua conta OpenAI está sem créditos ou atingiu o limite.' },
+    });
+    const g = setup(baseEnv, { gemini: 'gk' }, fakeFetch([['generativelanguage', () => new Response('x', { status: 403 })]]).fn);
+    await expect(g.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject({
+      response: { message: 'Sua chave do Gemini falhou: Chave da Google Gemini inválida ou sem permissão.' },
+    });
   });
 
   it('texto livre pelo gateway', async () => {

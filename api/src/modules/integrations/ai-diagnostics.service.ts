@@ -11,10 +11,20 @@ import { errMessage } from '../media/user-error';
 
 export interface DiagnosticCheck {
   name: string;
-  /** `null` = opcional / não conectado. */
+  /** `null` = opcional / não conectado / não usado (compatibilidade: o selo vem de `status`). */
   ok: boolean | null;
+  /** `optional` = não conectado (opcional); `skip` = não usado nesta instalação (ex.: sem gateway do app). */
+  status: 'ok' | 'fail' | 'optional' | 'skip';
   detail: string;
 }
+
+/** Sem gateway no servidor, as chaves da empresa fazem tudo: a linha da IA do app fica neutra ("Não usada"). */
+export const GATEWAY_UNUSED = 'Não configurada no servidor — o sistema usa as chaves da empresa (OpenAI/Gemini).';
+export const NO_AI_DIAGNOSTIC = 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini abaixo.';
+const KEYS_FAILED_NO_GATEWAY = 'Nenhuma IA disponível: as chaves da empresa falharam (veja abaixo) e o servidor não tem IA própria.';
+
+type Check = Omit<DiagnosticCheck, 'status'> & { status?: DiagnosticCheck['status'] };
+const withStatus = (c: Check): DiagnosticCheck => ({ ...c, status: c.status ?? (c.ok === true ? 'ok' : c.ok === false ? 'fail' : 'optional') });
 
 type EnvSlice = Pick<
   Env,
@@ -38,7 +48,8 @@ const msg = (e: unknown) => (e instanceof HttpException ? errMessage(e) : e inst
 
 /**
  * `diagnoseAi` (`ai-diagnostics.functions.ts`): confere de verdade o gateway do app, as chaves BYO, o Canva e o Higgsfield.
- * Adaptações à troca de infra (mesmo formato `{ checks:[{name,ok,detail}], at }`):
+ * Adaptações à troca de infra (formato `{ checks:[{name,ok,status,detail}], at }`; `status` é novo — o protótipo só tinha `ok`):
+ *  - o gateway é opcional: sem ele e com alguma chave própria válida, "IA do app" fica `skip` ("Não usada"), não "Falhou";
  *  - "IA do app" testa `AI_GATEWAY_URL` + `AI_GATEWAY_API_KEY` (era `LOVABLE_API_KEY`) e mostra o modelo configurado (era `openai/gpt-6-astra`);
  *  - os modelos exigidos de cada chave BYO são os configurados em `AI_MODEL_*`/`AI_BYO_*` (o protótipo fixava ids do Lovable);
  *  - o teste de imagem usa o gateway do app (`appOnly`), não o provedor Lovable.
@@ -61,26 +72,18 @@ export class AiDiagnosticsService {
 
   async diagnose(userId: string, workspaceId: string, withImage: boolean): Promise<{ checks: DiagnosticCheck[]; at: string }> {
     await this.access.require(userId, workspaceId, 'read');
-    const checks: DiagnosticCheck[] = [];
-    const run = async (name: string, fn: () => Promise<DiagnosticCheck | DiagnosticCheck[]>) => {
+    const checks: Check[] = [];
+    const run = async (name: string, fn: () => Promise<Check | Check[]>, into: Check[] = checks) => {
       try {
         const r = await fn();
-        checks.push(...(Array.isArray(r) ? r : [r]));
+        into.push(...(Array.isArray(r) ? r : [r]));
       } catch (e) {
-        checks.push({ name, ok: false, detail: msg(e) });
+        into.push({ name, ok: false, detail: msg(e) });
       }
     };
-
-    // IA do app (texto) — estrategista, copy, diretor de arte e SDR.
-    if (!this.env.AI_GATEWAY_URL || !this.env.AI_GATEWAY_API_KEY) {
-      checks.push({ name: 'IA do app (texto)', ok: false, detail: 'AI_GATEWAY_URL e AI_GATEWAY_API_KEY não configuradas no servidor.' });
-    } else {
-      const label = `IA do app (texto · ${this.ai.model()})`;
-      await run(label, async () => {
-        const r = await this.ai.pingGateway();
-        return { name: label, ok: r.ok, detail: r.ok ? 'Respondendo.' : 'Resposta inesperada.' };
-      });
-    }
+    const gateway = !!(this.env.AI_GATEWAY_URL?.trim() && this.env.AI_GATEWAY_API_KEY?.trim());
+    /** Chave própria aceita pelo provedor (a lista de modelos respondeu): serve para texto mesmo sem algum modelo de imagem/vídeo. */
+    let validKey = false;
 
     const [openai, gemini] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
 
@@ -89,6 +92,7 @@ export class AiDiagnosticsService {
       await run('Chave OpenAI', async () => {
         const r = await this.get(`${this.keys.baseUrl('openai')}/models`, { Authorization: `Bearer ${openai}` });
         if (!r.ok) throw new Error(`OpenAI respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
+        validKey = true;
         const ids = new Set(((await r.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? []);
         const need = [this.env.AI_MODEL_IMAGE_OPENAI, this.env.AI_BYO_OPENAI_TEXT_MODEL, 'whisper-1'];
         const missing = need.filter((m) => !ids.has(m));
@@ -105,6 +109,7 @@ export class AiDiagnosticsService {
       await run('Chave Gemini', async () => {
         const r = await this.get(`${this.keys.baseUrl('gemini')}/models?pageSize=1000`, { 'x-goog-api-key': gemini });
         if (!r.ok) throw new Error(`Gemini respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
+        validKey = true;
         const names = ((await r.json()) as { models?: { name: string }[] }).models?.map((m) => m.name.replace('models/', '')) ?? [];
         const want: [string, string][] = [
           [this.env.AI_MODEL_IMAGE_GEMINI, 'imagem'],
@@ -119,6 +124,24 @@ export class AiDiagnosticsService {
         };
       });
     }
+
+    // IA do app (texto) — estrategista, copy, diretor de arte e SDR. Vai no TOPO da lista, mas depende das chaves (testadas acima):
+    // o gateway é opcional; sem ele, as chaves da empresa fazem tudo e a linha fica neutra.
+    const appAi: Check[] = [];
+    if (!gateway) {
+      appAi.push(
+        validKey
+          ? { name: 'IA do app (texto)', ok: null, status: 'skip', detail: GATEWAY_UNUSED }
+          : { name: 'IA do app (texto)', ok: false, detail: openai || gemini ? KEYS_FAILED_NO_GATEWAY : NO_AI_DIAGNOSTIC },
+      );
+    } else {
+      const label = `IA do app (texto · ${this.ai.model()})`;
+      await run(label, async () => {
+        const r = await this.ai.pingGateway();
+        return { name: label, ok: r.ok, detail: r.ok ? 'Respondendo.' : 'Resposta inesperada.' };
+      }, appAi);
+    }
+    checks.unshift(...appAi);
 
     await run('Canva', async () => {
       const cs = await this.canva.status(userId, workspaceId);
@@ -144,7 +167,9 @@ export class AiDiagnosticsService {
       };
     });
 
-    if (withImage) {
+    if (withImage && !gateway) {
+      checks.push({ name: 'Imagem com créditos do app', ok: null, status: 'skip', detail: 'Não configurada no servidor — as imagens usam as chaves da empresa (OpenAI/Gemini).' });
+    } else if (withImage) {
       const label = `Imagem com créditos do app (${this.ai.model('google/gemini-3.1-flash-image')})`;
       await run(label, async () => {
         const r = await this.ai.image(workspaceId, { prompt: 'A simple red apple on a white table, studio photo.', aspectRatio: '1:1', vendor: 'gemini', appOnly: true });
@@ -154,6 +179,6 @@ export class AiDiagnosticsService {
     // O corpo de erro de um provedor pode ecoar a chave (ou parte dela): nada disso sai daqui.
     const secrets = [openai, gemini, this.env.AI_GATEWAY_API_KEY];
     for (const c of checks) c.detail = redactSecrets(c.detail, secrets);
-    return { checks, at: new Date().toISOString() };
+    return { checks: checks.map(withStatus), at: new Date().toISOString() };
   }
 }

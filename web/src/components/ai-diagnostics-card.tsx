@@ -7,15 +7,25 @@ import { Activity } from "lucide-react";
 import { Section, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { useWorkspace } from "@/lib/workspace";
-import { diagnoseAi } from "@/lib/ai-diagnostics.functions";
+import { diagnoseAi, type DiagnosticCheck } from "@/lib/ai-diagnostics.functions";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+
+/** Selo da verificação: "Não usada" (neutro) quando a instalação não usa aquilo (ex.: sem IA própria no servidor). */
+const pill = (c: DiagnosticCheck): { status: string; label: string } =>
+  c.status === "skip"
+    ? { status: "disconnected", label: "Não usada" }
+    : c.ok === null
+      ? { status: "disconnected", label: "Opcional" }
+      : c.ok
+        ? { status: "connected", label: "OK" }
+        : { status: "failed", label: "Falhou" };
 
 /** 4.5 Testa de verdade as IAs e conexões desta empresa e mostra o erro real de cada uma. */
 export function AiDiagnosticsCard() {
   const { workspaceId } = useWorkspace();
   const run = useServerFn(diagnoseAi);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ checks: { name: string; ok: boolean | null; detail: string }[]; at: string } | null>(null);
+  const [result, setResult] = useState<{ checks: DiagnosticCheck[]; at: string } | null>(null);
   const go = async (withImage: boolean) => {
     if (!workspaceId) return;
     setBusy(true);
@@ -52,7 +62,7 @@ export function AiDiagnosticsCard() {
                 <p className="font-medium">{c.name}</p>
                 <p className="text-xs text-muted-foreground">{c.detail}</p>
               </div>
-              <StatusPill status={c.ok === null ? "disconnected" : c.ok ? "connected" : "error"} label={c.ok === null ? "Opcional" : c.ok ? "OK" : "Falhou"} />
+              <StatusPill {...pill(c)} />
             </div>
           ))}
           <p className="text-xs text-muted-foreground">Testado em {new Date(result.at).toLocaleString("pt-BR")}.</p>
