@@ -62,7 +62,8 @@ export class ApprovalsService {
         if (req.entity_type === 'campaign') {
           const status = decision === 'approved' ? 'approved' : 'draft';
           const c = await tx.campaigns.findFirst({ where: { id: req.entity_id, workspace_id: req.workspace_id }, select: { status: true } });
-          if (c) {
+          // Campanha encerrada continua encerrada (aprovar um pedido antigo não a reabre).
+          if (c && c.status !== 'finished') {
             await this.guards.assertCanSetCampaignStatus(userId, req.workspace_id, c.status, status);
             await tx.campaigns.update({ where: { id: req.entity_id }, data: { status } });
           }

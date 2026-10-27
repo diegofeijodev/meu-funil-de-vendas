@@ -31,6 +31,15 @@ describe('ApprovalsService.decide', () => {
     expect(w.logs.at(-1)![2]).toBe('approval.rejected');
   });
 
+  it('campanha encerrada continua encerrada ao decidir um pedido antigo (aprovar não a reabre)', async () => {
+    const { w, svc } = setup();
+    const { campaign, req } = await pendingCampaignRequest(w);
+    w.t.campaigns.rows.find((c) => c.id === campaign.id)!.status = 'finished';
+    expect(await svc.decide(OWNER, req.id, 'approved')).toEqual({ ok: true });
+    expect(w.t.approval_requests.rows[0]!.status).toBe('approved');
+    expect(w.t.campaigns.rows.find((c) => c.id === campaign.id)!.status).toBe('finished');
+  });
+
   it('pedido de criativo: o criativo recebe o status da decisão', async () => {
     const { w, svc } = setup();
     const cr = await w.t.creatives.create({ data: { workspace_id: WS_A, title: 'C', status: 'ready' } });

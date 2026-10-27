@@ -180,6 +180,7 @@ export class StrategistService {
   /** 1.3 Cria o plano de conteúdo do Instagram a partir da estratégia (pilares, pesos, temas, frequência). */
   async createIgPlan(userId: string, campaignId: string) {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
+    if (c.status === 'finished') throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Campanha encerrada.' });
     const s = await this.currentStrategy(c.workspace_id, c.id);
     if (!s) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Gere a estratégia da campanha primeiro.' });
     const plan = s.plano_instagram;
@@ -197,6 +198,8 @@ export class StrategistService {
       data: {
         workspace_id: c.workspace_id,
         brand_id: c.brand_id,
+        // Origem: encerrar a campanha cancela os posts não publicados deste plano.
+        campaign_id: c.id,
         name: `Instagram · ${c.name}`,
         objective: s.objetivo_smart || s.big_idea,
         tone_of_voice: brand?.tone_of_voice ?? null,

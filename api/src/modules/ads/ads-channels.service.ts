@@ -16,6 +16,7 @@ import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from './campaign-end.service';
 
 /** Reserva de criação vencida (processo morreu no meio): outra tentativa pode assumir. */
 const CREATE_LEASE_MS = 10 * 60 * 1000;
@@ -153,6 +154,7 @@ export class AdsChannelsService {
     const base = await this.guards.resolveCampaign(userId, campaignId, 'write');
     const c = await this.prisma.campaigns.findFirst({ where: { id: base.id, workspace_id: base.workspace_id }, include: { brand: { select: { name: true, logo_url: true } } } });
     if (!c) throw notFound('Campanha não encontrada.');
+    if (c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     if (c.status !== 'approved' && c.status !== 'active') throw new UserError('A campanha precisa ser aprovada antes de ir para outros canais.');
     if (!c.landing_url) throw new UserError('Preencha a página de destino da campanha.');
     const ws = c.workspace_id;
@@ -231,6 +233,7 @@ export class AdsChannelsService {
     const base = await this.guards.resolveCampaign(userId, campaignId, active ? 'manage' : 'write');
     const c = await this.prisma.campaigns.findFirst({ where: { id: base.id, workspace_id: base.workspace_id } });
     if (!c) throw notFound('Campanha não encontrada.');
+    if (active && c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     if (channel === 'google') {
       if (!c.google_campaign_id) throw new UserError('Sem campanha no Google Ads.');
       await guarded(() => this.google.setStatus(c.workspace_id, c.google_campaign_id!, active ? 'ENABLED' : 'PAUSED'));

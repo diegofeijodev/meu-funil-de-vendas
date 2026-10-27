@@ -161,6 +161,26 @@ export async function requestCampaignApproval(ws: string, campaignId: string): P
   await api.post(`${base(ws)}/${campaignId}/request-approval`, {});
 }
 
+const endResult = z
+  .object({
+    ok: z.literal(true),
+    status: z.string(),
+    alreadyEnded: z.boolean(),
+    channels: z.array(z.object({ channel: z.string(), ok: z.boolean(), message: z.string() })),
+    instagram: z.object({ cancelledPosts: num, cancelledJobs: num, publishingNow: num }).passthrough(),
+  })
+  .passthrough();
+export type EndCampaignResult = z.infer<typeof endResult>;
+
+/**
+ * Encerra a campanha (owner|admin): pausa em todos os canais em que foi publicada, cancela os posts agendados do Instagram que
+ * vieram dela e a marca como "Encerrada". O resultado diz, por canal, o que aconteceu.
+ */
+export async function endCampaign(ws: string, campaignId: string): Promise<EndCampaignResult> {
+  const { data } = await api.post(`${base(ws)}/${campaignId}/end`, {});
+  return endResult.parse(data);
+}
+
 /** Define a página de destino (campanhas criadas sem URL ficavam presas ao publicar na Meta). */
 export async function setCampaignLandingUrl(ws: string, campaignId: string, landingUrl: string): Promise<void> {
   await api.patch(`${base(ws)}/${campaignId}/landing-url`, { landing_url: landingUrl });

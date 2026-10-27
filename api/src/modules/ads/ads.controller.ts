@@ -4,9 +4,10 @@ import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { PrismaService } from '../../common/database/prisma.service';
-import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
+import { RequireAccess, WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { AdsChannelsService } from './ads-channels.service';
 import { AdsOpsService } from './ads-ops.service';
+import { CampaignEndService } from './campaign-end.service';
 import {
   ChannelDto, ChannelLoginUrlDto, CreateExternalCampaignDto, DecideRecommendationDto, GenerateRecommendationsDto, LinkExternalCampaignDto, MetaCampaignDto,
   MetaInsightsDto, MetaLoginUrlDto, MetaSaveAppDto, MetaSaveAssetsDto, MetaSaveCredentialsDto, MetaSetStatusDto, SaveCampaignAdsSettingsDto, SaveChannelAppDto,
@@ -136,5 +137,24 @@ export class AdsResourcesController {
     await this.ops.recoverStaleApplying(ws).catch(() => 0);
     const rows = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws }, orderBy: { created_at: 'desc' }, take: 200, include: { campaign: { select: { name: true } } } });
     return rows.map(({ campaign, ...r }) => ({ ...r, campaigns: campaign }));
+  }
+}
+
+/**
+ * Encerrar campanha: pausa em todos os canais, cancela os posts do Instagram não publicados que vieram dela e marca "Encerrada".
+ * Fica aqui (e não no controller de campanhas) porque usa os clientes da Meta/Google/TikTok; o caminho segue o das campanhas.
+ */
+@ApiTags('Campaigns')
+@ApiBearerAuth()
+@UseGuards(WorkspaceAccessGuard)
+@Controller('v1/workspaces/:workspaceId/campaigns')
+export class CampaignEndController {
+  constructor(private readonly ending: CampaignEndService) {}
+
+  @Post(':id/end')
+  @HttpCode(200)
+  @RequireAccess('manage')
+  end(@CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Param('id', ParseUuidPipe) id: string) {
+    return this.ending.end(user.id, ws, id);
   }
 }

@@ -279,6 +279,7 @@ model campaigns {
   social_posts             social_posts[]             @relation("social_posts_campaign_id")
   publishing_jobs          publishing_jobs[]          @relation("publishing_jobs_campaign_id")
   ig_auto_runs             ig_auto_runs[]             @relation("ig_auto_runs_campaign_id")
+  ig_content_plans         ig_content_plans[]         @relation("ig_content_plans_campaign_id")
   meta_campaigns           meta_campaigns[]           @relation("meta_campaigns_campaign_id")
   performance_daily        performance_daily[]        @relation("performance_daily_campaign_id")
   conversions              conversions[]              @relation("conversions_campaign_id")
@@ -544,8 +545,11 @@ model ig_content_plans {
   pillar_weights      Json                  @default("{}") @db.JsonB
   last_autopilot_at   DateTime?             @db.Timestamptz(6)
   posting_days        Int[]                 @default([0, 1, 2, 3, 4, 5, 6])
+  /// Campanha de origem ("Criar plano no Instagram"): encerrar a campanha cancela os posts não publicados deste plano.
+  campaign_id         String?               @db.Uuid
   workspace           workspaces            @relation("ig_content_plans_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   brand               brands?               @relation("ig_content_plans_brand_id", fields: [brand_id], references: [id], onDelete: SetNull)
+  campaign            campaigns?            @relation("ig_content_plans_campaign_id", fields: [campaign_id], references: [id], onDelete: SetNull)
   ig_posts            ig_posts[]            @relation("ig_posts_plan_id")
   ig_autopilot_events ig_autopilot_events[] @relation("ig_autopilot_events_plan_id")
   ig_autopilot_weeks  ig_autopilot_weeks[]  @relation("ig_autopilot_weeks_plan_id")

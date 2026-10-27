@@ -271,7 +271,7 @@ describe('StrategistService.currentStrategy / createIgPlan', () => {
     const { planId } = await svc.createIgPlan(MARKETING, campaign.id);
     const plan = w.t.ig_content_plans.rows.find((p) => p.id === planId)!;
     expect(plan).toMatchObject({
-      name: 'Instagram · Black Friday', objective: 'O', tone_of_voice: 'descontraído', content_pillars: ['Bastidores', 'Promo'],
+      name: 'Instagram · Black Friday', campaign_id: campaign.id, objective: 'O', tone_of_voice: 'descontraído', content_pillars: ['Bastidores', 'Promo'],
       pillar_weights: { Bastidores: 0.75, Promo: 0.25 }, cta_default: 'Venha', requires_approval: true, auto_publish: false, status: 'draft',
       posting_frequency: { feed_image: 3, feed_carousel: 2, feed: 5, reels: 3, stories: 10 },
     });
@@ -286,6 +286,15 @@ describe('StrategistService.currentStrategy / createIgPlan', () => {
     expect(await status(svc.createIgPlan(OWNER, campaign.id))).toBe('400:Esta versão da estratégia não tem plano do Instagram. Regere a estratégia.');
     expect(await status(svc.createIgPlan(VIEWER, campaign.id))).toBe('403:Seu perfil não tem permissão para esta ação.');
     expect(await status(svc.createIgPlan(STRANGER, campaign.id))).toBe('404:Campanha não encontrada.');
+    expect(w.t.ig_content_plans.rows).toHaveLength(0);
+  });
+
+  it('campanha encerrada não cria plano novo no Instagram', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    await w.t.campaign_strategies.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, version: 1, status: 'approved', content: normalizeStrategy(RAW) } });
+    await w.t.campaigns.update({ where: { id: campaign.id }, data: { status: 'finished' } });
+    expect(await status(svc.createIgPlan(OWNER, campaign.id))).toBe('400:Campanha encerrada.');
     expect(w.t.ig_content_plans.rows).toHaveLength(0);
   });
 });

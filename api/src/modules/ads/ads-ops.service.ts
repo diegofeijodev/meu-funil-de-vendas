@@ -309,7 +309,8 @@ export class AdsOpsService {
 
   async runAllRules() {
     const data = await this.prisma.campaigns.findMany({
-      where: { meta_campaign_id: { not: null }, automation_rules: { path: ['enabled'], equals: true } },
+      // Campanha encerrada não recebe mais ações automáticas.
+      where: { meta_campaign_id: { not: null }, status: { not: 'finished' }, automation_rules: { path: ['enabled'], equals: true } },
     });
     const out: { campaign: string; actions?: string[]; error?: string }[] = [];
     for (const c of data) {
@@ -487,7 +488,7 @@ export class AdsOpsService {
   async generate(userId: string, ws: string, campaignId?: string | null) {
     await this.access.require(userId, ws, 'write');
     const camps = await this.prisma.campaigns.findMany({
-      where: { workspace_id: ws, meta_campaign_id: { not: null }, ...(campaignId ? { id: campaignId } : {}) },
+      where: { workspace_id: ws, meta_campaign_id: { not: null }, status: { not: 'finished' }, ...(campaignId ? { id: campaignId } : {}) },
       select: { id: true, name: true },
     });
     let created = 0;

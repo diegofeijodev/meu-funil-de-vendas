@@ -29,6 +29,7 @@ export function CampaignChannels({ campaign, canEdit, canManage }: { campaign: C
   const [ids, setIds] = useState({ google: "", tiktok: "" });
   const [log, setLog] = useState<{ label: string; status: string; detail: string }[]>([]);
   const approved = campaign.status === "approved" || campaign.status === "active";
+  const ended = campaign.status === "finished";
   const act = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
     try {
@@ -52,7 +53,8 @@ export function CampaignChannels({ campaign, canEdit, canManage }: { campaign: C
         </div>
         {ext ? (
           canEdit && (
-            (active || canManage) && (
+            // Encerrada: só pausar (reativar é bloqueado na API com "Campanha encerrada.").
+            (active || (canManage && !ended)) && (
               <Button size="sm" variant="outline" disabled={!!busy} onClick={() => act(`st-${ch}`, async () => {
                 await setStatus({ data: { campaignId: campaign.id, channel: ch, active: !active } });
                 toast.success(active ? "Pausada." : "Ativada.");
@@ -64,7 +66,7 @@ export function CampaignChannels({ campaign, canEdit, canManage }: { campaign: C
         ) : (
           canEdit && (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={!!busy || !approved} title={approved ? "" : "Aprove a campanha antes"} onClick={() => act(`new-${ch}`, async () => {
+              <Button size="sm" disabled={!!busy || !approved} title={ended ? "Campanha encerrada." : approved ? "" : "Aprove a campanha antes"} onClick={() => act(`new-${ch}`, async () => {
                 const r = await create({ data: { campaignId: campaign.id, channel: ch } });
                 setLog(r.steps);
                 toast.success(`Campanha criada pausada no ${label}.`);

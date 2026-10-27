@@ -12,6 +12,7 @@ import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaOpsService } from './meta-ops.service';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from './campaign-end.service';
 import { MetaSaveAssetsDto, MetaSaveCredentialsDto } from './ads.dto';
 
 const MSG_NO_ACCESS = 'Você não tem acesso a esta área de trabalho.';
@@ -109,6 +110,7 @@ export class MetaAdsService {
   private async publishLocked(userId: string, ws: string, campaignId: string) {
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: ws } });
     if (!c) throw notFound('Campanha não encontrada.');
+    if (c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     if (c.status !== 'approved' && c.status !== 'active') throw new UserError('A campanha precisa ser aprovada em Aprovações antes de ir para a Meta.');
     if (c.meta_campaign_id) throw new UserError('Esta campanha já foi enviada para a Meta. Use Ativar/Pausar.');
     if (!c.landing_url) throw new UserError('Preencha a página de destino (URL) da campanha antes de publicar.');
@@ -180,6 +182,8 @@ export class MetaAdsService {
     await this.member(userId, ws, true);
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: ws } });
     if (!c?.meta_campaign_id) throw new UserError('Campanha ainda não publicada na Meta.');
+    // Encerrada: pausar continua possível; reativar, não.
+    if (status === 'ACTIVE' && c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     // 7.3 Ativar gasta verba: só dono/admin (guarda de entrega, mensagem do gatilho `guard_campaign_delivery`).
     await this.guards.assertCanSetDelivery(userId, ws, c.meta_delivery_status, status);
     if (status === 'ACTIVE' && c.status !== 'approved' && c.status !== 'active') throw new UserError('Só é possível ativar depois da aprovação em Aprovações.');

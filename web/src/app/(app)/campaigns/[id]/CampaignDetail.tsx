@@ -5,13 +5,24 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Rocket, Sparkles } from "lucide-react";
+import { CircleStop, Rocket, Sparkles } from "lucide-react";
 import {
   createCopy,
+  endCampaign,
   getCampaignDetail,
   requestCampaignApproval,
   setCampaignLandingUrl,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, Section, StatCard, StatusPill, SandboxBadge } from "@/components/ui-bits";
@@ -55,6 +66,7 @@ export function CampaignDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
   const [landing, setLanding] = useState("");
+  const [endOpen, setEndOpen] = useState(false);
   // Aba controlada: mensagens de erro podem levar direto à aba certa (ex.: "Ver criativos").
   const [tab, setTab] = useState("estrategia");
   const showTab = (value: string) => {
@@ -298,6 +310,30 @@ export function CampaignDetail() {
       setBusy(null);
     }
   };
+  const finishCampaign = async () => {
+    if (!workspaceId) return;
+    setBusy("end");
+    try {
+      const r = await endCampaign(workspaceId, id);
+      setEndOpen(false);
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      const failed = r.channels.some((x) => !x.ok);
+      const description = r.channels.length ? (
+        <div className="space-y-0.5">
+          {r.channels.map((x) => (
+            <p key={x.channel}>{x.message}</p>
+          ))}
+        </div>
+      ) : undefined;
+      if (failed) toast.warning("Campanha encerrada, mas algum canal não confirmou a pausa. Tente encerrar de novo ou pause direto no canal.", { description, duration: 12000 });
+      else toast.success(r.alreadyEnded ? "A campanha já estava encerrada. Conferimos de novo os canais." : "Campanha encerrada.", { description });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível encerrar a campanha."));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const ended = c.status === "finished";
   const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
   const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
 
@@ -322,9 +358,51 @@ export function CampaignDetail() {
                 {busy === "publish" ? "Publicando..." : "Publicar na Meta"}
               </Button>
             )}
+            {canManage && !ended && (
+              <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setEndOpen(true)}>
+                <CircleStop className="mr-2 size-4" />
+                Encerrar campanha
+              </Button>
+            )}
           </>
         }
       />
+      <AlertDialog open={endOpen} onOpenChange={(open) => busy !== "end" && setEndOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Encerrar a campanha?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>Ao encerrar:</p>
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>os anúncios são pausados em todos os canais (Meta, Google e TikTok) e param de gastar verba;</li>
+                  <li>os posts agendados do Instagram desta campanha são cancelados;</li>
+                  <li>os posts que já foram publicados continuam no perfil.</li>
+                </ul>
+                <p>Depois de encerrada, a campanha não pode ser publicada nem ativada de novo.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy === "end"}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy === "end"}
+              onClick={(e) => {
+                e.preventDefault(); // fecha só depois da resposta
+                void finishCampaign();
+              }}
+            >
+              {busy === "end" ? "Encerrando..." : "Encerrar campanha"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {ended && (
+        <div className="panel mb-6 p-4 text-sm text-muted-foreground">
+          Campanha encerrada: os anúncios ficam pausados e ela não pode ser publicada nem ativada de novo. Os resultados continuam aqui.
+        </div>
+      )}
       <div className="mb-6">
         <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
       </div>
@@ -410,7 +488,7 @@ export function CampaignDetail() {
                       Aprovar estratégia
                     </Button>
                   )}
-                  {strategy?.plano_instagram && (
+                  {strategy?.plano_instagram && !ended && (
                     <Button size="sm" variant="outline" onClick={createIgPlan} disabled={busy === "ig-plan"}>
                       Criar plano no Instagram
                     </Button>

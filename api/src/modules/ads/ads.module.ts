@@ -10,7 +10,8 @@ import { CrmConversionController } from './crm-conversion.controller';
 import { CrmConversionService } from './crm-conversion.service';
 import { AdsOpsService } from './ads-ops.service';
 import { AdsPublicController } from './ads-public.controller';
-import { AdsChannelsController, AdsResourcesController, MetaAdsController } from './ads.controller';
+import { AdsChannelsController, AdsResourcesController, CampaignEndController, MetaAdsController } from './ads.controller';
+import { CampaignEndService } from './campaign-end.service';
 import { GoogleAdsClient } from './google-ads.client';
 import { MetaAdsService } from './meta-ads.service';
 import { MetaOAuthService } from './meta-oauth.service';
@@ -26,7 +27,7 @@ import { TikTokAdsClient } from './tiktok-ads.client';
  */
 @Module({
   imports: [InstagramModule, CampaignsModule, StrategistModule, MediaModule],
-  controllers: [MetaAdsController, AdsChannelsController, AdsResourcesController, AdsPublicController, CrmConversionController],
+  controllers: [MetaAdsController, AdsChannelsController, AdsResourcesController, AdsPublicController, CrmConversionController, CampaignEndController],
   providers: [
     // Única porta de rede do Google Ads / TikTok Business / OAuth do Google (hosts fixos) — nos testes entra um fake.
     { provide: ADS_FETCH, useValue: ((url, init) => fetch(url, init)) as AdsFetch },
@@ -41,6 +42,7 @@ import { TikTokAdsClient } from './tiktok-ads.client';
     AdsChannelsService,
     AdsCronService,
     CrmConversionService,
+    CampaignEndService,
   ],
   exports: [AdsOpsService, MetaOpsService],
 })
