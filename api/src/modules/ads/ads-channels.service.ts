@@ -16,7 +16,7 @@ import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
-import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from './campaign-end.service';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 
 /** Reserva de criação vencida (processo morreu no meio): outra tentativa pode assumir. */
 const CREATE_LEASE_MS = 10 * 60 * 1000;
@@ -234,14 +234,23 @@ export class AdsChannelsService {
     const c = await this.prisma.campaigns.findFirst({ where: { id: base.id, workspace_id: base.workspace_id } });
     if (!c) throw notFound('Campanha não encontrada.');
     if (active && c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
-    if (channel === 'google') {
-      if (!c.google_campaign_id) throw new UserError('Sem campanha no Google Ads.');
-      await guarded(() => this.google.setStatus(c.workspace_id, c.google_campaign_id!, active ? 'ENABLED' : 'PAUSED'));
-      await this.prisma.campaigns.update({ where: { id: c.id }, data: { google_status: active ? 'ENABLED' : 'PAUSED' } });
-    } else {
-      if (!c.tiktok_campaign_id) throw new UserError('Sem campanha no TikTok Ads.');
-      await guarded(() => this.tiktok.setStatus(c.workspace_id, c.tiktok_campaign_id!, active ? 'ENABLE' : 'DISABLE'));
-      await this.prisma.campaigns.update({ where: { id: c.id }, data: { tiktok_status: active ? 'ENABLE' : 'DISABLE' } });
+    const ws = c.workspace_id;
+    const google = channel === 'google';
+    const ext = google ? c.google_campaign_id : c.tiktok_campaign_id;
+    if (!ext) throw new UserError(google ? 'Sem campanha no Google Ads.' : 'Sem campanha no TikTok Ads.');
+    const call = (on: boolean) => (google ? this.google.setStatus(ws, ext, on ? 'ENABLED' : 'PAUSED') : this.tiktok.setStatus(ws, ext, on ? 'ENABLE' : 'DISABLE'));
+    const column = (on: boolean) => (google ? { google_status: on ? 'ENABLED' : 'PAUSED' } : { tiktok_status: on ? 'ENABLE' : 'DISABLE' });
+    await guarded(() => call(active));
+    if (!active) {
+      await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: column(false) });
+      return { ok: true };
+    }
+    // Condicional: encerrada enquanto o canal ativava → pausa de novo (se falhar, fica ativa para "Pausar os canais de novo").
+    const upd = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws, status: { not: CAMPAIGN_FINISHED } }, data: column(true) });
+    if (!upd.count) {
+      const repaused = await call(false).then(() => true, () => false);
+      await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: column(!repaused) });
+      throw new UserError(MSG_CAMPAIGN_ENDED);
     }
     return { ok: true };
   }

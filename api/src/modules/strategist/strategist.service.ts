@@ -9,7 +9,7 @@ import { ActivityService } from '../activity/activity.service';
 import { AiError } from '../ai/ai-error';
 import { AiService } from '../ai/ai.service';
 import { CampaignGuardsService } from '../campaigns/campaign-guards.service';
-import { OBJECTIVES } from '../campaigns/campaign-labels';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED, OBJECTIVES } from '../campaigns/campaign-labels';
 import { buildStrategyPrompt, STRATEGY_SCHEMA } from './strategist.prompt';
 import { normalizeStoredStrategy } from './strategy-normalize';
 import { FullStrategy } from './strategy-types';
@@ -180,7 +180,7 @@ export class StrategistService {
   /** 1.3 Cria o plano de conteúdo do Instagram a partir da estratégia (pilares, pesos, temas, frequência). */
   async createIgPlan(userId: string, campaignId: string) {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
-    if (c.status === 'finished') throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Campanha encerrada.' });
+    if (c.status === CAMPAIGN_FINISHED) throw new BadRequestException({ code: 'BAD_REQUEST', message: MSG_CAMPAIGN_ENDED });
     const s = await this.currentStrategy(c.workspace_id, c.id);
     if (!s) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Gere a estratégia da campanha primeiro.' });
     const plan = s.plano_instagram;

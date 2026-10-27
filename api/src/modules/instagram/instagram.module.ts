@@ -11,6 +11,7 @@ import { ProductionService } from './production.service';
 import { ContentService } from './content.service';
 import { ContentStrategyService } from './content-strategy.service';
 import { IgStore } from './ig-store.service';
+import { IgCampaignService } from './ig-campaign.service';
 import { InboundService } from './inbound.service';
 import { InstagramActionsService } from './instagram-actions.service';
 import { InstagramController } from './instagram.controller';
@@ -34,6 +35,7 @@ import { PostContextService } from './post-context.service';
     MetaConfigService,
     MetaGraphClient,
     IgStore,
+    IgCampaignService,
     ContentService,
     ContentStrategyService,
     PostContextService,
@@ -49,6 +51,6 @@ import { PostContextService } from './post-context.service';
     InboundService,
     InstagramCronService,
   ],
-  exports: [MetaGraphClient, MetaConfigService, META_FETCH, IgStore, InboundService],
+  exports: [MetaGraphClient, MetaConfigService, META_FETCH, IgStore, InboundService, IgCampaignService],
 })
 export class InstagramModule {}

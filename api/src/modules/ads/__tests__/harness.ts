@@ -15,6 +15,8 @@ import { AdsChannelsService } from '../ads-channels.service';
 import { MetaAdsService } from '../meta-ads.service';
 import { MetaOAuthService } from '../meta-oauth.service';
 import { CampaignEndService } from '../campaign-end.service';
+import { IgCampaignService } from '../../instagram/ig-campaign.service';
+import { IgStore } from '../../instagram/ig-store.service';
 
 export { ADMIN, MARKETING, OWNER, STRANGER, VIEWER, WS_A, WS_B };
 
@@ -58,6 +60,8 @@ export function adsWorld() {
     ig_auto_runs: new IgTable(() => ({ status: 'active', recurring: false, parent_id: null, locked_until: null, campaign_id: null })),
     ig_content_plans: new IgTable(() => ({ status: 'draft', campaign_id: null })),
     ig_posts: new IgTable(() => ({ status: 'idea', run_id: null, plan_id: null })),
+    ig_autopilot_events: new IgTable(),
+    approval_requests: new IgTable(() => ({ status: 'pending' })),
   };
   // oauth_states usa `state_hash` como chave (findUnique({ where: { state_hash } })) — o IgTable já resolve por igualdade.
   // $transaction em série (simula o pg_advisory_xact_lock por campanha) e $executeRaw sem efeito.
@@ -108,7 +112,7 @@ export function adsWorld() {
   const meta = new MetaAdsService(prisma, access, vault, ops, oauth, guards, strategist, activity);
   const adsOps = new AdsOpsService(prisma, access, guards, ops, google, tiktok, perf, ai, strategist, vault, crm);
   const channels = new AdsChannelsService(prisma, access, guards, vault, google, tiktok, states, ai, strategist, ENV);
-  const ending = new CampaignEndService(prisma, access, ops, google, tiktok, activity);
+  const ending = new CampaignEndService(prisma, access, ops, google, tiktok, activity, new IgCampaignService(new IgStore(prisma)));
 
   /** Campanha pronta para publicar (aprovada, com destino) + um criativo aprovado. */
   const seedCampaign = (over: Record<string, any> = {}) => {

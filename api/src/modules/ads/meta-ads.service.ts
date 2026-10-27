@@ -12,7 +12,7 @@ import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaOpsService } from './meta-ops.service';
-import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from './campaign-end.service';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 import { MetaSaveAssetsDto, MetaSaveCredentialsDto } from './ads.dto';
 
 const MSG_NO_ACCESS = 'Você não tem acesso a esta área de trabalho.';
@@ -192,19 +192,32 @@ export class MetaAdsService {
 
     const paused = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws, campaign_id: c.id, action: 'pause_ad', status: 'applied' }, select: { payload: true } });
     const pausedByOptimizer = new Set(paused.map((r) => (r.payload as { adId?: string } | null)?.adId).filter(Boolean) as string[]);
+    const adsetIds = (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[];
     await guarded(() =>
       this.ops.setDeliveryStatus(
         ws,
         {
           campaignId: c.meta_campaign_id!,
-          adsetIds: (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[],
+          adsetIds,
           // Ao ativar, anúncios pausados pelo otimizador/regras continuam pausados.
           adIds: (c.meta_ad_ids ?? []).filter((id) => status === 'PAUSED' || !pausedByOptimizer.has(id)),
         },
         status,
       ),
     );
-    await this.prisma.campaigns.update({ where: { id: c.id }, data: { meta_delivery_status: status, status: newStatus } });
+    // Condicional: se a campanha foi encerrada enquanto a Meta ativava, ela não volta a "ativa" — pausa de novo e avisa.
+    const upd = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws, status: { not: CAMPAIGN_FINISHED } }, data: { meta_delivery_status: status, status: newStatus } });
+    if (!upd.count) {
+      if (status === 'ACTIVE') {
+        const repaused = await this.ops
+          .setDeliveryStatus(ws, { campaignId: c.meta_campaign_id!, adsetIds, adIds: c.meta_ad_ids ?? [] }, 'PAUSED')
+          .then(() => true, () => false);
+        // Se a nova pausa falhar, fica ACTIVE: a tela mostra "Pausar os canais de novo".
+        await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { meta_delivery_status: repaused ? 'PAUSED' : 'ACTIVE' } });
+        throw new UserError(MSG_CAMPAIGN_ENDED);
+      }
+      await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { meta_delivery_status: status } });
+    }
     return { ok: true };
   }
 

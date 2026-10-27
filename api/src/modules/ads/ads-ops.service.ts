@@ -11,6 +11,7 @@ import { addDays, todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
 import { AiService } from '../ai/ai.service';
 import { CampaignGuardsService } from '../campaigns/campaign-guards.service';
+import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 import { CrmDefaultsService } from '../crm-defaults/crm-defaults.service';
 import { notFound, UserError } from '../media/user-error';
 import { StrategistService } from '../strategist/strategist.service';
@@ -236,6 +237,8 @@ export class AdsOpsService {
 
   async runRulesForCampaign(c: CampaignRow): Promise<string[]> {
     const rules = readRules(c.automation_rules);
+    // Encerrada: as regras ainda podem PAUSAR (anúncio que sobrou ativo); nada que ative ou aumente verba.
+    const pauseOnly = c.status === CAMPAIGN_FINISHED;
     if (!rules.enabled || !c.meta_campaign_id) return [];
     const ws = c.workspace_id;
     const actions: string[] = [];
@@ -280,7 +283,7 @@ export class AdsOpsService {
       );
     }
     // Escala conjunto barato (com teto e no máximo 1 aumento a cada 24 h).
-    if (rules.scaleBelowCpl != null) {
+    if (rules.scaleBelowCpl != null && !pauseOnly) {
       const recent = await this.statsFor(c.id, ws, 3);
       for (const [adsetId, a] of recent.byAdset) {
         const cpl = cplOf(a);
@@ -309,8 +312,8 @@ export class AdsOpsService {
 
   async runAllRules() {
     const data = await this.prisma.campaigns.findMany({
-      // Campanha encerrada não recebe mais ações automáticas.
-      where: { meta_campaign_id: { not: null }, status: { not: 'finished' }, automation_rules: { path: ['enabled'], equals: true } },
+      // Campanha encerrada entra só para PAUSAR o que sobrou ativo (runRulesForCampaign não escala verba dela).
+      where: { meta_campaign_id: { not: null }, automation_rules: { path: ['enabled'], equals: true } },
     });
     const out: { campaign: string; actions?: string[]; error?: string }[] = [];
     for (const c of data) {
@@ -428,6 +431,11 @@ export class AdsOpsService {
     const rec = await this.prisma.ai_recommendations.findUnique({ where: { id } });
     if (!rec) throw notFound('Recomendação não encontrada.');
     await this.recoverStaleApplying(rec.workspace_id);
+    // Campanha encerrada: só pausar (nada que ative ou mexa em verba).
+    if (rec.campaign_id && rec.action !== 'pause_ad') {
+      const camp = await this.prisma.campaigns.findFirst({ where: { id: rec.campaign_id, workspace_id: rec.workspace_id }, select: { status: true } });
+      if (camp?.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
+    }
     const claim = await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'pending' }, data: { status: 'applying', applying_at: new Date() } });
     if (claim.count !== 1) throw new UserError('Esta recomendação já foi decidida.');
     const ws = rec.workspace_id;
@@ -488,7 +496,7 @@ export class AdsOpsService {
   async generate(userId: string, ws: string, campaignId?: string | null) {
     await this.access.require(userId, ws, 'write');
     const camps = await this.prisma.campaigns.findMany({
-      where: { workspace_id: ws, meta_campaign_id: { not: null }, status: { not: 'finished' }, ...(campaignId ? { id: campaignId } : {}) },
+      where: { workspace_id: ws, meta_campaign_id: { not: null }, status: { not: CAMPAIGN_FINISHED }, ...(campaignId ? { id: campaignId } : {}) },
       select: { id: true, name: true },
     });
     let created = 0;

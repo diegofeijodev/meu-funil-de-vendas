@@ -27,12 +27,16 @@ function instagram(w: AdsWorld, campaignId: string) {
     w.t['ig_posts']!.rows.push(p);
     return p;
   };
+  const otherRun = { id: uid(), workspace_id: WS_A, campaign_id: null, plan_id: plan.id, status: 'active', recurring: true, parent_id: null };
+  w.t['ig_auto_runs']!.rows.push(otherRun);
   const posts = {
     scheduled: post('scheduled', { run_id: run.id }),
     weekReady: post('ready', { run_id: week.id }),
     planApproved: post('approved', { plan_id: plan.id }),
     published: post('published', { plan_id: plan.id }),
     publishing: post('publishing', { run_id: run.id }),
+    // Mesmo plano, mas de OUTRA programação (não desta campanha): fica.
+    otherRunInPlan: post('scheduled', { plan_id: plan.id, run_id: otherRun.id }),
   };
   const job = (postId: string, st = 'pending') => {
     const j: any = { id: uid(), workspace_id: WS_A, channel: 'instagram_organic', ig_post_id: postId, status: st };
@@ -44,7 +48,7 @@ function instagram(w: AdsWorld, campaignId: string) {
   const otherPlan = { id: uid(), workspace_id: WS_A, campaign_id: uid(), status: 'active' };
   w.t['ig_content_plans']!.rows.push(otherPlan);
   const foreign = post('scheduled', { plan_id: otherPlan.id });
-  return { run, week, plan, posts, jobs, otherPlan, foreign };
+  return { run, week, plan, otherRun, posts, jobs, otherPlan, foreign };
 }
 
 describe('CampaignEndService.end — encerrar campanha que já está no ar', () => {
@@ -55,10 +59,10 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
     const r = await w.ending.end(OWNER, WS_A, c.id);
     expect(r).toMatchObject({ ok: true, status: 'finished', alreadyEnded: false, instagram: { cancelledPosts: 3, cancelledJobs: 1, publishingNow: 1 } });
     expect(r.channels).toEqual([
-      { channel: 'meta', ok: true, message: 'Anúncios pausados no Meta.' },
+      { channel: 'meta', ok: true, message: 'Anúncios pausados na Meta.' },
       { channel: 'google', ok: true, message: 'Anúncios pausados no Google Ads.' },
       { channel: 'tiktok', ok: true, message: 'Anúncios pausados no TikTok Ads.' },
-      { channel: 'instagram', ok: true, message: '3 post(s) do Instagram cancelado(s). 1 já estava(m) sendo publicado(s) e segue(m).' },
+      { channel: 'instagram', ok: true, message: '3 posts agendados do Instagram foram cancelados. 1 post já estava sendo publicado e vai sair normalmente.' },
     ]);
     expect(metaPaused(w)).toEqual(['/9001', '/9101', '/9102', '/9301', '/9302']);
     expect(w.google.setStatus).toHaveBeenCalledWith(WS_A, '4242', 'PAUSED');
@@ -74,7 +78,30 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
     expect(ig.jobs.done.status).toBe('done');
     expect(ig.otherPlan.status).toBe('active');
     expect(ig.foreign.status).toBe('scheduled');
+    expect(ig.posts.otherRunInPlan.status).toBe('scheduled');
+    expect(ig.otherRun.status).toBe('active');
+    // Evento no painel do Instagram, por plano, com o motivo (como cancelar uma programação).
+    const events = w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'guardrail');
+    expect(events.map((e) => [e.plan_id, e.message]).sort()).toEqual([
+      [ig.plan.id, 'Campanha encerrada: 1 post retirado da fila.'],
+      [ig.run.plan_id, 'Campanha encerrada: 2 posts retirados da fila.'],
+    ].sort());
     expect(w.activity.log).toHaveBeenCalledWith(WS_A, OWNER, 'campaign.ended', 'campaign', expect.objectContaining({ campaign_id: c.id, already_ended: false, ig_posts_cancelled: 3 }));
+  });
+
+  it('pendências: recomendações da IA pendentes viram dispensadas e pedidos de aprovação pendentes são cancelados', async () => {
+    const w = adsWorld();
+    const c = published(w);
+    const rec = { id: uid(), workspace_id: WS_A, campaign_id: c.id, status: 'pending', action: 'increase_budget', payload: {} };
+    const applied = { id: uid(), workspace_id: WS_A, campaign_id: c.id, status: 'applied', action: 'pause_ad', payload: {} };
+    w.t['ai_recommendations']!.rows.push(rec, applied);
+    const req = { id: uid(), workspace_id: WS_A, campaign_id: c.id, entity_type: 'campaign', status: 'pending' };
+    const other = { id: uid(), workspace_id: WS_A, campaign_id: uid(), entity_type: 'campaign', status: 'pending' };
+    w.t['approval_requests']!.rows.push(req, other);
+    await w.ending.end(OWNER, WS_A, c.id);
+    expect([rec.status, applied.status]).toEqual(['dismissed', 'applied']);
+    expect(req).toMatchObject({ status: 'cancelled', decided_by: OWNER });
+    expect(other.status).toBe('pending');
   });
 
   it('falha num canal não impede os outros: resultado por canal e a coluna do canal que falhou não muda', async () => {
@@ -85,7 +112,7 @@ describe('CampaignEndService.end — encerrar campanha que já está no ar', () 
     w.tiktok.setStatus = jest.fn(async () => { throw new Error('bug interno com detalhe sensível'); });
     const r = await w.ending.end(ADMIN, WS_A, c.id);
     expect(r.channels).toEqual([
-      { channel: 'meta', ok: false, message: 'Não foi possível pausar no Meta: A Meta respondeu com erro: fora do ar' },
+      { channel: 'meta', ok: false, message: 'Não foi possível pausar na Meta: A Meta respondeu com erro: fora do ar' },
       { channel: 'google', ok: false, message: 'Não foi possível pausar no Google Ads: Google Ads: conta suspensa' },
       { channel: 'tiktok', ok: false, message: 'Não foi possível pausar no TikTok Ads: erro inesperado. Tente de novo em instantes.' },
     ]);
@@ -149,9 +176,34 @@ describe('campanha encerrada não volta ao ar pelos botões', () => {
     expect(await status(w.channels.setStatus(OWNER, live.id, 'google', false))).toBe('ok');
   });
 
-  it('regras automáticas e recomendações ignoram a campanha encerrada', async () => {
+  it('regras automáticas: na encerrada só PAUSAM (nunca aumentam verba); recomendação que não é pausa é recusada', async () => {
     const w = adsWorld();
-    published(w, { status: 'finished', automation_rules: { enabled: true } });
-    expect(await w.adsOps.runAllRules()).toEqual([]);
+    const c = published(w, { status: 'finished', automation_rules: { enabled: true, scaleBelowCpl: 50 } });
+    const scale = jest.spyOn(w.ops, 'setAdsetBudget');
+    await w.adsOps.runAllRules();
+    expect(scale).not.toHaveBeenCalled();
+    const rec = { id: uid(), workspace_id: WS_A, campaign_id: c.id, status: 'pending', action: 'increase_budget', payload: { adsetId: '9101', newDailyBudget: 99 } };
+    w.t['ai_recommendations']!.rows.push(rec);
+    expect(await status(w.adsOps.applyRecommendation(rec.id, OWNER))).toBe(`400:${MSG_CAMPAIGN_ENDED}`);
+    expect(rec.status).toBe('pending');
+  });
+
+  it('corrida: encerrada enquanto a Meta/Google ativava → pausa de novo e "Campanha encerrada."; a campanha não volta a ativa', async () => {
+    const w = adsWorld();
+    const c = published(w, { status: 'approved', meta_delivery_status: 'PAUSED', google_status: 'PAUSED' });
+    // A Meta "ativa" e, no meio, alguém encerra a campanha.
+    w.respond((path, opts) => {
+      if (path === '/9001' && opts.params?.status === 'ACTIVE') c.status = 'finished';
+      return undefined;
+    });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe(`400:${MSG_CAMPAIGN_ENDED}`);
+    expect(c).toMatchObject({ status: 'finished', meta_delivery_status: 'PAUSED' });
+    expect(metaPaused(w)).toContain('/9001');
+    // Google: idem.
+    const g = published(w, { status: 'approved', google_status: 'PAUSED' });
+    w.google.setStatus = jest.fn(async (_ws: string, _id: string, st: string) => { if (st === 'ENABLED') g.status = 'finished'; });
+    expect(await status(w.channels.setStatus(OWNER, g.id, 'google', true))).toBe(`400:${MSG_CAMPAIGN_ENDED}`);
+    expect(w.google.setStatus).toHaveBeenLastCalledWith(WS_A, '4242', 'PAUSED');
+    expect(g).toMatchObject({ status: 'finished', google_status: 'PAUSED' });
   });
 });
