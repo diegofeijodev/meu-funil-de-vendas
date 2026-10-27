@@ -11,7 +11,6 @@ import {
   endCampaign,
   getCampaignDetail,
   requestCampaignApproval,
-  type EndCampaignResult,
   setCampaignLandingUrl,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import {
@@ -69,8 +68,6 @@ export function CampaignDetail() {
   const [steps, setSteps] = useState<PublishStep[]>([]);
   const [landing, setLanding] = useState("");
   const [endOpen, setEndOpen] = useState(false);
-  /** Resultado do último "Encerrar" nesta tela (o Instagram que falhou não fica gravado na campanha). */
-  const [lastEnd, setLastEnd] = useState<EndCampaignResult | null>(null);
   // Aba controlada: mensagens de erro podem levar direto à aba certa (ex.: "Ver criativos").
   const [tab, setTab] = useState("estrategia");
   const showTab = (value: string) => {
@@ -328,7 +325,6 @@ export function CampaignDetail() {
     setBusy("end");
     try {
       const r = await endCampaign(workspaceId, id);
-      setLastEnd(r);
       setEndOpen(false);
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       const failedNames = r.channels.filter((x) => !x.ok && x.channel !== "instagram").map((x) => CHANNEL_NAME[x.channel] ?? x.channel);
@@ -374,8 +370,11 @@ export function CampaignDetail() {
     ext.google_campaign_id && ext.google_status === "ENABLED" && "google",
     ext.tiktok_campaign_id && ext.tiktok_status === "ENABLE" && "tiktok",
   ].filter(Boolean) as string[];
-  const igEndFailed = !!lastEnd?.channels.some((x) => x.channel === "instagram" && !x.ok);
-  const canPauseMeta = canEdit && !!metaId && metaDelivery === "ACTIVE";
+  // Posts do Instagram da campanha que ainda vão sair (vem da API: vale também depois de recarregar a página).
+  const igPending = data.instagram.pending_posts;
+  // Encerrada e quem gerencia: o caminho é "Pausar os canais de novo" (o "Pausar na Meta" some para não duplicar).
+  const canPauseMeta = canEdit && !!metaId && metaDelivery === "ACTIVE" && !(ended && canManage);
+  const endedBanner = ended && (stillActive.length > 0 || igPending > 0);
 
   return (
     <>
@@ -398,9 +397,14 @@ export function CampaignDetail() {
                 Ativar na Meta
               </Button>
             )}
-            {canManage && ended && (stillActive.length > 0 || igEndFailed) && (
+            {canManage && ended && stillActive.length > 0 && (
               <Button variant="outline" disabled={busy === "end"} onClick={() => void finishCampaign()}>
                 {busy === "end" ? "Pausando..." : "Pausar os canais de novo"}
+              </Button>
+            )}
+            {canManage && ended && stillActive.length === 0 && igPending > 0 && (
+              <Button variant="outline" disabled={busy === "end"} onClick={() => void finishCampaign()}>
+                {busy === "end" ? "Cancelando..." : "Cancelar os posts agendados"}
               </Button>
             )}
             {canEdit && !metaId && (c.status === "approved" || c.status === "active") && (
@@ -422,7 +426,14 @@ export function CampaignDetail() {
         }
       />
       <AlertDialog open={endOpen} onOpenChange={(open) => busy !== "end" && setEndOpen(open)}>
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            // Depois de encerrar, o foco vai para a faixa que diz o que aconteceu (e não volta a um botão que sumiu).
+            if (!document.getElementById("campaign-ended")) return;
+            e.preventDefault();
+            document.getElementById("campaign-ended")?.focus();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Encerrar a campanha &quot;{c.name}&quot;?</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -433,7 +444,13 @@ export function CampaignDetail() {
                       <li>Os anúncios {joinPt(liveChannels.map((ch) => CHANNEL_IN[ch]!))} são pausados e param de gastar verba.</li>
                     )}
                     {data.instagram.linked && (
-                      <li>Os posts agendados do Instagram desta campanha são cancelados. Os que já saíram continuam no perfil.</li>
+                      <li>
+                        {igPending === 0
+                          ? "A programação do Instagram desta campanha para de criar posts novos."
+                          : igPending === 1
+                            ? "O post agendado do Instagram desta campanha é cancelado. Os que já saíram continuam no perfil."
+                            : `Os ${igPending} posts agendados do Instagram desta campanha são cancelados. Os que já saíram continuam no perfil.`}
+                      </li>
                     )}
                   </ul>
                 )}
@@ -459,17 +476,13 @@ export function CampaignDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {ended && (stillActive.length > 0 || igEndFailed) ? (
-        <div role="status" className="panel mb-6 flex items-start gap-3 border-amber-500/50 bg-amber-500/5 p-4 text-sm">
+      {endedBanner ? (
+        <div id="campaign-ended" tabIndex={-1} role="status" className="panel mb-6 flex items-start gap-3 border-amber-500/50 bg-amber-500/5 p-4 text-sm outline-none">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-          <p>
-            {stillActive.length > 0
-              ? `Campanha encerrada, mas ${joinPt(stillActive.map((ch) => CHANNEL_NAME[ch]!))} ainda não ${stillActive.length > 1 ? "confirmaram" : "confirmou"} a pausa e os anúncios podem continuar gastando. Toque em Pausar os canais de novo ou pause direto ${joinPt(stillActive.map((ch) => CHANNEL_PLACE[ch]!))}.`
-              : "Campanha encerrada, mas não deu para cancelar os posts agendados do Instagram. Toque em Pausar os canais de novo."}
-          </p>
+          <p>{endedBannerText(stillActive, igPending, canManage ? "manage" : canEdit ? "edit" : "read")}</p>
         </div>
       ) : ended ? (
-        <div className="panel mb-6 p-4 text-sm text-muted-foreground">
+        <div id="campaign-ended" tabIndex={-1} className="panel mb-6 p-4 text-sm text-muted-foreground outline-none">
           Campanha encerrada: os anúncios ficam pausados e ela não pode ser publicada nem ativada de novo. Os resultados continuam aqui.
         </div>
       ) : null}
@@ -865,6 +878,24 @@ const CHANNEL_IN: Record<string, string> = { meta: "na Meta", google: "no Google
 const CHANNEL_PLACE: Record<string, string> = { meta: "no Gerenciador de Anúncios da Meta", google: "no Google Ads", tiktok: "no TikTok Ads Manager" };
 /** "a", "a e b", "a, b e c". */
 const joinPt = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}`);
+
+/** Faixa da campanha encerrada com pendência: canal que não confirmou a pausa ou post do Instagram ainda na fila; o final muda pelo papel. */
+function endedBannerText(active: string[], igPending: number, role: "manage" | "edit" | "read"): string {
+  if (active.length) {
+    const many = active.length > 1;
+    const head = `Campanha encerrada, mas ${joinPt(active.map((ch) => CHANNEL_NAME[ch]!))} ainda não ${many ? "confirmaram" : "confirmou"} a pausa e os anúncios podem continuar gastando.`;
+    const place = joinPt(active.map((ch) => CHANNEL_PLACE[ch]!));
+    if (role === "manage") return `${head} Clique em Pausar os canais de novo ou pause direto ${place}.`;
+    if (role === "edit") return `${head} Use o botão Pausar ${many ? "desses canais" : "desse canal"} ou pause direto ${place}.`;
+    return `${head} Avise o dono ou um admin da empresa.`;
+  }
+  const head =
+    igPending === 1
+      ? "Campanha encerrada, mas 1 post agendado do Instagram desta campanha ainda vai ser publicado."
+      : `Campanha encerrada, mas ${igPending} posts agendados do Instagram desta campanha ainda vão ser publicados.`;
+  if (role === "manage") return `${head} Clique em Cancelar os posts agendados para ${igPending === 1 ? "tirá-lo" : "tirá-los"} da fila.`;
+  return `${head} Avise o dono ou um admin da empresa.`;
+}
 
 function Block({ title, children, regen = false }: { title: string; children: React.ReactNode; regen?: boolean }) {
   const empty = isEmptyNode(children);
