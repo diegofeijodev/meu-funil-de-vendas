@@ -749,9 +749,18 @@ export class MediaGenerationService {
           out.push({ post: post.id, status: 'ready' });
           continue;
         }
+        // Mesma composição da geração direta: carrossel com texto + logo por slide; imagem única/story só com a logo.
+        const ready: GenerationResult = { ...r, assetUrl };
+        const fmt = post.format as IgFormat;
+        const composed =
+          fmt === 'feed_carousel'
+            ? await this.composeSlide(post, ready, pj.index, pj.prompts.length)
+            : !isVideoFormat(fmt) && !provider.sandbox
+              ? await this.composeLogoOnly(post, ready)
+              : null;
         const media = [
           ...pj.media,
-          await this.libraryItem(post, this.srcOf({ ...r, assetUrl }), pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
+          await this.libraryItem(post, composed ? { bytes: composed, mime: 'image/jpeg' } : this.srcOf(ready), pj.index, pj.provider, pj.prompts[pj.index] ?? null, r.cost ?? 0),
         ];
         await lease.renew();
         const res = await this.continueAssets(post, provider, pj.prompts, pj.index + 1, media, pj.cost + (r.cost ?? 0), pj.instructions, {}, lease);

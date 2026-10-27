@@ -62,4 +62,30 @@ describe('Instagram — logo da marca nas imagens geradas', () => {
     await s.mediaGen.generatePostAssets(WS_A, idea({ format: 'feed_image' }).id);
     expect(compose).not.toHaveBeenCalled();
   });
+
+  it('provedor assíncrono (generating → ready pelo poll): a imagem que chega depois também recebe a logo', async () => {
+    const { s, idea } = setup();
+    s.pipeline.run.mockResolvedValueOnce({ pending: { jobId: 'j1' }, ad: {} });
+    s.provider.generateImage.mockResolvedValueOnce({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: 'job-img', cost: 1 });
+    const post = idea({ format: 'feed_image' });
+    expect(await s.mediaGen.generatePostAssets(WS_A, post.id)).toMatchObject({ ok: true, pending: true });
+    expect(compose).not.toHaveBeenCalled();
+    s.provider.getGenerationStatus.mockResolvedValueOnce({ status: 'ready', assetUrl: 'https://provider.test/i.png', thumbnailUrl: null, externalJobId: 'job-img', cost: 1 });
+    expect(await s.mediaGen.pollPendingMedia()).toEqual([{ post: post.id, status: 'ready' }]);
+    expect(compose).toHaveBeenCalledTimes(1);
+    expect(compose.mock.calls[0][1]).toMatchObject({ layout: 'limpo', logo: LOGO, logoPosition: 'bottom_right' });
+    expect(post.media).toHaveLength(1);
+  });
+
+  it('carrossel assíncrono: o slide que chega pelo poll é composto com texto + logo, como os outros', async () => {
+    const { s, idea } = setup();
+    s.provider.generateImage.mockResolvedValueOnce({ status: 'generating', assetUrl: null, thumbnailUrl: null, externalJobId: 'job-s1', cost: 1 });
+    const post = idea({ format: 'feed_carousel', hook: 'Gancho', creative_brief: { prompt: 'b', slides: ['s1', 's2'] } });
+    expect(await s.mediaGen.generatePostAssets(WS_A, post.id)).toMatchObject({ ok: true, pending: true });
+    s.provider.getGenerationStatus.mockResolvedValueOnce({ status: 'ready', assetUrl: 'https://provider.test/s1.png', thumbnailUrl: null, externalJobId: 'job-s1', cost: 1 });
+    expect(await s.mediaGen.pollPendingMedia()).toEqual([{ post: post.id, status: 'ready' }]);
+    expect(compose).toHaveBeenCalledTimes(2); // slide 1 (pelo poll) + slide 2 (na sequência)
+    expect(compose.mock.calls[0][1]).toMatchObject({ layout: 'titulo_topo', title: 'Gancho', logo: LOGO, logoPosition: 'bottom_right' });
+    expect(post.media).toHaveLength(2);
+  });
 });
