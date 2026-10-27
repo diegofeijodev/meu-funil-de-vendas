@@ -51,7 +51,7 @@ export const STRATEGY_SCHEMA = obj({
 
 type Any = Record<string, any>;
 
-/** Prompt do estrategista — texto idêntico ao protótipo. */
+/** Prompt do estrategista — texto do protótipo + 2 regras de formato (27/10/2026: campos de texto são string; chaves do ângulo). */
 export function buildStrategyPrompt(c: Any, brand: Any, personas: unknown[], products: unknown[], learnings: unknown[], history: unknown[]): string {
   return [
     'Você é o estrategista-chefe de uma agência de marketing digital de performance no Brasil.',
