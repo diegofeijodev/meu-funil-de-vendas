@@ -439,8 +439,15 @@ export function CampaignDetail() {
                     <div className="grid gap-2 md:grid-cols-2">
                       {asList(strategy.angulos_detalhados).map((a, i) => (
                         <div key={`${a?.nome}-${i}`} className="rounded-md border border-border/60 p-3">
-                          <p className="font-medium text-foreground">{a?.nome || "—"}</p>
-                          {a?.gancho && <p className="mt-1">Gancho: &quot;{a.gancho}&quot;</p>}
+                          {/* Ângulo sem nome (IA com outras chaves): o gancho vira o título em vez de um "—" solto. */}
+                          {a?.nome ? (
+                            <>
+                              <p className="font-medium text-foreground">{a.nome}</p>
+                              {a?.gancho && <p className="mt-1">Gancho: &quot;{a.gancho}&quot;</p>}
+                            </>
+                          ) : (
+                            <p className="font-medium text-foreground">{a?.gancho ? <>&quot;{a.gancho}&quot;</> : "—"}</p>
+                          )}
                           {a?.mensagem && <p className="mt-1">{a.mensagem}</p>}
                           {joinList([a?.formato_sugerido, a?.etapa_funil, a?.dor_ou_desejo].filter(Boolean), " · ") && (
                             <p className="mt-1 text-xs">
@@ -694,7 +701,8 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-wider text-primary">{title}</p>
-      <div className="mt-1 text-muted-foreground">{isEmptyNode(children) ? "—" : children}</div>
+      {/* pre-line: campo que a IA mandou como objeto/lista chega em linhas ("Chave: valor"). */}
+      <div className="mt-1 whitespace-pre-line text-muted-foreground">{isEmptyNode(children) ? "—" : children}</div>
     </div>
   );
 }

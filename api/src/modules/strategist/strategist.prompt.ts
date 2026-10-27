@@ -1,5 +1,6 @@
 import { OBJECTIVES } from '../campaigns/campaign-labels';
-import { FullStrategy, StrategyAngle, StrategyAudience } from './strategy-types';
+import { FullStrategy, StrategyAudience } from './strategy-types';
+import { aiText, normalizeAngle } from './strategy-normalize';
 
 const str = { type: 'string' };
 const arr = (items: Record<string, unknown>) => ({ type: 'array', items });
@@ -64,6 +65,8 @@ export function buildStrategyPrompt(c: Any, brand: Any, personas: unknown[], pro
     '- briefing_criativo e briefing_video orientam o designer: o que se vê, sem texto dentro da imagem (o texto é aplicado depois).',
     '- plano_instagram: 3 a 5 pilares com peso (soma 1) e 8 temas de conteúdo orgânico alinhados à campanha.',
     '- Aprenda com os resultados anteriores e aprendizados da marca quando existirem.',
+    '- resumo_executivo, problema, objetivo_smart, icp, oferta, big_idea, mensagem_principal, funil, canais, plano_testes e cronograma são UM texto corrido (string), nunca objeto nem lista. Ex.: objetivo_smart = "Gerar 200 leads com CPL até R$ 10 em 30 dias."; icp = um parágrafo descrevendo o cliente ideal.',
+    '- Cada item de angulos_detalhados usa exatamente as chaves: nome, dor_ou_desejo, mensagem, gancho, formato_sugerido, etapa_funil (todas texto).',
     '',
     `MARCA: ${JSON.stringify({
       nome: brand.name,
@@ -106,30 +109,31 @@ export function buildStrategyPrompt(c: Any, brand: Any, personas: unknown[], pro
 
 const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-/** Normaliza a resposta da IA para `FullStrategy`; lança `null` quando faltar big_idea ou ângulo. */
+/** Normaliza a resposta da IA para `FullStrategy`; lança `null` quando faltar big_idea ou ângulo. Todo texto passa por `aiText`. */
 export function normalizeStrategy(raw: Any, now = new Date()): FullStrategy | null {
-  const angles = list<StrategyAngle>(raw.angulos_detalhados);
-  if (!raw.big_idea || !angles.length) return null;
+  const angles = list<unknown>(raw.angulos_detalhados).map(normalizeAngle);
+  const bigIdea = aiText(raw.big_idea);
+  if (!bigIdea || !angles.length) return null;
   return {
-    resumo_executivo: String(raw.resumo_executivo ?? ''),
-    problema: String(raw.problema ?? ''),
-    objetivo_smart: String(raw.objetivo_smart ?? ''),
-    icp: String(raw.icp ?? ''),
-    oferta: String(raw.oferta ?? ''),
-    big_idea: String(raw.big_idea ?? ''),
-    angulos: angles.map((a) => `${a.nome}: ${a.mensagem}`),
-    funil: String(raw.funil ?? ''),
-    mensagem_principal: String(raw.mensagem_principal ?? ''),
-    objecoes: list<{ objecao: string; resposta: string }>(raw.objecoes),
-    canais: String(raw.canais ?? ''),
+    resumo_executivo: aiText(raw.resumo_executivo),
+    problema: aiText(raw.problema),
+    objetivo_smart: aiText(raw.objetivo_smart),
+    icp: aiText(raw.icp),
+    oferta: aiText(raw.oferta),
+    big_idea: bigIdea,
+    angulos: angles.map((a) => (a.nome ? `${a.nome}: ${a.mensagem}` : a.mensagem)).filter(Boolean),
+    funil: aiText(raw.funil),
+    mensagem_principal: aiText(raw.mensagem_principal),
+    objecoes: list<Any>(raw.objecoes).map((o) => ({ objecao: aiText(o?.objecao ?? o), resposta: aiText(o?.resposta) })),
+    canais: aiText(raw.canais),
     distribuicao_verba: Object.fromEntries(
-      list<{ destino: string; percentual: number }>(raw.distribuicao_verba).map((d) => [d.destino, Number(d.percentual) || 0]),
+      list<{ destino: unknown; percentual: number }>(raw.distribuicao_verba).map((d) => [aiText(d.destino), Number(d.percentual) || 0]),
     ),
-    kpis: Object.fromEntries(list<{ nome: string; meta: string }>(raw.kpis).map((k) => [k.nome, k.meta])),
-    hipoteses: list<string>(raw.hipoteses),
-    plano_testes: String(raw.plano_testes ?? ''),
-    cronograma: String(raw.cronograma ?? ''),
-    recomendacoes: list<string>(raw.recomendacoes),
+    kpis: Object.fromEntries(list<{ nome: unknown; meta: unknown }>(raw.kpis).map((k) => [aiText(k.nome), aiText(k.meta)])),
+    hipoteses: list<unknown>(raw.hipoteses).map((h) => aiText(h, true)).filter(Boolean),
+    plano_testes: aiText(raw.plano_testes),
+    cronograma: aiText(raw.cronograma),
+    recomendacoes: list<unknown>(raw.recomendacoes).map((r) => aiText(r, true)).filter(Boolean),
     angulos_detalhados: angles,
     publicos_meta: list<StrategyAudience>(raw.publicos_meta),
     briefing_criativo: raw.briefing_criativo,

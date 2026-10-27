@@ -1,4 +1,4 @@
-import { asList, joinList, normalizeStoredStrategy, toList } from '../strategy-normalize';
+import { aiText, asList, joinList, normalizeAngle, normalizeStoredStrategy, toList } from '../strategy-normalize';
 
 describe('strategy-normalize', () => {
   it('toList/joinList/asList: ausente/null → [], string → [string], não-array nunca quebra o join', () => {
@@ -56,5 +56,62 @@ describe('strategy-normalize', () => {
     expect(s.briefing_video!.duracao_segundos).toBeUndefined();
     expect(s.briefing_criativo!.quantidade_por_angulo).toBe(3);
     expect(s.publicos_meta!.map((a) => a.tipo)).toEqual(['custom', '']);
+  });
+
+  it('aiText: texto/número/bool/lista/objeto viram texto legível, sem "[object Object]" em nenhum nível', () => {
+    expect(aiText('  oi  ')).toBe('oi');
+    expect(aiText(null)).toBe('');
+    expect(aiText(undefined)).toBe('');
+    expect(aiText(12)).toBe('12');
+    expect(aiText(true)).toBe('true');
+    expect(aiText(['a', ' ', 'b'])).toBe('a\nb');
+    expect(aiText({ especifico: 'Gerar 200 leads', mensuravel: 'CPL até R$ 10', prazo_final: 30 })).toBe('Especifico: Gerar 200 leads\nMensuravel: CPL até R$ 10\nPrazo final: 30');
+    const icp = aiText({ perfil: 'Mulheres 25-40', dores: ['falta de tempo', 'preço'], extra: { canal: 'Instagram', ok: null }, vazio: '' });
+    expect(icp).toBe('Perfil: Mulheres 25-40\nDores: falta de tempo, preço\nExtra: Canal: Instagram');
+    expect(aiText([{ a: { b: { c: 'fundo' } } }])).toBe('A: B: C: fundo');
+    expect(aiText('[object Object]')).toBe('');
+    expect(aiText({ x: '[object Object]' })).toBe('');
+    for (const v of [{ a: { b: {} } }, [{}], [[{ x: 1 }]]]) expect(aiText(v)).not.toContain('[object Object]');
+  });
+
+  it('campos de texto que vieram como objeto viram linhas; "[object Object]" gravado por versões antigas vira vazio', () => {
+    const s = normalizeStoredStrategy({
+      big_idea: 'x',
+      objetivo_smart: { especifico: 'Gerar 200 leads', temporal: '30 dias' },
+      icp: { perfil: 'Donos de bar', dores: ['pouco movimento'] },
+      resumo_executivo: '[object Object]',
+      problema: ['p1', 'p2'],
+      hipoteses: [{ hipotese: 'h1', teste: 't1' }, '[object Object]'],
+      kpis: [{ nome: 'CPL', meta: { valor: 10, moeda: 'R$' } }],
+    })!;
+    expect(s.objetivo_smart).toBe('Especifico: Gerar 200 leads\nTemporal: 30 dias');
+    expect(s.icp).toBe('Perfil: Donos de bar\nDores: pouco movimento');
+    expect(s.resumo_executivo).toBe('');
+    expect(s.problema).toBe('p1\np2');
+    expect(s.hipoteses).toEqual(['Hipotese: h1; Teste: t1']);
+    expect(s.kpis).toEqual({ CPL: 'Valor: 10\nMoeda: R$' });
+    expect(JSON.stringify(s)).not.toContain('[object Object]');
+  });
+
+  it('ângulos: sinônimos de nome/gancho/mensagem (qualquer caixa); sem nome continua vazio', () => {
+    const s = normalizeStoredStrategy({
+      big_idea: 'x',
+      angulos_detalhados: [
+        { titulo: 'Promo', hook: 'Dobrou', message: 'Chopp em dobro' },
+        { Título: 'Família', headline: 'Traga todos', descrição: 'Mesa grande' },
+        { name: 'N', angulo: 'ignorado', gancho: 'G', texto: 'T' },
+        { nome: '', nome_angulo: 'Pelo sinônimo' },
+        { hook: 'Só o gancho' },
+      ],
+    })!;
+    expect(s.angulos_detalhados!.map((a) => [a.nome, a.gancho, a.mensagem])).toEqual([
+      ['Promo', 'Dobrou', 'Chopp em dobro'],
+      ['Família', 'Traga todos', 'Mesa grande'],
+      ['N', 'G', 'T'],
+      ['Pelo sinônimo', '', ''],
+      ['', 'Só o gancho', ''],
+    ]);
+    expect(normalizeAngle('Só texto')).toMatchObject({ nome: 'Só texto', gancho: '' });
+    expect(normalizeAngle({ angulo: { foco: 'preço' } }).nome).toBe('Foco: preço');
   });
 });

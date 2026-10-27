@@ -22,16 +22,44 @@ const parseMaybeJson = (v: unknown): unknown => {
   }
 };
 
-const toText = (v: unknown): string => {
+/** Texto gravado por versões antigas quando a IA devolvia objeto no lugar de texto (`String({})`). */
+const OBJECT_JUNK = "[object Object]";
+
+/** Chave da IA em texto legível: `dor_principal` → "Dor principal". */
+const readableKey = (k: string): string => {
+  const t = k.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return t ? t[0]!.toUpperCase() + t.slice(1) : "";
+};
+
+/**
+ * Valor da IA → texto para a tela. Com chave própria (modo JSON sem schema estrito) a IA às vezes devolve objeto/lista no lugar
+ * de texto (ex.: `objetivo_smart: { especifico, mensuravel, ... }`). Texto → sem espaços nas pontas; número/bool → String;
+ * lista → um item por linha; objeto → linhas "Chave legível: valor". Dentro de objeto/lista, os valores aninhados ficam numa linha
+ * só ("a, b" / "Chave: valor; Outra: valor"). Nunca devolve "[object Object]" (nem o texto gravado assim por versões antigas).
+ */
+export function aiText(v: unknown, nested = false): string {
   if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t === OBJECT_JUNK ? "" : t;
+  }
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+  if (typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const items = v.map((x) => aiText(x, true)).filter(Boolean);
+    return items.join(nested ? ", " : "\n");
+  }
   if (isObj(v)) {
-    const first = Object.values(v).find((x) => typeof x === "string");
-    return typeof first === "string" ? first : "";
+    const lines = Object.entries(v)
+      .map(([k, x]) => [readableKey(k), aiText(x, true)] as const)
+      .filter(([k, x]) => k && x)
+      .map(([k, x]) => `${k}: ${x}`);
+    return lines.join(nested ? "; " : "\n");
   }
   return "";
-};
+}
+
+const toText = (v: unknown): string => aiText(v);
 
 /** Valor ausente/null vira [], string vira [string] (ou [] se vazia), array fica como está. */
 export const toList = (v: unknown): unknown[] => {
@@ -53,7 +81,8 @@ const num = (fallback: number) =>
     .transform((v) =>
       Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : fallback,
     );
-const textList = z.unknown().transform((v) => toList(v).map(toText).filter(Boolean));
+/** Lista de textos: cada item numa linha só (objeto/lista dentro do item vira "Chave: valor; ..."). */
+const textList = z.unknown().transform((v) => toList(v).map((x) => aiText(x, true)).filter(Boolean));
 
 /** Lista de objetos: itens string viram `{ [stringKey]: item }`, itens inválidos são descartados. */
 function objList<T extends z.ZodTypeAny>(item: T, stringKey: string) {
@@ -93,14 +122,38 @@ function record<V>(keyFields: string[], valueFields: string[], map: (v: unknown)
   });
 }
 
-const angleSchema = obj({
-  nome: text,
-  dor_ou_desejo: text,
-  mensagem: text,
-  gancho: text,
-  formato_sugerido: text,
-  etapa_funil: text,
-});
+/** Sinônimos que a IA usa nos ângulos (sem schema estrito): o primeiro com texto preenche a chave oficial. */
+const ANGLE_SYNONYMS: Record<string, string[]> = {
+  nome: ["nome", "name", "nome_angulo", "nome_do_angulo", "titulo", "título", "title", "angulo", "ângulo"],
+  gancho: ["gancho", "hook", "headline"],
+  mensagem: ["mensagem", "message", "descricao", "descrição", "texto"],
+};
+
+/** Ângulo com as chaves oficiais (nome/gancho/mensagem) preenchidas pelos sinônimos; chave comparada sem maiúsculas. */
+const withAngleSynonyms = (v: unknown): unknown => {
+  const parsed = parseMaybeJson(v);
+  if (!isObj(parsed)) return parsed;
+  const lower = new Map(Object.entries(parsed).map(([k, x]) => [k.toLowerCase(), x]));
+  const out: Record<string, unknown> = { ...parsed };
+  for (const [canon, keys] of Object.entries(ANGLE_SYNONYMS)) {
+    if (aiText(out[canon])) continue;
+    const hit = keys.map((k) => lower.get(k)).find((x) => aiText(x));
+    if (hit !== undefined) out[canon] = hit;
+  }
+  return out;
+};
+
+const angleSchema = z.preprocess(
+  withAngleSynonyms,
+  obj({
+    nome: text,
+    dor_ou_desejo: text,
+    mensagem: text,
+    gancho: text,
+    formato_sugerido: text,
+    etapa_funil: text,
+  }),
+);
 
 const audienceSchema = obj({
   nome: text,

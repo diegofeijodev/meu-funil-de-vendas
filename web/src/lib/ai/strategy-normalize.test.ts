@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asList, joinList, normalizeCopy, normalizeStrategy, toList } from "./strategy-normalize";
+import { aiText, asList, joinList, normalizeCopy, normalizeStrategy, toList } from "./strategy-normalize";
 
 describe("strategy-normalize", () => {
   it("toList/joinList/asList: ausente/null → [], string → [string], não-array nunca quebra", () => {
@@ -79,5 +79,31 @@ describe("strategy-normalize", () => {
     expect(s.briefing_video!.duracao_segundos).toBeUndefined();
     expect(s.briefing_criativo!.quantidade_por_angulo).toBe(3);
     expect(s.publicos_meta![0]!.tipo).toBe("custom");
+  });
+
+  it("aiText: objeto/lista viram texto legível, sem \"[object Object]\" em nenhum nível", () => {
+    expect(aiText(" a ")).toBe("a");
+    expect(aiText(3)).toBe("3");
+    expect(aiText(["a", "b"])).toBe("a\nb");
+    expect(aiText({ especifico: "200 leads", prazo_final: "30 dias" })).toBe("Especifico: 200 leads\nPrazo final: 30 dias");
+    expect(aiText({ perfil: "P", dores: ["d1", "d2"], sub: { x: "y" } })).toBe("Perfil: P\nDores: d1, d2\nSub: X: y");
+    expect(aiText("[object Object]")).toBe("");
+    expect(aiText([{ a: {} }])).toBe("");
+  });
+
+  it("estratégia antiga com \"[object Object]\" vira vazio; objeto vira linhas; ângulos aceitam sinônimos", () => {
+    const s = normalizeStrategy({
+      big_idea: "x",
+      objetivo_smart: "[object Object]",
+      icp: { perfil: "Donos de bar", dores: ["pouco movimento"] },
+      angulos_detalhados: [{ titulo: "Promo", hook: "Dobrou", message: "Chopp em dobro" }, { hook: "Só o gancho" }],
+    })!;
+    expect(s.objetivo_smart).toBe("");
+    expect(s.icp).toBe("Perfil: Donos de bar\nDores: pouco movimento");
+    expect(s.angulos_detalhados!.map((a) => [a.nome, a.gancho, a.mensagem])).toEqual([
+      ["Promo", "Dobrou", "Chopp em dobro"],
+      ["", "Só o gancho", ""],
+    ]);
+    expect(JSON.stringify(s)).not.toContain("[object Object]");
   });
 });

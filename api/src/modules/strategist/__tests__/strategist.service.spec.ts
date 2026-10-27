@@ -53,6 +53,9 @@ describe('StrategistService.generate', () => {
     expect(req.prompt).toContain('"verba_total":3000');
     expect(req.prompt).toMatch(/APRENDIZADOS DA MARCA: \[\{.*"category":"copy","value":"humor"/);
     expect(req.prompt).toContain('RESULTADOS ANTERIORES: [{"campanha":"Antiga","objetivo":"Vendas / Conversão","gasto":200,"ctr":5,"cpl":20,"roas":3}]');
+    // Chave própria sem schema estrito: o prompt deixa claro que objetivo_smart/icp são texto corrido e quais chaves o ângulo usa.
+    expect(req.prompt).toMatch(/objetivo_smart, icp.*são UM texto corrido \(string\), nunca objeto nem lista/);
+    expect(req.prompt).toContain('chaves: nome, dor_ou_desejo, mensagem, gancho, formato_sugerido, etapa_funil');
     expect(w.t.campaign_strategies.rows[0]).toMatchObject({ campaign_id: campaign.id, status: 'draft', version: 1 });
     expect(w.logs.at(-1)).toEqual([WS_A, MARKETING, 'campaign.strategy_generated', 'campaign', { campaign_id: campaign.id, version: 1 }]);
   });
@@ -176,6 +179,23 @@ describe('normalizeStrategy / strategyBrief', () => {
     expect(s.angulos).toEqual(['Promo: Chopp em dobro']);
     expect(s.gerado_por).toBe('IA');
     expect(s.gerado_em).toBe('2026-10-02T12:00:00.000Z');
+  });
+
+  it('campos de texto como objeto (chave própria sem schema estrito) viram texto legível; ângulos aceitam sinônimos', () => {
+    const s = normalizeStrategy({
+      ...RAW,
+      objetivo_smart: { especifico: 'Gerar 200 leads', mensuravel: 'CPL até R$ 10' },
+      icp: { perfil: 'Donos de bar', dores: ['pouco movimento', 'concorrência'] },
+      oferta: 7,
+      angulos_detalhados: [{ titulo: 'Promo', hook: 'Dobrou', message: 'Chopp em dobro' }, { hook: 'Sem nome', mensagem: 'm2' }],
+    })!;
+    expect(s.objetivo_smart).toBe('Especifico: Gerar 200 leads\nMensuravel: CPL até R$ 10');
+    expect(s.icp).toBe('Perfil: Donos de bar\nDores: pouco movimento, concorrência');
+    expect(s.oferta).toBe('7');
+    expect(s.angulos_detalhados![0]).toMatchObject({ nome: 'Promo', gancho: 'Dobrou', mensagem: 'Chopp em dobro' });
+    expect(s.angulos).toEqual(['Promo: Chopp em dobro', 'm2']);
+    expect(JSON.stringify(s)).not.toContain('[object Object]');
+    expect(normalizeStrategy({ ...RAW, big_idea: { a: '' } })).toBeNull();
   });
 
   it('strategyBrief: sem ângulo traz todos; com ângulo traz só ele; limita objeções a 4', () => {
