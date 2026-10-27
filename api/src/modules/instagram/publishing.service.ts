@@ -23,6 +23,23 @@ export const NO_ACCOUNT_GUARDRAIL = 'Nenhuma conta do Instagram conectada nesta 
 
 export type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string | null; error?: string };
 
+/**
+ * Esperas antes de cada nova tentativa de criar um container cuja mídia a Meta não conseguiu baixar (até 3 tentativas extras,
+ * dentro do mesmo job). Em produção a URL responde 200 e a Meta às vezes nem chega a buscá-la: a falha é transitória do lado dela.
+ */
+export const MEDIA_FETCH_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
+
+/**
+ * Erro "a Meta não conseguiu baixar a mídia da URL" na criação do container: código 9004 / subcódigo 2207052
+ * ("Media download has failed." / "The media could not be fetched from this uri"; em pt-BR, "Não foi possível obter a mídia
+ * deste URI"). O `MetaError` chega com `code`/`subcode` da Graph e a mensagem já traduzida ("A Meta respondeu com erro: …").
+ */
+export function isMediaFetchError(e: unknown): boolean {
+  if (!(e instanceof MetaError)) return false;
+  if (e.code === 9004 || e.subcode === 2207052) return true;
+  return /obter a m[ií]dia|media could not be fetched|media download has failed/i.test(e.message);
+}
+
 /** Mídia do gerador simulado (picsum) ou marcada como mock — nunca vai ao ar. */
 export const isMockMedia = (m: { url?: string | null; provider?: string | null; source?: string | null }) =>
   m.provider === 'mock' || m.source === 'mock' || /picsum\.photos/i.test(m.url ?? '');
@@ -294,7 +311,8 @@ export class PublishingService {
     for (const m of media) await this.assertPublicUrl(m.url, lease);
 
     const acc = await this.store.liveAccount(ws);
-    const deadline = this.now() + POLL_BUDGET_MS;
+    // Prazo do polling; cresce com as esperas das novas tentativas de mídia (senão elas comeriam o tempo do container).
+    let deadline = this.now() + POLL_BUDGET_MS;
 
     // Retomada: container já criado numa execução anterior → só polling + media_publish.
     if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline, lease);
@@ -311,9 +329,26 @@ export class PublishingService {
 
     await this.store.patchPost(postId, { status: 'publishing', last_error: null });
     const caption = fullCaption(post);
-    const create = async (params: Record<string, unknown>) => {
-      await lease.renew();
-      return (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+    /**
+     * Cria UM container. Se a Meta não conseguir baixar a mídia (falha transitória dela), tenta de novo a MESMA criação até 3 vezes
+     * (5 s, 15 s, 30 s), renovando o lease antes de cada tentativa; os containers já criados (filhos anteriores do carrossel) ficam.
+     * Qualquer outro erro, ou a 4ª falha, sobe como antes (a fila decide se repete o job).
+     */
+    const create = async (params: Record<string, unknown>, what = 'a mídia') => {
+      for (let attempt = 0; ; attempt++) {
+        await lease.renew();
+        try {
+          return (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+        } catch (e) {
+          const wait = MEDIA_FETCH_RETRY_DELAYS_MS[attempt];
+          if (wait === undefined || !isMediaFetchError(e)) throw e;
+          const line = `A Meta não conseguiu baixar ${what} (tentativa ${attempt + 1} de ${MEDIA_FETCH_RETRY_DELAYS_MS.length + 1}); tentando de novo em ${wait / 1000} s.`;
+          this.logger.warn(`[instagram] post ${postId}: ${line} ${errText(e)}`);
+          await this.store.logEvent({ workspace_id: ws, plan_id: post.plan_id, post_id: postId, kind: 'failure', level: 'warn', message: line });
+          await this.sleep(wait);
+          deadline += wait;
+        }
+      }
     };
     let creationId: string;
 
@@ -321,20 +356,21 @@ export class PublishingService {
       creationId = await create({ image_url: media[0].url, caption });
     } else if (format === 'feed_carousel') {
       const children: string[] = [];
-      for (const m of media.slice(0, 10)) {
+      const items = media.slice(0, 10);
+      for (const [i, m] of items.entries()) {
         const params: Record<string, unknown> = { is_carousel_item: 'true' };
         if (m.type === 'video') Object.assign(params, { media_type: 'VIDEO', video_url: m.url });
         else params['image_url'] = m.url;
-        const id = await create(params);
+        const id = await create(params, `a mídia ${i + 1} de ${items.length} do carrossel`);
         if (m.type === 'video') await this.waitContainer(ws, id, deadline, lease);
         children.push(id);
       }
-      creationId = await create({ media_type: 'CAROUSEL', children: children.join(','), caption });
+      creationId = await create({ media_type: 'CAROUSEL', children: children.join(','), caption }, 'o carrossel');
     } else if (format === 'reel') {
-      creationId = await create({ media_type: 'REELS', video_url: media[0].url, caption, share_to_feed: 'true', ...(media[0].cover_url ? { cover_url: media[0].cover_url } : {}) });
+      creationId = await create({ media_type: 'REELS', video_url: media[0].url, caption, share_to_feed: 'true', ...(media[0].cover_url ? { cover_url: media[0].cover_url } : {}) }, 'o vídeo');
     } else {
       const video = format === 'story_video';
-      creationId = await create({ media_type: 'STORIES', [video ? 'video_url' : 'image_url']: media[0].url });
+      creationId = await create({ media_type: 'STORIES', [video ? 'video_url' : 'image_url']: media[0].url }, video ? 'o vídeo do story' : 'a imagem do story');
     }
 
     // Salva o container antes do polling para poder retomar na próxima execução.

@@ -1,6 +1,6 @@
 import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited } from '../ig-store.service';
 import { MetaError } from '../meta-graph';
-import { fullCaption, PublishingService } from '../publishing.service';
+import { fullCaption, isMediaFetchError, MEDIA_FETCH_RETRY_DELAYS_MS, PublishingService } from '../publishing.service';
 import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 import { WS_B } from '../../media/__tests__/mem';
@@ -151,6 +151,105 @@ describe('PublishingService.publishInstagramPost (Graph)', () => {
     await svc.publishInstagramPost(p.id, undefined, { fromQueue: true });
     expect(created()).toHaveLength(0);
     expect(p.status).toBe('published');
+  });
+});
+
+describe('PublishingService — a Meta não baixou a mídia (repete só o container que falhou)', () => {
+  const FETCH_MSG = 'A Meta respondeu com erro: Não foi possível obter a mídia deste URI: https://api.test/v1/files/creative-assets/media/x.jpg';
+  const fetchErr = () => new MetaError(FETCH_MSG, 9004, 2207052);
+  const carousel = (w: IgWorld) =>
+    seedPost(w, { format: 'feed_carousel', media: [1, 2, 3, 4, 5].map((i) => ({ url: `https://cdn.test/${i}.jpg`, type: 'image', order: i })) });
+  /** Falha a criação do container com esta URL nas `times` primeiras vezes. */
+  const failUrl = (w: IgWorld, url: string, times: number, e: () => Error = fetchErr) => {
+    let n = 0;
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' && opts.params?.image_url === url && n++ < times ? e() : undefined));
+  };
+  const spySleep = (svc: PublishingService) => {
+    const slept: number[] = [];
+    const orig = svc.sleep;
+    svc.sleep = async (ms) => {
+      slept.push(ms);
+      return orig(ms);
+    };
+    return slept;
+  };
+  const byUrl = (rows: any[]) => rows.reduce<Record<string, number>>((acc, c) => (c.image_url ? { ...acc, [c.image_url]: (acc[c.image_url] ?? 0) + 1 } : acc), {});
+
+  it('detecta pelo código 9004, pelo subcódigo 2207052 ou pela mensagem; outros erros não', () => {
+    expect(isMediaFetchError(new MetaError('x', 9004))).toBe(true);
+    expect(isMediaFetchError(new MetaError('x', 100, 2207052))).toBe(true);
+    expect(isMediaFetchError(new MetaError(FETCH_MSG))).toBe(true);
+    expect(isMediaFetchError(new MetaError('A Meta respondeu com erro: Media download has failed.'))).toBe(true);
+    expect(isMediaFetchError(new MetaError('A Meta recusou um dos dados enviados: x', 100))).toBe(false);
+    expect(isMediaFetchError(new Error(FETCH_MSG))).toBe(false);
+  });
+
+  it('carrossel: o 4º filho falha 2× e passa na 3ª — publicado; filhos 1–3 e 5 criados uma vez só; esperas 5 s e 15 s', async () => {
+    const { w, svc, created } = setup();
+    const slept = spySleep(svc);
+    const p = carousel(w);
+    failUrl(w, 'https://cdn.test/4.jpg', 2);
+    expect(await svc.publishInstagramPost(p.id)).toEqual({ ok: true, sandbox: false, permalink: 'https://instagram.com/p/x' });
+    expect(p.status).toBe('published');
+    expect(byUrl(created())).toEqual({ 'https://cdn.test/1.jpg': 1, 'https://cdn.test/2.jpg': 1, 'https://cdn.test/3.jpg': 1, 'https://cdn.test/4.jpg': 3, 'https://cdn.test/5.jpg': 1 });
+    expect(created().at(-1)).toMatchObject({ media_type: 'CAROUSEL', children: 'c1,c2,c3,c4,c5' });
+    expect(slept).toEqual([5_000, 15_000]);
+    const warns = w.t['ig_autopilot_events']!.rows.filter((e) => e.post_id === p.id && e.level === 'warn');
+    expect(warns.map((e) => e.message)).toEqual([
+      'A Meta não conseguiu baixar a mídia 4 de 5 do carrossel (tentativa 1 de 4); tentando de novo em 5 s.',
+      'A Meta não conseguiu baixar a mídia 4 de 5 do carrossel (tentativa 2 de 4); tentando de novo em 15 s.',
+    ]);
+  });
+
+  it('falha 4×: desiste com o mesmo erro de antes (sem criar o carrossel) e o lease é solto', async () => {
+    const { w, svc, created } = setup();
+    const slept = spySleep(svc);
+    const p = carousel(w);
+    failUrl(w, 'https://cdn.test/4.jpg', 4);
+    const e = await err(svc.publishInstagramPost(p.id));
+    expect(e).toBeInstanceOf(MetaError);
+    expect(e.message).toBe(FETCH_MSG);
+    expect(byUrl(created())['https://cdn.test/4.jpg']).toBe(1 + MEDIA_FETCH_RETRY_DELAYS_MS.length);
+    expect(byUrl(created())['https://cdn.test/5.jpg']).toBeUndefined();
+    expect(created().some((c) => c.media_type === 'CAROUSEL')).toBe(false);
+    expect(slept).toEqual([5_000, 15_000, 30_000]);
+    expect(p.lease_until ?? null).toBeNull();
+  });
+
+  it('erro diferente (dado recusado) não repete: falha na hora, sem espera', async () => {
+    const { w, svc, created } = setup();
+    const slept = spySleep(svc);
+    const p = carousel(w);
+    failUrl(w, 'https://cdn.test/4.jpg', 1, () => new MetaError('A Meta recusou um dos dados enviados: formato', 100));
+    expect((await err(svc.publishInstagramPost(p.id))).message).toBe('A Meta recusou um dos dados enviados: formato');
+    expect(byUrl(created())['https://cdn.test/4.jpg']).toBe(1);
+    expect(slept).toEqual([]);
+  });
+
+  it('imagem única: falha 3× e passa na 4ª — as esperas (50 s) não comem o prazo do polling do container', async () => {
+    const { w, svc, created } = setup();
+    const slept = spySleep(svc);
+    const p = seedPost(w);
+    failUrl(w, 'https://cdn.test/a.jpg', 3);
+    expect((await svc.publishInstagramPost(p.id)).ok).toBe(true);
+    expect(p.status).toBe('published');
+    expect(created()).toHaveLength(4);
+    expect(slept).toEqual([5_000, 15_000, 30_000]);
+  });
+
+  it('story e reel também repetem a criação', async () => {
+    const { w, svc, created } = setup();
+    spySleep(svc);
+    const story = seedPost(w, { format: 'story_image' });
+    failUrl(w, 'https://cdn.test/a.jpg', 1);
+    await svc.publishInstagramPost(story.id);
+    expect(story.status).toBe('published');
+    let n = 0;
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.params?.media_type === 'REELS' && n++ < 1 ? new MetaError('x', 9004, 2207052) : undefined));
+    const reel = seedPost(w, { format: 'reel', media: [{ url: 'https://cdn.test/r.mp4', type: 'video', order: 0 }] });
+    await svc.publishInstagramPost(reel.id);
+    expect(reel.status).toBe('published');
+    expect(created().filter((c) => c.media_type === 'REELS')).toHaveLength(2);
   });
 });
 
