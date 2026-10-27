@@ -98,3 +98,16 @@ export function apiErrorMessage(error: unknown, fallback = 'Erro inesperado'): s
   if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
+
+/**
+ * O `code` estável do erro da API (`{ error: { code } }`), para a tela reagir a um caso sem comparar texto. Também lê o `code`
+ * que `serverFnPost` repassa no `Error` que ele lança.
+ */
+export function apiErrorCode(error: unknown): string | null {
+  if (axios.isAxiosError(error)) {
+    const code = error.response?.data?.error?.code;
+    return typeof code === 'string' ? code : null;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : null;
+}

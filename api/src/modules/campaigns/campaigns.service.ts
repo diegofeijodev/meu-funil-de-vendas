@@ -63,14 +63,35 @@ export class CampaignsService {
   /** As seis leituras de `["campaign", id]` juntas (mesmos filtros e ordens). */
   async detail(workspaceId: string, id: string) {
     const campaign = await this.get(workspaceId, id);
-    const [strategy, copy, creatives, perf, costs] = await Promise.all([
+    const [strategy, copy, creatives, perf, costs, instagram] = await Promise.all([
       this.prisma.campaign_strategies.findFirst({ where: { campaign_id: id, workspace_id: workspaceId }, orderBy: { version: 'desc' } }),
       this.prisma.copies.findFirst({ where: { campaign_id: id, workspace_id: workspaceId }, orderBy: { version: 'desc' } }),
       this.prisma.creatives.findMany({ where: { campaign_id: id, workspace_id: workspaceId }, orderBy: { created_at: 'desc' } }),
       this.prisma.performance_daily.findMany({ where: { campaign_id: id, workspace_id: workspaceId, source: { not: 'demo' } } }),
       this.prisma.campaign_costs.findMany({ where: { campaign_id: id, workspace_id: workspaceId } }),
+      this.instagramLinks(workspaceId, id),
     ]);
-    return { campaign, strategy, copy, creatives, perf, costs };
+    return { campaign, strategy, copy, creatives, perf, costs, instagram };
+  }
+
+  /**
+   * Instagram ligado à campanha (para o diálogo "Encerrar campanha" dizer só o que existe): planos de "Criar plano no Instagram" +
+   * programações automáticas da campanha, e quantos posts deles ainda não saíram.
+   */
+  private async instagramLinks(workspaceId: string, campaignId: string) {
+    const [plans, runs] = await Promise.all([
+      this.prisma.ig_content_plans.findMany({ where: { campaign_id: campaignId, workspace_id: workspaceId }, select: { id: true } }),
+      this.prisma.ig_auto_runs.findMany({ where: { campaign_id: campaignId, workspace_id: workspaceId }, select: { id: true } }),
+    ]);
+    if (!plans.length && !runs.length) return { linked: false, pending_posts: 0 };
+    const pending = await this.prisma.ig_posts.count({
+      where: {
+        workspace_id: workspaceId,
+        status: { notIn: ['published', 'publishing', 'cancelled'] },
+        OR: [...(plans.length ? [{ plan_id: { in: plans.map((p) => p.id) } }] : []), ...(runs.length ? [{ run_id: { in: runs.map((r) => r.id) } }] : [])],
+      },
+    });
+    return { linked: true, pending_posts: pending };
   }
 
   /** INSERT do wizard (`status` sempre `draft`) + atividade `campaign.created`. */

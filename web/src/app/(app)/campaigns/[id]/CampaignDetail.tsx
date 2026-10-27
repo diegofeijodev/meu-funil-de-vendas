@@ -5,12 +5,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { CircleStop, Rocket, Sparkles } from "lucide-react";
+import { AlertTriangle, CircleStop, Rocket, Sparkles } from "lucide-react";
 import {
   createCopy,
   endCampaign,
   getCampaignDetail,
   requestCampaignApproval,
+  type EndCampaignResult,
   setCampaignLandingUrl,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import {
@@ -23,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { apiErrorCode, apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace } from "@/lib/workspace";
 import { PageHeader, Section, StatCard, StatusPill, SandboxBadge } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-o
 import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
 import { CampaignChannels } from "@/components/campaign-channels";
 import { canvaCreateFromBrief } from "@/lib/creative/canva.functions";
+import { setCreativeStatus } from "@/modules/creative/infrastructure/creative.api";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
 import { asList, joinList, normalizeCopy, normalizeStrategy } from "@/lib/ai/strategy-normalize";
@@ -67,6 +69,8 @@ export function CampaignDetail() {
   const [steps, setSteps] = useState<PublishStep[]>([]);
   const [landing, setLanding] = useState("");
   const [endOpen, setEndOpen] = useState(false);
+  /** Resultado do último "Encerrar" nesta tela (o Instagram que falhou não fica gravado na campanha). */
+  const [lastEnd, setLastEnd] = useState<EndCampaignResult | null>(null);
   // Aba controlada: mensagens de erro podem levar direto à aba certa (ex.: "Ver criativos").
   const [tab, setTab] = useState("estrategia");
   const showTab = (value: string) => {
@@ -267,8 +271,9 @@ export function CampaignDetail() {
     } catch (e) {
       setSteps([]); // some o "Enviando para a Meta" que ficaria preso depois da falha
       const msg = apiErrorMessage(e, "Falha ao publicar");
-      // Sem criativo aprovado: o aviso leva direto à aba Criativos.
-      if (/criativo/i.test(msg)) toast.error(msg, { action: { label: "Ver criativos", onClick: () => showTab("criativos") } });
+      // Sem criativo aprovado (código estável da API): o aviso leva direto à aba Criativos.
+      if (apiErrorCode(e) === "NO_APPROVED_CREATIVE")
+        toast.error(msg, { duration: 10000, action: { label: "Ver criativos", onClick: () => showTab("criativos") } });
       else toast.error(msg);
     } finally {
       setBusy(null);
@@ -323,9 +328,11 @@ export function CampaignDetail() {
     setBusy("end");
     try {
       const r = await endCampaign(workspaceId, id);
+      setLastEnd(r);
       setEndOpen(false);
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      const failed = r.channels.some((x) => !x.ok);
+      const failedNames = r.channels.filter((x) => !x.ok && x.channel !== "instagram").map((x) => CHANNEL_NAME[x.channel] ?? x.channel);
+      const igFailed = r.channels.some((x) => !x.ok && x.channel === "instagram");
       const description = r.channels.length ? (
         <div className="space-y-0.5">
           {r.channels.map((x) => (
@@ -333,10 +340,25 @@ export function CampaignDetail() {
           ))}
         </div>
       ) : undefined;
-      if (failed) toast.warning("Campanha encerrada, mas algum canal não confirmou a pausa. Tente encerrar de novo ou pause direto no canal.", { description, duration: 12000 });
-      else toast.success(r.alreadyEnded ? "A campanha já estava encerrada. Conferimos de novo os canais." : "Campanha encerrada.", { description });
+      if (failedNames.length)
+        toast.warning(`Campanha encerrada, mas ${joinPt(failedNames)} não ${failedNames.length > 1 ? "confirmaram" : "confirmou"} a pausa.`, { description, duration: 12000 });
+      else if (igFailed) toast.warning("Campanha encerrada, mas não deu para cancelar os posts agendados do Instagram.", { description, duration: 12000 });
+      else toast.success(r.alreadyEnded ? "Canais conferidos de novo: tudo pausado." : "Campanha encerrada.", { description, duration: 8000 });
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível encerrar a campanha."));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const approveCreative = async (creativeId: string) => {
+    if (!workspaceId) return;
+    setBusy(`approve-${creativeId}`);
+    try {
+      await setCreativeStatus(workspaceId, creativeId, "approved");
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success("Criativo aprovado. Ele entra na publicação da campanha.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível aprovar o criativo."));
     } finally {
       setBusy(null);
     }
@@ -344,6 +366,16 @@ export function CampaignDetail() {
   const ended = c.status === "finished";
   const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
   const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
+  const ext = c as { google_campaign_id?: string | null; google_status?: string | null; tiktok_campaign_id?: string | null; tiktok_status?: string | null };
+  // Canais em que a campanha existe (o diálogo de encerrar cita só esses) e os que ainda estão no ar.
+  const liveChannels = [metaId && "meta", ext.google_campaign_id && "google", ext.tiktok_campaign_id && "tiktok"].filter(Boolean) as string[];
+  const stillActive = [
+    metaId && metaDelivery === "ACTIVE" && "meta",
+    ext.google_campaign_id && ext.google_status === "ENABLED" && "google",
+    ext.tiktok_campaign_id && ext.tiktok_status === "ENABLE" && "tiktok",
+  ].filter(Boolean) as string[];
+  const igEndFailed = !!lastEnd?.channels.some((x) => x.channel === "instagram" && !x.ok);
+  const canPauseMeta = canEdit && !!metaId && metaDelivery === "ACTIVE";
 
   return (
     <>
@@ -355,9 +387,20 @@ export function CampaignDetail() {
             <StatusPill status={c.status} label={CAMPAIGN_STATUS[c.status] ?? c.status} />
             <Button variant="outline" asChild><Link to="/campaigns">Voltar</Link></Button>
             {canEdit && c.status === "draft" && <Button onClick={requestApproval}>Solicitar aprovação</Button>}
-            {canEdit && metaId && (c.status === "approved" || c.status === "active") && (metaDelivery === "ACTIVE" || canManage) && (
-              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery(metaDelivery === "ACTIVE" ? "PAUSED" : "ACTIVE")}>
-                {metaDelivery === "ACTIVE" ? "Pausar na Meta" : "Ativar na Meta"}
+            {/* Pausar aparece sempre que a Meta está veiculando (mesmo encerrada); ativar, só aprovada/ativa e para dono/admin. */}
+            {canPauseMeta && (
+              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery("PAUSED")}>
+                Pausar na Meta
+              </Button>
+            )}
+            {canEdit && canManage && metaId && metaDelivery !== "ACTIVE" && (c.status === "approved" || c.status === "active") && (
+              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery("ACTIVE")}>
+                Ativar na Meta
+              </Button>
+            )}
+            {canManage && ended && (stillActive.length > 0 || igEndFailed) && (
+              <Button variant="outline" disabled={busy === "end"} onClick={() => void finishCampaign()}>
+                {busy === "end" ? "Pausando..." : "Pausar os canais de novo"}
               </Button>
             )}
             {canEdit && !metaId && (c.status === "approved" || c.status === "active") && (
@@ -367,10 +410,13 @@ export function CampaignDetail() {
               </Button>
             )}
             {canManage && !ended && (
-              <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setEndOpen(true)}>
-                <CircleStop className="mr-2 size-4" />
-                Encerrar campanha
-              </Button>
+              // No celular fica numa linha própria, longe dos outros botões.
+              <div className="flex w-full justify-end border-t border-border/60 pt-2 sm:w-auto sm:border-0 sm:pt-0">
+                <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setEndOpen(true)}>
+                  <CircleStop className="mr-2 size-4" />
+                  Encerrar campanha
+                </Button>
+              </div>
             )}
           </>
         }
@@ -378,21 +424,28 @@ export function CampaignDetail() {
       <AlertDialog open={endOpen} onOpenChange={(open) => busy !== "end" && setEndOpen(open)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Encerrar a campanha?</AlertDialogTitle>
+            <AlertDialogTitle>Encerrar a campanha &quot;{c.name}&quot;?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p>Ao encerrar:</p>
-                <ul className="list-disc space-y-1 pl-5">
-                  <li>os anúncios são pausados em todos os canais (Meta, Google e TikTok) e param de gastar verba;</li>
-                  <li>os posts agendados do Instagram desta campanha são cancelados;</li>
-                  <li>os posts que já foram publicados continuam no perfil.</li>
-                </ul>
-                <p>Depois de encerrada, a campanha não pode ser publicada nem ativada de novo.</p>
+                {(liveChannels.length > 0 || data.instagram.linked) && (
+                  <ul className="list-disc space-y-1 pl-5">
+                    {liveChannels.length > 0 && (
+                      <li>Os anúncios {joinPt(liveChannels.map((ch) => CHANNEL_IN[ch]!))} são pausados e param de gastar verba.</li>
+                    )}
+                    {data.instagram.linked && (
+                      <li>Os posts agendados do Instagram desta campanha são cancelados. Os que já saíram continuam no perfil.</li>
+                    )}
+                  </ul>
+                )}
+                <p>
+                  Não dá para desfazer: a campanha não pode ser publicada nem ativada de novo. Os resultados continuam aqui.
+                  {canPauseMeta ? " Se quiser só dar uma pausa, use Pausar na Meta." : ""}
+                </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy === "end"}>Voltar</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy === "end"}>Não encerrar</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={busy === "end"}
@@ -406,11 +459,20 @@ export function CampaignDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {ended && (
+      {ended && (stillActive.length > 0 || igEndFailed) ? (
+        <div role="status" className="panel mb-6 flex items-start gap-3 border-amber-500/50 bg-amber-500/5 p-4 text-sm">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+          <p>
+            {stillActive.length > 0
+              ? `Campanha encerrada, mas ${joinPt(stillActive.map((ch) => CHANNEL_NAME[ch]!))} ainda não ${stillActive.length > 1 ? "confirmaram" : "confirmou"} a pausa e os anúncios podem continuar gastando. Toque em Pausar os canais de novo ou pause direto ${joinPt(stillActive.map((ch) => CHANNEL_PLACE[ch]!))}.`
+              : "Campanha encerrada, mas não deu para cancelar os posts agendados do Instagram. Toque em Pausar os canais de novo."}
+          </p>
+        </div>
+      ) : ended ? (
         <div className="panel mb-6 p-4 text-sm text-muted-foreground">
           Campanha encerrada: os anúncios ficam pausados e ela não pode ser publicada nem ativada de novo. Os resultados continuam aqui.
         </div>
-      )}
+      ) : null}
       <div className="mb-6">
         <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
       </div>
@@ -691,7 +753,14 @@ export function CampaignDetail() {
           <Section title="Criativos da campanha" actions={<Button size="sm" variant="outline" asChild><Link to="/studio">Abrir Creative Studio</Link></Button>}>
             <SectionErrorBoundary resetKey={data.creatives.length} onRegenerate={canEdit ? regenStrategy : undefined} regenerating={busy === "strategy"}>
             {data.creatives.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhum criativo gerado para esta campanha.</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Nenhum criativo desta campanha ainda. Crie no Creative Studio.</p>
+                {canEdit && (
+                  <Button size="sm" asChild>
+                    <Link to="/studio">Criar criativo</Link>
+                  </Button>
+                )}
+              </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {data.creatives.map((cr) => (
@@ -709,6 +778,13 @@ export function CampaignDetail() {
                       <p className="text-sm font-medium">{cr.title}</p>
                       <p className="text-xs text-muted-foreground">{FORMATS[cr.type] ?? cr.type} · {cr.aspect_ratio}</p>
                       <StatusPill status={cr.status} label={CREATIVE_STATUS[cr.status] ?? cr.status} />
+                      {canEdit && cr.status !== "approved" && !ended && (
+                        <div className="pt-1">
+                          <Button size="sm" variant="outline" disabled={busy === `approve-${cr.id}`} onClick={() => void approveCreative(cr.id)}>
+                            {busy === `approve-${cr.id}` ? "Aprovando..." : "Aprovar"}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -782,6 +858,13 @@ export function CampaignDetail() {
 /** Campo vazio (texto em branco, lista vazia, null) aparece como "—" em vez de quebrar ou sumir sem aviso. */
 const isEmptyNode = (n: React.ReactNode): boolean =>
   n == null || n === false || (typeof n === "string" && !n.trim()) || (Array.isArray(n) && n.every(isEmptyNode));
+
+/** Nomes dos canais nos textos do encerramento (com artigo/preposição). */
+const CHANNEL_NAME: Record<string, string> = { meta: "a Meta", google: "o Google Ads", tiktok: "o TikTok Ads" };
+const CHANNEL_IN: Record<string, string> = { meta: "na Meta", google: "no Google Ads", tiktok: "no TikTok Ads" };
+const CHANNEL_PLACE: Record<string, string> = { meta: "no Gerenciador de Anúncios da Meta", google: "no Google Ads", tiktok: "no TikTok Ads Manager" };
+/** "a", "a e b", "a, b e c". */
+const joinPt = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}`);
 
 function Block({ title, children, regen = false }: { title: string; children: React.ReactNode; regen?: boolean }) {
   const empty = isEmptyNode(children);

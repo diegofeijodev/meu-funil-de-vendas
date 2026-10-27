@@ -120,6 +120,7 @@ describe('MetaAdsService.publish', () => {
     expect(await status(w.meta.publish(OWNER, WS_A, nolp.id))).toBe('400:Preencha a página de destino (URL) da campanha antes de publicar.');
     const nocr = w.seedCampaign();
     expect(await status(w.meta.publish(OWNER, WS_A, nocr.id))).toBe('400:Aprove pelo menos um criativo desta campanha antes de publicar.');
+    expect(((await w.meta.publish(OWNER, WS_A, nocr.id).catch((e) => e)) as any).getResponse().code).toBe('NO_APPROVED_CREATIVE');
     expect(w.calls).toHaveLength(0);
   });
 

@@ -92,7 +92,7 @@
   --muted-foreground: oklch(0.5223 0.0285 252.09);
   --accent: oklch(0.7162 0.1281 179.73);
   --accent-foreground: oklch(0.2255 0.0638 258.36);
-  --destructive: oklch(0.62 0.2 22);
+  --destructive: oklch(0.55 0.2 22); /* 0.62 não passava contraste AA para texto pequeno sobre fundo claro */
   --destructive-foreground: oklch(0.98 0.005 250);
   --success: oklch(0.6941 0.1565 158.95);
   --success-foreground: oklch(1 0 0);

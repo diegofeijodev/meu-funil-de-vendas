@@ -105,7 +105,7 @@ export function Approvals() {
                   <span>{r.title}</span>
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     <span>{shortDate(r.decided_at ?? r.created_at)}</span>
-                    <StatusPill status={r.status} label={r.status === "approved" ? "Aprovado" : "Rejeitado"} />
+                    <StatusPill status={r.status} label={r.status === "approved" ? "Aprovado" : r.status === "cancelled" ? "Cancelado (campanha encerrada)" : "Rejeitado"} />
                   </div>
                 </div>
               ))}

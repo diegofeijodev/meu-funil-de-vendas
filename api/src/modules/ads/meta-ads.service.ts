@@ -1,5 +1,5 @@
 /** As 11 server fns de `meta-ads.functions.ts` (`POST /v1/meta/meta-ads-*`, `meta-save-app`, `meta-login-url`, `meta-list-assets`, `meta-save-assets`). */
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -119,7 +119,8 @@ export class MetaAdsService {
       this.prisma.creatives.findMany({ where: { campaign_id: c.id, workspace_id: ws, status: 'approved' }, select: { id: true, title: true, preview_url: true, thumbnail_url: true, status: true, angle: true } }),
       this.prisma.copies.findMany({ where: { campaign_id: c.id, workspace_id: ws }, select: { content: true, status: true }, orderBy: { version: 'desc' }, take: 10 }),
     ]);
-    if (!creatives.length) throw new UserError('Aprove pelo menos um criativo desta campanha antes de publicar.');
+    // Código estável: a tela leva direto aos criativos sem comparar texto.
+    if (!creatives.length) throw new BadRequestException({ code: 'NO_APPROVED_CREATIVE', message: 'Aprove pelo menos um criativo desta campanha antes de publicar.' });
     // Copy aprovada mais recente (senão a última versão) e estratégia em vigor.
     const copy = ((copies.find((r) => r.status === 'approved') ?? copies[0])?.content ?? {}) as any;
     const strategy = await this.strategist.currentStrategy(ws, c.id);

@@ -63,10 +63,12 @@ export function CampaignChannels({ campaign, canEdit, canManage }: { campaign: C
               </Button>
             )
           )
+        ) : ended ? (
+          <p className="text-xs text-muted-foreground">Campanha encerrada: não dá para criar campanha nova neste canal.</p>
         ) : (
           canEdit && (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={!!busy || !approved} title={ended ? "Campanha encerrada." : approved ? "" : "Aprove a campanha antes"} onClick={() => act(`new-${ch}`, async () => {
+              <Button size="sm" disabled={!!busy || !approved} title={approved ? "" : "Aprove a campanha antes"} onClick={() => act(`new-${ch}`, async () => {
                 const r = await create({ data: { campaignId: campaign.id, channel: ch } });
                 setLog(r.steps);
                 toast.success(`Campanha criada pausada no ${label}.`);

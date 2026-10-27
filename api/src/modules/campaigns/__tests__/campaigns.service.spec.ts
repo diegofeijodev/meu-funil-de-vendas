@@ -59,6 +59,7 @@ describe('CampaignsService — wizard e leituras', () => {
     expect(d.creatives).toHaveLength(1);
     expect(d.perf.map((p: any) => p.spend)).toEqual([20]);
     expect(d.costs).toHaveLength(1);
+    expect(d.instagram).toEqual({ linked: false, pending_posts: 0 });
     expect(await status(svc.detail(WS_B, campaign.id))).toBe('404:Campanha não encontrada.');
   });
 

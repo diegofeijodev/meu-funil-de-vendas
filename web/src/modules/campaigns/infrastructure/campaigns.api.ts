@@ -101,6 +101,8 @@ const detailSchema = z.object({
   creatives: z.array(creative),
   perf: z.array(perfRow),
   costs: z.array(z.object({ amount: num }).passthrough()),
+  // Instagram ligado (planos/programações da campanha) e posts dele ainda não publicados — o diálogo de encerrar cita só o que existe.
+  instagram: z.object({ linked: z.boolean(), pending_posts: num }).default({ linked: false, pending_posts: 0 }),
 });
 export type CampaignDetailData = Omit<z.infer<typeof detailSchema>, "perf"> & { perf: PerformanceRow[] };
 

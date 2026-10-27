@@ -1,4 +1,4 @@
-import { api, apiErrorMessage } from '@/modules/shared/infrastructure/http';
+import { api, apiErrorCode, apiErrorMessage } from '@/modules/shared/infrastructure/http';
 
 /**
  * `useServerFn(fn)` do TanStack Start devolvia uma função que chama a server
@@ -40,7 +40,8 @@ export function serverFnPost<T = void, R = unknown>(path: string | ((data: T) =>
       const res = await api.post<R>(url, opts?.data ?? {});
       return res.data;
     } catch (e) {
-      throw new Error(apiErrorMessage(e));
+      // Mantém o `code` da API (`{ error: { code } }`) para quem precisa reagir a um caso específico.
+      throw Object.assign(new Error(apiErrorMessage(e)), { code: apiErrorCode(e) ?? undefined });
     }
   };
 }
