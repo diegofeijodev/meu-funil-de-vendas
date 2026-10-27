@@ -261,7 +261,7 @@ check "plano do Instagram a partir da estratégia aprovada (v2)" "Instagram · C
 check "atividade campaign.strategy_approved gravada" "2" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$WID' AND action='campaign.strategy_approved'")"
 CPY=$API/v1/copy-ai/generate-copy-with-ai
 CPB="{\"workspaceId\":\"$WID\",\"engine\":\"auto\",\"brand\":{\"name\":\"M\"},\"brief\":{\"name\":\"C\"},\"seed\":0,\"campaignId\":\"$CID\",\"angle\":null}"
-check "copy sem gateway de IA → IA do app não configurada" "IA do app não configurada." "$(curl -s -X POST $CPY -H "$H" -H "$J" -d "$CPB" | jq -r .error.message)"
+check "copy sem gateway nem chave → Nenhuma IA disponível" "Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações." "$(curl -s -X POST $CPY -H "$H" -H "$J" -d "$CPB" | jq -r .error.message)"
 check "copy: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$HV" -H "$J" -d "$CPB")"
 check "copy: estranho → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$HD" -H "$J" -d "$CPB")"
 check "copy: motor inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CPY -H "$H" -H "$J" -d "$(echo "$CPB" | jq -c '.engine="x"')")"
@@ -390,7 +390,7 @@ check "retry: job inexistente → 404" "Job de geração não encontrado." "$(cu
 check "nova versão: criativo de estranho → 404" "Criativo não encontrado." "$(curl -s -X POST $CRV/new-creative-version -H "$HD" -H "$J" -d "{\"creativeId\":\"$CRE\"}" | jq -r .error.message)"
 check "nova versão: viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $CRV/new-creative-version -H "$HV" -H "$J" -d "{\"creativeId\":\"$CRE\"}")"
 NV=$(curl -s -X POST $CRV/new-creative-version -H "$HM" -H "$J" -d "{\"creativeId\":\"$CRE\"}")
-check "nova versão sem gateway: o erro VOLTA em `error` (200), job failed" "failed,IA do app não configurada.,failed" "$(echo "$NV" | jq -r '"\(.status),\(.error)"' | tr '\n' ','; PSQL "SELECT status FROM creative_generation_jobs WHERE id='$(echo "$NV" | jq -r .jobId)'")"
+check "nova versão sem gateway: o erro VOLTA em `error` (200), job failed" "failed,Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.,failed" "$(echo "$NV" | jq -r '"\(.status),\(.error)"' | tr '\n' ','; PSQL "SELECT status FROM creative_generation_jobs WHERE id='$(echo "$NV" | jq -r .jobId)'")"
 check "retry do job falho (mesma falha, mesmo job)" "failed" "$(curl -s -X POST $CRV/retry-creative-job -H "$HM" -H "$J" -d "{\"jobId\":\"$(echo "$NV" | jq -r .jobId)\"}" | jq -r .status)"
 PKG=$(curl -s -X POST $CRV/capcut-package -H "$HV" -H "$J" -d "{\"creativeId\":\"$CRE\"}")
 check "pacote CapCut: zip com imagem + LEIA-ME" "PK,1" "$(curl -s "$(echo "$PKG" | jq -r .url)" -o /tmp/mf-smoke-capcut.zip; head -c2 /tmp/mf-smoke-capcut.zip; echo -n ","; unzip -l /tmp/mf-smoke-capcut.zip 2>/dev/null | grep -c 'LEIA-ME.txt')"
@@ -569,7 +569,7 @@ check "auto: resumo das programações" "1,1,0" "$(curl -s $IGW/ig-auto-runs -H 
 check "auto: resumo é por workspace" "0" "$(curl -s $API/v1/workspaces/$NID/ig-auto-runs -H "$H" | jq length)"
 check "auto: preencher — estranho → 404 (sem vazar)" "Programação não encontrada." "$(curl -s -X POST $IGA/fill-auto-calendar -H "$HD" -H "$J" -d "{\"runId\":\"$RUN\"}" | jq -r .error.message)"
 check "auto: preencher — viewer → 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/fill-auto-calendar -H "$HV" -H "$J" -d "{\"runId\":\"$RUN\"}")"
-check "auto: preencher sem IA → 502; lock solto e erro guardado" "502,,IA" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/fill-auto-calendar -H "$H" -H "$J" -d "{\"runId\":\"$RUN\"}"),$(PSQL "SELECT coalesce(locked_until::text,'') FROM ig_auto_runs WHERE id='$RUN'"),$(PSQL "SELECT left(last_error,2) FROM ig_auto_runs WHERE id='$RUN'")"
+check "auto: preencher sem IA → 502; lock solto e erro guardado" "502,,Ne" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $IGA/fill-auto-calendar -H "$H" -H "$J" -d "{\"runId\":\"$RUN\"}"),$(PSQL "SELECT coalesce(locked_until::text,'') FROM ig_auto_runs WHERE id='$RUN'"),$(PSQL "SELECT left(last_error,2) FROM ig_auto_runs WHERE id='$RUN'")"
 check "auto: …sem IA a estratégia continua pendente e sem aviso de pausa" "pending,0,0" "$(PSQL "SELECT strategy_status||','||(strategy IS NOT NULL)::int||','||(paused_reason IS NOT NULL)::int FROM ig_auto_runs WHERE id='$RUN'")"
 check "auto: …o objetivo digitado foi guardado em focus" "$FOCUS" "$(PSQL "SELECT focus FROM ig_auto_runs WHERE id='$RUN'")"
 # Estratégia do período: a IA real não roda no smoke, então a estratégia "gerada" é gravada direto (o fluxo com IA falsa é coberto pelo jest).

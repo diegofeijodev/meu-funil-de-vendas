@@ -435,7 +435,7 @@ try {
   esperado(/generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
   if (SEM_IA) {
     aiLive = false;
-    check('BC_NO_AI=1: a API responde "IA do app não configurada." (sem gateway)', respIa.status === 502 && /IA do app não configurada/.test(JSON.stringify(respIa.body)), `${respIa.status} ${JSON.stringify(respIa.body).slice(0, 120)}`);
+    check('BC_NO_AI=1: a API responde "Nenhuma IA disponível" (sem gateway nem chave)', respIa.status === 502 && /Nenhuma IA disponível/.test(JSON.stringify(respIa.body)), `${respIa.status} ${JSON.stringify(respIa.body).slice(0, 120)}`);
   } else {
     aiLive = respIa.status === 200;
     check('API com o gateway de IA falso (AI_GATEWAY_URL=http://127.0.0.1:3099/v1)', aiLive, 'sem o gateway falso o teste de IA roda no modo "sem IA" (BC_NO_AI=1)');
@@ -747,7 +747,7 @@ try {
     await page.getByText('Campanha criada com estratégia gerada pela IA.').waitFor({ timeout: 60000 });
     ok('wizard: toast "Campanha criada com estratégia gerada pela IA."');
   } else {
-    await page.getByText(/Estratégia não gerada: IA do app não configurada/).waitFor({ timeout: 60000 });
+    await page.getByText(/Estratégia não gerada\. Nenhuma IA disponível/).waitFor({ timeout: 60000 });
     ok('wizard sem IA: toast "Estratégia não gerada: …" e segue para a campanha');
     esperado(/generate-campaign-strategy|generate-copy-with-ai|502|AI_NOT_CONFIGURED/);
   }
@@ -803,7 +803,7 @@ try {
   } else {
     check('sem IA: estratégia vazia', tem(await corpo(), 'Nenhuma estratégia gerada ainda.'));
     await page.getByRole('button', { name: 'Gerar com IA' }).click();
-    await page.getByText('IA do app não configurada.').first().waitFor({ timeout: 30000 });
+    await page.getByText(/Nenhuma IA disponível/).first().waitFor({ timeout: 30000 });
     ok('sem IA: "Gerar com IA" mostra a mensagem da API');
     esperado(/generate-campaign-strategy|502|AI_NOT_CONFIGURED/);
   }
