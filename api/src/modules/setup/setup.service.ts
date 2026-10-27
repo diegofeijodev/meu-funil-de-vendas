@@ -81,7 +81,7 @@ export class SetupService {
         ? 'Disponível para estratégia, copy, imagens e SDR.'
         : ownText
           ? 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).'
-          : 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.',
+          : 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.',
       link: '/integrations', required: appAi || !ownText,
     });
     const own = [oKey && 'OpenAI', gKey && 'Gemini', higgs && 'Higgsfield'].filter(Boolean);

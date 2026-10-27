@@ -1,7 +1,7 @@
 import { WorkspaceAccessService } from '../../access/access.service';
 import { AiKeysService } from '../../ai/ai-keys.service';
 import { OWNER, STRANGER, VIEWER, WS_A, memMembers, status } from '../../media/__tests__/mem';
-import { AiDiagnosticsService } from '../ai-diagnostics.service';
+import { AiDiagnosticsService, geminiHas } from '../ai-diagnostics.service';
 
 const ENV = {
   NODE_ENV: 'test', AI_GATEWAY_URL: 'http://gw.test/v1', AI_GATEWAY_API_KEY: 'k', AI_MODEL_TEXT: 'gpt-4o',
@@ -77,9 +77,17 @@ describe('AiDiagnosticsService — cada verificação', () => {
     const noTextOpenai = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-image-1'] }).diagnose(OWNER, WS_A, false);
     expect(by(noTextOpenai, 'IA do app').status).toBe('fail');
     const bad = await setup({ env: noGw, openai: 'sk-x', openaiStatus: 401 }).diagnose(OWNER, WS_A, false);
-    expect(by(bad, 'IA do app')).toMatchObject({ ok: false, status: 'fail', detail: expect.stringMatching(/^Nenhuma IA disponível: as chaves da empresa falharam/) });
+    expect(by(bad, 'IA do app')).toMatchObject({ ok: false, status: 'fail', detail: 'Nenhuma IA funcionando: as chaves da empresa falharam ou não têm o modelo de texto (veja os detalhes abaixo). Corrija no quadro "IAs com a sua conta", mais acima nesta página.' });
     // Teste de imagem com créditos do app também fica neutro (nenhuma chamada ao gateway).
     expect((await setup({ env: noGw, gemini: 'AIza', image: 'erro' }).diagnose(OWNER, WS_A, true)).checks.at(-1)).toMatchObject({ ok: null, status: 'skip' });
+  });
+
+  it('modelo do Gemini: igualdade ou sufixo -latest/-número; prefixo solto não conta', () => {
+    expect(geminiHas(['gemini-flash-latest'], 'gemini-flash-latest')).toBe(true);
+    expect(geminiHas(['gemini-2.5-flash-001'], 'gemini-2.5-flash')).toBe(true);
+    expect(geminiHas(['gemini-2.5-flash-latest'], 'gemini-2.5-flash')).toBe(true);
+    expect(geminiHas(['gemini-2.5-flash-image-preview', 'gemini-2.5-flash-lite'], 'gemini-2.5-flash')).toBe(false);
+    expect(geminiHas(['gemini-2.5-flashy'], 'gemini-2.5-flash')).toBe(false);
   });
 
   it('gateway fora do ar / resposta estranha', async () => {

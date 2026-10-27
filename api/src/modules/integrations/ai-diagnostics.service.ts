@@ -21,7 +21,7 @@ export interface DiagnosticCheck {
 /** Sem gateway no servidor, as chaves da empresa fazem tudo: a linha da IA do app fica neutra ("Não usada"). */
 export const GATEWAY_UNUSED = 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).';
 export const NO_AI_DIAGNOSTIC = 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini no quadro "IAs com a sua conta", mais acima nesta página.';
-const KEYS_FAILED_NO_GATEWAY = 'Nenhuma IA disponível: as chaves da empresa falharam ou não têm o modelo de texto (veja abaixo) e o servidor não tem IA própria.';
+const KEYS_FAILED_NO_GATEWAY = 'Nenhuma IA funcionando: as chaves da empresa falharam ou não têm o modelo de texto (veja os detalhes abaixo). Corrija no quadro "IAs com a sua conta", mais acima nesta página.';
 
 type Check = Omit<DiagnosticCheck, 'status'> & { status?: DiagnosticCheck['status'] };
 const withStatus = (c: Check): DiagnosticCheck => ({ ...c, status: c.status ?? (c.ok === true ? 'ok' : c.ok === false ? 'fail' : 'optional') });
@@ -43,6 +43,10 @@ export function redactSecrets(text: string, secrets: (string | null | undefined)
   }
   return out.replace(/\b(?:sk-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{10,})/g, '••••').replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1••••');
 }
+
+/** Modelo do Gemini na lista: o próprio id, ou ele com sufixo `-latest` / `-<número>` (versões publicadas). Nada de prefixo solto. */
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const geminiHas = (names: string[], model: string) => names.some((n) => n === model || new RegExp(`^${escapeRe(model)}-(latest|\\d+)$`).test(n));
 
 const msg = (e: unknown) => (e instanceof HttpException ? errMessage(e) : e instanceof Error ? e.message : String(e)).slice(0, 300);
 
@@ -111,13 +115,13 @@ export class AiDiagnosticsService {
         const r = await this.get(`${this.keys.baseUrl('gemini')}/models?pageSize=1000`, { 'x-goog-api-key': gemini });
         if (!r.ok) throw new Error(`Gemini respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
         const names = ((await r.json()) as { models?: { name: string }[] }).models?.map((m) => m.name.replace('models/', '')) ?? [];
-        if (names.some((n) => n.startsWith(this.env.AI_BYO_GEMINI_TEXT_MODEL))) validKey = true;
+        if (geminiHas(names, this.env.AI_BYO_GEMINI_TEXT_MODEL)) validKey = true;
         const want: [string, string][] = [
           [this.env.AI_MODEL_IMAGE_GEMINI, 'imagem'],
           [this.env.AI_MODEL_VIDEO, 'vídeo Veo'],
           [this.env.AI_BYO_GEMINI_TEXT_MODEL, 'texto/visão/áudio'],
         ];
-        const missing = want.filter(([m]) => !names.some((n) => n.startsWith(m))).map(([m, d]) => `${m} (${d})`);
+        const missing = want.filter(([m]) => !geminiHas(names, m)).map(([m, d]) => `${m} (${d})`);
         return {
           name: 'Chave Gemini',
           ok: missing.length < want.length,

@@ -165,9 +165,9 @@ describe('StrategistService.generate', () => {
   });
 
   it('erro da IA (créditos/config) sobe com a mensagem original', async () => {
-    const { w, svc } = setup({ json: async () => { throw new AiError('Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.', 'AI_NOT_CONFIGURED'); } });
+    const { w, svc } = setup({ json: async () => { throw new AiError('Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.', 'AI_NOT_CONFIGURED'); } });
     const { campaign } = await seedCampaign(w);
-    expect(await status(svc.generate(OWNER, campaign.id))).toBe('502:Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.');
+    expect(await status(svc.generate(OWNER, campaign.id))).toBe('502:Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.');
   });
 });
 

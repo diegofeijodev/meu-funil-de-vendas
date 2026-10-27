@@ -55,7 +55,7 @@ describe('AiService.jsonWithEngine (Copy Engine)', () => {
     const body = JSON.parse(String(a.calls[0]!.init!.body));
     expect(body.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'copy', strict: true, schema } });
     const bare = new AiService({ get: async () => null } as any, async () => json({}), validateEnv({ DATABASE_URL: 'x', JWT_SECRET: 'test-secret-with-16+chars', NODE_ENV: 'test' }));
-    await expect(bare.jsonWithEngine(WS, { prompt: 'P', schema, name: 'copy' })).rejects.toMatchObject({ response: { code: 'AI_NOT_CONFIGURED', message: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.' } });
+    await expect(bare.jsonWithEngine(WS, { prompt: 'P', schema, name: 'copy' })).rejects.toMatchObject({ response: { code: 'AI_NOT_CONFIGURED', message: 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.' } });
   });
 
   it('só o motor escolhido sem chave → direto ao gateway (rótulo "IA do app")', async () => {

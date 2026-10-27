@@ -86,7 +86,7 @@ describe('AiService.json', () => {
   it('sem chave própria e sem gateway → "Nenhuma IA disponível…" (502 AI_NOT_CONFIGURED), sem chamar ninguém', async () => {
     const f = fakeFetch([]);
     const ai = setup(baseEnv, {}, f.fn);
-    const none = { status: 502, response: { code: 'AI_NOT_CONFIGURED', message: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.' } };
+    const none = { status: 502, response: { code: 'AI_NOT_CONFIGURED', message: 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.' } };
     await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(none);
     await expect(ai.text(WS, { prompt: 'P' })).rejects.toMatchObject(none);
     await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(none);
@@ -105,8 +105,7 @@ describe('AiService.json', () => {
       status: 502,
       response: {
         code: 'AI_ERROR',
-        message:
-          'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações. Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações. Confira as chaves em Integrações.',
+        message: 'Nenhuma IA funcionou: a chave do ChatGPT (OpenAI) foi recusada e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações.',
       },
     };
     await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject(both);
@@ -117,6 +116,38 @@ describe('AiService.json', () => {
     await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n', engine: 'chatgpt' })).rejects.toMatchObject({
       response: { message: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.' },
     });
+  });
+
+  it('classificação do erro da chave própria: chave inválida (400), modelo indisponível (404/400), outro 4xx e 5xx', async () => {
+    const one = (vendor: 'openai' | 'gemini', status: number, body: string) => {
+      const f = fakeFetch([[vendor === 'openai' ? 'api.openai.com' : 'generativelanguage', () => new Response(body, { status })]]);
+      return setup(baseEnv, { [vendor]: 'k-cliente-000' }, f.fn).text(WS, { prompt: 'P' }).catch((e) => e.getResponse().message);
+    };
+    expect(await one('gemini', 400, '{"error":{"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'))
+      .toBe('A chave do Gemini (Google) foi recusada. Cole uma chave nova em Integrações.');
+    expect(await one('openai', 400, '{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}')).toBe('A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.');
+    expect(await one('openai', 404, '{"error":{"code":"model_not_found","message":"The model `gpt-4o-mini` does not exist"}}'))
+      .toBe('O modelo gpt-4o-mini não está disponível na chave do ChatGPT (OpenAI). Confira o acesso da chave em Integrações.');
+    expect(await one('gemini', 400, '{"error":{"message":"models/gemini-flash-latest is not found for API version v1beta"}}'))
+      .toBe('O modelo gemini-flash-latest não está disponível na chave do Gemini (Google). Confira o acesso da chave em Integrações.');
+    expect(await one('openai', 422, '{"error":{"message":"bad"}}')).toBe('A OpenAI recusou o pedido (erro 422).');
+    expect(await one('gemini', 503, 'overloaded')).toBe('O Gemini (Google) não respondeu agora. Tente de novo em alguns minutos.');
+  });
+
+  it('as duas chaves falhando: uma frase só com os trechos de cada caso', async () => {
+    const both = async (o: [number, string], g: [number, string]) => {
+      const f = fakeFetch([['api.openai.com', () => new Response(o[1], { status: o[0] })], ['generativelanguage', () => new Response(g[1], { status: g[0] })]]);
+      return setup(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn).text(WS, { prompt: 'P' }).catch((e) => e.getResponse().message);
+    };
+    expect(await both([404, 'model_not_found'], [500, 'x'])).toBe(
+      'Nenhuma IA funcionou: o modelo gpt-4o-mini não está disponível na chave do ChatGPT (OpenAI) e o Gemini (Google) não respondeu. Confira as chaves em Integrações.',
+    );
+    expect(await both([409, 'x'], [403, 'x'])).toBe('Nenhuma IA funcionou: o ChatGPT (OpenAI) recusou o pedido (erro 409) e a chave do Gemini (Google) foi recusada. Confira as chaves em Integrações.');
+    // Resposta fora do formato (JSON) também vira trecho próprio.
+    const f = fakeFetch([['api.openai.com', () => chat('sem json')], ['generativelanguage', () => new Response('x', { status: 429 })]]);
+    expect(await setup(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn).json(WS, { prompt: 'P', schema, name: 'n' }).catch((e) => e.getResponse().message)).toBe(
+      'Nenhuma IA funcionou: o ChatGPT (OpenAI) devolveu uma resposta fora do formato e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações.',
+    );
   });
 
   it('sem gateway: a mensagem do provedor que ecoa a chave sai sem a chave', async () => {

@@ -93,7 +93,7 @@ describe('CopyAiService.generate', () => {
       ['Créditos de IA esgotados. Adicione créditos para continuar.', 'Créditos de IA esgotados. Conecte sua própria chave em Integrações.'],
       ['Muitas solicitações agora. Aguarde um instante e tente de novo.', 'Muitas solicitações agora. Tente em instantes.'],
       ['A IA não conseguiu responder.', 'A IA não conseguiu gerar a copy.'],
-      ['Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.', 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.'],
+      ['Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.', 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.'],
     ];
     for (const [from, to] of cases) {
       const { svc } = setup(async () => { throw new AiError(from); });

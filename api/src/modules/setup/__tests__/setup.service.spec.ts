@@ -65,7 +65,7 @@ describe('SetupService.status', () => {
 
   it('IA do app ausente e sem chave própria → erro com o que fazer; contas próprias viram passo obrigatório', async () => {
     const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' } }).svc.status(USER, WS, NOW);
-    expect(byKey(items, 'app-ai')).toMatchObject({ status: 'error', required: true, detail: 'Nenhuma IA disponível: cadastre a chave da OpenAI ou do Gemini em Integrações.' });
+    expect(byKey(items, 'app-ai')).toMatchObject({ status: 'error', required: true, detail: 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.' });
     expect(byKey(items, 'own-ai')).toMatchObject({ status: 'pending', required: true });
   });
 
