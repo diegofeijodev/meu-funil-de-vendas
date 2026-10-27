@@ -45,11 +45,15 @@ export class PostLease {
     private readonly ttlMs: number,
   ) {}
 
+  /** Chamado depois de cada renovação (a fila renova junto o `locked_at` do job, para a trava não vencer no meio). */
+  afterRenew: (() => Promise<unknown>) | null = null;
+
   async renew() {
     const next = new Date(Date.now() + this.ttlMs);
     const got = await this.prisma.ig_posts.updateMany({ where: { id: this.postId, lease_until: this.until }, data: { lease_until: next } });
     if (!got.count) throw new PublishClaimLost('O trabalho neste post foi assumido por outro processo (lease vencido).');
     this.until = next;
+    await this.afterRenew?.();
   }
 
   async release() {

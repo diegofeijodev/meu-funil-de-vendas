@@ -32,6 +32,8 @@ const KIND: Record<string, { label: string; icon: any }> = {
   post_rewritten: { label: "Reescrito pela IA", icon: RefreshCw },
   post_skipped: { label: "Pulado", icon: AlertTriangle },
   video_regenerated: { label: "Vídeo refeito", icon: Clapperboard },
+  // A Meta não conseguiu baixar a mídia: a publicação tenta de novo sozinha.
+  retry: { label: "Nova tentativa", icon: RefreshCw },
 };
 
 /** Próximo domingo 18h em São Paulo (UTC-3 → 21h UTC). */

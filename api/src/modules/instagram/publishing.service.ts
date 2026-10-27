@@ -6,6 +6,7 @@ import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/exter
 import { MetaError, MetaGraphClient } from './meta-graph';
 import { dateIssues } from './content-strategy';
 import { normalizeHashtags } from './normalize';
+import { CAMPAIGN_FINISHED } from '../campaigns/campaign-labels';
 
 const MAX_ATTEMPTS = 3;
 const DAILY_LIMIT = 25;
@@ -28,17 +29,30 @@ export type PublishResult = { ok: boolean; sandbox: boolean; permalink?: string 
  * dentro do mesmo job). Em produção a URL responde 200 e a Meta às vezes nem chega a buscá-la: a falha é transitória do lado dela.
  */
 export const MEDIA_FETCH_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
+/** Teto da soma das esperas de novas tentativas numa execução da publicação (todas as mídias do post juntas). */
+export const MEDIA_FETCH_RETRY_BUDGET_MS = 90_000;
+
+const MEDIA_FETCH_TEXT = /obter a m[ií]dia|media could not be fetched|media download has failed|2207052/i;
+
+/** O container de vídeo terminou em ERROR porque a Meta não conseguiu baixar o arquivo (aparece só no polling). */
+export class MediaFetchFailed extends Error {}
 
 /**
- * Erro "a Meta não conseguiu baixar a mídia da URL" na criação do container: código 9004 / subcódigo 2207052
+ * Erro "a Meta não conseguiu baixar a mídia da URL": na criação do container vem como `MetaError` código 9004 / subcódigo 2207052
  * ("Media download has failed." / "The media could not be fetched from this uri"; em pt-BR, "Não foi possível obter a mídia
- * deste URI"). O `MetaError` chega com `code`/`subcode` da Graph e a mensagem já traduzida ("A Meta respondeu com erro: …").
+ * deste URI"), com a mensagem já traduzida ("A Meta respondeu com erro: …"); no vídeo, aparece no polling (`status_code: ERROR`
+ * com esse texto no `status`) e vira `MediaFetchFailed`.
  */
 export function isMediaFetchError(e: unknown): boolean {
+  if (e instanceof MediaFetchFailed) return true;
   if (!(e instanceof MetaError)) return false;
   if (e.code === 9004 || e.subcode === 2207052) return true;
-  return /obter a m[ií]dia|media could not be fetched|media download has failed/i.test(e.message);
+  return MEDIA_FETCH_TEXT.test(e.message);
 }
+
+/** "14h05" no horário de Brasília. */
+const hhmmSp = (d: Date) => d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+const withPeriod = (t: string) => (/[.!?…]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`);
 
 /** Mídia do gerador simulado (picsum) ou marcada como mock — nunca vai ao ar. */
 export const isMockMedia = (m: { url?: string | null; provider?: string | null; source?: string | null }) =>
@@ -177,6 +191,7 @@ export class PublishingService {
       await lease?.renew();
       const r = await this.graph.graph<{ status_code?: string; status?: string }>(workspaceId, `/${containerId}`, { params: { fields: 'status_code,status' } });
       if (r.status_code === 'FINISHED') return;
+      if (r.status_code === 'ERROR' && MEDIA_FETCH_TEXT.test(r.status ?? '')) throw new MediaFetchFailed(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ''}`);
       if (r.status_code === 'ERROR' || r.status_code === 'EXPIRED') throw new Error(`A Meta não processou o vídeo (${r.status_code}): ${r.status ?? ''}`);
       await this.sleep(Math.min(r.status_code === 'IN_PROGRESS' ? 5_000 : 3_000, Math.max(0, deadline - this.now())));
     }
@@ -247,9 +262,12 @@ export class PublishingService {
     return lease;
   }
 
-  async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean } = {}): Promise<PublishResult> {
+  async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean; jobId?: string } = {}): Promise<PublishResult> {
     const post = await this.store.getPost(postId, workspaceId);
     const lease = await this.claim(postId, post.workspace_id, !!opts.fromQueue);
+    // Pela fila: cada renovação do lease também renova a trava do job (esperas de nova tentativa não deixam a trava vencer).
+    const jobId = opts.jobId;
+    if (jobId) lease.afterRenew = () => this.prisma.publishing_jobs.updateMany({ where: { id: jobId, status: 'running' }, data: { locked_at: new Date() } });
     try {
       return await this.publishInner(postId, { ...post, status: post.status }, lease);
     } finally {
@@ -313,9 +331,45 @@ export class PublishingService {
     const acc = await this.store.liveAccount(ws);
     // Prazo do polling; cresce com as esperas das novas tentativas de mídia (senão elas comeriam o tempo do container).
     let deadline = this.now() + POLL_BUDGET_MS;
+    let retryWaited = 0;
+    /**
+     * Roda `fn` (criar um container e, se for vídeo, esperar o processamento). Se a Meta não conseguir baixar a mídia (falha
+     * transitória dela), repete a MESMA etapa até 3 vezes (5 s, 15 s, 30 s; no máximo 90 s de espera somando todo o post),
+     * renovando o lease antes de cada tentativa; o que já foi criado (filhos anteriores do carrossel) fica. Qualquer outro erro, a
+     * 4ª falha ou o teto de espera sobem como antes (a fila decide se repete o job).
+     */
+    const withMediaRetry = async <T>(what: string, fn: (attempt: number) => Promise<T>): Promise<T> => {
+      for (let attempt = 0; ; attempt++) {
+        await lease.renew();
+        try {
+          return await fn(attempt);
+        } catch (e) {
+          const wait = MEDIA_FETCH_RETRY_DELAYS_MS[attempt];
+          if (wait === undefined || !isMediaFetchError(e) || retryWaited + wait > MEDIA_FETCH_RETRY_BUDGET_MS) throw e;
+          retryWaited += wait;
+          const line = `O Instagram não conseguiu baixar ${what}. Tentando de novo em ${wait / 1000} segundos (tentativa ${attempt + 2} de ${MEDIA_FETCH_RETRY_DELAYS_MS.length + 1}).`;
+          this.logger.warn(`[instagram] post ${postId}: ${line} ${errText(e)}`);
+          await this.store.logEvent({ workspace_id: ws, plan_id: post.plan_id, post_id: postId, kind: 'retry', level: 'warn', message: line });
+          await this.sleep(wait);
+          deadline += wait;
+        }
+      }
+    };
+    const mediaLabel = (format === 'reel' || format === 'story_video') ? 'o vídeo' : 'a imagem';
 
-    // Retomada: container já criado numa execução anterior → só polling + media_publish.
-    if (acc && post.ig_creation_id && post.status === 'publishing') return this.finishPublish(ws, postId, acc.ig_user_id as string, post.ig_creation_id, deadline, lease);
+    // Retomada: container já criado numa execução anterior → polling + media_publish (vídeo que a Meta não baixou é recriado).
+    if (acc && post.ig_creation_id && post.status === 'publishing') {
+      const ig = acc.ig_user_id as string;
+      const resumeId = post.ig_creation_id as string;
+      if (format === 'feed_carousel') return this.finishPublish(ws, postId, ig, resumeId, deadline, lease);
+      const params = this.singleParams(format, media, fullCaption(post));
+      const creationId = await withMediaRetry(mediaLabel, async (attempt) => {
+        const id = attempt === 0 ? resumeId : await this.createContainer(ws, ig, params, postId);
+        await this.waitContainer(ws, id, deadline, lease);
+        return id;
+      });
+      return this.finishPublish(ws, postId, ig, creationId, deadline, lease, true);
+    }
 
     // Sem conta conectada não existe publicação: nunca marcar como publicado de mentira.
     if (!acc) throw new Guardrail(NO_ACCOUNT_GUARDRAIL);
@@ -329,58 +383,56 @@ export class PublishingService {
 
     await this.store.patchPost(postId, { status: 'publishing', last_error: null });
     const caption = fullCaption(post);
-    /**
-     * Cria UM container. Se a Meta não conseguir baixar a mídia (falha transitória dela), tenta de novo a MESMA criação até 3 vezes
-     * (5 s, 15 s, 30 s), renovando o lease antes de cada tentativa; os containers já criados (filhos anteriores do carrossel) ficam.
-     * Qualquer outro erro, ou a 4ª falha, sobe como antes (a fila decide se repete o job).
-     */
-    const create = async (params: Record<string, unknown>, what = 'a mídia') => {
-      for (let attempt = 0; ; attempt++) {
-        await lease.renew();
-        try {
-          return (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
-        } catch (e) {
-          const wait = MEDIA_FETCH_RETRY_DELAYS_MS[attempt];
-          if (wait === undefined || !isMediaFetchError(e)) throw e;
-          const line = `A Meta não conseguiu baixar ${what} (tentativa ${attempt + 1} de ${MEDIA_FETCH_RETRY_DELAYS_MS.length + 1}); tentando de novo em ${wait / 1000} s.`;
-          this.logger.warn(`[instagram] post ${postId}: ${line} ${errText(e)}`);
-          await this.store.logEvent({ workspace_id: ws, plan_id: post.plan_id, post_id: postId, kind: 'failure', level: 'warn', message: line });
-          await this.sleep(wait);
-          deadline += wait;
-        }
-      }
-    };
-    let creationId: string;
 
-    if (format === 'feed_image') {
-      creationId = await create({ image_url: media[0].url, caption });
-    } else if (format === 'feed_carousel') {
+    if (format === 'feed_carousel') {
       const children: string[] = [];
       const items = media.slice(0, 10);
       for (const [i, m] of items.entries()) {
         const params: Record<string, unknown> = { is_carousel_item: 'true' };
         if (m.type === 'video') Object.assign(params, { media_type: 'VIDEO', video_url: m.url });
         else params['image_url'] = m.url;
-        const id = await create(params, `a mídia ${i + 1} de ${items.length} do carrossel`);
-        if (m.type === 'video') await this.waitContainer(ws, id, deadline, lease);
+        const what = `${m.type === 'video' ? 'o vídeo' : 'a imagem'} ${i + 1} de ${items.length} do carrossel`;
+        const id = await withMediaRetry(what, async () => {
+          const created = await this.createContainer(ws, ig, params);
+          if (m.type === 'video') await this.waitContainer(ws, created, deadline, lease);
+          return created;
+        });
         children.push(id);
       }
-      creationId = await create({ media_type: 'CAROUSEL', children: children.join(','), caption }, 'o carrossel');
-    } else if (format === 'reel') {
-      creationId = await create({ media_type: 'REELS', video_url: media[0].url, caption, share_to_feed: 'true', ...(media[0].cover_url ? { cover_url: media[0].cover_url } : {}) }, 'o vídeo');
-    } else {
-      const video = format === 'story_video';
-      creationId = await create({ media_type: 'STORIES', [video ? 'video_url' : 'image_url']: media[0].url }, video ? 'o vídeo do story' : 'a imagem do story');
+      const creationId = await withMediaRetry('o carrossel', () => this.createContainer(ws, ig, { media_type: 'CAROUSEL', children: children.join(','), caption }));
+      // Salva o container antes do polling para poder retomar na próxima execução.
+      await this.store.patchPost(postId, { ig_creation_id: creationId });
+      return this.finishPublish(ws, postId, ig, creationId, deadline, lease);
     }
 
-    // Salva o container antes do polling para poder retomar na próxima execução.
-    await this.store.patchPost(postId, { ig_creation_id: creationId });
-    return this.finishPublish(ws, postId, ig, creationId, deadline, lease);
+    // Imagem única, reel e story: cria, salva (retomada) e espera ficar pronto; se a Meta não baixar a mídia, recria.
+    const params = this.singleParams(format, media, caption);
+    const creationId = await withMediaRetry(mediaLabel, async () => {
+      const id = await this.createContainer(ws, ig, params, postId);
+      await this.waitContainer(ws, id, deadline, lease);
+      return id;
+    });
+    return this.finishPublish(ws, postId, ig, creationId, deadline, lease, true);
   }
 
-  private async finishPublish(ws: string, postId: string, ig: string, creationId: string, deadline: number, lease: PostLease): Promise<PublishResult> {
-    // Imagens também passam por processamento na Meta: espera o container ficar FINISHED.
-    await this.waitContainer(ws, creationId, deadline, lease);
+  /** Parâmetros do container de mídia única (imagem do feed, reel ou story). */
+  private singleParams(format: IgFormat, media: any[], caption: string): Record<string, unknown> {
+    if (format === 'feed_image') return { image_url: media[0].url, caption };
+    if (format === 'reel') return { media_type: 'REELS', video_url: media[0].url, caption, share_to_feed: 'true', ...(media[0].cover_url ? { cover_url: media[0].cover_url } : {}) };
+    const video = format === 'story_video';
+    return { media_type: 'STORIES', [video ? 'video_url' : 'image_url']: media[0].url };
+  }
+
+  /** Cria um container; com `saveTo`, grava o id no post antes do polling (a próxima execução retoma dele). */
+  private async createContainer(ws: string, ig: string, params: Record<string, unknown>, saveTo?: string): Promise<string> {
+    const id = (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+    if (saveTo) await this.store.patchPost(saveTo, { ig_creation_id: id });
+    return id;
+  }
+
+  private async finishPublish(ws: string, postId: string, ig: string, creationId: string, deadline: number, lease: PostLease, ready = false): Promise<PublishResult> {
+    // Imagens também passam por processamento na Meta: espera o container ficar FINISHED (se ainda não esperou).
+    if (!ready) await this.waitContainer(ws, creationId, deadline, lease);
     await lease.renew();
     const published = await this.graph.graph<{ id: string }>(ws, `/${ig}/media_publish`, { method: 'POST', params: { creation_id: creationId } });
     const info = await this.graph.graph<{ permalink?: string }>(ws, `/${published.id}`, { params: { fields: 'permalink' } }).catch(() => ({ permalink: undefined }));
@@ -397,6 +449,21 @@ export class PublishingService {
   }
 
   // ------------------------------------------------------------------ fila
+
+  /**
+   * Motivo para NÃO devolver o post à agenda depois de uma falha: ele foi cancelado no meio da publicação, a programação dele foi
+   * cancelada ou a campanha de origem (da programação ou do plano) foi encerrada. `null` = pode tentar de novo.
+   */
+  private async cancelledOrigin(post: { id: string; status: string; run_id?: string | null; plan_id?: string | null; workspace_id: string }): Promise<string | null> {
+    if (post.status === 'cancelled') return 'o post foi cancelado.';
+    const ws = post.workspace_id;
+    const run = post.run_id ? await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: ws }, select: { status: true, campaign_id: true } }) : null;
+    if (run?.status === 'cancelled') return 'a programação foi cancelada.';
+    const plan = post.plan_id ? await this.prisma.ig_content_plans.findFirst({ where: { id: post.plan_id, workspace_id: ws }, select: { campaign_id: true } }) : null;
+    const campaignIds = [run?.campaign_id, plan?.campaign_id].filter(Boolean) as string[];
+    if (campaignIds.length && (await this.prisma.campaigns.count({ where: { id: { in: campaignIds }, workspace_id: ws, status: CAMPAIGN_FINISHED } }))) return 'a campanha foi encerrada.';
+    return null;
+  }
 
   async runPublishingQueue() {
     const now = new Date();
@@ -427,7 +494,7 @@ export class PublishingService {
       const logWith = (line: string) => `${job.log ?? ''}\n[${stamp}] ${line}`.trim();
       try {
         if (!job.ig_post_id) throw new Guardrail('Job sem post.');
-        const r = await this.publishInstagramPost(job.ig_post_id, undefined, { fromQueue: true });
+        const r = await this.publishInstagramPost(job.ig_post_id, undefined, { fromQueue: true, jobId: job.id });
         await this.prisma.publishing_jobs.update({
           where: { id: job.id },
           data: { status: 'done', locked_at: null, mode: r.sandbox ? 'mock' : 'live', log: logWith(`publicado ${r.permalink ?? ''}`) },
@@ -460,11 +527,21 @@ export class PublishingService {
         const rate = e instanceof RateLimited;
         const tokenExpired = e instanceof MetaError && e.code === 190;
         const blocked = e instanceof Guardrail;
-        const retry = !tokenExpired && !blocked && (rate || attempts < MAX_ATTEMPTS);
         const post = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id } }) : null;
+        // O post saiu de cena enquanto publicava (campanha encerrada, programação cancelada): nada de voltar para a agenda.
+        const gone = post ? await this.cancelledOrigin(post) : null;
+        if (post && gone) {
+          await this.prisma.publishing_jobs.update({ where: { id: job.id }, data: { status: 'cancelled', locked_at: null, attempts, log: logWith(`${msg} — cancelado: ${gone}`) } });
+          await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { notIn: ['published'] } }, data: { status: 'cancelled', last_error: msg, ig_creation_id: null } });
+          await this.store.logEvent({ workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'guardrail', level: 'warn', message: `Publicação cancelada: ${gone}` });
+          results.push({ job: job.id, status: 'cancelled', error: msg });
+          continue;
+        }
+        const retry = !tokenExpired && !blocked && (rate || attempts < MAX_ATTEMPTS);
         if (tokenExpired && post) await this.store.handleTokenExpired(post.workspace_id, msg);
         // Post da programação sem conta/token: volta para "pronto" (sem refazer mídia) e é reagendado sozinho quando a conta reconectar.
         const backToReady = !!post?.run_id && (tokenExpired || (blocked && msg === NO_ACCOUNT_GUARDRAIL));
+        const delay = rate ? 60 * 60e3 : 5 * 60e3 * 2 ** (attempts - 1); // backoff 5, 10 min
         if (post)
           await this.store.logEvent({
             workspace_id: post.workspace_id,
@@ -472,9 +549,12 @@ export class PublishingService {
             post_id: post.id,
             kind: blocked ? 'guardrail' : 'failure',
             level: retry ? 'warn' : 'error',
-            message: `${retry ? 'Falha (nova tentativa)' : 'Falha'} ao publicar: ${msg}`,
+            message: retry
+              ? `Não foi possível publicar: ${withPeriod(msg)} Vamos tentar de novo às ${hhmmSp(new Date(Date.now() + delay))}.`
+              : !blocked && !tokenExpired && attempts >= MAX_ATTEMPTS
+                ? `Não foi possível publicar depois de ${attempts} tentativas: ${msg}`
+                : `Não foi possível publicar: ${msg}`,
           });
-        const delay = rate ? 60 * 60e3 : 5 * 60e3 * 2 ** (attempts - 1); // backoff 5, 10 min
         await this.prisma.publishing_jobs.update({
           where: { id: job.id },
           data: {

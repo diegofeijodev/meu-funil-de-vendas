@@ -18,7 +18,9 @@ export type PostRow = any;
 export type AutopilotEventKind =
   | 'generation' | 'media' | 'schedule' | 'publish' | 'failure' | 'approval' | 'reschedule' | 'optimize' | 'guardrail'
   // Produção automática (05/10/2026): estratégia aprovada sozinha, post reescrito/pulado e vídeo refeito pelo crítico.
-  | 'strategy_auto_approved' | 'post_rewritten' | 'post_skipped' | 'video_regenerated';
+  | 'strategy_auto_approved' | 'post_rewritten' | 'post_skipped' | 'video_regenerated'
+  // Nova tentativa automática dentro da publicação (a Meta não conseguiu baixar a mídia).
+  | 'retry';
 
 /** Evento da aprovação automática da estratégia (modo totalmente automático). */
 export const STRATEGY_AUTO_APPROVED = 'Estratégia do período aprovada automaticamente (modo totalmente automático).';

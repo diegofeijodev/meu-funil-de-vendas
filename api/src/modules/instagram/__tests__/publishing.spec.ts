@@ -1,6 +1,6 @@
 import { ContainerPending, Guardrail, IgStore, PublishClaimLost, RateLimited } from '../ig-store.service';
 import { MetaError } from '../meta-graph';
-import { fullCaption, isMediaFetchError, MEDIA_FETCH_RETRY_DELAYS_MS, PublishingService } from '../publishing.service';
+import { fullCaption, isMediaFetchError, MEDIA_FETCH_RETRY_DELAYS_MS, MediaFetchFailed, PublishingService } from '../publishing.service';
 import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 import { WS_B } from '../../media/__tests__/mem';
@@ -194,10 +194,10 @@ describe('PublishingService — a Meta não baixou a mídia (repete só o contai
     expect(byUrl(created())).toEqual({ 'https://cdn.test/1.jpg': 1, 'https://cdn.test/2.jpg': 1, 'https://cdn.test/3.jpg': 1, 'https://cdn.test/4.jpg': 3, 'https://cdn.test/5.jpg': 1 });
     expect(created().at(-1)).toMatchObject({ media_type: 'CAROUSEL', children: 'c1,c2,c3,c4,c5' });
     expect(slept).toEqual([5_000, 15_000]);
-    const warns = w.t['ig_autopilot_events']!.rows.filter((e) => e.post_id === p.id && e.level === 'warn');
-    expect(warns.map((e) => e.message)).toEqual([
-      'A Meta não conseguiu baixar a mídia 4 de 5 do carrossel (tentativa 1 de 4); tentando de novo em 5 s.',
-      'A Meta não conseguiu baixar a mídia 4 de 5 do carrossel (tentativa 2 de 4); tentando de novo em 15 s.',
+    const retries = w.t['ig_autopilot_events']!.rows.filter((e) => e.post_id === p.id && e.kind === 'retry');
+    expect(retries.map((e) => [e.level, e.message])).toEqual([
+      ['warn', 'O Instagram não conseguiu baixar a imagem 4 de 5 do carrossel. Tentando de novo em 5 segundos (tentativa 2 de 4).'],
+      ['warn', 'O Instagram não conseguiu baixar a imagem 4 de 5 do carrossel. Tentando de novo em 15 segundos (tentativa 3 de 4).'],
     ]);
   });
 
@@ -235,6 +235,63 @@ describe('PublishingService — a Meta não baixou a mídia (repete só o contai
     expect(p.status).toBe('published');
     expect(created()).toHaveLength(4);
     expect(slept).toEqual([5_000, 15_000, 30_000]);
+  });
+
+  it('vídeo: ERROR de download no polling (reel) recria o container; outro ERROR falha como antes', async () => {
+    const { w, svc, created } = setup();
+    const slept = spySleep(svc);
+    const reel = seedPost(w, { format: 'reel', media: [{ url: 'https://cdn.test/r.mp4', type: 'video', order: 0 }] });
+    let polls = 0;
+    w.respond((path) => (path === '/c1' && polls++ === 0 ? { status_code: 'ERROR', status: 'Error: Media download has failed. The media could not be fetched from this uri (2207052)' } : undefined));
+    expect((await svc.publishInstagramPost(reel.id)).ok).toBe(true);
+    expect(created().filter((c) => c.media_type === 'REELS')).toHaveLength(2);
+    expect(slept).toEqual([5_000]);
+    expect(reel).toMatchObject({ status: 'published', ig_creation_id: null });
+    expect(w.t['ig_autopilot_events']!.rows.find((e) => e.kind === 'retry')!.message).toBe('O Instagram não conseguiu baixar o vídeo. Tentando de novo em 5 segundos (tentativa 2 de 4).');
+
+    const other = setup();
+    other.w.respond((path) => (path === '/c1' ? { status_code: 'ERROR', status: 'Error: unsupported codec' } : undefined));
+    const r2 = seedPost(other.w, { format: 'reel', media: [{ url: 'https://cdn.test/r.mp4', type: 'video', order: 0 }] });
+    expect((await err(other.svc.publishInstagramPost(r2.id))).message).toBe('A Meta não processou o vídeo (ERROR): Error: unsupported codec');
+    expect(isMediaFetchError(new MediaFetchFailed('x'))).toBe(true);
+  });
+
+  it('carrossel com vídeo: ERROR de download no polling do filho recria só aquele filho', async () => {
+    const { w, svc, created } = setup();
+    spySleep(svc);
+    const p = seedPost(w, { format: 'feed_carousel', media: [{ url: 'https://cdn.test/1.jpg', type: 'image', order: 0 }, { url: 'https://cdn.test/2.mp4', type: 'video', order: 1 }] });
+    let polls = 0;
+    w.respond((path) => (path === '/c2' && polls++ === 0 ? { status_code: 'ERROR', status: 'Media download has failed.' } : undefined));
+    expect((await svc.publishInstagramPost(p.id)).ok).toBe(true);
+    expect(created().filter((c) => c.image_url === 'https://cdn.test/1.jpg')).toHaveLength(1);
+    expect(created().filter((c) => c.video_url === 'https://cdn.test/2.mp4')).toHaveLength(2);
+    expect(created().at(-1)).toMatchObject({ media_type: 'CAROUSEL', children: 'c1,c3' });
+  });
+
+  it('teto de 90 s de espera somando o post inteiro: passou disso, desiste com o erro da Meta', async () => {
+    const { w, svc } = setup();
+    const slept = spySleep(svc);
+    const p = carousel(w);
+    failUrl(w, 'https://cdn.test/2.jpg', 3); // 5 + 15 + 30 = 50 s
+    failUrl(w, 'https://cdn.test/4.jpg', 3); // 5 + 15 = 70 s; os próximos 30 s passariam de 90
+    expect((await err(svc.publishInstagramPost(p.id))).message).toBe(FETCH_MSG);
+    expect(slept).toEqual([5_000, 15_000, 30_000, 5_000, 15_000]);
+  });
+
+  it('pela fila: falha 2× e passa — job done, sem consumir tentativa extra, e a trava do job é renovada a cada tentativa', async () => {
+    const { w, svc } = setup();
+    spySleep(svc);
+    const p = seedPost(w);
+    failUrl(w, 'https://cdn.test/a.jpg', 2);
+    const j: any = { id: uuid(), workspace_id: WS, channel: 'instagram_organic', ig_post_id: p.id, target: 'instagram', status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null };
+    w.t['publishing_jobs']!.rows.push(j);
+    const touch = jest.spyOn(w.t['publishing_jobs']!, 'updateMany');
+    const res = await svc.runPublishingQueue();
+    expect(res).toEqual([{ job: j.id, status: 'done' }]);
+    expect(j).toMatchObject({ status: 'done', attempts: 1 });
+    expect(p.status).toBe('published');
+    const renewals = touch.mock.calls.filter(([a]: any[]) => a?.where?.id === j.id && a?.where?.status === 'running' && a?.data?.locked_at instanceof Date);
+    expect(renewals.length).toBeGreaterThanOrEqual(3);
   });
 
   it('story e reel também repetem a criação', async () => {
@@ -332,7 +389,33 @@ describe('PublishingService.runPublishingQueue (publishing_jobs, lock, retentati
     expect(j).toMatchObject({ status: 'failed', attempts: 3 });
     expect(p).toMatchObject({ status: 'failed', retry_count: 3 });
     expect(j.log!.split('\n')).toHaveLength(3);
-    expect(w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'failure').map((e) => e.level)).toEqual(['warn', 'warn', 'error']);
+    const fails = w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'failure');
+    expect(fails.map((e) => e.level)).toEqual(['warn', 'warn', 'error']);
+    expect(fails[0]!.message).toMatch(/^Não foi possível publicar: A Meta recusou\. Vamos tentar de novo às \d{2}h\d{2}\.$/);
+    expect(fails[2]!.message).toBe('Não foi possível publicar depois de 3 tentativas: A Meta recusou');
+  });
+
+  it('falha de post cuja programação foi cancelada ou cuja campanha foi encerrada: o job é cancelado, o post NÃO volta à agenda', async () => {
+    const { w, svc } = setup();
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new Error('A Meta recusou') : undefined));
+    const run = { id: uuid(), workspace_id: WS, status: 'cancelled', campaign_id: null };
+    w.t['ig_auto_runs']!.rows.push(run);
+    const camp = { id: uuid(), workspace_id: WS, status: 'finished' };
+    w.t['campaigns']!.rows.push(camp);
+    const plan = { id: uuid(), workspace_id: WS, campaign_id: camp.id, requires_approval: false };
+    w.t['ig_content_plans']!.rows.push(plan);
+    const fromRun = seedPost(w, { run_id: run.id });
+    const fromPlan = seedPost(w, { plan_id: plan.id });
+    const j1 = job(w, fromRun.id);
+    const j2 = job(w, fromPlan.id);
+    const res = await svc.runPublishingQueue();
+    expect(res.map((r) => r.status)).toEqual(['cancelled', 'cancelled']);
+    expect([j1.status, j2.status]).toEqual(['cancelled', 'cancelled']);
+    expect([fromRun.status, fromPlan.status]).toEqual(['cancelled', 'cancelled']);
+    expect(w.t['ig_autopilot_events']!.rows.filter((e) => e.kind === 'guardrail').map((e) => e.message)).toEqual([
+      'Publicação cancelada: a programação foi cancelada.',
+      'Publicação cancelada: a campanha foi encerrada.',
+    ]);
   });
 
   it('Guardrail não repete: job failed na hora, evento "guardrail"', async () => {
