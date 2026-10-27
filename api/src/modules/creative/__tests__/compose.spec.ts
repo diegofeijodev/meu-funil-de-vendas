@@ -123,6 +123,28 @@ describe('composeCreative (texto e logo por cima, nunca pela IA)', () => {
     expect(ok[0]).toBe(0xff);
   });
 
+  it('logo embaixo não cobre a pílula do preço nem a chamada: sobe para o topo livre ou vai para a esquerda', async () => {
+    const logo = new Uint8Array(await images.encode(images.blank(300, 100, 0xff0000ff), true));
+    const isRed = ([r, g]: [number, number, number]) => r > 200 && g < 60;
+    const BR: [number, number] = [544, Math.round(600 * 0.94 - 12 - 8)];
+    const TR: [number, number] = [544, 50];
+    const BL: [number, number] = [56, Math.round(600 * 0.94 - 12 - 8)];
+    // preço no canto inferior direito, topo livre → logo no canto superior direito
+    const price = await composeCreative(images, { image: await base(), aspectRatio: '1:1', layout: 'preco_destaque', price: 'R$ 9,90', logo, logoPosition: 'bottom_right', font });
+    expect(isRed(await pixelAt(price, ...TR))).toBe(true);
+    expect(isRed(await pixelAt(price, ...BR))).toBe(false);
+    // preço embaixo + título no topo → logo no canto inferior esquerdo
+    const both = await composeCreative(images, { image: await base(), aspectRatio: '1:1', layout: 'preco_destaque', title: 'Oi', price: 'R$ 9,90', logo, logoPosition: 'bottom_right', font });
+    expect(isRed(await pixelAt(both, ...BL))).toBe(true);
+    expect(isRed(await pixelAt(both, ...BR))).toBe(false);
+    // chamada no rodapé → logo no topo
+    const cta = await composeCreative(images, { image: await base(), aspectRatio: '1:1', layout: 'cta_rodape', cta: 'Peça já pelo WhatsApp', logo, logoPosition: 'bottom_right', font });
+    expect(isRed(await pixelAt(cta, ...TR))).toBe(true);
+    // canto inferior esquerdo com o preço à direita continua onde foi pedido
+    const left = await composeCreative(images, { image: await base(), aspectRatio: '1:1', layout: 'preco_destaque', price: 'R$ 9,90', logo, logoPosition: 'bottom_left', font });
+    expect(isRed(await pixelAt(left, ...BL))).toBe(true);
+  });
+
   it('texto longo é reduzido para caber (máx. 2 linhas) sem estourar a imagem', async () => {
     const out = await composeCreative(images, { image: await base(), aspectRatio: '1:1', layout: 'titulo_topo', title: 'Uma chamada gigantesca que precisa ser reduzida para caber em duas linhas na imagem toda', font });
     expect(await changed(out, [128, 128, 128], [0, 20, 600, 200])).toBeGreaterThan(500);

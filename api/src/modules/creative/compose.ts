@@ -284,12 +284,20 @@ export async function composeCreative(images: ImageService, inp: ComposeInput): 
     try {
       const logo = await images.read(inp.logo);
       logo.scaleToFit({ w: Math.round(W * 0.18), h: Math.round(W * 0.12) });
-      const lx = inp.logoPosition.endsWith('left') ? margin : W - margin - logo.bitmap.width;
-      const top = inp.logoPosition.startsWith('top');
-      // Evita a faixa do título quando o layout usa o topo.
-      const busyTop = top && (inp.layout === 'titulo_topo' || inp.layout === 'preco_destaque') && !!title;
-      const ly = top && !busyTop ? topSafe : bottomSafe - logo.bitmap.height - H * 0.02;
-      img.composite(logo, Math.round(lx), Math.round(busyTop ? bottomSafe - logo.bitmap.height - H * 0.02 : ly));
+      let left = inp.logoPosition.endsWith('left');
+      let top = inp.logoPosition.startsWith('top');
+      // Evita a faixa do título quando o layout usa o topo…
+      const busyTop = (inp.layout === 'titulo_topo' || inp.layout === 'preco_destaque') && !!title;
+      if (top && busyTop) top = false;
+      // …e, embaixo, a chamada (centro) e a pílula do preço (canto direito): sobe para o topo livre ou vai para a esquerda.
+      const priceCorner = inp.layout === 'preco_destaque' && !!price;
+      if (!top && (inp.layout === 'cta_rodape' || (priceCorner && !left))) {
+        if (!busyTop) top = true;
+        else if (priceCorner) left = true;
+      }
+      const lx = left ? margin : W - margin - logo.bitmap.width;
+      const ly = top ? topSafe : bottomSafe - logo.bitmap.height - H * 0.02;
+      img.composite(logo, Math.round(lx), Math.round(ly));
     } catch {
       /* logo ilegível: segue sem ela (o texto já foi aplicado) */
     }

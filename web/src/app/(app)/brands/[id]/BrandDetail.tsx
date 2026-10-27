@@ -358,7 +358,18 @@ export function BrandDetail() {
         </TabsContent>
 
         <TabsContent value="guia" className="space-y-6">
-          <VisualGuide brandId={id} brand={brand} canEdit={canEdit} />
+          <VisualGuide
+            brandId={id}
+            brand={brand}
+            canEdit={canEdit}
+            // O logo mais recente enviado; sem ele, o logo_url só conta se for arquivo enviado aqui (link externo a API ignora).
+            logoName={
+              (assets.filter((a) => a.kind === "logo").at(-1)?.name ?? null) ||
+              (brand?.logo_url && /\/v1\/files\//.test(brand.logo_url) ? brand.logo_url.split("?")[0]! : null)
+            }
+            uploadingLogo={uploading === "logo"}
+            onUploadLogo={(files) => uploadAssets("logo", files)}
+          />
         </TabsContent>
 
         <TabsContent value="produtos">
@@ -518,7 +529,25 @@ const GUIDE_LISTS: { key: keyof VisualStyle; label: string; placeholder: string 
   { key: "elementos_proibidos", label: "Elementos proibidos", placeholder: "pessoas com rosto visível, texto gerado pela IA, marcas de concorrentes" },
 ];
 
-function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: Brand; canEdit: boolean }) {
+/** Sem posição escolhida no guia, a logo enviada entra no canto inferior direito (igual à API). */
+const DEFAULT_LOGO_POSITION: LogoPosition = "bottom_right";
+
+function VisualGuide({
+  brandId,
+  brand,
+  canEdit,
+  logoName,
+  uploadingLogo,
+  onUploadLogo,
+}: {
+  brandId: string;
+  brand: Brand;
+  canEdit: boolean;
+  /** Nome do logo mais recente da marca (`null` = nenhum enviado). */
+  logoName: string | null;
+  uploadingLogo: boolean;
+  onUploadLogo: (files: FileList | null) => void | Promise<void>;
+}) {
   const qc = useQueryClient();
   const { workspaceId } = useWorkspace();
   const runGuide = useServerFn(generateBrandGuide);
@@ -604,16 +633,43 @@ function VisualGuide({ brandId, brand, canEdit }: { brandId: string; brand: Bran
           </div>
         ))}
         <div className="space-y-1.5">
-          <Label>Posição da logo</Label>
+          <Label htmlFor="posicao-logo">Posição da logo</Label>
           <select
+            id="posicao-logo"
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={vs.posicao_logo ?? "none"}
+            value={vs.posicao_logo ?? DEFAULT_LOGO_POSITION}
             onChange={(e) => setVs({ ...vs, posicao_logo: e.target.value as LogoPosition })}
           >
             {Object.entries(LOGO_POSITIONS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
+              <option key={k} value={k}>{k === DEFAULT_LOGO_POSITION ? `${v} (padrão)` : v}</option>
             ))}
           </select>
+          {(!logoName || /\.(svg|pdf)$/i.test(logoName)) && (vs.posicao_logo ?? DEFAULT_LOGO_POSITION) !== "none" && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                {logoName
+                  ? "A logo em SVG ou PDF não entra nos criativos. Envie a logo em PNG ou JPG."
+                  : "Envie a logo da marca para ela aparecer nos criativos."}
+              </span>
+              {canEdit && (
+                <Button size="sm" variant="outline" asChild disabled={uploadingLogo}>
+                  <label className="cursor-pointer">
+                    <Upload className="mr-1 size-3.5" />
+                    {uploadingLogo ? "Enviando..." : "Enviar logo"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        void onUploadLogo(e.target.files);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </Button>
+              )}
+            </div>
+          )}
         </div>
         <div className="space-y-1.5 md:col-span-2">
           <Label>Prompts que funcionaram ({listField(vs.exemplos_prompt).length}/10)</Label>

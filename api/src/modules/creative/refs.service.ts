@@ -84,6 +84,10 @@ export class RefsService {
     return out;
   }
 
+  /**
+   * Logo da marca (PNG/JPG/WEBP; SVG e PDF não entram na composição). Ordem: o `brand_assets` de logo mais recente; sem ele,
+   * `brands.logo_url` — mas só quando é um arquivo NOSSO (URL assinada desta API, dentro da pasta deste workspace).
+   */
   async loadLogo(workspaceId: string, brandId: string | null | undefined): Promise<Uint8Array | null> {
     if (!brandId) return null;
     const row = await this.prisma.brand_assets.findFirst({
@@ -91,9 +95,28 @@ export class RefsService {
       orderBy: { created_at: 'desc' },
       select: { url: true, storage_path: true, name: true },
     });
-    if (!row || /\.(svg|pdf)$/i.test(row.name ?? '')) return null;
+    if (row) {
+      if (/\.(svg|pdf)$/i.test(row.name ?? '')) return null;
+      try {
+        return await this.bytesOf(workspaceId, row);
+      } catch {
+        return null;
+      }
+    }
+    const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: workspaceId }, select: { logo_url: true } });
+    return this.ownFileBytes(workspaceId, brand?.logo_url ?? null);
+  }
+
+  /**
+   * Bytes de uma URL assinada DESTA API (`<PUBLIC_URL>/v1/files/<bucket>/<chave>`) cujo arquivo é deste workspace, lidos direto do
+   * disco pelo FilesService. URL externa (site do cliente, CDN, outro domínio) é ignorada de propósito: baixar um endereço
+   * qualquer vindo do cadastro abriria SSRF, e quem quer a logo nos criativos a envia pelo upload.
+   */
+  private async ownFileBytes(workspaceId: string, url: string | null): Promise<Uint8Array | null> {
+    const own = url ? this.files.parseOwnUrl(url) : null;
+    if (!own || !this.files.keyBelongsToWorkspace(own.key, workspaceId) || /\.(svg|pdf)$/i.test(own.key)) return null;
     try {
-      return await this.bytesOf(workspaceId, row);
+      return new Uint8Array(await this.files.read(own.bucket, own.key));
     } catch {
       return null;
     }

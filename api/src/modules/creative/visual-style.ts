@@ -22,6 +22,15 @@ export const LOGO_POSITIONS: Record<LogoPosition, string> = {
   none: "Sem logo",
 };
 
+/**
+ * Posição da logo quando o guia visual não define nenhuma: canto inferior direito (a marca que enviou logo a vê nos criativos).
+ * `'none'` explícito continua sem logo; valor desconhecido também cai no padrão.
+ */
+export const DEFAULT_LOGO_POSITION: LogoPosition = "bottom_right";
+export function resolveLogoPosition(v: unknown): LogoPosition {
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(LOGO_POSITIONS, v) ? (v as LogoPosition) : DEFAULT_LOGO_POSITION;
+}
+
 export type TextLayout = "limpo" | "titulo_topo" | "preco_destaque" | "cta_rodape";
 export const TEXT_LAYOUTS: Record<TextLayout, string> = {
   limpo: "Limpo (sem texto)",

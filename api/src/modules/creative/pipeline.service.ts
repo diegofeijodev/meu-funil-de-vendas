@@ -16,7 +16,7 @@ import { composeCreative } from './compose';
 import { MIN_SCORE, scoreCreative } from './critic';
 import { GenerationResult, ServerCreativeProvider } from './creative.types';
 import { BrandRef, RefsService } from './refs.service';
-import { AiScore, ArtDirection, listField, TextLayout, Variation, VisualStyle } from './visual-style';
+import { AiScore, ArtDirection, listField, resolveLogoPosition, TextLayout, Variation, VisualStyle } from './visual-style';
 
 export type PipelineInput = {
   workspaceId: string;
@@ -158,13 +158,15 @@ export class PipelineService {
 
     await Promise.all(pool.map((p) => this.patchReport(p.asset, { ai_score: p.score, winner: p === win, variation_group: group, version: 'clean' })));
 
-    // Composição final (texto e logo por cima). "Limpo" sem logo = a própria vencedora.
+    // Composição final (texto e logo por cima). "Limpo" sem logo = a própria vencedora. Posição não definida no guia visual =
+    // canto inferior direito (marca com logo enviada a vê nos criativos); 'none' explícito = sem logo.
     let final: MediaAsset = win.asset;
-    const logoPos = vs.posicao_logo ?? 'none';
-    const needsCompose = inp.layout !== 'limpo' || logoPos !== 'none';
+    const logoPos = resolveLogoPosition(vs.posicao_logo);
+    const logo = logoPos === 'none' ? null : await this.refsSvc.loadLogo(inp.workspaceId, inp.brand?.id).catch(() => null);
+    const needsCompose = inp.layout !== 'limpo' || !!logo;
     if (needsCompose) {
       try {
-        const [font, logo] = await Promise.all([this.refsSvc.loadFont(inp.workspaceId, inp.brand?.id), this.refsSvc.loadLogo(inp.workspaceId, inp.brand?.id)]);
+        const font = await this.refsSvc.loadFont(inp.workspaceId, inp.brand?.id);
         const composed = await composeCreative(this.images, {
           image: win.bytes, aspectRatio: inp.aspectRatio, layout: inp.layout, title: inp.text.title, price: inp.text.price, cta: inp.text.cta,
           logo, logoPosition: logoPos, font, primary: palette[0] ?? null, secondary: palette[1] ?? null,

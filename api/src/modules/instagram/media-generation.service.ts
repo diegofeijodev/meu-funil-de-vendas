@@ -11,7 +11,7 @@ import { PipelineService } from '../creative/pipeline.service';
 import { ChainedProvider, ProviderResolverService, providerLog } from '../creative/provider-resolver.service';
 import { BrandRef, RefsService } from '../creative/refs.service';
 import { VideoExtrasService } from '../creative/video-extras.service';
-import { AiScore, ArtDirection, listField, TextLayout, VisualStyle } from '../creative/visual-style';
+import { AiScore, ArtDirection, listField, resolveLogoPosition, TextLayout, VisualStyle } from '../creative/visual-style';
 import { AssetsService, MediaAsset } from '../media/assets.service';
 import { VideoConformService } from '../media/video-conform.service';
 import { targetForIgFormat } from '../media/formats';
@@ -160,7 +160,12 @@ export class MediaGenerationService {
       const brandId = await this.brandIdOfPost(post);
       const brand = await this.content.brandFor(post.workspace_id, brandId);
       const image = r.bytes ? new Uint8Array(r.bytes) : (await this.assets.download(r.assetUrl!)).bytes;
-      const [font, logo] = await Promise.all([this.refs.loadFont(post.workspace_id, brand?.id ?? null), this.refs.loadLogo(post.workspace_id, brand?.id ?? null)]);
+      // Posição do guia visual (padrão: canto inferior direito; 'none' = sem logo). Antes a posição não ia e a logo nunca saía.
+      const logoPosition = resolveLogoPosition(((brand?.visual_style ?? {}) as VisualStyle).posicao_logo);
+      const [font, logo] = await Promise.all([
+        this.refs.loadFont(post.workspace_id, brand?.id ?? null),
+        logoPosition === 'none' ? null : this.refs.loadLogo(post.workspace_id, brand?.id ?? null),
+      ]);
       const first = index === 0;
       const last = index === total - 1 && total > 1;
       const slideText = (post.creative_brief?.slide_texts as string[] | undefined)?.[index] ?? null;
@@ -171,12 +176,39 @@ export class MediaGenerationService {
         title: first ? (post.hook ?? post.theme ?? null) : slideText,
         cta: last ? (post.cta ?? null) : null,
         logo,
+        logoPosition,
         font,
         primary: brand?.primary_color ?? null,
         secondary: brand?.secondary_color ?? null,
       });
     } catch (e) {
       this.logger.warn(`[instagram] composição do slide falhou: ${errText(e)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Imagem única/story que NÃO passou pelo pipeline (provedor assíncrono: a mídia chega depois pelo `continueAssets`): só a logo
+   * no canto do guia visual (padrão inferior direito), sem texto novo. Sem logo, posição 'none' ou falha → a imagem fica como veio.
+   */
+  private async composeLogoOnly(post: PostRow, r: GenerationResult): Promise<Uint8Array | null> {
+    if (post.creative_brief?.compose === false) return null;
+    try {
+      const brand = await this.content.brandFor(post.workspace_id, await this.brandIdOfPost(post));
+      const logoPosition = resolveLogoPosition(((brand?.visual_style ?? {}) as VisualStyle).posicao_logo);
+      if (!brand || logoPosition === 'none') return null;
+      const logo = await this.refs.loadLogo(post.workspace_id, brand.id);
+      if (!logo) return null;
+      const [image, font] = await Promise.all([
+        r.bytes ? Promise.resolve(new Uint8Array(r.bytes)) : this.assets.download(r.assetUrl!).then((d) => d.bytes),
+        this.refs.loadFont(post.workspace_id, brand.id),
+      ]);
+      return await composeCreative(this.images, {
+        image, aspectRatio: ASPECT[post.format as IgFormat], layout: 'limpo', logo, logoPosition, font,
+        primary: brand.primary_color ?? null, secondary: brand.secondary_color ?? null,
+      });
+    } catch (e) {
+      this.logger.warn(`[instagram] logo na imagem falhou: ${errText(e)}`);
       return null;
     }
   }
@@ -260,7 +292,13 @@ export class MediaGenerationService {
         slideScores.push({ slide: i + 1, total: score?.total ?? null, motivo: score?.motivo ?? null, retried: checked.retried });
       }
       if (result.note && !notes.includes(result.note)) notes.push(result.note);
-      const composed = format === 'feed_carousel' ? await this.composeSlide(post, result, i, prompts.length) : null;
+      // Carrossel: texto + logo por slide. Imagem única/story (só chega aqui sem o pipeline): logo no canto. Vídeo: fica como veio.
+      const composed =
+        format === 'feed_carousel'
+          ? await this.composeSlide(post, result, i, prompts.length)
+          : !isVideoFormat(format) && !provider.sandbox
+            ? await this.composeLogoOnly(post, result)
+            : null;
       const item: Record<string, any> = await this.libraryItem(post, composed ? { bytes: composed, mime: 'image/jpeg' } : this.srcOf(result), i, provider.id, itemPrompt, result.cost);
       if (format === 'feed_carousel' && qa) item['score'] = score?.total ?? null;
       if (isVideoFormat(format)) Object.assign(item, await this.videoCover(post, provider, req.finalPrompt, item['asset_id'], Number(item['duration']) || VIDEO_SECONDS));
