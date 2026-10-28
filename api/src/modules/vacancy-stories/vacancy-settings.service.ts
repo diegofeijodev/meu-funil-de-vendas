@@ -232,6 +232,12 @@ export class VacancySettingsService {
     this.gate.assert(workspaceId);
     await this.access.require(userId, workspaceId, 'manage');
     await this.get(workspaceId);
+    const cancelled = await this.turnOff(workspaceId, userId, {});
+    return { ok: true, cancelled };
+  }
+
+  /** Desliga e cancela (sem checar acesso): usado pelo botão (`disable`) e pelo job quando a arte modelo some. Devolve linhas + posts cancelados. */
+  async turnOff(workspaceId: string, actorId: string | null, meta: Record<string, unknown> = {}): Promise<number> {
     const cancelled = await this.prisma.$transaction(async (tx) => {
       const rows = await tx.vacancy_stories.updateMany({
         where: { workspace_id: workspaceId, status: { in: QUEUED } },
@@ -252,8 +258,8 @@ export class VacancySettingsService {
       await tx.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { enabled: false } });
       return rows.count + posts;
     });
-    await this.activity.log(workspaceId, userId, 'vacancy_stories.disable', 'vacancy_stories', { cancelled });
-    return { ok: true, cancelled };
+    await this.activity.log(workspaceId, actorId, 'vacancy_stories.disable', 'vacancy_stories', { cancelled, ...meta });
+    return cancelled;
   }
 
   async setAutoPublish(userId: string, workspaceId: string, value: boolean): Promise<VacancySettingsView> {

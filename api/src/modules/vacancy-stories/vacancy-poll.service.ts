@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
-import { ActivityService } from '../activity/activity.service';
 import { leaseFree } from '../instagram/ig-store.service';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
+import { VacancySettingsService } from './vacancy-settings.service';
 import { fingerprint, hourLabel, leadLabel, spParts } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
@@ -35,7 +35,7 @@ export class VacancyPollService {
     private readonly prisma: PrismaService,
     private readonly feed: VacancyFeedClient,
     private readonly gate: VacancyGate,
-    private readonly activity: ActivityService,
+    private readonly settings: VacancySettingsService,
   ) {}
 
   /** Empresas ligadas E na lista de liberadas. */
@@ -51,13 +51,15 @@ export class VacancyPollService {
     try {
       list = await this.feed.recent();
     } catch (e) {
-      if (!(e instanceof FeedDownError)) throw e;
-      // `last_poll_ok_at` fica como está: a tela mostra "última consulta que deu certo".
+      // Erro inesperado também aparece na tela (texto genérico; o detalhe vai para o log). `last_poll_ok_at` fica como está.
+      let message = new FeedDownError().message;
+      if (e instanceof FeedDownError) message = e.message;
+      else this.logger.error(`[vagas] consulta da vitrine falhou: ${e instanceof Error ? e.message : String(e)}`);
       await this.prisma.vacancy_story_settings.updateMany({
         where: { workspace_id: { in: active.map((s) => s.workspace_id) } },
-        data: { last_poll_at: now, last_poll_error: e.message },
+        data: { last_poll_at: now, last_poll_error: message },
       });
-      return { workspaces: active.length, inserted: 0, skipped: 0, error: e.message };
+      return { workspaces: active.length, inserted: 0, skipped: 0, error: message };
     }
     const cities = countCities(list);
     let inserted = 0;
@@ -143,15 +145,13 @@ export class VacancyPollService {
     return r.count;
   }
 
-  /** Ligada mas sem arte modelo (a marca apagou o arquivo): desliga e deixa no registro de atividade. */
+  /** Ligada mas sem arte modelo (a marca apagou o arquivo): desliga como o botão (cancela fila, posts não publicados e jobs) e registra a atividade. */
   async disableOrphans(): Promise<number> {
     const orphans = await this.prisma.vacancy_story_settings.findMany({ where: { enabled: true, template_asset_id: null } });
     let n = 0;
     for (const s of orphans) {
-      const got = await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: s.workspace_id, enabled: true, template_asset_id: null }, data: { enabled: false } });
-      if (!got.count) continue;
+      await this.settings.turnOff(s.workspace_id, null, { reason: 'arte modelo apagada' });
       n++;
-      await this.activity.log(s.workspace_id, null, 'vacancy_stories.disable', 'vacancy_stories', { reason: 'arte modelo apagada' });
       this.logger.warn(`[vagas] ${s.workspace_id}: desligado, arte modelo apagada`);
     }
     return n;

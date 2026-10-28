@@ -22,7 +22,7 @@ const vac = (o: Partial<FreelaVacancy> = {}): FreelaVacancy => ({
 
 function setup(list?: string) {
   const w = vacancyWorld({ list });
-  const poll = new VacancyPollService(w.prisma, w.feedClient, w.gate, w.activity);
+  const poll = new VacancyPollService(w.prisma, w.feedClient, w.gate, w.settings);
   const settings = (ws = WS_A, over: Record<string, unknown> = {}) => {
     const row = { workspace_id: ws, enabled: true, enabled_at: ENABLED_AT, template_asset_id: uuid(), cities: [], min_lead_minutes: 120, daily_cap: 10, ...over };
     w.t['vacancy_story_settings']!.rows.push(row);
@@ -93,6 +93,16 @@ describe('VacancyPollService.pollAll', () => {
     expect(r2.error).toBeUndefined();
     expect(s.last_poll_error).toBeNull();
     expect(s.last_poll_ok_at).toEqual(later);
+  });
+
+  it('erro inesperado da vitrine também é gravado, sem exceção', async () => {
+    const { w, poll, settings } = setup();
+    const s = settings();
+    jest.spyOn(w.feedClient, 'recent').mockRejectedValueOnce(new Error('x'));
+    const r = await poll.pollAll(NOW);
+    expect(r.error).toBe('Não conseguimos consultar as vagas do Freela.');
+    expect(s.last_poll_error).toBe('Não conseguimos consultar as vagas do Freela.');
+    expect(s.last_poll_at).toEqual(NOW);
   });
 
   it('recent_cities: contagem das cidades da resposta, maior primeiro', async () => {
@@ -179,13 +189,23 @@ describe('sweepLeases e disableOrphans', () => {
   });
 
   it('empresa ligada sem arte modelo é desligada e registrada', async () => {
-    const { w, poll, settings } = setup();
+    const { w, poll, settings, story } = setup();
     const orphan = settings(WS_A, { template_asset_id: null });
     const fine = settings(WS_B);
+    const queued = story({ workspace_id: WS_A, status: 'new' });
+    const post = { id: uuid(), workspace_id: WS_A, source: 'vacancy', status: 'scheduled' };
+    w.t['ig_posts']!.rows.push(post);
+    const job = { id: uuid(), workspace_id: WS_A, ig_post_id: post.id, status: 'pending' };
+    w.t['publishing_jobs']!.rows.push(job);
+    const row = story({ workspace_id: WS_A, status: 'handed_off', ig_post_id: post.id });
     expect(await poll.disableOrphans()).toBe(1);
+    expect(queued).toMatchObject({ status: 'cancelled', skip_reason: 'Os stories das vagas foram desligados.' });
+    expect(post.status).toBe('cancelled');
+    expect(job.status).toBe('cancelled');
+    expect(row.skip_reason).toBe('Os stories das vagas foram desligados.');
     expect(orphan.enabled).toBe(false);
     expect(fine.enabled).toBe(true);
-    expect(w.t['activity_logs']!.rows[0]).toMatchObject({ workspace_id: WS_A, action: 'vacancy_stories.disable', metadata: { reason: 'arte modelo apagada' } });
+    expect(w.t['activity_logs']!.rows[0]).toMatchObject({ workspace_id: WS_A, action: 'vacancy_stories.disable', metadata: { cancelled: 2, reason: 'arte modelo apagada' } });
   });
 });
 
