@@ -15,6 +15,7 @@ import {
   postNowDialog,
   reasonChipsFeedback,
   redoLabel,
+  sameCities,
   scheduleDelayed,
   settingsSummary,
   vagasTabState,
@@ -180,5 +181,12 @@ describe('vacancy-stories (puro)', () => {
     expect(sampleLine({ funcao: 'Garçom', valor: 'R$ 150', dia: 'Sáb 31/10', horario: '18h às 23h', cidade: 'Campinas' })).toBe(
       'Não há vaga aberta no Freela agora. Usamos uma vaga de exemplo: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas.',
     );
+  });
+
+  it('sameCities: conjunto, ordem não importa', () => {
+    expect(sameCities(['A', 'B'], ['B', 'A'])).toBe(true);
+    expect(sameCities([], [])).toBe(true);
+    expect(sameCities(['A'], ['A', 'B'])).toBe(false);
+    expect(sameCities(['A', 'B'], ['A', 'C'])).toBe(false);
   });
 });

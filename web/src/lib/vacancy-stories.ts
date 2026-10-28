@@ -223,3 +223,10 @@ export function previewProgress(p: { step?: 'art' | 'check' | 'fallback'; attemp
 export function sampleLine(v: { funcao: string; valor: string; dia: string; horario: string; cidade: string }): string {
   return `Não há vaga aberta no Freela agora. Usamos uma vaga de exemplo: ${v.funcao}, ${v.valor}, ${v.dia}, ${v.horario}, ${v.cidade}.`;
 }
+
+/** Cidades como conjunto: a ordem em que foram marcadas não conta como mudança. */
+export function sameCities(a: string[], b: string[]): boolean {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((c) => y.has(c));
+}

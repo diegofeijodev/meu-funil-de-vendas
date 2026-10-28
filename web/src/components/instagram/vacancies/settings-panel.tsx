@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { autoPublishSummary, capWarning, settingsSummary, weeklyFallbackWarning, windowError } from "@/lib/vacancy-stories";
+import { autoPublishSummary, capWarning, settingsSummary, sameCities, weeklyFallbackWarning, windowError } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   patchVacancySettings,
@@ -95,12 +95,14 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const s = settings;
 
   const value = <K extends keyof Edits>(k: K) => (k in edits ? edits[k] : s[k]) as NonNullable<Edits[K]>;
-  const set = <K extends keyof Edits>(k: K, v: NonNullable<Edits[K]>) =>
+  const set = <K extends keyof Edits>(k: K, v: NonNullable<Edits[K]>) => {
+    if (save.isError) save.reset(); // nova edição depois da falha: o botão volta a "Salvar ajustes"
     setEdits((e) => {
       const next = { ...e, [k]: v };
-      if (same(v, s[k])) delete next[k]; // voltou ao valor salvo: não conta como mudança
+      if (k === "cities" ? sameCities(v as string[], s.cities) : same(v, s[k])) delete next[k]; // voltou ao valor salvo: não conta como mudança
       return next;
     });
+  };
 
   const cities = value("cities");
   const start = value("window_start");
@@ -143,6 +145,12 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const disabled = !canEdit;
 
   return (
+    <div className="space-y-4">
+    {weekly && (
+      <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="status">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden /> {weekly}
+      </p>
+    )}
     <section className="panel" aria-labelledby="vac-settings-title">
       <h2 id="vac-settings-title" className="m-0">
         <button
@@ -162,12 +170,6 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
 
       {open && (
         <div id="vac-settings-body" className="space-y-4 px-5 pb-0">
-          {weekly && (
-            <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="status">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden /> {weekly}
-            </p>
-          )}
-
           {s.template && (
             <>
               <TemplateCard workspaceId={workspaceId} settings={s} canEdit={canEdit} />
@@ -294,5 +296,6 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
         </AlertDialogContent>
       </AlertDialog>
     </section>
+    </div>
   );
 }

@@ -86,7 +86,7 @@ export function PreviewCard({ workspaceId, settings, canEdit }: { workspaceId: s
           <div className="relative aspect-[9/16] w-full max-w-[280px] overflow-hidden rounded-lg border border-border bg-muted">
             <img
               src={p.media_url}
-              alt={sample ? `Prévia do story: ${sample.funcao}, ${sample.valor}, ${sample.dia}, ${sample.horario}, ${sample.cidade}` : "Prévia do story"}
+              alt={sample ? `Story: ${sample.funcao}, ${sample.valor}, ${sample.dia}, ${sample.horario}, ${sample.cidade}` : "Story de prévia"}
               className="size-full object-cover"
             />
             <span className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs font-semibold text-white">PRÉVIA · não foi postada</span>
