@@ -8,12 +8,17 @@ export const api = axios.create({ baseURL: API_URL });
 
 const AUTH_PATHS = ['/v1/auth/login', '/v1/auth/signup', '/v1/auth/refresh'];
 
+/** Access token da sessão guardada (o mesmo que o interceptor anexa); também usado pelo `fetch` com `keepalive`. */
+export function bearerToken(): string | null {
+  return getStoredAuth()?.access_token ?? null;
+}
+
 api.interceptors.request.use((config) => {
   // Só anexa o token quando o chamador não definiu um (ver nota do freela-web-v2:
   // sobrescrever um Authorization explícito já misturou contas).
   if (!config.headers.Authorization) {
-    const auth = getStoredAuth();
-    if (auth?.access_token) config.headers.Authorization = `Bearer ${auth.access_token}`;
+    const token = bearerToken();
+    if (token) config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });

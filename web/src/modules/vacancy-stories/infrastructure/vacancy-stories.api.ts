@@ -1,10 +1,13 @@
 import axios from "axios";
 import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/modules/shared/infrastructure/http";
+import { API_URL, api, bearerToken } from "@/modules/shared/infrastructure/http";
+import { dontPostKeepaliveRequest } from "@/lib/vacancy-stories";
 
 const str = z.string().nullish().transform((v) => v ?? null);
 const num = z.coerce.number();
+const strList = z.array(z.string()).nullish().transform((v) => (v && v.length ? v : null));
+const fallbackKind = z.enum(["photo", "plain"]).nullish().transform((v) => v ?? null);
 
 const fieldCheck = z.object({ key: z.string(), label: z.string(), ok: z.boolean(), read: str, expected: str }).passthrough();
 const attemptLog = z
@@ -33,6 +36,7 @@ const preview = z
     checks: z.array(fieldCheck).default([]),
     attempts: z.array(attemptLog).default([]),
     used_fallback: z.boolean().optional(),
+    fallback_kind: fallbackKind,
     sample: z.boolean().optional(),
     vacancy: z.object({}).passthrough().nullish().transform((v) => v ?? null),
     error: str,
@@ -106,6 +110,12 @@ const story = z
     is_test: z.boolean(),
     freela_url: z.string(),
     own_art: z.boolean(),
+    /** A3: reserva que a leitura reprovou — os textos achados na arte. */
+    check_alert: strList,
+    /** B1: reserva com foto ou sem foto. */
+    fallback_kind: fallbackKind,
+    /** B3: por que está esperando (diálogo do "Postar agora"). */
+    wait_kind: z.enum(["cap", "instagram", "window", "spacing"]).nullish().transform((v) => v ?? null),
     can: z
       .object({
         approve: z.boolean(),
@@ -156,8 +166,11 @@ export async function disableVacancies(ws: string): Promise<{ cancelled: number 
   const { data } = await api.post(`${base(ws)}/disable`);
   return ok.extend({ cancelled: num }).parse(data);
 }
-export async function setVacancyAutoPublish(ws: string, auto_publish: boolean): Promise<VacancySettings> {
-  return settings.parse((await api.post(`${base(ws)}/auto-publish`, { auto_publish })).data);
+const autoPublishResult = settings.extend({ moved_to_approval: num.default(0) });
+export type VacancyAutoPublishResult = z.infer<typeof autoPublishResult>;
+/** A1: voltar para "Eu aprovo" devolve quantos stories prontos voltaram para "Para aprovar". */
+export async function setVacancyAutoPublish(ws: string, auto_publish: boolean): Promise<VacancyAutoPublishResult> {
+  return autoPublishResult.parse((await api.post(`${base(ws)}/auto-publish`, { auto_publish })).data);
 }
 export async function uploadVacancyTemplate(ws: string, file: File): Promise<VacancyTemplateResult> {
   const form = new FormData();
@@ -176,6 +189,14 @@ export async function getVacancyStory(ws: string, id: string): Promise<VacancySt
 }
 export async function vacancyDontPost(ws: string, id: string, feedback?: VacancyFeedback): Promise<void> {
   ok.parse((await api.post(`${base(ws)}/stories/${id}/dont-post`, feedback ? { feedback } : {})).data);
+}
+/**
+ * M3: o mesmo "Não postar" com `fetch(..., { keepalive: true })`, para sair mesmo com a aba fechando (o axios não garante). Sem
+ * resposta útil: a tela atualiza na volta.
+ */
+export function vacancyDontPostKeepalive(ws: string, id: string): Promise<unknown> {
+  const [url, init] = dontPostKeepaliveRequest(API_URL, ws, id, bearerToken());
+  return fetch(url, init).catch(() => undefined);
 }
 export async function vacancyPostNow(ws: string, id: string): Promise<void> {
   ok.parse((await api.post(`${base(ws)}/stories/${id}/post-now`)).data);
