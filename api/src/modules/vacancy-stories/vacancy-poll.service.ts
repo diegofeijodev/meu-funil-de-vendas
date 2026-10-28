@@ -4,14 +4,13 @@ import { leaseFree } from '../instagram/ig-store.service';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import { fingerprint, hourLabel, leadLabel, spParts } from './vacancy-text';
+import { capWaitReason, noApprovalReason, tooCloseReason } from './vacancy-reasons';
+import { fingerprint } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
 
 export const WAIT_CAP = 'cap';
 const MIN = 60_000;
-
-const startLabel = (startsAt: Date) => hourLabel(spParts(startsAt.toISOString()).minutes);
 
 /** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada). */
 function countCities(list: FreelaVacancy[]): { city: string; count: number }[] {
@@ -104,8 +103,8 @@ export class VacancyPollService {
       if (r.starts_at.getTime() - now.getTime() >= lead(r.workspace_id)) continue;
       const s = settings.get(r.workspace_id);
       const reason = r.wait_reason === WAIT_CAP
-        ? `Ficou esperando a vez (máximo de ${s?.daily_cap ?? 10} por dia) e a vaga começou antes.`
-        : `Começa às ${startLabel(r.starts_at)}, em menos de ${leadLabel(s?.min_lead_minutes ?? 120)}. Não dá tempo de divulgar.`;
+        ? capWaitReason(s?.daily_cap ?? 10)
+        : tooCloseReason(r.starts_at, s?.min_lead_minutes ?? 120);
       // Condicional ao estado lido: se o gerador pegou a linha entre a leitura e aqui, ela segue.
       const got = await this.prisma.vacancy_stories.updateMany({
         where: { id: r.id, AND: [{ OR: [{ status: { in: ['new', 'waiting'] } }, { status: 'generating', ...leaseFree(now) }] }] },
@@ -126,7 +125,7 @@ export class VacancyPollService {
           await tx.publishing_jobs.updateMany({ where: { ig_post_id: postId, workspace_id: r.workspace_id, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
           await tx.vacancy_stories.updateMany({
             where: { id: r.id },
-            data: { skip_reason: `Ninguém aprovou a tempo: a vaga começou às ${startLabel(r.starts_at)}.` },
+            data: { skip_reason: noApprovalReason(r.starts_at) },
           });
           return 1;
         });

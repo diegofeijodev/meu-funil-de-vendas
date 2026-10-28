@@ -7,7 +7,8 @@ import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../instagram/ig-types';
 import { PublishingService } from '../instagram/publishing.service';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
-import { capWaitReason, tooCloseReason, VacancyGuardService } from './vacancy-guard.service';
+import { VacancyGuardService } from './vacancy-guard.service';
+import { capWaitReason, slotTooCloseReason } from './vacancy-reasons';
 import { nextWindowSlot, spDay, windowStartOn } from './vacancy-slots';
 import type { SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
@@ -86,40 +87,58 @@ export class VacancySchedulerService implements OnModuleInit {
     return { room: IG_DAILY_LIMIT - IG_RESERVE - published.length - others - vacancies, freesAt: oldest ? new Date(oldest.getTime() + DAY_MS) : null };
   }
 
-  /** Último story de vaga da empresa (agendado/publicando, ou o publicado mais recente): o próximo vai 15 min depois dele. */
-  private async lastVacancySlot(ws: string, exceptPostId?: string): Promise<Date | null> {
-    const except = exceptPostId ? { id: { not: exceptPostId } } : {};
-    const sched = await this.prisma.ig_posts.findFirst({
-      where: { workspace_id: ws, source: 'vacancy', status: { in: ['scheduled', 'publishing'] }, scheduled_at: { not: null }, ...except },
-      orderBy: { scheduled_at: 'desc' },
-      select: { scheduled_at: true },
+  /**
+   * Horários que os stories de vaga da empresa ocupam a partir de `since` (agendados/publicando pelo `scheduled_at`, publicados pelo
+   * `published_at`), sem o post que está sendo agendado.
+   */
+  private async vacancyTimes(ws: string, since: Date, exceptPostId?: string): Promise<number[]> {
+    const rows = await this.prisma.ig_posts.findMany({
+      where: {
+        workspace_id: ws,
+        source: 'vacancy',
+        ...(exceptPostId ? { id: { not: exceptPostId } } : {}),
+        OR: [
+          { status: { in: ['scheduled', 'publishing'] }, scheduled_at: { gte: since } },
+          { status: 'published', published_at: { gte: since } },
+        ],
+      },
+      select: { status: true, scheduled_at: true, published_at: true },
     });
-    const pub = await this.prisma.ig_posts.findFirst({
-      where: { workspace_id: ws, source: 'vacancy', status: 'published', published_at: { not: null }, ...except },
-      orderBy: { published_at: 'desc' },
-      select: { published_at: true },
-    });
-    const times = [sched?.scheduled_at, pub?.published_at].filter((d): d is Date => !!d).map((d) => d.getTime());
-    return times.length ? new Date(Math.max(...times)) : null;
+    return rows.map((r) => (r.status === 'published' ? r.published_at : r.scheduled_at)?.getTime()).filter((t): t is number => t != null);
   }
 
   /**
-   * Horário do story de uma vaga que começa em `startsAt`: janela → espaço da Meta → limite do dia (passou → janela do dia seguinte).
-   * `force` ("Postar agora") ignora janela, limite e espaço: agora + 1 min (a guarda ainda confere a vaga na hora de publicar).
-   * Não dá mais tempo (`at` + antecedência > início) → `{ expire }` com o motivo. `postId` = o post sendo agendado (não conta contra
-   * ele mesmo).
+   * R24 — busca de folga: o 1º instante ≥ `from` + 1 min, dentro da janela, sem story de vaga a menos de 15 min (antes ou depois).
+   * Esbarrou → 15 min depois do story do caminho (o mais tarde deles) e confere de novo pela janela. Sempre anda para a frente.
+   */
+  private freeSlot(s: SettingsRow, from: Date, taken: number[]): Date {
+    const win = { windowStart: s.window_start, windowEnd: s.window_end, spacingMin: SPACING_MIN };
+    let at = nextWindowSlot({ ...win, now: from, after: null });
+    for (;;) {
+      const t = at.getTime();
+      const near = taken.filter((x) => Math.abs(x - t) < SPACING_MIN * MIN);
+      if (!near.length) return at;
+      at = nextWindowSlot({ ...win, now: new Date(t - MIN), after: new Date(Math.max(...near)) });
+    }
+  }
+
+  /**
+   * Horário do story de uma vaga que começa em `startsAt`: janela + folga de 15 min → espaço da Meta → limite do dia (dia do horário
+   * cheio → janela do dia seguinte). `force` ("Postar agora") ignora janela, limite e espaço: agora + 1 min (a guarda ainda confere a
+   * vaga na hora de publicar). Não dá mais tempo (`at` + antecedência > início) → `{ expire }` com o motivo verdadeiro (limite do dia, ou
+   * o próximo horário livre — R23). `postId` = o post sendo agendado (não conta contra ele mesmo).
    */
   async planSlot(ws: string, s: SettingsRow, startsAt: Date, now: Date, o: { force?: boolean; postId?: string } = {}): Promise<SlotPlan> {
     if (o.force) return { at: new Date(now.getTime() + MIN), waitingFor: 'none' };
-    const after = await this.lastVacancySlot(ws, o.postId);
-    const slot = (from: Date) => nextWindowSlot({ now: from, windowStart: s.window_start, windowEnd: s.window_end, after, spacingMin: SPACING_MIN });
-    const lower = Math.max(now.getTime() + MIN, after ? after.getTime() + SPACING_MIN * MIN : -Infinity);
-    let at = slot(now);
-    let waitingFor: 'none' | 'window' | 'cap' | 'ig_limit' = at.getTime() > lower ? 'window' : 'none';
+    const taken = await this.vacancyTimes(ws, new Date(now.getTime() - SPACING_MIN * MIN), o.postId);
+    const free = (from: Date) => this.freeSlot(s, from, taken);
+    const opens = nextWindowSlot({ now, windowStart: s.window_start, windowEnd: s.window_end, after: null, spacingMin: SPACING_MIN });
+    let waitingFor: 'none' | 'window' | 'cap' | 'ig_limit' = opens.getTime() > now.getTime() + MIN ? 'window' : 'none';
+    let at = free(now);
 
     const ig = await this.igRoom(ws, now, o.postId);
     if (ig.room <= 0 && ig.freesAt && ig.freesAt.getTime() > at.getTime()) {
-      at = slot(new Date(ig.freesAt.getTime() - MIN));
+      at = free(new Date(ig.freesAt.getTime() - MIN));
       waitingFor = 'ig_limit';
     }
 
@@ -128,12 +147,14 @@ export class VacancySchedulerService implements OnModuleInit {
       const { used, cap } = await this.capacityFor(ws, s, spDay(at), o.postId);
       if (used < cap) break;
       if (i >= MAX_DAYS) return { expire: capWaitReason(s.daily_cap) };
-      // Dia cheio: início da janela do dia seguinte (respeitando o espaço depois do último agendado).
-      at = slot(new Date(windowStartOn(addDays(spDay(at), 1), s.window_start).getTime() - MIN));
+      // Dia cheio: a folga a partir do início da janela do dia seguinte.
+      at = free(new Date(windowStartOn(addDays(spDay(at), 1), s.window_start).getTime() - MIN));
       waitingFor = 'cap';
       if (at.getTime() + lead > startsAt.getTime()) return { expire: capWaitReason(s.daily_cap) };
     }
-    if (at.getTime() + lead > startsAt.getTime()) return { expire: waitingFor === 'cap' ? capWaitReason(s.daily_cap) : tooCloseReason(startsAt, s.min_lead_minutes) };
+    if (at.getTime() + lead > startsAt.getTime()) {
+      return { expire: waitingFor === 'cap' ? capWaitReason(s.daily_cap) : slotTooCloseReason(at, startsAt, s.min_lead_minutes) };
+    }
     return { at, waitingFor };
   }
 

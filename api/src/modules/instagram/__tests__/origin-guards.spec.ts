@@ -2,7 +2,7 @@ import { ClaimRefused, Guardrail, OriginUnavailable } from '../ig-store.service'
 import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../ig-types';
 import { MetaError } from '../meta-graph';
 import { PublishOriginGuard } from '../origin-guards';
-import { OWNER, WS_A } from '../../media/__tests__/mem';
+import { OWNER, WS_A, status } from '../../media/__tests__/mem';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
 
 const IG = 'ig-user-1';
@@ -276,5 +276,19 @@ describe('aprovação de story de vaga', () => {
     const p = vacancyPost(w, { status: 'pending_approval', approved_at: null }, true);
     expect(await s.actions.approvePost(OWNER, WS_A, p.id)).toEqual({ ok: true });
     expect(p.status).toBe('approved');
+  });
+});
+
+describe('R25 — agendar à mão um story de vaga', () => {
+  it('recusa com o motivo, sem job nem mudança no post; post comum continua agendando', async () => {
+    const { w, s } = setup();
+    const p = vacancyPost(w, { status: 'ready', scheduled_at: null });
+    const when = new Date(Date.now() + 3600e3).toISOString();
+    expect(await status(s.actions.schedulePost(OWNER, WS_A, p.id, when))).toBe('400:Story de vaga: o horário é definido na aba Vagas.');
+    expect(p).toMatchObject({ status: 'ready', scheduled_at: null });
+    expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
+    const regular = seedPost(w, { status: 'approved' });
+    expect(await s.actions.schedulePost(OWNER, WS_A, regular.id, when)).toMatchObject({ ok: true });
+    expect(regular.status).toBe('scheduled');
   });
 });

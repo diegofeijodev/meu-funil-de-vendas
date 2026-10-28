@@ -1,5 +1,6 @@
 import type { FreelaVacancy } from './vacancy-types';
-import { cityMatches, hourLabel, isTestText, leadLabel, spParts } from './vacancy-text';
+import { tooCloseReason } from './vacancy-reasons';
+import { cityMatches, isTestText } from './vacancy-text';
 
 export const SKIP = {
   test: 'Parece vaga de teste: o nome da empresa tem “teste”.',
@@ -22,7 +23,7 @@ export function triage(v: FreelaVacancy, s: TriageSettings, now: Date): TriageRe
   if (!cityMatches(city, s.cities)) return skip(`Cidade fora da sua lista: ${city}.`);
   const leadMs = new Date(v.startTime).getTime() - now.getTime();
   if (leadMs < s.min_lead_minutes * 60_000) {
-    return skip(`Começa às ${hourLabel(spParts(v.startTime).minutes)}, em menos de ${leadLabel(s.min_lead_minutes)}. Não dá tempo de divulgar.`);
+    return skip(tooCloseReason(new Date(v.startTime), s.min_lead_minutes));
   }
   return { status: 'new' };
 }

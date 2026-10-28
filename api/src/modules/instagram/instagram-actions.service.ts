@@ -16,6 +16,8 @@ import { computeSlots } from './slots';
 
 /** "Publicar agora" num story de vaga com a vitrine do Freela fora do ar. */
 export const ORIGIN_UNAVAILABLE_MSG = 'Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos.';
+/** Agendar à mão um story de vaga pularia janela, limite e espaço (R25). */
+export const VACANCY_SCHEDULE_MSG = 'Story de vaga: o horário é definido na aba Vagas.';
 
 /**
  * Corpo das 21 server functions do Instagram (`instagram.functions` + `auto-calendar.functions`) com a autorização no servidor:
@@ -123,6 +125,9 @@ export class InstagramActionsService {
 
   async schedulePost(userId: string, workspaceId: string, postId: string, scheduledAt: string) {
     await this.access.require(userId, workspaceId, 'write');
+    // Story de vaga: janela, limite do dia e 15 min entre stories são do módulo das vagas (R25); "Publicar agora" continua (guarda).
+    const post = await this.store.getPost(postId, workspaceId);
+    if (post.source === 'vacancy') throw new UserError(VACANCY_SCHEDULE_MSG);
     return this.publishing.schedulePost(workspaceId, postId, scheduledAt);
   }
 

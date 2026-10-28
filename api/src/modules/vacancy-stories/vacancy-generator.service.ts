@@ -13,13 +13,13 @@ import { composeFallback, composeStoryFrame, cropForCheck, loadBadges } from './
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { WAIT_CAP } from './vacancy-poll.service';
+import { VACANCY_CLOSED_REASON } from './vacancy-reasons';
 import { artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
 import { compareArt, READ_SCHEMA } from './vacancy-verify';
 
 export const NO_ACCOUNT_WAIT = 'O Instagram está desconectado. Os stories ficam prontos aqui, mas só vão ao ar depois que você reconectar.';
-export const VACANCY_CLOSED_REASON = 'A vaga não está mais aberta no Freela (preenchida ou cancelada).';
 /** `handOff` perdeu a linha (desligaram no meio): nada foi entregue. */
 export const HANDOFF_LOST = 'lost';
 

@@ -102,12 +102,12 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
   it('limite 2 com 2 já agendados hoje: o 3º vai às 8h de amanhã; vaga que começa antes de 8h + antecedência é cancelada', async () => {
     const t = await setup({ settings: { daily_cap: 2 } });
     await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(HOUR) });
-    // O 2º (pronto, criado hoje) já conta no dia, mas não contra ele mesmo: vai hoje, 15 min depois do 1º.
+    // O 2º (pronto, criado hoje) já conta no dia, mas não contra ele mesmo: vai hoje, no próximo horário livre.
     const p2 = await t.delivered(vac());
     expect(await t.sched.capacityFor(WS_A, t.settings(), '2026-10-29')).toEqual({ used: 2, cap: 2 });
     expect(await t.sched.capacityFor(WS_A, t.settings(), '2026-10-29', p2.id)).toEqual({ used: 1, cap: 2 });
     expect(await t.sched.afterHandOff(WS_A, p2.id)).toBe('scheduled');
-    expect(p2.scheduled_at).toEqual(at(75 * MIN));
+    expect(p2.scheduled_at).toEqual(at(MIN));
     expect(await t.sched.capacityFor(WS_A, t.settings(), '2026-10-29')).toEqual({ used: 2, cap: 2 });
 
     // 3º story de uma vaga que começa amanhã às 9h30: amanhã 8h + 2 h já passa do início.
@@ -155,7 +155,7 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     expect((await t.sched.igRoom(WS_A, NOW)).room).toBe(0);
   });
 
-  it('fora da janela espera o início dela; vaga que já não daria tempo é cancelada com o motivo da antecedência', async () => {
+  it('fora da janela espera o início dela; vaga que já não daria tempo é cancelada com o motivo verdadeiro (R23)', async () => {
     const t = await setup();
     const late = new Date('2026-10-30T01:10:00Z'); // 22h10
     expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-31T21:00:00Z'), late)).toEqual({ at: TOMORROW_8H, waitingFor: 'window' });
@@ -163,7 +163,30 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     const v = vac({ startTime: '2026-10-30T12:00:00Z', endTime: '2026-10-30T18:00:00Z' }); // amanhã 9h
     const p = await t.delivered(v);
     expect(await t.sched.afterHandOff(WS_A, p.id)).toBe('cancelled');
-    expect(t.rowOf(p.id).skip_reason).toBe('Começa às 9h, em menos de 2 h. Não dá tempo de divulgar.');
+    expect(t.rowOf(p.id).skip_reason).toBe('O próximo horário livre (8h) fica a menos de 2 h do início (9h). Não dá tempo de divulgar.');
+  });
+
+  it('R24 — folga de 15 min: vaga de hoje liberada por um cancelamento é usada mesmo com story amanhã às 8h', async () => {
+    const t = await setup();
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: TOMORROW_8H });
+    await t.delivered(vac(), { status: 'cancelled', scheduled_at: at(MIN) });
+    const p = await t.delivered(vac());
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-31T21:00:00Z'), NOW, { postId: p.id })).toEqual({ at: at(MIN), waitingFor: 'none' });
+    expect(await t.sched.afterHandOff(WS_A, p.id)).toBe('scheduled');
+    expect(p.scheduled_at).toEqual(at(MIN));
+  });
+
+  it('R24 — entre stories às 10h (publicado) e 10h30 cabe um às 10h15 (15 min de cada)', async () => {
+    const t = await setup();
+    await t.delivered(vac(), { status: 'published', published_at: NOW, scheduled_at: NOW });
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(30 * MIN) });
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-31T21:00:00Z'), NOW)).toEqual({ at: at(15 * MIN), waitingFor: 'none' });
+  });
+
+  it('R24 — story às 10h05 empurra o candidato das 10h01 para 10h20', async () => {
+    const t = await setup();
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(5 * MIN) });
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-31T21:00:00Z'), NOW)).toEqual({ at: at(20 * MIN), waitingFor: 'none' });
   });
 
   it('"Postar agora" (force) às 22h10 com o limite cheio → job em agora+1 min; linha com post_now também', async () => {
@@ -224,9 +247,10 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     const pendingApproval = await t.delivered(vac(), { status: 'pending_approval' }, { requiresApproval: true });
 
     expect(await t.sched.tick(NOW)).toEqual({ approved: 1, reconciled: 2 });
-    expect(approved).toMatchObject({ status: 'scheduled', scheduled_at: at(45 * MIN) });
-    expect(orphan).toMatchObject({ status: 'scheduled', scheduled_at: at(60 * MIN) });
-    expect(readyAuto).toMatchObject({ status: 'scheduled', scheduled_at: at(75 * MIN), last_error: null });
+    // Folga de 15 min em volta do agendado das 10h30: 10h01, depois 10h45 (10h16 fica a 14 min dele) e 11h.
+    expect(approved).toMatchObject({ status: 'scheduled', scheduled_at: at(MIN) });
+    expect(orphan).toMatchObject({ status: 'scheduled', scheduled_at: at(45 * MIN) });
+    expect(readyAuto).toMatchObject({ status: 'scheduled', scheduled_at: at(60 * MIN), last_error: null });
     for (const p of [approved, orphan, readyAuto]) expect(t.pending(p.id)).toHaveLength(1);
     expect(t.jobsOf(busy.id)).toEqual([busyJob]);
     expect(busyJob).toMatchObject({ status: 'pending', run_at: at(30 * MIN) });
@@ -285,6 +309,25 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
     w.feed.state.closed.add(v.id);
     expect(await w.guard.blockReason(p, NOW)).toBe(CLOSED);
     expect(t.rowOf(p.id)).toMatchObject({ status: 'handed_off', skip_reason: CLOSED });
+  });
+
+  it('vitrine fora, mas a vaga já começou ou está em cima da hora → cancela pela data guardada, sem consultar a vitrine', async () => {
+    const t = await setup();
+    const v = vac();
+    const p = await t.delivered(v, { status: 'scheduled' });
+    const q = await t.delivered(vac(), { status: 'scheduled' });
+    w.feed.state.down = true;
+    expect(await w.guard.blockReason(p, new Date(new Date(v.startTime).getTime() + MIN))).toBe(STARTED);
+    expect(t.rowOf(p.id).skip_reason).toBe(STARTED);
+    expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe('Começa às 18h, em menos de 2 h. Não dá tempo de divulgar.');
+    expect(w.feed.state.urls).toEqual([]);
+  });
+
+  it('post de vaga sem vaga de origem (sem linha nem external_id) → não sai', async () => {
+    await setup();
+    const p = seedPost(w, { source: 'vacancy', format: 'story_image', status: 'scheduled', creative_brief: {} });
+    expect(await w.guard.blockReason(p, NOW)).toBe('Não conseguimos conferir a vaga deste story.');
+    expect(w.feed.state.urls).toEqual([]);
   });
 
   it('vitrine fora do ar → OriginUnavailable (a fila tenta de novo), linha intacta', async () => {
