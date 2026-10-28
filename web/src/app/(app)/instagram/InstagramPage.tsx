@@ -60,7 +60,7 @@ export function InstagramPage() {
         <TabsList className="mb-6 flex h-auto flex-wrap justify-start">
           <TabsTrigger value="overview">Visão geral</TabsTrigger>
           {hasVagas && (
-            <TabsTrigger value="vagas">
+            <TabsTrigger value="vagas" className="min-h-11">
               Vagas{vacancySettings && vacancySettings.pending_approval > 0 ? ` (${vacancySettings.pending_approval})` : ""}
             </TabsTrigger>
           )}

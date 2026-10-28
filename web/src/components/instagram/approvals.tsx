@@ -13,7 +13,19 @@ import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { awaitsHuman } from "@/lib/instagram/production";
 import { useNavigate } from "@/lib/router";
-import { checkedLine, funcaoOfTheme, isOwnArt, postVacancy, reasonChipsFeedback, vagasTabState } from "@/lib/vacancy-stories";
+import { cn } from "@/lib/utils";
+import {
+  batchErrorFallback,
+  batchToast,
+  checkAlertLine,
+  checkedLine,
+  funcaoOfTheme,
+  isOwnArt,
+  postVacancy,
+  reasonChipsFeedback,
+  rejectSelectedLabel,
+  vagasTabState,
+} from "@/lib/vacancy-stories";
 import { useVacancySettings, vacancyDontPost } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { useStoryActions } from "./vacancies/use-story-actions";
 
@@ -43,8 +55,10 @@ export function IgApprovalList({
     return !(v && actions.hidden.has(v.story_id));
   });
 
+  // Story de vaga abre a aba Vagas já com o detalhe dele (B5e).
   const open = (p: (typeof posts)[number]) => {
-    if (postVacancy(p) && hasVagas) navigate({ to: "/instagram", search: { tab: "vagas" } });
+    const v = postVacancy(p);
+    if (v && hasVagas) navigate({ to: "/instagram", search: { tab: "vagas", story: v.story_id } });
     else onOpen?.(p.id);
   };
 
@@ -59,7 +73,7 @@ export function IgApprovalList({
       if (!reason) return;
     }
     setBusy(true);
-    let ok = 0;
+    const done = { posts: 0, vacancies: 0 };
     for (const id of ids) {
       try {
         const v = postVacancy(byId.get(id) ?? {});
@@ -68,19 +82,18 @@ export function IgApprovalList({
           await (kind === "approve"
             ? approve({ data: { workspaceId, postId: id } })
             : reject({ data: { workspaceId, postId: id, reason } }));
-        ok++;
+        if (kind === "reject" && v) done.vacancies++;
+        else done.posts++;
       } catch (e) {
-        toast.error(apiErrorMessage(e, "Falha."));
+        toast.error(apiErrorMessage(e, batchErrorFallback(kind)));
       }
     }
     setBusy(false);
     setSel(new Set());
     qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
-    if (vacancyIds.length) actions.refresh();
-    if (ok)
-      toast.success(
-        kind === "approve" ? `${ok} post(s) aprovado(s).` : `${ok} post(s) rejeitado(s).`,
-      );
+    if (vacancyIds.length || (kind === "approve" && ids.some((id) => postVacancy(byId.get(id) ?? {})))) actions.refresh();
+    const msg = batchToast(kind, done);
+    if (msg) toast.success(msg);
   };
 
   if (isLoading) return <div className="h-32 animate-pulse rounded-lg bg-muted" />;
@@ -93,6 +106,8 @@ export function IgApprovalList({
     );
 
   const all = sel.size === pending.length;
+  // Stories de vaga: botões de 44 px (alvo de toque no celular); o resto da lista segue o protótipo.
+  const tall = pending.some((p) => postVacancy(p));
   return (
     <div className="space-y-3">
       {actions.feedback && (
@@ -123,12 +138,13 @@ export function IgApprovalList({
             <Button
               size="sm"
               variant="ghost"
+              className={cn(tall && "h-11")}
               disabled={!sel.size || busy}
               onClick={() => act([...sel], "reject")}
             >
-              Rejeitar selecionados
+              {rejectSelectedLabel(pending.filter((p) => sel.has(p.id)))}
             </Button>
-            <Button size="sm" disabled={!sel.size || busy} onClick={() => act([...sel], "approve")}>
+            <Button size="sm" className={cn(tall && "h-11")} disabled={!sel.size || busy} onClick={() => act([...sel], "approve")}>
               {busy && <Loader2 className="size-4 animate-spin" />} Aprovar selecionados ({sel.size}
               )
             </Button>
@@ -138,7 +154,8 @@ export function IgApprovalList({
       {pending.map((p) => {
         const vac = postVacancy(p);
         const own = vac ? isOwnArt(p) : false;
-        const conferido = vac && !own ? checkedLine(vac.checked_fields) : null;
+        const alerta = vac && !own && vac.check_alert ? checkAlertLine(vac.check_alert) : null;
+        const conferido = vac && !own && !alerta ? checkedLine(vac.checked_fields) : null;
         return (
         <div
           key={p.id}
@@ -169,6 +186,14 @@ export function IgApprovalList({
             {vac ? (
               own ? (
                 <p className="text-xs text-muted-foreground">A sua arte não passa pela conferência.</p>
+              ) : alerta ? (
+                // A3: reserva que a leitura reprovou — nunca "✓ Conferido".
+                <p className="text-xs font-medium">
+                  <span className="text-warning" aria-hidden>
+                    !
+                  </span>{" "}
+                  {alerta}
+                </p>
               ) : (
                 conferido && (
                 <p className="text-xs text-muted-foreground">
@@ -189,12 +214,13 @@ export function IgApprovalList({
               <Button
                 size="sm"
                 variant="ghost"
+                className={cn(vac && "h-11")}
                 disabled={busy}
                 onClick={() => (vac ? actions.dontPost({ id: vac.story_id, funcao: funcaoOfTheme(p.theme) }) : act([p.id], "reject"))}
               >
                 {vac ? "Não postar" : "Rejeitar"}
               </Button>
-              <Button size="sm" disabled={busy} onClick={() => act([p.id], "approve")}>
+              <Button size="sm" className={cn(vac && "h-11")} disabled={busy} onClick={() => act([p.id], "approve")}>
                 Aprovar
               </Button>
             </div>

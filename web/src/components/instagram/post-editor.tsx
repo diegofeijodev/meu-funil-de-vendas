@@ -36,7 +36,7 @@ import { VideoDirectionPanel } from "@/components/creative/video-direction-panel
 import { effectiveLayout, videoBriefPatch } from "@/lib/instagram/production";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { Link } from "@/lib/router";
-import { funcaoOfTheme, postVacancy } from "@/lib/vacancy-stories";
+import { APPROVED_TOAST, funcaoOfTheme, isOwnArt, ownArtNotice, postVacancy, vacancyEditorActions } from "@/lib/vacancy-stories";
 import { useStoryActions } from "./vacancies/use-story-actions";
 
 const toLocal = (iso: string | null) => {
@@ -89,6 +89,9 @@ export function PostEditor({
       </Sheet>
     );
   const vac = postVacancy(post);
+  // A2/I1: story de vaga só aprova esperando aprovação; Não postar/Refazer/Enviar só antes de publicar; nunca o "Publicar agora" genérico.
+  const vacCan = vac ? vacancyEditorActions(post.status) : null;
+  const ownArt = vac ? isOwnArt(post) : false;
   const F = FORMATS[post.format] ?? FORMATS["feed_image"]!;
   const media = [...(post.media ?? [])].sort((a, b) => a.order - b.order);
   const refresh = () => qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
@@ -209,6 +212,7 @@ export function PostEditor({
 
           <div className="flex flex-wrap justify-center gap-2">
             {vac ? (
+              vacCan?.redo && (
               <B
                 id="redo"
                 variant="outline"
@@ -221,6 +225,7 @@ export function PostEditor({
               >
                 <RefreshCw className="size-4" /> Refazer a arte
               </B>
+              )
             ) : (
               <B
                 id="gen"
@@ -237,9 +242,11 @@ export function PostEditor({
                 <RefreshCw className="size-4" /> Regenerar mídia
               </B>
             )}
-            <B id="upload" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-              <Upload className="size-4" /> Enviar minha própria
-            </B>
+            {(!vac || vacCan?.upload) && (
+              <B id="upload" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                <Upload className="size-4" /> Enviar minha própria
+              </B>
+            )}
             {!vac && (
               <PickFromLibrary
                 workspaceId={workspaceId}
@@ -257,8 +264,8 @@ export function PostEditor({
             />
           </div>
 
-          {vac && (
-            <p className="text-center text-xs text-muted-foreground">A sua arte não passa pela conferência.</p>
+          {vac && (vacCan?.upload || ownArt) && (
+            <p className="text-center text-xs text-muted-foreground">{ownArtNotice(ownArt)}</p>
           )}
 
           {vac ? null : post.format === "reel" || post.format === "story_video" ? (
@@ -404,7 +411,7 @@ export function PostEditor({
           </>)}
           {vac && (
             <p className="text-sm text-muted-foreground">
-              O horário deste story é definido na aba Vagas.{" "}
+              O horário dos stories de vagas segue os Ajustes da aba Vagas.{" "}
               <Link to="/instagram" search={{ tab: "vagas" }} className="text-primary underline">
                 Abrir a aba Vagas
               </Link>
@@ -417,6 +424,7 @@ export function PostEditor({
                 Salvar
               </B>
             )}
+            {(!vac || vacCan?.approve) && (
             <B
               id="approve"
               variant="secondary"
@@ -424,12 +432,13 @@ export function PostEditor({
                 run(
                   "approve",
                   () => fns.approve({ data: { workspaceId, postId: post.id } }),
-                  "Post aprovado.",
-                )
+                  vac ? APPROVED_TOAST : "Post aprovado.",
+                ).then(() => vac && vacancyActions.refresh())
               }
             >
               Aprovar
             </B>
+            )}
             {!vac && (
             <B
               id="schedule"
@@ -452,6 +461,8 @@ export function PostEditor({
               Agendar
             </B>
             )}
+            {/* Story de vaga: "Postar agora" é da aba Vagas (diálogo pelo motivo da espera; nada de diálogo dentro do editor). */}
+            {!vac && (
             <B
               id="publish"
               onClick={() =>
@@ -464,6 +475,8 @@ export function PostEditor({
             >
               Publicar agora
             </B>
+            )}
+            {(!vac || vacCan?.dontPost) && (
             <B
               id="reject"
               variant="ghost"
@@ -484,6 +497,7 @@ export function PostEditor({
             >
               {vac ? "Não postar" : "Cancelar post"}
             </B>
+            )}
           </div>
           {post.ig_permalink && (
             <a

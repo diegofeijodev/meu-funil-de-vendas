@@ -1207,7 +1207,7 @@ try {
     // rejeitar um (window.prompt)
     page.once('dialog', (d) => d.accept('Texto fora do tom'));
     await page.getByRole('button', { name: 'Rejeitar', exact: true }).first().click();
-    await page.getByText('1 post(s) rejeitado(s).').waitFor({ timeout: 30000 });
+    await page.getByText('1 post rejeitado.').waitFor({ timeout: 30000 });
     check('API: rejeitar cancela e guarda o motivo', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.some((x) => x.plan_id === planoIg.id && x.status === 'cancelled' && x.rejection_reason === 'Texto fora do tom'));
     // abrir o editor pelo cartão
     await page.locator('button', { hasText: 'Tema IA' }).first().click();
@@ -1490,7 +1490,8 @@ try {
   await page.goto(`${BASE}/instagram?tab=vagas`);
   await page.getByRole('heading', { name: 'Vagas do Freela nos stories' }).waitFor({ timeout: 30000 });
   check('vagas: aba Vagas ativa em ?tab=vagas', (await page.getByRole('tab', { name: /Vagas/ }).getAttribute('aria-selected')) === 'true');
-  check('vagas: primeira vez com os 3 passos e o interruptor travado', tem(await corpo(), 'Envie a arte modelo') && (await page.locator('#vac-first-switch').isDisabled()));
+  // Repetições (revisão final): a primeira vez não mostra mais o interruptor travado — ele só aparece com a arte modelo.
+  check('vagas: primeira vez com os 3 passos e sem o interruptor travado', tem(await corpo(), 'Envie a arte modelo') && (await page.locator('#vac-first-switch').count()) === 0);
   if (!aiLive) {
     console.log('  (sem gateway de IA: envio da arte modelo pulado — a leitura dos textos precisa da IA)');
     return;
