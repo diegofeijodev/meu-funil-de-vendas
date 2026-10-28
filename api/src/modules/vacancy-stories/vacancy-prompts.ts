@@ -26,7 +26,7 @@ export function photoPrompt(funcao: string): string {
 /** Leitura às cegas: nunca inclui os valores esperados. */
 export function readPrompt(): string {
   return (
-    'Leia esta arte de story. Liste em `textos` TODOS os textos visíveis, exatamente como aparecem, um item por bloco. ' +
+    'Leia esta arte de story. Liste em `textos` TODOS os textos visíveis, inclusive os pequenos e os da foto (placas, fachadas, uniformes), exatamente como aparecem, um item por bloco. ' +
     'Depois preencha: `funcao` (a função/cargo da vaga), `estabelecimento`, `data`, `inicio`, `fim`, `valor` (o valor em reais), `cidade`. ' +
     'Use null quando o campo não aparecer. Não invente nem corrija nada.'
   );

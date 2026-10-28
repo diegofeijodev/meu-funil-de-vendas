@@ -84,22 +84,33 @@ export function parseDayMonth(s: string | null | undefined): { day: number; mont
   return day >= 1 && day <= 31 && month >= 1 && month <= 12 ? { day, month } : null;
 }
 
-export function parseMinutes(s: string | null | undefined): number | null {
-  const m = /(\d{1,2})\s*(?::|h(?:s|oras?)?)\s*(\d{2})?/i.exec(s ?? '');
+/** `which`: 'first' (início) ou 'last' (fim: "18h às 23h" lido em fim vale 23h). 24h = meia-noite (0). */
+export function parseMinutes(s: string | null | undefined, which: 'first' | 'last' = 'first'): number | null {
+  const all = [...(s ?? '').matchAll(/(\d{1,2})\s*(?::|h(?:s|oras?)?)\s*(\d{2})?/gi)];
+  const m = which === 'last' ? all[all.length - 1] : all[0];
   if (!m) return null;
   const h = Number(m[1]);
   const min = m[2] ? Number(m[2]) : 0;
-  return h <= 24 && min < 60 ? h * 60 + min : null;
+  return h <= 24 && min < 60 ? (h * 60 + min) % 1440 : null;
 }
 
 function check(key: FieldKey, label: string, ok: boolean, read: string | null, expected: string | null): FieldCheck {
   return { key, label, ok, read, expected };
 }
 
-function textField(key: FieldKey, label: string, read: string | null, expected: string | null): FieldCheck {
+const UFS = new Set('ac al ap am ba ce df es go ma mt ms mg pa pb pr pe pi rj rn rs ro rr sc sp se to'.split(' '));
+
+/** R11: "Campinas/SP", "Campinas - SP", "CAMPINAS (SP)" valem "Campinas". */
+function stripUf(s: string): string {
+  const t = s.split(' ');
+  return t.length > 1 && UFS.has(t[t.length - 1]) ? t.slice(0, -1).join(' ') : s;
+}
+
+function textField(key: FieldKey, label: string, read: string | null, expected: string | null, uf = false): FieldCheck {
+  const prep = (x: string) => (uf ? stripUf(stripGeneric(x)) : stripGeneric(x));
   const r = read && read.trim() ? read : null;
-  if (expected == null) return check(key, label, r == null || !stripGeneric(r), r, null);
-  return check(key, label, r != null && stripGeneric(r) === stripGeneric(expected), r, expected);
+  if (expected == null) return check(key, label, r == null || !prep(r), r, null);
+  return check(key, label, r != null && prep(r) === prep(expected), r, expected);
 }
 
 function checkFields(read: ArtRead, f: VacancyFields): FieldCheck[] {
@@ -108,30 +119,82 @@ function checkFields(read: ArtRead, f: VacancyFields): FieldCheck[] {
   return [
     textField('funcao', 'função', read.funcao, f.funcao),
     textField('estabelecimento', 'estabelecimento', read.estabelecimento, f.estabelecimento),
-    textField('cidade', 'cidade', read.cidade, f.cidade),
+    textField('cidade', 'cidade', read.cidade, f.cidade, true),
     check('valor', 'valor', parseCents(read.valor) === e.cents, read.valor, f.valor),
     check('data', 'data', !!dm && dm.day === e.day && dm.month === e.month, read.data, f.data),
     check('inicio', 'horário de início', parseMinutes(read.inicio) === e.startMin, read.inicio, hourLabel(e.startMin)),
-    check('fim', 'horário de fim', parseMinutes(read.fim) === e.endMin, read.fim, hourLabel(e.endMin)),
+    check('fim', 'horário de fim', parseMinutes(read.fim, 'last') === e.endMin, read.fim, hourLabel(e.endMin)),
   ];
+}
+
+const DAYS_MONTHS = new Set(
+  ('segunda terca quarta quinta sexta sabado domingo seg ter qua qui sex sab dom janeiro fevereiro marco abril maio junho julho ' +
+    'agosto setembro outubro novembro dezembro').split(' '),
+);
+const GENERIC_WORDS = new Set(GENERIC_LABELS.flatMap((g) => g.split(' ')));
+
+function removePhrases(n: string, phrases: string[]): string {
+  let out = n;
+  for (const p of [...phrases].filter(Boolean).sort((a, b) => b.length - a.length))
+    out = out.replace(new RegExp(`(^| )${esc(p)}(?= |$)`, 'g'), ' ');
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/** Item do modelo que é horário, faixa, data ou valor: só é cópia errada se o valor interpretado for DIFERENTE do esperado. */
+function isValueLike(n: string): boolean {
+  return n.length > 0 && n.split(' ').every((t) => /^\d+h?\d*$/.test(t) || ['r', 'as', 'a', 'ate', 'hs'].includes(t));
+}
+
+function valueMatchesExpected(raw: string, f: VacancyFields): boolean {
+  const e = f.expected;
+  if (/:|\dh/i.test(raw)) {
+    const times = [...raw.matchAll(/(\d{1,2})\s*(?::|h)\s*(\d{2})?/gi)].map((m) => parseMinutes(m[0]));
+    return times.length > 0 && times.every((t) => t === e.startMin || t === e.endMin);
+  }
+  if (raw.includes('/')) {
+    const dm = parseDayMonth(raw);
+    return !!dm && dm.day === e.day && dm.month === e.month;
+  }
+  return parseCents(raw) === e.cents;
+}
+
+function distinctive(n: string, expectedTokens: Set<string>): Set<string> {
+  return new Set(
+    n.split(' ').filter((w) => {
+      if (!w || GENERIC_WORDS.has(w) || DAYS_MONTHS.has(w) || expectedTokens.has(w)) return false;
+      return w.length >= 4 || /^\d{3,}$/.test(w);
+    }),
+  );
 }
 
 function findForbidden(read: ArtRead, f: VacancyFields, templateTexts: string[]): string[] {
   const found = new Set<string>();
-  const allowed = [f.funcao, f.estabelecimento, f.cidade, f.valor, f.data, f.horario].filter((x): x is string => !!x).map(norm);
+  const nameValues = [f.funcao, f.estabelecimento, f.cidade].filter((x): x is string => !!x).map(norm);
+  const allowed = [...nameValues, f.valor, f.data, f.horario].map(norm);
+  const expectedTokens = new Set(allowed.flatMap((a) => a.split(' ')));
   const generic = new Set(GENERIC_LABELS);
-  // item do modelo só é proibido se não for (nem estiver dentro de) um valor da vaga (R7)
   const exempt = (n: string) => n.length < 4 || generic.has(n) || allowed.some((a) => a === n || hasPhrase(a, n));
-  const banned = templateTexts.map((t) => norm(t)).filter((n) => !exempt(n));
+  const items = templateTexts
+    .filter((t) => !ALWAYS_FORBIDDEN.links.test(String(t).toLowerCase()))
+    .map((t) => ({ raw: t, n: norm(t) }))
+    .filter(({ n }) => !exempt(n));
+  const banned = items.filter(({ raw, n }) => !(isValueLike(n) && valueMatchesExpected(raw, f)));
+  const wordSets = items.filter(({ n }) => !isValueLike(n)).map(({ n }) => distinctive(n, expectedTokens));
   for (const raw of read.textos ?? []) {
     const text = String(raw ?? '').trim();
     if (!text) continue;
     const n = norm(text);
+    // R9: "Bar do Bairro" (estabelecimento da vaga) não é o rótulo "bairro"
+    const nLabels = removePhrases(n, nameValues);
     const bad =
       ALWAYS_FORBIDDEN.links.test(text.toLowerCase()) ||
-      [...ALWAYS_FORBIDDEN.labels, ...ALWAYS_FORBIDDEN.stores].some((p) => hasPhrase(n, p)) ||
-      // copiado do modelo: o item está no texto gerado, ou o texto gerado é um trecho do item
-      (!exempt(n) && banned.some((b) => hasPhrase(n, b) || hasPhrase(b, n)));
+      [...ALWAYS_FORBIDDEN.labels, ...ALWAYS_FORBIDDEN.stores].some((p) => hasPhrase(nLabels, p)) ||
+      banned.some((b) => hasPhrase(n, b.n)) ||
+      // cópia editada do modelo: ≥ 2 palavras distintivas em comum com um mesmo item
+      (() => {
+        const mine = distinctive(n, expectedTokens);
+        return mine.size >= 2 && wordSets.some((ws) => [...mine].filter((w) => ws.has(w)).length >= 2);
+      })();
     if (bad) found.add(text);
   }
   return [...found];

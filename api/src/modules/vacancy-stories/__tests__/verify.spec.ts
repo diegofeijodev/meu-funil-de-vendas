@@ -58,4 +58,41 @@ describe('conferência da arte', () => {
     expect(p).toContain('GARÇOM'); expect(p).toContain('R$ 150'); expect(p).toContain('Sáb, 31/10'); expect(p).not.toContain('Coco Bambu');
     expect(p).toMatch(/sem fachada/i); expect(p).toMatch(/Endereço/); expect(p).toMatch(/faixa de baixo/i);
   });
+
+  const withText = (t: string, f = F, tpl = TEMPLATE, o?: { forbiddenOnly?: boolean }) =>
+    compareArt({ ...good, textos: [...good.textos, t] }, f, tpl, o);
+
+  it('R9: rótulo dentro do nome do estabelecimento da vaga é permitido', () => {
+    const f = { ...F, estabelecimento: 'Bar do Bairro' };
+    expect(withText('Bar do Bairro', f).forbidden).toEqual([]);
+    expect(withText('Bar do Bairro', f, TEMPLATE, { forbiddenOnly: true }).ok).toBe(true);
+    expect(withText('Sabores da Região', { ...F, estabelecimento: 'Sabores da Região' }).forbidden).toEqual([]);
+    expect(withText('Endereço: Rua X', f).ok).toBe(false);
+    const r = compareArt({ ...good, estabelecimento: 'Bar do Bairro', textos: [...good.textos, 'Bar do Bairro', 'Bairro: Centro'] }, f, TEMPLATE);
+    expect(r.forbidden).toEqual(['Bairro: Centro']);
+  });
+  it('cópia editada do endereço do modelo é barrada', () => {
+    for (const t of ['Onde: Estrada Joaquim Bueno Neto, 9999', 'Local: Estrada Joaquim Bueno Neto, 9999',
+      'Estrada Joaquim Bueno Neto, 9999 - Itupeva', 'Estrada Joaquim Bueno Neto, 999, Rio abaxo', 'Estr. Joaquim Bueno Neto, 9999'])
+      expect(withText(t).forbidden).toEqual([t]);
+  });
+  it('palavras comuns e valores iguais aos da vaga não são cópia', () => {
+    expect(withText('VAGAS').forbidden).toEqual([]);
+    expect(withText('Sábado').forbidden).toEqual([]);
+    const f10 = { ...F, horario: '10h às 16h', expected: { ...F.expected, startMin: 600, endMin: 960 } };
+    expect(withText('10:00', f10).forbidden).toEqual([]);
+    expect(withText('10:00 às 16:00', f10).forbidden).toEqual([]);
+    const fi = { ...F, cidade: 'Itupeva' };
+    expect(withText('Itupeva/SP', fi).forbidden).toEqual([]);
+    expect(withText('Sábado, 25/10', F, [...TEMPLATE, 'Sábado, 25/10']).forbidden).toEqual(['Sábado, 25/10']);
+  });
+  it('R10: o prompt de leitura pede textos pequenos e da foto', () => expect(readPrompt()).toMatch(/pequenos e os da foto/));
+  it('R11: cidade com UF, fim pelo último horário, 24h = meia-noite', () => {
+    for (const c of ['Campinas/SP', 'Campinas - SP', 'Campinas, SP', 'CAMPINAS (SP)'])
+      expect(compareArt({ ...good, cidade: c }, F, TEMPLATE).fields.find((x) => x.key === 'cidade')!.ok).toBe(true);
+    expect(compareArt({ ...good, fim: '18h às 23h' }, F, TEMPLATE).fields.find((x) => x.key === 'fim')!.ok).toBe(true);
+    expect(parseMinutes('18h às 23h', 'last')).toBe(1380);
+    expect(parseMinutes('24:00')).toBe(0);
+    expect(parseMinutes('24h')).toBe(0);
+  });
 });
