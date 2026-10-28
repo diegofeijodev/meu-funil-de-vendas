@@ -13,14 +13,19 @@ import { PostEditor } from "@/components/instagram/post-editor";
 import { IgApprovalList } from "@/components/instagram/approvals";
 import { IgResults } from "@/components/instagram/results";
 import { IgAccountInsights } from "@/components/instagram/account-insights";
+import { VacanciesTab } from "@/components/instagram/vacancies/vacancies-tab";
+import { useVacancySettings } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
 
-const TABS = ["overview", "strategy", "calendar", "approvals", "results"] as const;
+const TABS = ["overview", "vagas", "strategy", "calendar", "approvals", "results"] as const;
 type IgTab = (typeof TABS)[number];
 
-/** `validateSearch` do protótipo: `?tab=` inválido vira "sem aba" (padrão `overview`). */
-const tabOf = (search: Record<string, unknown>): IgTab | undefined => (TABS.includes(search["tab"] as IgTab) ? (search["tab"] as IgTab) : undefined);
+/** `validateSearch` do protótipo: `?tab=` inválido vira "sem aba" (padrão `overview`). `vagas` só existe para empresas com a função (D7). */
+const tabOf = (search: Record<string, unknown>, hasVagas: boolean): IgTab | undefined => {
+  const t = search["tab"] as IgTab;
+  return TABS.includes(t) && (t !== "vagas" || hasVagas) ? t : undefined;
+};
 
 export function InstagramPage() {
   const { workspaceId, canEdit } = useWorkspace();
@@ -28,11 +33,14 @@ export function InstagramPage() {
   const { data: account } = useIgAccount(workspaceId);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = posts.find((p) => p.id === openId) ?? null;
+  const { data: vacancySettings, isLoading: vacanciesLoading } = useVacancySettings(workspaceId);
+  const hasVagas = !!vacancySettings;
   const search = useSearch();
-  const tab = tabOf(search) ?? "overview";
+  const tab = tabOf(search, hasVagas) ?? "overview";
   const navigate = useNavigate({ from: "/instagram" });
 
-  if (!workspaceId || isLoading) return <div className="panel h-64 animate-pulse" />;
+  // `?tab=vagas` espera a resposta das configurações para não piscar "Visão geral" antes de a aba existir.
+  if (!workspaceId || isLoading || (search["tab"] === "vagas" && vacanciesLoading)) return <div className="panel h-64 animate-pulse" />;
 
   return (
     <>
@@ -47,6 +55,11 @@ export function InstagramPage() {
       <Tabs value={tab} onValueChange={(v) => navigate({ search: { tab: v as IgTab }, replace: true })}>
         <TabsList className="mb-6 flex h-auto flex-wrap justify-start">
           <TabsTrigger value="overview">Visão geral</TabsTrigger>
+          {hasVagas && (
+            <TabsTrigger value="vagas">
+              Vagas{vacancySettings.pending_approval > 0 ? ` (${vacancySettings.pending_approval})` : ""}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="strategy">Estratégia</TabsTrigger>
           <TabsTrigger value="calendar">Calendário</TabsTrigger>
           <TabsTrigger value="approvals">Aprovações</TabsTrigger>
@@ -55,6 +68,11 @@ export function InstagramPage() {
         <TabsContent value="overview">
           <IgOverview workspaceId={workspaceId} posts={posts} onOpen={setOpenId} />
         </TabsContent>
+        {hasVagas && (
+          <TabsContent value="vagas">
+            <VacanciesTab workspaceId={workspaceId} />
+          </TabsContent>
+        )}
         <TabsContent value="strategy">
           <IgStrategy workspaceId={workspaceId} />
         </TabsContent>

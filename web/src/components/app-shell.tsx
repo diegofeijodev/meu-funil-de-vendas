@@ -26,6 +26,7 @@ import { api } from "@/modules/shared/infrastructure/http";
 import { useAuth } from "@/modules/auth/application/use-auth";
 import { useWorkspace } from "@/lib/workspace";
 import { fetchIgPendingCount } from "@/lib/ig-pending";
+import { useVacancySettings } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { ROLE_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { meuFunilLogo, meuFunilSymbol } from "@/lib/assets";
@@ -66,6 +67,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryFn: () => fetchIgPendingCount(workspaceId!),
   });
 
+  // Empresa com stories de vagas e story esperando aprovação: o item Instagram abre direto na aba Vagas.
+  const { data: vacancySettings } = useVacancySettings(workspaceId);
+  const instagramTab = vacancySettings && vacancySettings.pending_approval > 0 ? "vagas" : undefined;
+
   const nav = (
     <nav className="flex flex-1 flex-col gap-0.5 px-3">
       {NAV.map((item) => {
@@ -75,6 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link
             key={item.to}
             to={item.to}
+            search={item.to === "/instagram" && instagramTab ? { tab: instagramTab } : undefined}
             onClick={() => setOpen(false)}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
