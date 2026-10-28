@@ -713,7 +713,29 @@ Autenticação: o token da URL é o `webhook_token` da integração (tipo certo)
 
 Toda saída passa por `EXTERNAL_FETCH` (DNS verificado e fixado; rede interna recusada; redirecionamento **nunca** seguido). Z-API/Evolution usam o `base_url` da empresa (validado ao salvar e a cada envio). Hosts oficiais: Cloud API `graph.facebook.com/v21.0`, Resend `api.resend.com`, Cal.com `api.cal.com/v2`; só fora de produção podem ser trocados por `META_GRAPH_BASE_URL`, `RESEND_API_URL` e `CALCOM_API_URL` (provedores falsos de smoke/browser-check: `api/scripts/fake-providers.mjs` e `fake-graph.mjs`). Segredos (`WHATSAPP_CLOUD_TOKEN`, `ZAPI_TOKEN`, `EVOLUTION_API_KEY`, `RESEND_API_KEY`, `CALCOM_API_KEY`, `WHATSAPP_WEBHOOK_SECRET`) ficam no cofre (empresa → global → ambiente) e nunca saem do servidor.
 
-## 26. Integrações — chaves de IA, diagnóstico, histórico de publicações e limpeza dos exports (Task 9a)
+## 26. Stories das vagas do Freela — `/v1/workspaces/:workspaceId/vacancy-stories/*`
+
+Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota) · `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `VacancySettingsView`, `StoryView` e `StoryDetail` são definidos pelas Tasks 7 e 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
+
+| Rota | Nível | Corpo | Resposta |
+|---|---|---|---|
+| `GET settings` | read | — | `VacancySettingsView` (Task 7) |
+| `PATCH settings` | write | `{ cities?: string[]≤50, daily_cap?: 1..20, window_start?: "HH:MM", window_end?: "HH:MM", min_lead_minutes?: 60\|120\|240\|360, vendor?: "openai"\|"gemini" }` | view; 400 "O início precisa ser antes do fim." |
+| `POST enable` | manage | — | view; 400 "Envie a arte modelo para poder ligar." |
+| `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
+| `POST auto-publish` | manage | `{ auto_publish: boolean }` | view |
+| `POST template` | write | multipart `file` (PNG/JPG/WEBP, ≤ 10 MB) | view + `warning: "landscape" \| null` |
+| `POST preview` | write | — | `{ ok: true }` (segundo plano); 409 se outra em andamento |
+| `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]` (100 mais novas) |
+| `GET stories/:id` | read | — | `StoryDetail` |
+| `POST stories/:id/dont-post` | write | `{ feedback?: "texto_errado"\|"foto_estranha"\|"nao_divulgar" }` | `{ ok: true }` |
+| `POST stories/:id/post-now` | write | — | `{ ok: true }` |
+| `POST stories/:id/create-anyway` | write | — | `{ ok: true }` |
+| `POST stories/:id/redo` | write | — | `{ ok: true }` |
+
+Mais: `POST /api/public/cron/vacancy-stories` (`x-cron-secret` = `CRM_CRON_SECRET` ou `cron_tokens.name='vacancy-stories'`; 401 sem); job `vacancy-stories-10min` (`*/10 * * * *`, heartbeat `vacancy-stories`); aprovar = `POST /v1/instagram/approve-post` de sempre (o story é agendado na hora); fonte = `GET {FREELA_PUBLIC_API_URL}/v1/bars-restaurants/public/vacancies/recent?limit=24` e `…/:id` (envelope `{ data }`, vaga fechada = 404). Na §22: post de vaga (`source='vacancy'`) recusa `generate-post-assets`/`regenerate-media` ("Story de vaga: use Refazer a arte na aba Vagas."); "Publicar agora" num post não aprovado não grava `failed`.
+
+## 27. Integrações — chaves de IA, diagnóstico, histórico de publicações e limpeza dos exports (Task 9a)
 
 Módulo `api/src/modules/integrations`. Cartões Meta/Google/TikTok/agência/MCP/Canva já estão nas §§ 11, 20, 23; aqui ficam as ações de `ai-keys.functions.ts` e `ai-diagnostics.functions.ts`, a leitura do histórico e o job de limpeza.
 

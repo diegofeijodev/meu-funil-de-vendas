@@ -97,6 +97,8 @@ services:
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
       RESEND_API_URL: ${RESEND_API_URL:-}
       CALCOM_API_URL: ${CALCOM_API_URL:-}
+      VACANCY_STORIES_WORKSPACE_IDS: ${VACANCY_STORIES_WORKSPACE_IDS:-}
+      FREELA_PUBLIC_API_URL: ${FREELA_PUBLIC_API_URL:-}
     volumes:
       - meufunil_uploads:/data/uploads
     ports:

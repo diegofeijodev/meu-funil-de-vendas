@@ -107,9 +107,18 @@ export class IgTable {
     this.rows.push(row);
     return this.pick(row, { select });
   }
-  async createMany({ data }: Row) {
-    for (const d of data as Row[]) this.rows.push(this.build(d));
-    return { count: (data as Row[]).length };
+  private dup(row: Row): boolean {
+    return !!this.unique && this.unique.every((k) => row[k] != null) && this.rows.some((r) => this.unique!.every((k) => (r[k] instanceof Date ? r[k].getTime() === row[k]?.getTime?.() : r[k] === row[k])));
+  }
+  async createMany({ data, skipDuplicates }: Row) {
+    let count = 0;
+    for (const d of data as Row[]) {
+      const row = this.build(d);
+      if (skipDuplicates && this.dup(row)) continue;
+      this.rows.push(row);
+      count++;
+    }
+    return { count };
   }
   async createManyAndReturn({ data, select }: Row) {
     const out: Row[] = [];
@@ -184,6 +193,9 @@ export function igWorld() {
     crm_settings: new IgTable(),
     crm_stage_history: new IgTable(),
     workspace_members: new IgTable(),
+    vacancy_story_settings: new IgTable(() => ({ enabled: false, brand_id: null, enabled_at: null, enabled_by: null, template_asset_id: null, template_texts: [], template_bg: null, template_landscape: false, cities: [], daily_cap: 10, window_start: '08:00', window_end: '21:00', min_lead_minutes: 120, vendor: 'openai', auto_publish: false, last_poll_at: null, last_poll_ok_at: null, last_poll_error: null, recent_cities: [], preview: {}, ai_error: null, ai_error_at: null }), ['workspace_id']),
+    vacancy_stories: new IgTable(() => ({ source: 'freela', status: 'new', skip_reason: null, wait_reason: null, template_asset_id: null, lease_until: null, next_attempt_at: null, not_before: null, forced: false, post_now: false, mismatch_attempts: 0, ai_error_count: 0, redo_count: 0, attempts_log: [], used_fallback: false, feedback: null, ig_post_id: null }), ['workspace_id', 'source', 'external_id']),
+    brand_assets: new IgTable(() => ({ kind: 'photo' })),
   };
   t.ig_posts!.relations['publishing_jobs'] = { table: t.publishing_jobs!, fk: 'ig_post_id' };
   const prisma: any = { ...t, workspace_members: memMembers, $transaction: async (ops: Promise<unknown>[] | ((tx: any) => Promise<unknown>)) => {

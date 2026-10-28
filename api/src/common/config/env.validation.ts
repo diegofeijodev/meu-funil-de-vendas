@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { parseVacancyWorkspaces } from '../../modules/vacancy-stories/vacancy-env';
 
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
 const opt = () => z.string().optional();
@@ -154,8 +155,17 @@ const envSchema = z
     /** Só testes (smoke/browser-check): Resend e Cal.com falsos. Só valem em development/test (lista de permissão `testOverridesAllowed`). */
     RESEND_API_URL: opt(),
     CALCOM_API_URL: opt(),
+    /** Ids (uuid) das empresas com stories das vagas do Freela, separados por vírgula. `*` (todas) só em development/test. */
+    VACANCY_STORIES_WORKSPACE_IDS: z.string().default(''),
+    /** Só testes: vitrine falsa. Só vale em development/test; em produção é sempre `https://api.freelaservicosapp.com.br`. */
+    FREELA_PUBLIC_API_URL: opt(),
   })
   .superRefine((env, ctx) => {
+    try {
+      parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
+    } catch (e) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['VACANCY_STORIES_WORKSPACE_IDS'], message: (e as Error).message });
+    }
     if (env.IG_PRODUCTION_TARGET_HOURS > env.IG_PRODUCTION_WINDOW_HOURS) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

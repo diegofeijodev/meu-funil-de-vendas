@@ -112,6 +112,8 @@ model workspaces {
   integration_connections    integration_connections[]  @relation("integration_connections_workspace_id")
   mcp_connections            mcp_connections[]          @relation("mcp_connections_workspace_id")
   app_credentials            app_credentials[]          @relation("app_credentials_workspace_id")
+  vacancy_story_settings     vacancy_story_settings?    @relation("vacancy_story_settings_workspace_id")
+  vacancy_stories            vacancy_stories[]          @relation("vacancy_stories_workspace_id")
 }
 
 model workspace_members {
@@ -159,22 +161,24 @@ model brands {
   social_posts             social_posts[]             @relation("social_posts_brand_id")
   ig_content_plans         ig_content_plans[]         @relation("ig_content_plans_brand_id")
   media_assets             media_assets[]             @relation("media_assets_brand_id")
+  vacancy_story_settings   vacancy_story_settings[]   @relation("vacancy_story_settings_brand_id")
 
   @@index([workspace_id])
 }
 
 model brand_assets {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id String     @db.Uuid
-  brand_id     String     @db.Uuid
-  kind         String     @default("photo")
-  name         String?
-  url          String?
-  created_at   DateTime   @default(now()) @db.Timestamptz(6)
-  tag          String?
-  storage_path String?
-  workspace    workspaces @relation("brand_assets_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
-  brand        brands     @relation("brand_assets_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id           String                   @db.Uuid
+  brand_id               String                   @db.Uuid
+  kind                   String                   @default("photo")
+  name                   String?
+  url                    String?
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  tag                    String?
+  storage_path           String?
+  workspace              workspaces               @relation("brand_assets_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand                  brands                   @relation("brand_assets_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  vacancy_story_settings vacancy_story_settings[] @relation("vacancy_story_settings_template_asset_id")
 
   @@index([workspace_id])
 }
@@ -264,10 +268,10 @@ model campaigns {
   last_insights_sync_at    DateTime?                  @db.Timestamptz(6)
   google_campaign_id       String?
   google_status            String?
-  google_creating_at       DateTime?  @db.Timestamptz(6)
+  google_creating_at       DateTime?                  @db.Timestamptz(6)
   tiktok_campaign_id       String?
   tiktok_status            String?
-  tiktok_creating_at       DateTime?  @db.Timestamptz(6)
+  tiktok_creating_at       DateTime?                  @db.Timestamptz(6)
   workspace                workspaces                 @relation("campaigns_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   brand                    brands                     @relation("campaigns_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
   campaign_strategies      campaign_strategies[]      @relation("campaign_strategies_campaign_id")
@@ -604,6 +608,7 @@ model ig_posts {
   ig_post_metrics     ig_post_metrics[]     @relation("ig_post_metrics_post_id")
   ig_autopilot_events ig_autopilot_events[] @relation("ig_autopilot_events_post_id")
   media_assets        media_assets[]        @relation("media_assets_ig_post_id")
+  vacancy_story       vacancy_stories?      @relation("vacancy_stories_ig_post_id")
 
   @@index([workspace_id, status], map: "ig_posts_ws_status")
 }
@@ -1373,4 +1378,68 @@ model oauth_states {
   created_at   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([expires_at], map: "oauth_states_expires_idx")
+}
+
+model vacancy_story_settings {
+  workspace_id       String        @id @db.Uuid
+  brand_id           String?       @db.Uuid
+  enabled            Boolean       @default(false)
+  enabled_at         DateTime?     @db.Timestamptz(6)
+  enabled_by         String?       @db.Uuid
+  template_asset_id  String?       @db.Uuid
+  template_texts     String[]      @default([])
+  template_bg        String?
+  template_landscape Boolean       @default(false)
+  cities             String[]      @default([])
+  daily_cap          Int           @default(10)
+  window_start       String        @default("08:00")
+  window_end         String        @default("21:00")
+  min_lead_minutes   Int           @default(120)
+  vendor             String        @default("openai")
+  auto_publish       Boolean       @default(false)
+  last_poll_at       DateTime?     @db.Timestamptz(6)
+  last_poll_ok_at    DateTime?     @db.Timestamptz(6)
+  last_poll_error    String?
+  recent_cities      Json          @default("[]") @db.JsonB
+  preview            Json          @default("{}") @db.JsonB
+  ai_error           String?
+  ai_error_at        DateTime?     @db.Timestamptz(6)
+  created_at         DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace          workspaces    @relation("vacancy_story_settings_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand              brands?       @relation("vacancy_story_settings_brand_id", fields: [brand_id], references: [id], onDelete: SetNull)
+  template_asset     brand_assets? @relation("vacancy_story_settings_template_asset_id", fields: [template_asset_id], references: [id], onDelete: SetNull)
+}
+
+model vacancy_stories {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id      String     @db.Uuid
+  source            String     @default("freela")
+  external_id       String
+  status            String     @default("new")
+  skip_reason       String?
+  wait_reason       String?
+  snapshot          Json       @db.JsonB
+  fingerprint       String
+  starts_at         DateTime   @db.Timestamptz(6)
+  template_asset_id String?    @db.Uuid
+  lease_until       DateTime?  @db.Timestamptz(6)
+  next_attempt_at   DateTime?  @db.Timestamptz(6)
+  not_before        DateTime?  @db.Timestamptz(6)
+  forced            Boolean    @default(false)
+  post_now          Boolean    @default(false)
+  mismatch_attempts Int        @default(0)
+  ai_error_count    Int        @default(0)
+  redo_count        Int        @default(0)
+  attempts_log      Json       @default("[]") @db.JsonB
+  used_fallback     Boolean    @default(false)
+  feedback          String?
+  ig_post_id        String?    @unique @db.Uuid
+  created_at        DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace         workspaces @relation("vacancy_stories_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  ig_post           ig_posts?  @relation("vacancy_stories_ig_post_id", fields: [ig_post_id], references: [id], onDelete: SetNull)
+
+  @@unique([workspace_id, source, external_id])
+  @@index([status, starts_at])
 }
