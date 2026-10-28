@@ -68,11 +68,13 @@ export type StoryView = {
   ig_post_id: string | null;
   is_test: boolean;
   freela_url: string;
+  /** R29: a mídia veio de "Enviar minha própria" — ninguém conferiu a arte. */
+  own_art: boolean;
   can: StoryCan;
 };
 
 /** `own_art`: a mídia foi trocada por "Enviar minha própria" (R29) — ninguém conferiu, então `checks` vem vazio. */
-export type StoryDetail = StoryView & { checks: FieldCheck[]; attempts_log: AttemptLog[]; alt: string; own_art: boolean };
+export type StoryDetail = StoryView & { checks: FieldCheck[]; attempts_log: AttemptLog[]; alt: string };
 
 /** Página pública da vaga no Freela. */
 export const FREELA_VACANCY_URL = 'https://www.freelaservicosapp.com.br/vagas/';
@@ -284,6 +286,7 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     ig_post_id: row.ig_post_id,
     is_test: isTestText(v.contractorName) || isTestText(v.title),
     freela_url: `${FREELA_VACANCY_URL}${encodeURIComponent(row.external_id)}`,
+    own_art: ownArt(post),
     can: canOf(row, post, d.display, s, now),
   };
 }
@@ -324,5 +327,5 @@ export function storyDetail(row: StoryRow, post: StoryPost | null, s: SettingsRo
   const view = storyView(row, post, s, now, ctx);
   const when = whenOf(row);
   const alt = `Story: ${[view.funcao, view.valor, when.day, when.horario, view.cidade].filter(Boolean).join(', ')}`;
-  return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt, own_art: ownArt(post) };
+  return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt };
 }

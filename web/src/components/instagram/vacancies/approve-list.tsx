@@ -35,6 +35,13 @@ export function ApproveList({
       </h2>
       {q.isLoading ? (
         <Skeleton className="h-40 w-full" aria-label="Carregando os stories para aprovar" />
+      ) : q.isError && !q.data ? (
+        <div className="space-y-3" role="alert">
+          <p className="text-sm">Não conseguimos carregar as vagas. Verifique a conexão e toque em Tentar de novo.</p>
+          <Button className="h-11" variant="outline" disabled={q.isFetching} onClick={() => q.refetch()}>
+            Tentar de novo
+          </Button>
+        </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nenhum story esperando você agora.</p>
       ) : (
@@ -57,8 +64,24 @@ export function ApproveList({
                     {s.valor && <p>{s.valor}</p>}
                     <p>{s.quando}</p>
                     {s.cidade && <p>{s.cidade}</p>}
-                    <p className="text-success">✓ Conferido: função, valor, data, horário, cidade</p>
-                    {s.approve_until && <p className="font-medium text-warning">! {untilLabel(s.approve_until)}</p>}
+                    {s.own_art ? (
+                      <p>A sua arte não passa pela conferência.</p>
+                    ) : (
+                      <p>
+                        <span className="text-success" aria-hidden>
+                          ✓
+                        </span>{" "}
+                        Conferido: função, valor, data, horário, cidade
+                      </p>
+                    )}
+                    {s.approve_until && (
+                      <p className="font-medium">
+                        <span className="text-warning" aria-hidden>
+                          !
+                        </span>{" "}
+                        {untilLabel(s.approve_until)}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="mt-3 flex gap-2">

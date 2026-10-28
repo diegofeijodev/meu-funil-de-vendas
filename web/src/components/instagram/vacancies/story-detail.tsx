@@ -119,12 +119,12 @@ function DetailBody({
                       </th>
                       <td className="py-2">
                         {c.ok ? (
-                          <span className="inline-flex items-center gap-1 text-success">
-                            <Check className="size-4" aria-hidden /> confere
+                          <span className="inline-flex items-center gap-1">
+                            <Check className="size-4 text-success" aria-hidden /> confere
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-destructive">
-                            <X className="size-4" aria-hidden /> diferente{c.read ? `: a arte diz ${c.read}` : ""}
+                          <span className="inline-flex items-center gap-1">
+                            <X className="size-4 text-destructive" aria-hidden /> diferente{c.read ? `: a arte diz ${c.read}` : ""}
                           </span>
                         )}
                       </td>

@@ -105,6 +105,7 @@ const story = z
     ig_post_id: str,
     is_test: z.boolean(),
     freela_url: z.string(),
+    own_art: z.boolean(),
     can: z
       .object({
         approve: z.boolean(),
@@ -123,7 +124,6 @@ const storyDetail = story.extend({
   checks: z.array(fieldCheck).default([]),
   attempts_log: z.array(attemptLog).default([]),
   alt: z.string(),
-  own_art: z.boolean(),
 });
 export type VacancyStoryDetail = z.infer<typeof storyDetail>;
 

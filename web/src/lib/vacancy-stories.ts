@@ -41,7 +41,7 @@ export function settingsSummary(s: SummaryInput): string {
 }
 
 /** "Hoje: 4 postados de 10 (o máximo por dia que você definiu)". */
-export function dayLine(s: { today: { posted: number; cap: number } }): string {
+export function dayLine(s: { today: { posted: number; cap: number; scheduled?: number } }): string {
   const { posted, cap } = s.today;
   return `Hoje: ${posted} ${posted === 1 ? 'postado' : 'postados'} de ${cap} (o máximo por dia que você definiu)`;
 }

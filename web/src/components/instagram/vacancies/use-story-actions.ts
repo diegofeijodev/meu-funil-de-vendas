@@ -33,13 +33,17 @@ export function useStoryActions(ws: string) {
   const [feedback, setFeedback] = useState<Pending | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
 
-  const refresh = useCallback(() => {
-    qc.invalidateQueries({ queryKey: vacancyListKey(ws) });
-    qc.invalidateQueries({ queryKey: ["vacancy-story", ws] });
-    qc.invalidateQueries({ queryKey: vacancySettingsKey(ws) });
-    qc.invalidateQueries({ queryKey: ["ig-pending-badge", ws] });
-    qc.invalidateQueries({ queryKey: ["ig-posts", ws] });
-  }, [qc, ws]);
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: vacancyListKey(ws) }),
+        qc.invalidateQueries({ queryKey: ["vacancy-story", ws] }),
+        qc.invalidateQueries({ queryKey: vacancySettingsKey(ws) }),
+        qc.invalidateQueries({ queryKey: ["ig-pending-badge", ws] }),
+        qc.invalidateQueries({ queryKey: ["ig-posts", ws] }),
+      ]).then(() => undefined),
+    [qc, ws],
+  );
 
   const setIn = (set: (f: (s: ReadonlySet<string>) => ReadonlySet<string>) => void, id: string, on: boolean) =>
     set((s) => {
@@ -74,7 +78,7 @@ export function useStoryActions(ws: string) {
         toast.error("Este story ainda não tem arte para aprovar.");
         return Promise.resolve(false);
       }
-      return run(story, () => approvePost({ workspaceId: ws, postId: story.ig_post_id! }), "Story aprovado.", "Não conseguimos aprovar agora. Tente de novo.");
+      return run(story, () => approvePost({ data: { workspaceId: ws, postId: story.ig_post_id! } }), "Story aprovado.", "Não conseguimos aprovar agora. Tente de novo.");
     },
     [run, ws],
   );
@@ -90,12 +94,14 @@ export function useStoryActions(ws: string) {
         } catch (e) {
           toast.error(apiErrorMessage(e, "Não conseguimos cancelar o story agora. Tente de novo."));
         } finally {
+          // Só mostra o cartão de novo depois da revalidação: senão o já cancelado reaparece com "Aprovar" ativo.
+          await refresh();
           setIn(setHidden, story.id, false);
-          refresh();
         }
       }, DONT_POST_UNDO_MS);
+      // Toast some 500 ms antes do envio: um "Desfazer" no último instante nunca chega depois da chamada.
       toast(`O story da vaga ${story.funcao} não vai ao ar.`, {
-        duration: DONT_POST_UNDO_MS,
+        duration: DONT_POST_UNDO_MS - 500,
         action: {
           label: "Desfazer",
           onClick: () => {

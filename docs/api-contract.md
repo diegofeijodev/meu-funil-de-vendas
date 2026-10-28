@@ -785,6 +785,7 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
   scheduled_at: string | null, published_at: string | null, permalink: string | null, thumb_url: string | null, media_url: string | null,
   attempts: number /* tentativas da IA registradas */, used_fallback: boolean, redo_count: number, ig_post_id: string | null,
   is_test: boolean /* "teste" no nome da empresa ou no título */, freela_url: string /* https://www.freelaservicosapp.com.br/vagas/{external_id} */,
+  own_art: boolean /* R29: mídia trocada por "Enviar minha própria" (último passo do ai_generation_log = upload) */,
   can: { approve /* to_approve — aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
          post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, motivo ≠ fechada/sem valor/sem cidade, início − antecedência − 15 min > agora (R30) */,
          redo /* entregue e não publicado, redo_count < 3 */, retry /* linha ou post failed */: boolean }
@@ -797,7 +798,7 @@ outro dia com a janela aberta → `waiting_cap` se o limite de hoje está cheio 
 senão `waiting_window`. `expired` aparece como `cancelled`;
 linha `waiting` que não é do limite (erro da IA, vitrine fora) aparece como `queued` com o motivo no `support`.
 
-`StoryDetail` = `StoryView` & `{ checks: FieldCheck[], attempts_log: AttemptLog[], alt: string, own_art: boolean }`:
+`StoryDetail` = `StoryView` & `{ checks: FieldCheck[], attempts_log: AttemptLog[], alt: string }`:
 - `checks`: entregue → `{ key, label, ok, read: null, expected }` para função, valor, data, horário de início, horário de fim, cidade (e
   estabelecimento quando sai na arte); `ok` pelos `checked_fields` do post (reserva: todos `true`, texto do sistema). O texto lido pela IA
   não é guardado — o campo errado de cada tentativa está em `attempts_log[].wrong`. Antes da entrega: `[]`.

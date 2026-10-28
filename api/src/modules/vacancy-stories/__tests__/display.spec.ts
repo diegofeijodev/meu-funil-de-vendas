@@ -193,7 +193,7 @@ describe('storyView / storyDetail', () => {
       funcao: 'Garçom', estabelecimento: 'Coco Bambu', valor: 'R$ 150', quando: 'Sáb 31/10 · 18h às 23h', cidade: 'Campinas',
       starts_at: new Date(v.startTime), approve_until: new Date('2026-10-31T18:45:00Z'), scheduled_at: null, published_at: null,
       permalink: null, thumb_url: 'https://cdn.test/story.jpg', media_url: 'https://cdn.test/story.jpg', attempts: 1, used_fallback: false,
-      redo_count: 0, ig_post_id: p.id, is_test: false, freela_url: `https://www.freelaservicosapp.com.br/vagas/${v.id}`,
+      redo_count: 0, ig_post_id: p.id, is_test: false, freela_url: `https://www.freelaservicosapp.com.br/vagas/${v.id}`, own_art: false,
       can: { approve: true, dont_post: true, post_now: false, create_anyway: false, redo: true, retry: false },
     });
   });
@@ -272,6 +272,7 @@ describe('storyView / storyDetail', () => {
     });
     const d = storyDetail(delivered(p), p, s, NOW);
     expect(d).toMatchObject({ checks: [], own_art: true, display: 'to_approve' });
+    expect(storyView(delivered(p), p, s, NOW).own_art).toBe(true);
     // Gerada de novo depois do envio: o último passo volta a ser da arte.
     const again = post({ status: 'pending_approval', ai_generation_log: [{ step: 'upload' }, { step: 'vacancy_art', attempt: 1, ok: true }] });
     expect(storyDetail(delivered(again), again, s, NOW)).toMatchObject({ own_art: false, checks: expect.arrayContaining([expect.objectContaining({ ok: true })]) });

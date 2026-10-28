@@ -52,8 +52,8 @@ const SITUATION: Record<VacancyStory["display"], { icon: LucideIcon; tone: strin
 export function SituationLabel({ story }: { story: VacancyStory }) {
   const { icon: Icon, tone, spin } = SITUATION[story.display];
   return (
-    <p className={cn("flex items-center gap-1.5 text-sm font-medium", tone)} aria-live={story.display === "generating" ? "polite" : undefined}>
-      <Icon className={cn("size-4 shrink-0", spin && "animate-spin motion-reduce:animate-none")} aria-hidden />
+    <p className="flex items-center gap-1.5 text-sm font-medium" aria-live={story.display === "generating" ? "polite" : undefined}>
+      <Icon className={cn("size-4 shrink-0", tone, spin && "animate-spin motion-reduce:animate-none")} aria-hidden />
       <span>{story.label}</span>
     </p>
   );
