@@ -9,8 +9,11 @@ import { MediaModule } from '../media/media.module';
 import { FREELA_VACANCIES_FETCH, FreelaFetch, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate, VacancyGateGuard } from './vacancy-gate.service';
 import { VacancyGuardService } from './vacancy-guard.service';
+import { VacancyPollService } from './vacancy-poll.service';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { VacancyStoriesController } from './vacancy-stories.controller';
+import { VacancyStoriesCronController } from './vacancy-stories-cron.controller';
+import { VacancyStoriesCronService } from './vacancy-stories-cron.service';
 
 /**
  * Núcleo dos stories das vagas, sem dependência do Instagram (D10): vitrine do Freela, lista de empresas e a guarda de origem
@@ -34,8 +37,8 @@ export class VacancyStoriesCoreModule {}
 /** Stories das vagas do Freela: ajustes, arte modelo, ligar/desligar (as Tasks 8–11 somam consulta, geração, agenda e ações). */
 @Module({
   imports: [VacancyStoriesCoreModule, InstagramModule, AiModule, MediaModule, CreativeModule, AccessModule, ActivityModule],
-  controllers: [VacancyStoriesController],
-  providers: [VacancySettingsService],
-  exports: [VacancySettingsService],
+  controllers: [VacancyStoriesController, VacancyStoriesCronController],
+  providers: [VacancySettingsService, VacancyPollService, VacancyStoriesCronService],
+  exports: [VacancySettingsService, VacancyPollService],
 })
 export class VacancyStoriesModule {}

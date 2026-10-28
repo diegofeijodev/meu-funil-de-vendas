@@ -47,8 +47,8 @@ describe('SchedulerService', () => {
     await expect(svc.run('nao-existe')).rejects.toThrow(/desconhecido/);
   });
 
-  it('JOB_SCHEDULES tem os 10 jobs do pg_cron + 2 extras', () => {
-    expect(Object.keys(JOB_SCHEDULES)).toHaveLength(12);
+  it('JOB_SCHEDULES tem os 10 jobs do pg_cron + 3 extras (creative, exports, vagas)', () => {
+    expect(Object.keys(JOB_SCHEDULES)).toHaveLength(13);
     expect(JOB_SCHEDULES['crm-daily'].cron).toBe('10 9 * * *');
   });
 

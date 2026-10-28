@@ -15,5 +15,6 @@ export const JOB_SCHEDULES = {
   'crm-daily': { name: 'crm-daily', cron: '10 9 * * *', heartbeat: 'crm-daily' },
   // Extras do port (não existem no pg_cron do protótipo): retomada dos vídeos de criativo e limpeza dos exports.
   'creative-poll-5min': { name: 'creative-poll-5min', cron: '*/5 * * * *', heartbeat: 'creative' },
+  'vacancy-stories-10min': { name: 'vacancy-stories-10min', cron: '*/10 * * * *', heartbeat: 'vacancy-stories' },
   'exports-cleanup-hourly': { name: 'exports-cleanup-hourly', cron: '47 * * * *', heartbeat: 'exports_cleanup' },
 } as const;
