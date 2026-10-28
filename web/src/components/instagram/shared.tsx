@@ -33,6 +33,8 @@ export type IgPost = {
   /** Programação com IA: modo ("publish" | "approval") e a execução de origem. */
   automation?: string | null;
   run_id?: string | null;
+  /** Origem do post; `"vacancy"` = story automático de vaga. */
+  source?: string | null;
 };
 
 export const FORMATS: Record<

@@ -55,7 +55,7 @@ export function useStoryActions(ws: string) {
 
   /** Roda uma ação marcando o story como ocupado; erro vira toast e a tela é atualizada do mesmo jeito. */
   const run = useCallback(
-    async (story: VacancyStory, fn: () => Promise<unknown>, okMsg: string | null, errMsg: string): Promise<boolean> => {
+    async (story: { id: string }, fn: () => Promise<unknown>, okMsg: string | null, errMsg: string): Promise<boolean> => {
       setIn(setBusy, story.id, true);
       try {
         await fn();
@@ -84,7 +84,7 @@ export function useStoryActions(ws: string) {
   );
 
   const dontPost = useCallback(
-    (story: VacancyStory) => {
+    (story: Pending) => {
       setIn(setHidden, story.id, true);
       setFeedback(null);
       const timer = scheduleDelayed(async () => {
@@ -139,10 +139,10 @@ export function useStoryActions(ws: string) {
     [run, ws],
   );
   const redo = useCallback(
-    (story: VacancyStory) => run(story, () => vacancyRedo(ws, story.id), "Vamos refazer a arte.", "Não conseguimos refazer a arte. Tente de novo."),
+    (story: { id: string }) => run(story, () => vacancyRedo(ws, story.id), "Vamos refazer a arte.", "Não conseguimos refazer a arte. Tente de novo."),
     [run, ws],
   );
 
-  return { approve, dontPost, postNow, createAnyway, redo, sendFeedback, dismissFeedback: () => setFeedback(null), hidden, feedback, busy };
+  return { refresh, approve, dontPost, postNow, createAnyway, redo, sendFeedback, dismissFeedback: () => setFeedback(null), hidden, feedback, busy };
 }
 export type StoryActions = ReturnType<typeof useStoryActions>;

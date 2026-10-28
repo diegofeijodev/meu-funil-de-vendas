@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calendarPosts,
+  funcaoOfTheme,
+  checkedLine,
+  postVacancy,
   attemptsLine,
   autoPublishSummary,
   capWarning,
@@ -188,5 +192,29 @@ describe('vacancy-stories (puro)', () => {
     expect(sameCities([], [])).toBe(true);
     expect(sameCities(['A'], ['A', 'B'])).toBe(false);
     expect(sameCities(['A', 'B'], ['A', 'C'])).toBe(false);
+  });
+
+  it('checkedLine: usa os nomes da aba Vagas, sem repetir', () => {
+    expect(checkedLine(['funcao', 'valor', 'inicio'])).toBe('Conferido: função, valor, horário');
+    expect(checkedLine(['inicio', 'fim'])).toBe('Conferido: horário, horário de término');
+    expect(checkedLine([])).toBeNull();
+  });
+
+  it('postVacancy: só para source vacancy com story_id', () => {
+    const brief = { vacancy: { story_id: 's1', checked_fields: ['valor'], requires_approval: true } };
+    expect(postVacancy({ source: 'vacancy', creative_brief: brief })).toEqual({ story_id: 's1', checked_fields: ['valor'], requires_approval: true });
+    expect(postVacancy({ source: 'plan', creative_brief: brief })).toBeNull();
+    expect(postVacancy({ source: 'vacancy', creative_brief: null })).toBeNull();
+  });
+
+  it('funcaoOfTheme: segunda parte do tema', () => {
+    expect(funcaoOfTheme('Vaga · Garçom · Coco Bambu · Sáb 29/10')).toBe('Garçom');
+    expect(funcaoOfTheme(null)).toBe('selecionada');
+  });
+
+  it('calendarPosts: esconde stories de vaga por padrão', () => {
+    const posts = [{ id: 'a', source: 'vacancy' }, { id: 'b', source: 'plan' }, { id: 'c' }];
+    expect(calendarPosts(posts, false).map((p) => p.id)).toEqual(['b', 'c']);
+    expect(calendarPosts(posts, true)).toHaveLength(3);
   });
 });

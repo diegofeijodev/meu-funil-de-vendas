@@ -35,6 +35,9 @@ import { ArtDirectionPanel } from "@/components/creative/art-direction-panel";
 import { VideoDirectionPanel } from "@/components/creative/video-direction-panel";
 import { effectiveLayout, videoBriefPatch } from "@/lib/instagram/production";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { Link } from "@/lib/router";
+import { funcaoOfTheme, postVacancy } from "@/lib/vacancy-stories";
+import { useStoryActions } from "./vacancies/use-story-actions";
 
 const toLocal = (iso: string | null) => {
   if (!iso) return "";
@@ -59,6 +62,7 @@ export function PostEditor({
   const [when, setWhen] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const vacancyActions = useStoryActions(workspaceId);
 
   const fns = {
     gen: useServerFn(generatePostAssets),
@@ -84,6 +88,7 @@ export function PostEditor({
         <SheetContent />
       </Sheet>
     );
+  const vac = postVacancy(post);
   const F = FORMATS[post.format] ?? FORMATS["feed_image"]!;
   const media = [...(post.media ?? [])].sort((a, b) => a.order - b.order);
   const refresh = () => qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
@@ -203,20 +208,35 @@ export function PostEditor({
           )}
 
           <div className="flex flex-wrap justify-center gap-2">
-            <B
-              id="gen"
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                run(
-                  "gen",
-                  () => fns.gen({ data: { workspaceId, postId: post.id, provider: "auto" } }),
-                  "Mídia gerada.",
-                )
-              }
-            >
-              <RefreshCw className="size-4" /> Regenerar mídia
-            </B>
+            {vac ? (
+              <B
+                id="redo"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  setBusy("redo");
+                  await vacancyActions.redo({ id: vac.story_id });
+                  setBusy(null);
+                }}
+              >
+                <RefreshCw className="size-4" /> Refazer a arte
+              </B>
+            ) : (
+              <B
+                id="gen"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  run(
+                    "gen",
+                    () => fns.gen({ data: { workspaceId, postId: post.id, provider: "auto" } }),
+                    "Mídia gerada.",
+                  )
+                }
+              >
+                <RefreshCw className="size-4" /> Regenerar mídia
+              </B>
+            )}
             <B id="upload" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
               <Upload className="size-4" /> Enviar minha própria
             </B>
@@ -235,7 +255,11 @@ export function PostEditor({
             />
           </div>
 
-          {post.format === "reel" || post.format === "story_video" ? (
+          {vac && (
+            <p className="text-center text-xs text-muted-foreground">A sua arte não passa pela conferência.</p>
+          )}
+
+          {vac ? null : post.format === "reel" || post.format === "story_video" ? (
             <VideoDirectionPanel
               key={post.id}
               brief={post.creative_brief}
@@ -278,6 +302,7 @@ export function PostEditor({
             />
           )}
 
+          {!vac && (<>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label>Legenda</Label>
@@ -374,11 +399,22 @@ export function PostEditor({
               <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
             </div>
           </div>
+          </>)}
+          {vac && (
+            <p className="text-sm text-muted-foreground">
+              O horário deste story é definido na aba Vagas.{" "}
+              <Link to="/instagram" search={{ tab: "vagas" }} className="text-primary underline">
+                Abrir a aba Vagas
+              </Link>
+            </p>
+          )}
 
           <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-            <B id="save" variant="outline" onClick={save}>
-              Salvar
-            </B>
+            {!vac && (
+              <B id="save" variant="outline" onClick={save}>
+                Salvar
+              </B>
+            )}
             <B
               id="approve"
               variant="secondary"
@@ -392,6 +428,7 @@ export function PostEditor({
             >
               Aprovar
             </B>
+            {!vac && (
             <B
               id="schedule"
               disabled={!when}
@@ -412,6 +449,7 @@ export function PostEditor({
             >
               Agendar
             </B>
+            )}
             <B
               id="publish"
               onClick={() =>
@@ -428,6 +466,11 @@ export function PostEditor({
               id="reject"
               variant="ghost"
               onClick={() => {
+                if (vac) {
+                  vacancyActions.dontPost({ id: vac.story_id, funcao: funcaoOfTheme(post.theme) });
+                  onClose();
+                  return;
+                }
                 const reason = window.prompt("Motivo do cancelamento:");
                 if (reason)
                   run(
@@ -437,7 +480,7 @@ export function PostEditor({
                   );
               }}
             >
-              Cancelar post
+              {vac ? "Não postar" : "Cancelar post"}
             </B>
           </div>
           {post.ig_permalink && (

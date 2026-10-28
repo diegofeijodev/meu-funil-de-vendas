@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { FORMATS, STATUS_LABEL, MediaThumb, type IgPost } from "./shared";
 import { IgAutoCalendar } from "./auto-calendar";
 import { useWorkspace } from "@/lib/workspace";
+import { calendarPosts } from "@/lib/vacancy-stories";
+import { Checkbox } from "@/components/ui/checkbox";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
 const DAY = 86400e3;
@@ -43,6 +45,8 @@ export function IgCalendar({
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [fmt, setFmt] = useState("all");
   const [st, setSt] = useState("all");
+  const [showVacancies, setShowVacancies] = useState(false);
+  const vacancyCount = posts.filter((p) => p.source === "vacancy").length;
   const [batch, setBatch] = useState<{
     done: number;
     total: number;
@@ -61,7 +65,7 @@ export function IgCalendar({
     return Array.from({ length: 42 }, (_, i) => new Date(s.getTime() + i * DAY));
   }, [view, anchor]);
 
-  const filtered = posts.filter(
+  const filtered = calendarPosts(posts, showVacancies).filter(
     (p) => (fmt === "all" || p.format === fmt) && (st === "all" || p.status === st),
   );
   const byDay = new Map<string, IgPost[]>();
@@ -104,7 +108,7 @@ export function IgCalendar({
   };
 
   const pending = posts.filter(
-    (p) => (p.status === "idea" || p.status === "failed") && !p.media?.length,
+    (p) => (p.status === "idea" || p.status === "failed") && !p.media?.length && p.source !== "vacancy",
   );
   const runBatch = async () => {
     setBatch({ done: 0, total: pending.length });
@@ -138,7 +142,7 @@ export function IgCalendar({
     const Icon = FORMATS[p.format]?.icon;
     return (
       <button
-        draggable
+        draggable={p.source !== "vacancy"}
         onDragStart={(e) => e.dataTransfer.setData("text/plain", p.id)}
         onClick={() => onOpen(p.id)}
         className="flex w-full cursor-grab items-center gap-2 rounded-md border border-border bg-card p-1.5 text-left hover:border-primary/50"
@@ -213,6 +217,12 @@ export function IgCalendar({
               ))}
             </SelectContent>
           </Select>
+          {vacancyCount > 0 && (
+            <label className="flex min-h-9 items-center gap-2 text-sm">
+              <Checkbox checked={showVacancies} onCheckedChange={(v) => setShowVacancies(v === true)} />
+              Mostrar stories das vagas ({vacancyCount})
+            </label>
+          )}
           <Button onClick={runBatch} disabled={!!batch || pending.length === 0}>
             {batch ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
             Gerar criativos pendentes ({pending.length})

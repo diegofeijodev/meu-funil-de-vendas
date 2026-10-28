@@ -230,3 +230,33 @@ export function sameCities(a: string[], b: string[]): boolean {
   const y = new Set(b);
   return x.size === y.size && [...x].every((c) => y.has(c));
 }
+
+/** O que o post de vaga carrega em `creative_brief.vacancy`; `null` para qualquer outro post. */
+export type PostVacancy = { story_id: string; checked_fields: string[]; requires_approval: boolean };
+export function postVacancy(post: { source?: string | null; creative_brief?: unknown }): PostVacancy | null {
+  if (post.source !== 'vacancy') return null;
+  const v = (post.creative_brief as { vacancy?: Record<string, unknown> } | null | undefined)?.vacancy;
+  if (!v || typeof v['story_id'] !== 'string') return null;
+  return {
+    story_id: v['story_id'],
+    checked_fields: Array.isArray(v['checked_fields']) ? (v['checked_fields'] as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+    requires_approval: v['requires_approval'] === true,
+  };
+}
+
+/** Função da vaga a partir do `theme` do post ("Vaga · Garçom · Coco Bambu · Sáb 29/10" → "Garçom"). */
+export function funcaoOfTheme(theme: string | null | undefined): string {
+  const parts = (theme ?? '').split(' · ');
+  return (parts[0] === 'Vaga' ? parts[1] : parts[0])?.trim() || 'selecionada';
+}
+
+/** "Conferido: função, valor, horário" a partir dos `checked_fields` (mesmos nomes da aba Vagas, sem repetir). `null` sem campos. */
+export function checkedLine(fields: string[]): string | null {
+  const labels = [...new Set(fields.map(fieldLabel))];
+  return labels.length ? `Conferido: ${labels.join(', ')}` : null;
+}
+
+/** Calendário (D14): stories de vaga ficam de fora, a menos que o usuário peça. */
+export function calendarPosts<T extends { source?: string | null }>(posts: T[], showVacancies: boolean): T[] {
+  return showVacancies ? posts : posts.filter((p) => p.source !== 'vacancy');
+}

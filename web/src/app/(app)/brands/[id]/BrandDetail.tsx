@@ -13,7 +13,9 @@ const ASSET_KINDS = [
   { kind: "font", label: "Fonte (.ttf/.otf)" },
 ];
 const kindLabel = (a: { kind: string; tag?: string | null }) =>
-  a.kind === "photo" || a.kind === "reference"
+  a.kind === "vacancy_template"
+    ? "Arte modelo de vaga"
+    : a.kind === "photo" || a.kind === "reference"
     ? `Referência${a.tag ? ` · ${REFERENCE_TAGS[a.tag] ?? a.tag}` : ""}`
     : (ASSET_KINDS.find((k) => k.kind === a.kind)?.label ?? a.kind);
 import {
