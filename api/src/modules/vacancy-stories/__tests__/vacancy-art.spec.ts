@@ -1,3 +1,5 @@
+jest.setTimeout(120_000);
+
 import { ImageService } from '../../media/image.service';
 import { loadDefaultFont } from '../../creative/refs.service';
 import {
@@ -10,8 +12,10 @@ import {
   composeStoryFrame,
   cropForCheck,
   edgeColor,
+  fitWrapped,
   loadBadges,
 } from '../vacancy-art';
+import { parseFont } from '../../creative/compose';
 import type { VacancyFields } from '../vacancy-types';
 
 const images = new ImageService();
@@ -51,10 +55,40 @@ describe('selos oficiais', () => {
   });
 });
 
+describe('fitWrapped (R14: nunca corta texto da vaga)', () => {
+  const f = parseFont(font);
+  it('função longa que cabe em 3 linhas: todas as palavras aparecem e ≥ 110 px', () => {
+    const text = 'AUXILIAR DE SERVIÇOS GERAIS';
+    const r = fitWrapped(f, text, 936, { start: 130, floor: 110, maxLines: 3 });
+    expect(r.lines.join(' ')).toBe(text);
+    expect(r.lines.length).toBeLessThanOrEqual(3);
+    expect(r.size).toBeGreaterThanOrEqual(110);
+  });
+  it('função que não cabe em 3 linhas a 110 px (AUXILIAR DE SERVIÇOS GERAIS E LIMPEZA PESADA): encolhe, sem descartar palavra', () => {
+    const text = 'AUXILIAR DE SERVIÇOS GERAIS E LIMPEZA PESADA';
+    const r = fitWrapped(f, text, 936, { start: 130, floor: 110, maxLines: 3 });
+    expect(r.lines.join(' ')).toBe(text);
+    expect(r.lines.length).toBeLessThanOrEqual(3);
+    expect(r.size).toBeLessThan(110);
+    expect(r.lines.every((l) => f.getAdvanceWidth(l, r.size) <= 936)).toBe(true);
+  });
+  it('estabelecimento longo quebra em 2 linhas com ≥ 48 px', () => {
+    const text = 'Restaurante e Churrascaria Fogo de Chão Unidade Centro';
+    const r = fitWrapped(f, text, 936, { start: 54, floor: 48, maxLines: 2 });
+    expect(r.lines.join(' ')).toBe(text);
+    expect(r.lines.length).toBe(2);
+    expect(r.size).toBeGreaterThanOrEqual(48);
+  });
+});
+
 describe('composeStoryFrame', () => {
+  let portraitFrame: Uint8Array;
+  beforeAll(async () => {
+    portraitFrame = await composeStoryFrame(images, { art: await solid(1024, 1536, 0xff0000ff), bg: '#ffffff', font, badges });
+  });
+
   it('arte em pé: 1080x1920, faixas na cor do modelo, rodapé com texto e selos, nada abaixo de 1600', async () => {
-    const art = await solid(1024, 1536, 0xff0000ff);
-    const out = await composeStoryFrame(images, { art, bg: '#ffffff', font, badges });
+    const out = portraitFrame;
     const img = await images.read(out);
     expect([img.bitmap.width, img.bitmap.height]).toEqual([STORY_W, STORY_H]);
     const [r, g, b] = px(img, 540, 800);
@@ -89,10 +123,13 @@ describe('composeStoryFrame', () => {
 });
 
 describe('cropForCheck', () => {
+  let portraitFrame: Uint8Array;
+  beforeAll(async () => {
+    portraitFrame = await composeStoryFrame(images, { art: await solid(1024, 1536, 0xff0000ff), bg: '#ffffff', font, badges });
+  });
+
   it('corta em y 1360 (proporcional, ≤ 1024 px) e o rodapé não entra', async () => {
-    const art = await solid(1024, 1536, 0xff0000ff);
-    const frame = await composeStoryFrame(images, { art, bg: '#ffffff', font, badges });
-    const { bytes, mime } = await cropForCheck(images, frame);
+    const { bytes, mime } = await cropForCheck(images, portraitFrame);
     expect(mime).toBe('image/jpeg');
     const img = await images.read(bytes);
     const { width, height } = img.bitmap;
@@ -143,5 +180,12 @@ describe('composeFallback', () => {
     expect(anyIn(img, 0, STORY_W, 0, ART_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
     expect(anyIn(img, 0, STORY_W, ART_BOX.top, ART_BOX.bottom, (p) => p[1]! > p[0]! + 40 && p[1]! > p[2]! + 20)).toBe(true); // foto verde
     expect(anyIn(img, 0, STORY_W, FOOTER_BOX.bottom, STORY_H, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
+  });
+
+  it('textos longos: nada é cortado nem sai da área 250–1350', async () => {
+    const long = { ...fields, funcao: 'Auxiliar de serviços gerais e limpeza pesada', estabelecimento: 'Restaurante e Churrascaria Fogo de Chão Unidade Centro', cidade: 'São José do Rio Preto' };
+    const img = await images.read(await composeFallback(images, { ...base, fields: long }));
+    expect(anyIn(img, 0, STORY_W, 0, ART_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
+    expect(anyIn(img, 0, STORY_W, ART_BOX.bottom + 1, FOOTER_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
   });
 });

@@ -101,15 +101,19 @@ function wrap(font: Font, text: string, size: number, maxW: number): string[] {
   return lines;
 }
 
-/** Maior tamanho (≤ start) em que o texto cabe em `maxLines` linhas de `maxW`. */
-function fitText(font: Font, text: string, start: number, maxW: number, maxLines: number, min = 40) {
-  let size = start;
-  let lines = wrap(font, text, size, maxW);
-  while ((lines.length > maxLines || lines.some((l) => font.getAdvanceWidth(l, size) > maxW)) && size > min) {
-    size = Math.max(min, size * 0.94);
-    lines = wrap(font, text, size, maxW);
+/**
+ * Quebra e ajusta um texto da vaga SEM nunca descartar palavra (R14): tenta de `start` até `floor` com até `maxLines` linhas;
+ * só se nem assim couber, continua encolhendo abaixo do piso. `lines.join(' ')` é sempre o texto de entrada (espaços normalizados).
+ */
+export function fitWrapped(font: Font, text: string, maxW: number, o: { start: number; floor: number; maxLines: number }) {
+  const fits = (lines: string[], size: number) => lines.length <= o.maxLines && lines.every((l) => font.getAdvanceWidth(l, size) <= maxW);
+  let size = o.start;
+  for (;;) {
+    const lines = wrap(font, text, size, maxW);
+    if (fits(lines, size) || size <= 12) return { size, lines };
+    if (size > o.floor) size = Math.max(o.floor, size * 0.96);
+    else size = Math.max(12, size * 0.94);
   }
-  return { size, lines: lines.slice(0, maxLines) };
 }
 
 /** Rodapé do sistema dentro de FOOTER_BOX: duas linhas de texto e os selos lado a lado, centralizados. */
@@ -189,23 +193,30 @@ export async function composeFallback(
 
   const logo = i.logo ? await images.read(i.logo).then((l: Img) => (l.scaleToFit({ w: 220, h: 120 }), l)).catch(() => null) : null;
 
-  // Medidas dos blocos (altura de cada cartão) antes de posicionar.
-  const fn = fitText(font, f.funcao.toUpperCase(), 130, innerW, 2, 110 * 0.6);
-  const fnH = Math.round(fn.lines.length * fn.size * 1.0 + 36);
-  const valSize = fitText(font, f.valor, 150, innerW, 1, 100).size;
-  const valLabel = 40;
-  const valH = Math.round(valLabel + 14 + valSize * 0.8 + 40);
-  const whenSize = fitText(font, `${f.data} · ${f.horario}`, 66, innerW, 1, 40).size;
-  const whenH = Math.round(whenSize * 0.8 + 40);
-  const pinW = 56;
-  const whereSize = fitText(font, f.cidade, 66, innerW - pinW - 20, 1, 40).size;
-  const whereH = Math.round(whereSize * 0.8 + 40);
-  const estSize = f.estabelecimento ? fitText(font, f.estabelecimento, 54, innerW, 1, 40).size : 0;
-  const estH = f.estabelecimento ? Math.round(estSize * 0.8 + 36) : 0;
+  // Medidas dos blocos (altura de cada cartão) antes de posicionar. Nenhum texto é cortado: se a pilha não cabe, tudo encolhe junto.
   const stripH = 56;
-  const blocks = [stripH, fnH, valH, whenH, whereH, ...(estH ? [estH] : [])];
-  const stack = blocks.reduce((a, b) => a + b, 0) + GAP * (blocks.length - 1);
+  const valLabel = 40;
+  const pinW = 56;
   const free = ART_BOX.bottom - ART_BOX.top;
+  const measure = (k: number) => {
+    const fn = fitWrapped(font, f.funcao.toUpperCase(), innerW, { start: 130 * k, floor: 110 * k, maxLines: 3 });
+    const val = fitWrapped(font, f.valor, innerW, { start: 150 * k, floor: 130 * k, maxLines: 2 });
+    const when = fitWrapped(font, `${f.data} · ${f.horario}`, innerW, { start: 66 * k, floor: 60 * k, maxLines: 2 });
+    const where = fitWrapped(font, f.cidade, innerW - pinW - 20, { start: 66 * k, floor: 60 * k, maxLines: 2 });
+    const est = f.estabelecimento ? fitWrapped(font, f.estabelecimento, innerW, { start: 54 * k, floor: 48 * k, maxLines: 2 }) : null;
+    const fnH = Math.round(fn.lines.length * fn.size * 1.07 + 36);
+    const valH = Math.round(valLabel + 14 + (val.lines.length - 1) * val.size + val.size * 0.8 + 40);
+    const whenH = Math.round((when.lines.length - 1) * when.size * 1.05 + when.size * 0.8 + 40);
+    const whereH = Math.round((where.lines.length - 1) * where.size * 1.05 + where.size * 0.8 + 40);
+    const estH = est ? Math.round((est.lines.length - 1) * est.size * 1.05 + est.size * 0.8 + 36) : 0;
+    const blocks = [stripH, fnH, valH, whenH, whereH, ...(estH ? [estH] : [])];
+    const stack = blocks.reduce((a, b) => a + b, 0) + GAP * (blocks.length - 1);
+    return { fn, val, when, where, est, fnH, valH, whenH, whereH, estH, stack };
+  };
+  let m = measure(1);
+  const room = free - (!i.photo && logo ? (logo.bitmap.height as number) + GAP : 0);
+  for (let k = 0.96; m.stack > room && k > 0.2; k *= 0.96) m = measure(k);
+  const { fn, val, when, where, est, fnH, valH, whenH, whereH, estH, stack } = m;
 
   // Foto ocupa o que sobra em cima (até 550 px); sem espaço para ao menos 200 px, os cartões ficam sozinhos.
   let photoH = i.photo ? Math.min(550, free - stack - GAP) : 0;
@@ -248,20 +259,20 @@ export async function composeFallback(
 
   // Função
   let top = card(fnH);
-  fn.lines.forEach((l, k) => drawText(canvas, font, l, fn.size, STORY_W / 2, top + 18 + fn.size * 0.8 + k * fn.size, INK));
+  fn.lines.forEach((l, k) => drawText(canvas, font, l, fn.size, STORY_W / 2, top + 18 + fn.size * 0.8 + k * fn.size * 1.07, INK));
 
   // Valor
   top = card(valH);
   drawText(canvas, font, 'Valor para o freela', valLabel, STORY_W / 2, top + 20 + valLabel * 0.8, INK);
-  drawText(canvas, font, f.valor, valSize, STORY_W / 2, top + 20 + valLabel + 14 + valSize * 0.8, INK);
+  val.lines.forEach((l, k) => drawText(canvas, font, l, val.size, STORY_W / 2, top + 20 + valLabel + 14 + val.size * 0.8 + k * val.size, INK));
 
   // Quando
   top = card(whenH);
-  drawText(canvas, font, `${f.data} · ${f.horario}`, whenSize, STORY_W / 2, top + 20 + whenSize * 0.8, INK);
+  when.lines.forEach((l, k) => drawText(canvas, font, l, when.size, STORY_W / 2, top + 20 + when.size * 0.8 + k * when.size * 1.05, INK));
 
   // Onde (pino = círculo + triângulo)
   top = card(whereH);
-  const tw = font.getAdvanceWidth(f.cidade, whereSize);
+  const tw = Math.max(...where.lines.map((l) => font.getAdvanceWidth(l, where.size)));
   const gx = (STORY_W - (pinW + 20 + tw)) / 2;
   const cy = top + whereH / 2 - 6;
   const pr = 17;
@@ -269,12 +280,12 @@ export async function composeFallback(
   const circle: [number, number][] = Array.from({ length: 32 }, (_, k) => [cx + pr * Math.cos((k / 32) * 2 * Math.PI), cy + pr * Math.sin((k / 32) * 2 * Math.PI)]);
   fillPolys(canvas, [[[cx - pr * 0.9, cy + pr * 0.4], [cx + pr * 0.9, cy + pr * 0.4], [cx, cy + pr * 2.1]], circle], accent);
   rect(canvas, cx - 6, cy - 6, 12, 12, WHITE, 1, 6);
-  drawText(canvas, font, f.cidade, whereSize, gx + pinW + 20, top + 20 + whereSize * 0.8, INK, 'left');
+  where.lines.forEach((l, k) => drawText(canvas, font, l, where.size, gx + pinW + 20, top + 20 + where.size * 0.8 + k * where.size * 1.05, INK, 'left'));
 
   // Estabelecimento
-  if (f.estabelecimento) {
+  if (est) {
     top = card(estH);
-    drawText(canvas, font, f.estabelecimento, estSize, STORY_W / 2, top + 18 + estSize * 0.8, INK);
+    est.lines.forEach((l, k) => drawText(canvas, font, l, est.size, STORY_W / 2, top + 18 + est.size * 0.8 + k * est.size * 1.05, INK));
   }
 
   await drawFooter(images, canvas, font, i.badges, bg);
