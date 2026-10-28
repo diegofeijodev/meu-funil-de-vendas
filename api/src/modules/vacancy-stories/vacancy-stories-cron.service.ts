@@ -4,25 +4,19 @@ import { JOB_SCHEDULES } from '../scheduler/job-schedules';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyPollService } from './vacancy-poll.service';
-
-/** Etapa que a Task 10 liga (agenda). Ausente = a etapa não entra no resultado. */
-export type VacancyTickHooks = {
-  scheduleTick?: () => Promise<unknown>;
-};
+import { VacancySchedulerService } from './vacancy-scheduler.service';
 
 /**
- * Rodada de 10 minutos dos stories das vagas: consulta → desliga órfãs → expira → varre leases → (agenda) → geração.
+ * Rodada de 10 minutos dos stories das vagas: consulta → desliga órfãs → expira → varre leases → agenda → geração.
  * Cada etapa falha sozinha: o erro vira `{ error }` no resultado e as demais seguem.
  */
 @Injectable()
 export class VacancyStoriesCronService implements OnModuleInit {
-  /** Gancho da Task 10 (trocado por injeção quando o serviço existir). */
-  readonly hooks: VacancyTickHooks = {};
-
   constructor(
     private readonly scheduler: SchedulerService,
     private readonly poll: VacancyPollService,
     private readonly generator: VacancyGeneratorService,
+    private readonly agenda: VacancySchedulerService,
   ) {}
 
   private step<T>(fn: () => Promise<T>): Promise<T | { error: string }> {
@@ -35,8 +29,8 @@ export class VacancyStoriesCronService implements OnModuleInit {
     out['orphans'] = await this.step(() => this.poll.disableOrphans());
     out['expired'] = await this.step(() => this.poll.expireDue());
     out['swept'] = await this.step(() => this.poll.sweepLeases());
-    // Task 10: a agenda (capacidade do dia, janela) vem antes da geração.
-    if (this.hooks.scheduleTick) out['scheduler'] = await this.step(this.hooks.scheduleTick);
+    // Aprovados e posts sem job vão para o próximo horário livre antes de a geração entregar os novos.
+    out['scheduler'] = await this.step(() => this.agenda.tick());
     out['generator'] = await this.step(() => this.generator.generateDue());
     return out;
   }

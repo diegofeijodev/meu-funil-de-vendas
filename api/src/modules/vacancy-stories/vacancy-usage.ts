@@ -11,11 +11,13 @@ const spDayStart = (day: string) => new Date(`${day}T00:00:00-03:00`);
  * Stories de vaga do dia `day` (Brasília) de uma empresa, pela data de `published_at ?? scheduled_at ?? created_at`: `posted` =
  * publicados; `scheduled` = os que ainda vão ao ar (esperando aprovação, aprovados, prontos, agendados, publicando).
  * ÚNICA regra de "stories de vaga do dia": a tela ("Hoje: X postados de Y") e o limite por dia (Task 10) chamam esta função.
+ * `exceptPostId`: o post que está sendo agendado não conta contra ele mesmo (pronto/aprovado ele já conta pelo `created_at`).
  */
 export async function countVacancyStoriesOnDay(
   prisma: Pick<PrismaService, 'ig_posts'>,
   workspaceId: string,
   day: string,
+  exceptPostId?: string,
 ): Promise<{ posted: number; scheduled: number }> {
   const range = { gte: spDayStart(day), lt: spDayStart(addDays(day, 1)) };
   const rows = await prisma.ig_posts.findMany({
@@ -23,6 +25,7 @@ export async function countVacancyStoriesOnDay(
       workspace_id: workspaceId,
       source: 'vacancy',
       status: { in: DAY_COUNT_STATUSES },
+      ...(exceptPostId ? { id: { not: exceptPostId } } : {}),
       OR: [
         { published_at: range },
         { published_at: null, scheduled_at: range },

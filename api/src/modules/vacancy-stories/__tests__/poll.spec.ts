@@ -220,8 +220,9 @@ function cronSetup() {
     sweepLeases: jest.fn(async () => 0),
   };
   const generator = { generateDue: jest.fn(async () => ({ started: 0, handed: 0, waiting: 0, cancelled: 0 })) };
-  const svc = new VacancyStoriesCronService(scheduler, poll as never, generator as never);
-  return { w, scheduler, auth, poll, generator, svc };
+  const agenda = { tick: jest.fn(async () => ({ approved: 0, reconciled: 0 })) };
+  const svc = new VacancyStoriesCronService(scheduler, poll as never, generator as never, agenda as never);
+  return { w, scheduler, auth, poll, generator, agenda, svc };
 }
 
 describe('cron dos stories das vagas', () => {
@@ -229,16 +230,17 @@ describe('cron dos stories das vagas', () => {
     const { svc, poll } = cronSetup();
     poll.expireDue.mockRejectedValueOnce(new Error('banco caiu'));
     const out = await svc.tick();
-    expect(Object.keys(out)).toEqual(['poll', 'orphans', 'expired', 'swept', 'generator']);
+    expect(Object.keys(out)).toEqual(['poll', 'orphans', 'expired', 'swept', 'scheduler', 'generator']);
     expect(out['expired']).toEqual({ error: 'banco caiu' });
     expect(out['swept']).toBe(0);
+    expect(out['scheduler']).toEqual({ approved: 0, reconciled: 0 });
     expect(out['generator']).toEqual({ started: 0, handed: 0, waiting: 0, cancelled: 0 });
   });
 
-  it('a agenda (ligada depois, Task 10) roda antes da geração; erro da geração vira { error }', async () => {
-    const { svc, generator } = cronSetup();
+  it('a agenda roda antes da geração; erro da geração vira { error }', async () => {
+    const { svc, generator, agenda } = cronSetup();
     const calls: string[] = [];
-    svc.hooks.scheduleTick = async () => { calls.push('schedule'); return 's'; };
+    agenda.tick.mockImplementationOnce(async () => { calls.push('schedule'); return { approved: 1, reconciled: 0 }; });
     generator.generateDue.mockImplementationOnce(async () => { calls.push('generate'); throw new Error('IA caiu'); });
     const out = await svc.tick();
     expect(Object.keys(out)).toEqual(['poll', 'orphans', 'expired', 'swept', 'scheduler', 'generator']);
@@ -261,7 +263,7 @@ describe('cron dos stories das vagas', () => {
     await expect(ctl.run(undefined)).rejects.toMatchObject({ status: 401 });
     await expect(ctl.run('errado')).rejects.toMatchObject({ status: 401 });
     const out = await ctl.run('segredo');
-    expect(Object.keys(out as object)).toEqual(['poll', 'orphans', 'expired', 'swept', 'generator']);
+    expect(Object.keys(out as object)).toEqual(['poll', 'orphans', 'expired', 'swept', 'scheduler', 'generator']);
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'vacancy-stories', last_status: 'ok' });
     w.t['cron_tokens']!.rows.push({ name: 'vacancy-stories', token: 'tok-v' });
     await expect(ctl.run('tok-v')).resolves.toBeDefined();

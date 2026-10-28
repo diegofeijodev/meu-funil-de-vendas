@@ -97,7 +97,7 @@ export function vacancyWorld(o: { list?: string } = {}) {
   const feedClient = new VacancyFeedClient(env, feed.fetch);
   const gate = new VacancyGate(env);
   const activity = new ActivityService(w.prisma);
-  const guard = new VacancyGuardService();
+  const guard = new VacancyGuardService(w.prisma, feedClient);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const settings = new VacancySettingsService(w.prisma, w.access, activity, files, images, ai as any, w.store, gate);
   /** Marca da empresa (a arte modelo precisa de uma — D1). */
