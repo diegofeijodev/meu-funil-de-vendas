@@ -18,3 +18,19 @@ export class UpdateVacancySettingsDto {
 export class AutoPublishDto {
   @IsBoolean() auto_publish!: boolean;
 }
+
+export const STORY_FILTERS = ['all', 'live', 'not_posted'] as const;
+export type StoryFilter = (typeof STORY_FILTERS)[number];
+/** Chips depois do "Não postar": "Texto errado · Foto estranha · Não quero divulgar esta vaga". */
+export const STORY_FEEDBACKS = ['texto_errado', 'foto_estranha', 'nao_divulgar'] as const;
+export type StoryFeedback = (typeof STORY_FEEDBACKS)[number];
+
+/** `GET …/vacancy-stories/stories?filter=`. Ausente = todas. */
+export class ListStoriesQuery {
+  @IsOptional() @IsIn(STORY_FILTERS) filter?: StoryFilter;
+}
+
+/** `POST …/vacancy-stories/stories/:id/dont-post`. Sem motivo obrigatório (D6); o feedback vem dos chips, numa 2ª chamada. */
+export class DontPostDto {
+  @IsOptional() @IsIn(STORY_FEEDBACKS) feedback?: StoryFeedback;
+}

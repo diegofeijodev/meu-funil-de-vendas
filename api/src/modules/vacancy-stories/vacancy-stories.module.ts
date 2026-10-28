@@ -6,11 +6,13 @@ import { CreativeModule } from '../creative/creative.module';
 import { InstagramModule } from '../instagram/instagram.module';
 import { PUBLISH_ORIGIN_GUARDS } from '../instagram/origin-guards';
 import { MediaModule } from '../media/media.module';
+import { VacancyActionsService } from './vacancy-actions.service';
 import { FREELA_VACANCIES_FETCH, FreelaFetch, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate, VacancyGateGuard } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGuardService } from './vacancy-guard.service';
 import { VacancyPollService } from './vacancy-poll.service';
+import { VacancyPreviewService } from './vacancy-preview.service';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { VacancyStoriesController } from './vacancy-stories.controller';
@@ -36,11 +38,19 @@ import { VacancyStoriesCronService } from './vacancy-stories-cron.service';
 })
 export class VacancyStoriesCoreModule {}
 
-/** Stories das vagas do Freela: ajustes, arte modelo, ligar/desligar, consulta, geração e agenda (a Task 11 soma as ações). */
+/** Stories das vagas do Freela: ajustes, arte modelo, ligar/desligar, consulta, geração, agenda, lista/detalhe, ações e prévia. */
 @Module({
   imports: [VacancyStoriesCoreModule, InstagramModule, AiModule, MediaModule, CreativeModule, AccessModule, ActivityModule],
   controllers: [VacancyStoriesController, VacancyStoriesCronController],
-  providers: [VacancySettingsService, VacancyPollService, VacancyGeneratorService, VacancySchedulerService, VacancyStoriesCronService],
+  providers: [
+    VacancySettingsService,
+    VacancyPollService,
+    VacancyGeneratorService,
+    VacancySchedulerService,
+    VacancyStoriesCronService,
+    VacancyActionsService,
+    VacancyPreviewService,
+  ],
   exports: [VacancySettingsService, VacancyPollService, VacancyGeneratorService, VacancySchedulerService],
 })
 export class VacancyStoriesModule {}

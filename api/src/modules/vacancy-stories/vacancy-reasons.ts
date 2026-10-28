@@ -11,6 +11,8 @@ const hourOf = (d: Date) => hourLabel(spParts(d.toISOString()).minutes);
 /** D11: refações por mudança da vaga (e "Refazer a arte") por linha. */
 export const MAX_REDOS = 3;
 
+export const DISABLED_REASON = 'Os stories das vagas foram desligados.';
+export const DONT_POST_REASON = 'Você escolheu não postar.';
 export const VACANCY_CLOSED_REASON = 'A vaga não está mais aberta no Freela (preenchida ou cancelada).';
 export const VACANCY_STARTED_REASON = 'A vaga começou antes de ir ao ar.';
 export const VACANCY_CHANGED_REASON = 'A vaga mudou no Freela (valor ou horário). Vamos criar o story de novo.';

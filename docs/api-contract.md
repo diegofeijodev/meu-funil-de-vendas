@@ -715,7 +715,7 @@ Toda saída passa por `EXTERNAL_FETCH` (DNS verificado e fixado; rede interna re
 
 ## 26. Stories das vagas do Freela — `/v1/workspaces/:workspaceId/vacancy-stories/*`
 
-Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota, conferido ANTES do acesso — até membro sem papel recebe 404) · depois `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `StoryView` e `StoryDetail` são definidos pela Task 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
+Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota, conferido ANTES do acesso — até membro sem papel recebe 404) · depois `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. `StoryView`, `StoryDetail` e o estado da prévia: ver depois da tabela.
 
 `VacancySettingsView` (Task 7; a 1ª leitura cria a configuração com os padrões — desligado, aprovar antes, 08:00–21:00, até 10/dia,
 antecedência 120 min, OpenAI):
@@ -731,7 +731,7 @@ antecedência 120 min, OpenAI):
   instagram: { connected: boolean, username: string | null },
   today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
-  ai_error: string | null, ai_error_at: string | null, preview: object /* estado da prévia (Task 11) */,
+  ai_error: string | null, ai_error_at: string | null, preview: PreviewState | {} /* {} = nunca gerou; ver abaixo */,
   recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
   week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */
 }
@@ -749,13 +749,74 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
 | `POST auto-publish` | manage | `{ auto_publish: boolean }` | view |
 | `POST template` | write | multipart `file` (PNG/JPG, ≤ 10 MB) | view + `warning: "landscape" \| null` |
-| `POST preview` | write | — | `{ ok: true }` (segundo plano); 409 se outra em andamento |
-| `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]` (100 mais novas) |
-| `GET stories/:id` | read | — | `StoryDetail` |
-| `POST stories/:id/dont-post` | write | `{ feedback?: "texto_errado"\|"foto_estranha"\|"nao_divulgar" }` | `{ ok: true }` |
-| `POST stories/:id/post-now` | write | — | `{ ok: true }` |
-| `POST stories/:id/create-anyway` | write | — | `{ ok: true }` |
-| `POST stories/:id/redo` | write | — | `{ ok: true }` |
+| `POST preview` | write | — | `{ ok: true }` (segundo plano; o andamento fica em `settings.preview`); 409 "Já existe uma prévia sendo criada." se outra começou há < 10 min; 400 "Envie a arte modelo antes de gerar a prévia." |
+| `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]`: as 100 linhas mais novas (`created_at desc`), filtradas depois — `live` = `display: 'live'` (no ar agora), `not_posted` = `skipped\|cancelled\|failed` |
+| `GET stories/:id` | read | — | `StoryDetail`; id de outra empresa ou inexistente → 404 "Story não encontrado." (vale para toda rota `stories/:id`) |
+| `POST stories/:id/dont-post` | write | `{ feedback?: "texto_errado"\|"foto_estranha"\|"nao_divulgar" }` | `{ ok: true }` — antes da entrega (`new\|waiting\|generating`) a linha vira `cancelled`; entregue e não publicado (`pending_approval\|approved\|ready\|scheduled`) → post `cancelled` + jobs pendentes cancelados + `rejection_reason` e a linha (continua `handed_off`) com `skip_reason` = "Você escolheu não postar."; já não postado → só grava o `feedback` (idempotente) |
+| `POST stories/:id/post-now` | write | — | `{ ok: true }` — só `waiting_window\|waiting_cap`: post → agendado em agora + 1 min (fura janela, limite e espaço; a guarda ainda confere a vaga); linha esperando o limite → `new` com `post_now`; Instagram desconectado → 400 com o aviso vermelho |
+| `POST stories/:id/create-anyway` | write | — | `{ ok: true }` — só `skipped\|cancelled\|expired` (ou entregue com o post cancelado/apagado): confere a vaga na vitrine (fechada → 400 "A vaga não está mais aberta no Freela."; vitrine fora → 400 "Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos."; já começou → 400 "A vaga começou antes de ir ao ar.") e a linha volta a `new` com `forced: true`, `ig_post_id: null` e os dados vivos da vaga (se já estiver dentro da antecedência, expira de novo na próxima rodada) |
+| `POST stories/:id/redo` | write | — | `{ ok: true }` — "Refazer a arte" (entregue e não publicado): post `cancelled` (+ jobs), linha `new` com `redo_count + 1`; no teto (D11, 3) → 400 "Esta vaga já foi refeita 3 vezes." · "Tentar de novo" (linha `failed` ou post `failed`): linha `new` sem contar refação |
+
+Erros comuns às ações (400): "A situação deste story mudou. Atualize a tela e tente de novo." (a ação não vale para a situação atual,
+ou o story mudou entre a leitura e a escrita) · "Ligue os stories das vagas para usar esta ação." (post-now, create-anyway e redo com
+a função desligada). Cada ação entra no log de atividade (`vacancy_stories.dont_post|post_now|create_anyway|redo`).
+
+`StoryView` (textos da UI §4; horários em Brasília):
+
+```ts
+{
+  id: string, external_id: string, status: "new"|"skipped"|"waiting"|"generating"|"handed_off"|"failed"|"expired"|"cancelled" /* da linha */,
+  display: "queued"|"generating"|"waiting_window"|"waiting_cap"|"to_approve"|"ready"|"live"|"was_live"|"skipped"|"cancelled"|"failed",
+  label: string   /* "Na fila para criar a arte" · "Criando a arte" · "Esperando o horário" · "Esperando a vez" · "Esperando sua aprovação" ·
+                     "Pronto, vai ao ar às 14h50" (sem horário: "Pronto para ir ao ar") · "No ar até amanhã às 14h50" · "Ficou 24 h no ar" ·
+                     "Não virou story" · "Não foi ao ar" · "Não conseguimos criar o story" */,
+  support: string | null /* apoio: "Tentativa 2 de 3" · "Vai ao ar às 8h" / "amanhã às 8h" / "dia 31/10 às 8h" ·
+                     "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado." (1: "Hoje já foi 1") ·
+                     "Aprove até 16h. Depois disso não dá tempo de divulgar." · na fila depois de erro da IA/sem Instagram: o motivo da espera ·
+                     pronto sem horário: o `last_error` do post */,
+  reason: string | null  /* motivo de skipped/cancelled/failed: `skip_reason` da linha; post cancelado: `skip_reason` ?? ("Você escolheu
+                     não postar." se `rejection_reason`) ?? `last_error`; post failed: "O Instagram recusou a publicação: {last_error}." */,
+  funcao: string, estabelecimento: string | null /* null = não sai na arte */, contractor_name: string | null /* cru, p/ "parece de teste ({nome})" */,
+  valor: string | null /* "R$ 150" */, quando: string /* "Sáb 31/10 · 18h às 23h" */, cidade: string | null,
+  starts_at: string, approve_until: string | null /* só em to_approve: início − antecedência − 15 min, puxado para dentro da janela */,
+  scheduled_at: string | null, published_at: string | null, permalink: string | null, thumb_url: string | null, media_url: string | null,
+  attempts: number /* tentativas da IA registradas */, used_fallback: boolean, redo_count: number, ig_post_id: string | null,
+  is_test: boolean /* "teste" no nome da empresa ou no título */, freela_url: string /* https://www.freelaservicosapp.com.br/vagas/{external_id} */,
+  can: { approve /* to_approve — aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
+         post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, vaga não fechada e por começar */,
+         redo /* entregue e não publicado, redo_count < 3 */, retry /* linha ou post failed */: boolean }
+         /* post_now, create_anyway, redo e retry: false com a função desligada */
+}
+```
+
+Situação de post agendado para depois: mesmo dia com a janela aberta → `ready`; janela fechada agora → `waiting_window`; empurrado para
+outro dia com a janela aberta → `waiting_cap` se o limite de hoje está cheio, senão `waiting_window`. `expired` aparece como `cancelled`;
+linha `waiting` que não é do limite (erro da IA, vitrine fora) aparece como `queued` com o motivo no `support`.
+
+`StoryDetail` = `StoryView` & `{ checks: FieldCheck[], attempts_log: AttemptLog[], alt: string }`:
+- `checks`: entregue → `{ key, label, ok, read: null, expected }` para função, valor, data, horário de início, horário de fim, cidade (e
+  estabelecimento quando sai na arte); `ok` pelos `checked_fields` do post (reserva: todos `true`, texto do sistema). O texto lido pela IA
+  não é guardado — o campo errado de cada tentativa está em `attempts_log[].wrong`. Antes da entrega: `[]`.
+- `attempts_log`: `{ n, at, kind: "ai"|"fallback_photo"|"fallback_plain", ok, wrong: FieldKey[], forbidden: string[], error? }[]`.
+- `alt`: "Story: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas".
+
+`PreviewState` (em `settings.preview`; a prévia usa a vaga mais recente da vitrine com `isUpcoming`, valor e cidade, sem "teste"; sem
+nenhuma — ou vitrine fora — usa a vaga de exemplo Garçom, R$ 150, Campinas, próximo sábado 18h–23h; não precisa de Instagram conectado
+nem da função ligada; nunca cria `ig_posts`; a imagem vai para a Biblioteca com o título "Prévia · story de vaga"):
+
+```ts
+{
+  run_id: string, status: "running"|"done"|"failed",
+  step: "art" /* "Criando a arte (tentativa {attempt} de 3)" */ | "check" /* "Conferindo os textos" */ |
+        "fallback" /* versão de reserva — a tela mostra "Conferindo os textos"; attempt fica em 3 (nunca "4 de 3") */,
+  attempt: 1|2|3, started_at: string, finished_at: string | null, media_url: string | null, asset_id: string | null,
+  checks: FieldCheck[] /* da arte aceita (vazio na reserva) */, attempts: AttemptLog[], used_fallback: boolean, sample: boolean,
+  vacancy: { funcao, estabelecimento, valor, dia /* "Sáb 31/10" */, horario, cidade } | null,
+  error: string | null /* erro da IA em pt-BR, ou "Não conseguimos criar a prévia. Tente de novo em alguns minutos." */
+}
+```
+`running` com `started_at` há mais de 10 min (a API reiniciou no meio) sai no `GET settings` como `failed` com "A prévia não terminou. Gere
+de novo." e um novo `POST preview` sobrescreve.
 
 Mais: `POST /api/public/cron/vacancy-stories` (`x-cron-secret` = `CRM_CRON_SECRET` ou `cron_tokens.name='vacancy-stories'`; 401 sem); job `vacancy-stories-10min` (`*/10 * * * *`, heartbeat `vacancy-stories`); aprovar = `POST /v1/instagram/approve-post` de sempre (o story é agendado na hora); fonte = `GET {FREELA_PUBLIC_API_URL}/v1/bars-restaurants/public/vacancies/recent?limit=24` e `…/:id` (envelope `{ data }`, vaga fechada = 404). Na §22: post de vaga (`source='vacancy'`) recusa `generate-post-assets`/`regenerate-media` ("Story de vaga: use Refazer a arte na aba Vagas."); "Publicar agora" num post não aprovado não grava `failed`; num story de vaga com a vitrine fora do ar devolve `{ ok:false, error: "Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos." }` e o post volta ao status de antes (na fila: job de volta em 10 min sem gastar tentativa, post `scheduled`).
 

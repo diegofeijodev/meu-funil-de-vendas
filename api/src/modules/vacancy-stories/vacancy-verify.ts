@@ -113,17 +113,29 @@ function textField(key: FieldKey, label: string, read: string | null, expected: 
   return check(key, label, r != null && prep(r) === prep(expected), r, expected);
 }
 
+/** Nome de cada campo conferido (a conferência da arte, a prévia e o detalhe do story usam os mesmos). */
+export const FIELD_LABELS: Record<FieldKey, string> = {
+  funcao: 'função',
+  estabelecimento: 'estabelecimento',
+  cidade: 'cidade',
+  valor: 'valor',
+  data: 'data',
+  inicio: 'horário de início',
+  fim: 'horário de fim',
+};
+
 function checkFields(read: ArtRead, f: VacancyFields): FieldCheck[] {
   const e = f.expected;
   const dm = parseDayMonth(read.data);
+  const L = FIELD_LABELS;
   return [
-    textField('funcao', 'função', read.funcao, f.funcao),
-    textField('estabelecimento', 'estabelecimento', read.estabelecimento, f.estabelecimento),
-    textField('cidade', 'cidade', read.cidade, f.cidade, true),
-    check('valor', 'valor', parseCents(read.valor) === e.cents, read.valor, f.valor),
-    check('data', 'data', !!dm && dm.day === e.day && dm.month === e.month, read.data, f.data),
-    check('inicio', 'horário de início', parseMinutes(read.inicio) === e.startMin, read.inicio, hourLabel(e.startMin)),
-    check('fim', 'horário de fim', parseMinutes(read.fim, 'last') === e.endMin, read.fim, hourLabel(e.endMin)),
+    textField('funcao', L.funcao, read.funcao, f.funcao),
+    textField('estabelecimento', L.estabelecimento, read.estabelecimento, f.estabelecimento),
+    textField('cidade', L.cidade, read.cidade, f.cidade, true),
+    check('valor', L.valor, parseCents(read.valor) === e.cents, read.valor, f.valor),
+    check('data', L.data, !!dm && dm.day === e.day && dm.month === e.month, read.data, f.data),
+    check('inicio', L.inicio, parseMinutes(read.inicio) === e.startMin, read.inicio, hourLabel(e.startMin)),
+    check('fim', L.fim, parseMinutes(read.fim, 'last') === e.endMin, read.fim, hourLabel(e.endMin)),
   ];
 }
 

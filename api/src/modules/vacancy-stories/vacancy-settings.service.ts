@@ -12,13 +12,14 @@ import { edgeColor } from './vacancy-art';
 import { VacancyGate } from './vacancy-gate.service';
 import { templateReadPrompt } from './vacancy-prompts';
 import { LEAD_OPTIONS, UpdateVacancySettingsDto, VENDORS } from './vacancy-stories.dto';
+import { previewForView } from './vacancy-preview-state';
+import { DISABLED_REASON, DONT_POST_REASON } from './vacancy-reasons';
 import { norm } from './vacancy-text';
 import type { SettingsRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 import { TEMPLATE_TEXTS_SCHEMA } from './vacancy-verify';
 
-export const DISABLED_REASON = 'Os stories das vagas foram desligados.';
-export const DONT_POST_REASON = 'Você escolheu não postar.';
+export { DISABLED_REASON, DONT_POST_REASON };
 
 const BUCKET = 'creative-assets';
 const MAX_TEMPLATE_MB = 10;
@@ -176,7 +177,7 @@ export class VacancySettingsService {
       counts: { ready, to_approve: toApprove },
       ai_error: s.ai_error,
       ai_error_at: s.ai_error_at,
-      preview: s.preview,
+      preview: previewForView(s.preview, now),
       recent_outcomes: recent,
       week,
     };
