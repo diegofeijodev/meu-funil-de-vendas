@@ -26,12 +26,12 @@ import { StoryDetailSheet } from "./story-detail";
 import { useStoryActions } from "./use-story-actions";
 import { VacanciesFirstRun } from "./first-run";
 import { VacanciesStatusCard } from "./status-card";
+import { VacanciesSettingsPanel } from "./settings-panel";
 
 type Confirm = { kind: "post_now" | "create_anyway"; story: VacancyStory };
 
 /**
  * Aba "Vagas" do Instagram. Ordem no celular: situação → "Para aprovar" → "Vagas que chegaram" → "Ajustes".
- * Os três últimos entram nas Tasks 13 e 14 pelos contêineres `data-vac-section` abaixo.
  */
 export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   const { role, canEdit } = useWorkspace();
@@ -107,8 +107,9 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
       </div>
       <StoryDetailSheet workspaceId={workspaceId} story={open} actions={actions} onAction={onAction} onClose={() => setOpen(null)} />
       <ConfirmStory confirm={confirm} settings={settings} onClose={() => setConfirm(null)} actions={actions} />
-      {/* Task 14: "Ajustes" (fechado, com o resumo de 1 linha) */}
-      <div data-vac-section="settings" />
+      <div data-vac-section="settings">
+        <VacanciesSettingsPanel workspaceId={workspaceId} settings={settings} canEdit={canEdit} canManage={canManage} />
+      </div>
     </div>
   );
 }

@@ -167,3 +167,59 @@ export function noStoriesYet(s: { enabled_at: string | null; last_poll_ok_at: st
   const ultima = s.last_poll_ok_at ? ` Consultamos o Freela a cada 10 minutos; a última foi às ${hhLabel(s.last_poll_ok_at)}.` : ' Consultamos o Freela a cada 10 minutos.';
   return `Nenhuma vaga nova${desde}.${ultima}`;
 }
+
+/** Aviso do máximo por dia (UI §3): acima de 15 os posts normais podem ficar sem espaço. */
+export function capWarning(cap: number): string | null {
+  return cap > 15 ? 'Acima de 15, os posts normais da empresa podem ficar sem espaço no dia.' : null;
+}
+
+export type Outcomes = { n: number; first_try: number; redone: number; fallback: number; not_posted: number };
+
+/** Frase do diálogo "Postar sozinho" (concordância em número, R4). Sem histórico, `null`. */
+export function autoPublishSummary(o: Outcomes): string | null {
+  if (o.n <= 0) return null;
+  const quando = o.n === 1 ? 'No último story' : `Nos últimos ${o.n} stories`;
+  const primeira = `${o.first_try} ${o.first_try === 1 ? 'saiu certo' : 'saíram certos'} de primeira`;
+  const refeitos = `${o.redone} ${o.redone === 1 ? 'foi refeito' : 'foram refeitos'}`;
+  const reserva = `${o.fallback} ${o.fallback === 1 ? 'foi' : 'foram'} para a reserva`;
+  return `${quando}: ${primeira}, ${refeitos}, ${reserva} e você não postou ${o.not_posted}.`;
+}
+
+/** Aviso semanal: ≥ 30% dos stories dos últimos 7 dias na reserva, com pelo menos 5 stories. */
+export function weeklyFallbackWarning(w: { total: number; fallback: number }): string | null {
+  if (w.total < 5 || w.fallback / w.total < 0.3) return null;
+  return `Nos últimos 7 dias, ${w.fallback} de ${w.total} stories foram para a reserva. Uma arte modelo com menos texto costuma ajudar a IA.`;
+}
+
+export const TEMPLATE_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Validação do navegador da arte modelo (mesmos textos da API, R19): só PNG/JPG e até 10 MB. */
+export function templateFileError(f: { type: string; size: number }): string | null {
+  if (f.type !== 'image/png' && f.type !== 'image/jpeg') return 'Esse arquivo não serve. Envie uma imagem PNG ou JPG.';
+  if (f.size > TEMPLATE_MAX_BYTES) {
+    const mb = (Math.ceil((f.size / 1048576) * 10) / 10).toFixed(1).replace('.', ',');
+    return `A imagem tem ${mb} MB e o máximo é 10 MB. Envie uma menor.`;
+  }
+  return null;
+}
+
+export const LANDSCAPE_WARNING =
+  'Essa arte está deitada. Story é em pé: envie uma arte em pé para não sobrar faixa grande em cima e embaixo.';
+
+/** Início precisa vir antes do fim ("HH:MM" compara como texto). Campo vazio não acusa erro. */
+export function windowError(start: string, end: string): string | null {
+  if (!start || !end) return null;
+  return start < end ? null : 'O início precisa ser antes do fim.';
+}
+
+/** Passo da prévia em andamento. A reserva aparece como "Conferindo os textos"; a tentativa nunca passa de 3. */
+export function previewProgress(p: { step?: 'art' | 'check' | 'fallback'; attempt?: number }): string {
+  if (p.step === 'check' || p.step === 'fallback') return 'Conferindo os textos';
+  const n = Math.min(3, Math.max(1, p.attempt ?? 1));
+  return `Criando a arte (tentativa ${n} de 3)`;
+}
+
+/** Frase quando a prévia usou a vaga de exemplo. */
+export function sampleLine(v: { funcao: string; valor: string; dia: string; horario: string; cidade: string }): string {
+  return `Não há vaga aberta no Freela agora. Usamos uma vaga de exemplo: ${v.funcao}, ${v.valor}, ${v.dia}, ${v.horario}, ${v.cidade}.`;
+}

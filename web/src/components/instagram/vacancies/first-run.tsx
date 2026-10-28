@@ -1,31 +1,15 @@
 "use client";
 
-import { useRef } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
-import { uploadVacancyTemplate, vacancySettingsKey } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
+import { useTemplateUpload } from "./template-card";
 
 const STEPS = ["Envie a arte modelo", "Veja uma prévia", "Ligue"];
 
 /** Primeira vez (sem arte modelo): passos, envio da arte e interruptor travado. */
 export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: string; canEdit: boolean }) {
-  const qc = useQueryClient();
-  const input = useRef<HTMLInputElement>(null);
-
-  const upload = useMutation({
-    mutationFn: (file: File) => uploadVacancyTemplate(workspaceId, file),
-    onSuccess: (res) => {
-      qc.setQueryData(vacancySettingsKey(workspaceId), res);
-      toast.success("Arte modelo salva. Gere uma prévia para ver como fica com uma vaga de verdade.");
-      if (res.warning === "landscape")
-        toast.warning("Essa arte está deitada. Story é em pé: envie uma arte em pé para não sobrar faixa grande em cima e embaixo.");
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, "Não conseguimos enviar a arte modelo.")),
-  });
+  const upload = useTemplateUpload(workspaceId);
 
   return (
     <section className="panel space-y-5 p-5" aria-labelledby="vac-first-title">
@@ -44,19 +28,8 @@ export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: strin
         ))}
       </ol>
       <div className="space-y-2">
-        <input
-          ref={input}
-          type="file"
-          accept="image/png,image/jpeg"
-          className="sr-only"
-          aria-label="Arte modelo (PNG ou JPG)"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = "";
-            if (f) upload.mutate(f);
-          }}
-        />
-        <Button className="h-11 w-full sm:w-auto" disabled={!canEdit || upload.isPending} onClick={() => input.current?.click()}>
+        {upload.fileInput}
+        <Button className="h-11 w-full sm:w-auto" disabled={!canEdit || upload.isPending} onClick={upload.open}>
           <ImagePlus /> {upload.isPending ? "Enviando…" : "Enviar arte modelo"}
         </Button>
         <p className="text-xs text-muted-foreground">PNG ou JPG, em pé.</p>

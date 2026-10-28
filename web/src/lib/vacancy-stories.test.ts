@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   attemptsLine,
+  autoPublishSummary,
+  capWarning,
+  previewProgress,
+  sampleLine,
+  templateFileError,
+  weeklyFallbackWarning,
+  windowError,
   dayLine,
   fieldLabel,
   hhLabel,
@@ -117,5 +124,61 @@ describe('vacancy-stories (puro)', () => {
     b.cancel();
     expect(cleared).toEqual([2]);
     expect(a).toBeDefined();
+  });
+
+  it('capWarning: só acima de 15', () => {
+    expect(capWarning(16)).toBe('Acima de 15, os posts normais da empresa podem ficar sem espaço no dia.');
+    expect(capWarning(15)).toBeNull();
+  });
+
+  it('autoPublishSummary: concordância (R4)', () => {
+    expect(autoPublishSummary({ n: 12, first_try: 8, redone: 2, fallback: 1, not_posted: 1 })).toBe(
+      'Nos últimos 12 stories: 8 saíram certos de primeira, 2 foram refeitos, 1 foi para a reserva e você não postou 1.',
+    );
+    expect(autoPublishSummary({ n: 3, first_try: 1, redone: 1, fallback: 0, not_posted: 1 })).toBe(
+      'Nos últimos 3 stories: 1 saiu certo de primeira, 1 foi refeito, 0 foram para a reserva e você não postou 1.',
+    );
+    expect(autoPublishSummary({ n: 0, first_try: 0, redone: 0, fallback: 0, not_posted: 0 })).toBeNull();
+  });
+
+  it('weeklyFallbackWarning: ≥ 30% e pelo menos 5 stories', () => {
+    expect(weeklyFallbackWarning({ total: 12, fallback: 5 })).toBe(
+      'Nos últimos 7 dias, 5 de 12 stories foram para a reserva. Uma arte modelo com menos texto costuma ajudar a IA.',
+    );
+    expect(weeklyFallbackWarning({ total: 10, fallback: 3 })).not.toBeNull();
+    expect(weeklyFallbackWarning({ total: 10, fallback: 2 })).toBeNull();
+    expect(weeklyFallbackWarning({ total: 4, fallback: 4 })).toBeNull();
+    expect(weeklyFallbackWarning({ total: 6, fallback: 1 })).toBeNull();
+  });
+
+  it('templateFileError: tipo e tamanho (R19)', () => {
+    const f = (type: string, size: number) => ({ type, size });
+    expect(templateFileError(f('image/png', 1000))).toBeNull();
+    expect(templateFileError(f('image/jpeg', 1000))).toBeNull();
+    expect(templateFileError(f('image/webp', 1000))).toBe('Esse arquivo não serve. Envie uma imagem PNG ou JPG.');
+    expect(templateFileError(f('application/pdf', 1000))).toBe('Esse arquivo não serve. Envie uma imagem PNG ou JPG.');
+    expect(templateFileError(f('image/png', 12.34 * 1024 * 1024))).toBe('A imagem tem 12,4 MB e o máximo é 10 MB. Envie uma menor.');
+    expect(templateFileError(f('image/png', 10 * 1024 * 1024))).toBeNull();
+  });
+
+  it('windowError: início antes do fim', () => {
+    expect(windowError('08:00', '21:00')).toBeNull();
+    expect(windowError('21:00', '08:00')).toBe('O início precisa ser antes do fim.');
+    expect(windowError('08:00', '08:00')).toBe('O início precisa ser antes do fim.');
+    expect(windowError('', '08:00')).toBeNull();
+  });
+
+  it('previewProgress: reserva vira "Conferindo os textos", tentativa nunca passa de 3', () => {
+    expect(previewProgress({ step: 'art', attempt: 2 })).toBe('Criando a arte (tentativa 2 de 3)');
+    expect(previewProgress({ step: 'art', attempt: 4 })).toBe('Criando a arte (tentativa 3 de 3)');
+    expect(previewProgress({ step: 'check', attempt: 1 })).toBe('Conferindo os textos');
+    expect(previewProgress({ step: 'fallback', attempt: 3 })).toBe('Conferindo os textos');
+    expect(previewProgress({})).toBe('Criando a arte (tentativa 1 de 3)');
+  });
+
+  it('sampleLine: vaga de exemplo', () => {
+    expect(sampleLine({ funcao: 'Garçom', valor: 'R$ 150', dia: 'Sáb 31/10', horario: '18h às 23h', cidade: 'Campinas' })).toBe(
+      'Não há vaga aberta no Freela agora. Usamos uma vaga de exemplo: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas.',
+    );
   });
 });
