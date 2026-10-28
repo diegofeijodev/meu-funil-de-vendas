@@ -145,7 +145,7 @@ export function IgCalendar({
         draggable={p.source !== "vacancy"}
         onDragStart={(e) => e.dataTransfer.setData("text/plain", p.id)}
         onClick={() => onOpen(p.id)}
-        className="flex w-full cursor-grab items-center gap-2 rounded-md border border-border bg-card p-1.5 text-left hover:border-primary/50"
+        className={cn("flex w-full items-center gap-2 rounded-md border border-border bg-card p-1.5 text-left hover:border-primary/50", p.source !== "vacancy" && "cursor-grab")}
       >
         <MediaThumb post={p} className="size-9 shrink-0" />
         <div className="min-w-0 flex-1">

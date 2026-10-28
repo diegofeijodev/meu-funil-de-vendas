@@ -317,10 +317,11 @@ export function storyChecks(row: StoryRow, post: StoryPost | null): FieldCheck[]
     .map(([key, e]) => ({ key, label: FIELD_LABELS[key], ok: all || ok.has(key), read: null, expected: e }));
 }
 
-/** A mídia do post foi trocada por "Enviar minha própria" (último passo do `ai_generation_log` = `upload`): ninguém conferiu. */
+/** A mídia do post foi trocada por "Enviar minha própria" ou pela Biblioteca (último passo do `ai_generation_log` = `upload`|`library`): ninguém conferiu. */
 export function ownArt(post: StoryPost | null): boolean {
   const log = Array.isArray(post?.ai_generation_log) ? (post!.ai_generation_log as unknown as { step?: unknown }[]) : [];
-  return log.length > 0 && log[log.length - 1]?.step === 'upload';
+  const last = log[log.length - 1]?.step;
+  return last === 'upload' || last === 'library';
 }
 
 export function storyDetail(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryDetail {

@@ -273,6 +273,9 @@ describe('storyView / storyDetail', () => {
     const d = storyDetail(delivered(p), p, s, NOW);
     expect(d).toMatchObject({ checks: [], own_art: true, display: 'to_approve' });
     expect(storyView(delivered(p), p, s, NOW).own_art).toBe(true);
+    // R35: arte escolhida na Biblioteca também é própria.
+    const lib = post({ status: 'pending_approval', ai_generation_log: [{ step: 'vacancy_art', attempt: 1, ok: true }, { step: 'library', asset_id: 'a1' }] });
+    expect(storyDetail(delivered(lib), lib, s, NOW)).toMatchObject({ own_art: true, checks: [] });
     // Gerada de novo depois do envio: o último passo volta a ser da arte.
     const again = post({ status: 'pending_approval', ai_generation_log: [{ step: 'upload' }, { step: 'vacancy_art', attempt: 1, ok: true }] });
     expect(storyDetail(delivered(again), again, s, NOW)).toMatchObject({ own_art: false, checks: expect.arrayContaining([expect.objectContaining({ ok: true })]) });

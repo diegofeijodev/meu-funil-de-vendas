@@ -13,7 +13,7 @@ import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { awaitsHuman } from "@/lib/instagram/production";
 import { useNavigate } from "@/lib/router";
-import { checkedLine, funcaoOfTheme, postVacancy, reasonChipsFeedback, vagasTabState } from "@/lib/vacancy-stories";
+import { checkedLine, funcaoOfTheme, isOwnArt, postVacancy, reasonChipsFeedback, vagasTabState } from "@/lib/vacancy-stories";
 import { useVacancySettings, vacancyDontPost } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { useStoryActions } from "./vacancies/use-story-actions";
 
@@ -137,7 +137,8 @@ export function IgApprovalList({
       )}
       {pending.map((p) => {
         const vac = postVacancy(p);
-        const conferido = vac ? checkedLine(vac.checked_fields) : null;
+        const own = vac ? isOwnArt(p) : false;
+        const conferido = vac && !own ? checkedLine(vac.checked_fields) : null;
         return (
         <div
           key={p.id}
@@ -166,13 +167,17 @@ export function IgApprovalList({
             </div>
             <p className="mt-1 truncate text-sm font-medium">{p.theme ?? "Post"}</p>
             {vac ? (
-              conferido && (
+              own ? (
+                <p className="text-xs text-muted-foreground">A sua arte não passa pela conferência.</p>
+              ) : (
+                conferido && (
                 <p className="text-xs text-muted-foreground">
                   <span className="text-success" aria-hidden>
                     ✓
                   </span>{" "}
                   {conferido}
                 </p>
+                )
               )
             ) : (
               <p className="line-clamp-1 text-xs text-muted-foreground">{p.caption}</p>

@@ -250,6 +250,13 @@ export function funcaoOfTheme(theme: string | null | undefined): string {
   return (parts[0] === 'Vaga' ? parts[1] : parts[0])?.trim() || 'selecionada';
 }
 
+/** Arte própria (R35): último passo do `ai_generation_log` é `upload` ou `library` — ninguém conferiu. */
+export function isOwnArt(post: { ai_generation_log?: unknown }): boolean {
+  const log = Array.isArray(post.ai_generation_log) ? (post.ai_generation_log as { step?: unknown }[]) : [];
+  const last = log[log.length - 1]?.step;
+  return last === 'upload' || last === 'library';
+}
+
 /** "Conferido: função, valor, horário" a partir dos `checked_fields` (mesmos nomes da aba Vagas, sem repetir). `null` sem campos. */
 export function checkedLine(fields: string[]): string | null {
   const labels = [...new Set(fields.map(fieldLabel))];

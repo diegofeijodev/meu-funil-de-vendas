@@ -271,7 +271,7 @@ export class LibraryService {
   /** Anexa mídia(s) da biblioteca a um post do Instagram (substitui a mídia atual). */
   async attachToPost(userId: string, workspaceId: string, postId: string, ids: string[]) {
     await this.member(userId, workspaceId, true);
-    const post = await this.prisma.ig_posts.findFirst({ where: { id: postId, workspace_id: workspaceId }, select: { id: true, format: true } });
+    const post = await this.prisma.ig_posts.findFirst({ where: { id: postId, workspace_id: workspaceId }, select: { id: true, format: true, source: true, ai_generation_log: true } });
     if (!post) throw new UserError('Post não encontrado.');
     const list = await this.loadAssets(workspaceId, ids);
     const badOnes = list.filter((a) => !a.ig_ready);
@@ -283,7 +283,11 @@ export class LibraryService {
       url: a.url, type: a.kind, order: i, width: a.width, height: a.height,
       duration: a.duration_seconds == null ? null : Number(a.duration_seconds), asset_id: a.id, ig_ready: a.ig_ready,
     }));
-    await this.prisma.ig_posts.update({ where: { id: postId }, data: { media } });
+    // Story de vaga: a arte da biblioteca não passa pela conferência — o passo `library` marca isso (R35), como o `upload`.
+    const log = Array.isArray(post.ai_generation_log) ? (post.ai_generation_log as Record<string, unknown>[]) : [];
+    const data: Record<string, unknown> = { media };
+    if (post.source === 'vacancy') data['ai_generation_log'] = [...log, { at: new Date().toISOString(), step: 'library', asset_id: list[0]?.id ?? null }].slice(-50);
+    await this.prisma.ig_posts.update({ where: { id: postId }, data });
     await this.prisma.media_assets.updateMany({ where: { workspace_id: workspaceId, id: { in: list.map((a) => a.id) } }, data: { ig_post_id: postId } });
     return { ok: true, items: media.length };
   }

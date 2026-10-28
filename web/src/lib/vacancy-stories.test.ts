@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calendarPosts,
+  isOwnArt,
   funcaoOfTheme,
   checkedLine,
   postVacancy,
@@ -210,6 +211,13 @@ describe('vacancy-stories (puro)', () => {
   it('funcaoOfTheme: segunda parte do tema', () => {
     expect(funcaoOfTheme('Vaga · Garçom · Coco Bambu · Sáb 29/10')).toBe('Garçom');
     expect(funcaoOfTheme(null)).toBe('selecionada');
+  });
+
+  it('isOwnArt: último passo upload ou library', () => {
+    expect(isOwnArt({ ai_generation_log: [{ step: 'vacancy_art' }, { step: 'upload' }] })).toBe(true);
+    expect(isOwnArt({ ai_generation_log: [{ step: 'library' }] })).toBe(true);
+    expect(isOwnArt({ ai_generation_log: [{ step: 'upload' }, { step: 'vacancy_art' }] })).toBe(false);
+    expect(isOwnArt({})).toBe(false);
   });
 
   it('calendarPosts: esconde stories de vaga por padrão', () => {

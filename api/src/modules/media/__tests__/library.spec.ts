@@ -181,6 +181,13 @@ describe('LibraryService — envio, reformatação e usos', () => {
     expect(await lib.attachToPost(OWNER, WS_A, feed.id, [img.id, vid.id])).toEqual({ ok: true, items: 1 });
     const car = await w.t['ig_posts']!.create({ data: { workspace_id: WS_A, format: 'feed_carousel' } });
     expect(await lib.attachToPost(OWNER, WS_A, car.id, [img.id, vid.id])).toEqual({ ok: true, items: 2 });
+    // Story de vaga: grava o passo `library` no log (R35); post comum não ganha log.
+    const vac = await w.t['ig_posts']!.create({ data: { workspace_id: WS_A, format: 'story_image', source: 'vacancy', ai_generation_log: [{ step: 'vacancy_art' }] } });
+    await lib.attachToPost(OWNER, WS_A, vac.id, [img.id]);
+    const vlog = w.t['ig_posts']!.rows.find((x) => x.id === vac.id)!.ai_generation_log as { step: string; asset_id?: string }[];
+    expect(vlog.map((l) => l.step)).toEqual(['vacancy_art', 'library']);
+    expect(vlog[1]!.asset_id).toBe(img.id);
+    expect(w.t['ig_posts']!.rows.find((x) => x.id === feed.id)!.ai_generation_log ?? []).toEqual([]);
     w.cleanup();
   });
 
