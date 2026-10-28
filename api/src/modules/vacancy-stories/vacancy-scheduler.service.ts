@@ -9,7 +9,7 @@ import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGuardService } from './vacancy-guard.service';
 import { capWaitReason, slotTooCloseReason } from './vacancy-reasons';
-import { nextWindowSlot, spDay, windowStartOn } from './vacancy-slots';
+import { nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import type { SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
@@ -125,8 +125,8 @@ export class VacancySchedulerService implements OnModuleInit {
   /**
    * Horário do story de uma vaga que começa em `startsAt`: janela + folga de 15 min → espaço da Meta → limite do dia (dia do horário
    * cheio → janela do dia seguinte). `force` ("Postar agora") ignora janela, limite e espaço: agora + 1 min (a guarda ainda confere a
-   * vaga na hora de publicar). Não dá mais tempo (`at` + antecedência > início) → `{ expire }` com o motivo verdadeiro (limite do dia, ou
-   * o próximo horário livre — R23). `postId` = o post sendo agendado (não conta contra ele mesmo).
+   * vaga na hora de publicar). Não dá mais tempo (`at` + antecedência + 15 min de folga da fila > início, R26) → `{ expire }` com o
+   * motivo verdadeiro (limite do dia, ou o próximo horário livre — R23). `postId` = o post sendo agendado (não conta contra ele mesmo).
    */
   async planSlot(ws: string, s: SettingsRow, startsAt: Date, now: Date, o: { force?: boolean; postId?: string } = {}): Promise<SlotPlan> {
     if (o.force) return { at: new Date(now.getTime() + MIN), waitingFor: 'none' };
@@ -142,7 +142,8 @@ export class VacancySchedulerService implements OnModuleInit {
       waitingFor = 'ig_limit';
     }
 
-    const lead = s.min_lead_minutes * MIN;
+    // Antecedência + folga da fila (R26): o story precisa sair com a antecedência medida na hora REAL da publicação.
+    const lead = s.min_lead_minutes * MIN + PUBLISH_SLACK_MS;
     for (let i = 0; ; i++) {
       const { used, cap } = await this.capacityFor(ws, s, spDay(at), o.postId);
       if (used < cap) break;
@@ -169,7 +170,7 @@ export class VacancySchedulerService implements OnModuleInit {
       const { used, cap } = await this.capacityFor(row.workspace_id, s, spDay(at));
       if (used < cap) return i === 0 ? null : at;
       at = windowStartOn(addDays(spDay(at), 1), s.window_start);
-      if (at.getTime() + s.min_lead_minutes * MIN > row.starts_at.getTime()) return at;
+      if (at.getTime() + s.min_lead_minutes * MIN + PUBLISH_SLACK_MS > row.starts_at.getTime()) return at;
     }
     return at;
   }

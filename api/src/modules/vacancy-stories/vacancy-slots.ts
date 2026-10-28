@@ -2,6 +2,12 @@ import { addDays, todaySp } from '../../common/time/dates';
 
 const MIN = 60_000;
 
+/**
+ * R26: folga além da antecedência ao escolher o horário. A guarda mede a antecedência no instante REAL da publicação, e a fila roda a
+ * cada 5 min (até 4 jobs por rodada): um story marcado exatamente em início − antecedência seria cancelado ao publicar.
+ */
+export const PUBLISH_SLACK_MS = 15 * MIN;
+
 /** Dia `YYYY-MM-DD` de Brasília do instante `d` (nunca o dia UTC: entre 21h e 0h BRT ele já virou). */
 export function spDay(d: Date): string {
   return todaySp(d);

@@ -166,6 +166,21 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     expect(t.rowOf(p.id).skip_reason).toBe('O próximo horário livre (8h) fica a menos de 2 h do início (9h). Não dá tempo de divulgar.');
   });
 
+  it('R26 — folga de 15 min além da antecedência: vaga às 10h (janela 8h, 2 h) expira; às 10h20 vai às 8h e a guarda às 8h05 libera', async () => {
+    const t = await setup();
+    t.clock.t = new Date('2026-10-30T01:10:00Z').getTime(); // 22h10
+    const ten = await t.delivered(vac({ startTime: '2026-10-30T13:00:00Z', endTime: '2026-10-30T18:00:00Z' })); // amanhã 10h
+    expect(await t.sched.afterHandOff(WS_A, ten.id)).toBe('cancelled');
+    expect(t.rowOf(ten.id).skip_reason).toBe('O próximo horário livre (8h) fica a menos de 2 h do início (10h). Não dá tempo de divulgar.');
+    expect(t.jobsOf(ten.id)).toHaveLength(0);
+
+    const tenTwenty = await t.delivered(vac({ startTime: '2026-10-30T13:20:00Z', endTime: '2026-10-30T18:00:00Z' })); // amanhã 10h20
+    expect(await t.sched.afterHandOff(WS_A, tenTwenty.id)).toBe('scheduled');
+    expect(tenTwenty.scheduled_at).toEqual(TOMORROW_8H);
+    // A fila publica alguns minutos depois do horário: ainda dentro da antecedência medida pela guarda.
+    expect(await w.guard.blockReason(tenTwenty, new Date(TOMORROW_8H.getTime() + 5 * MIN))).toBeNull();
+  });
+
   it('R24 — folga de 15 min: vaga de hoje liberada por um cancelamento é usada mesmo com story amanhã às 8h', async () => {
     const t = await setup();
     await t.delivered(vac(), { status: 'scheduled', scheduled_at: TOMORROW_8H });
@@ -311,7 +326,7 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
     expect(t.rowOf(p.id)).toMatchObject({ status: 'handed_off', skip_reason: CLOSED });
   });
 
-  it('vitrine fora, mas a vaga já começou ou está em cima da hora → cancela pela data guardada, sem consultar a vitrine', async () => {
+  it('vitrine fora, mas a vaga já começou ou está em cima da hora (data guardada) → cancela em vez de OriginUnavailable', async () => {
     const t = await setup();
     const v = vac();
     const p = await t.delivered(v, { status: 'scheduled' });
@@ -320,7 +335,19 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
     expect(await w.guard.blockReason(p, new Date(new Date(v.startTime).getTime() + MIN))).toBe(STARTED);
     expect(t.rowOf(p.id).skip_reason).toBe(STARTED);
     expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe('Começa às 18h, em menos de 2 h. Não dá tempo de divulgar.');
-    expect(w.feed.state.urls).toEqual([]);
+    // R27: a vitrine é consultada primeiro; a data guardada só decide porque ela está fora.
+    expect(w.feed.state.urls).toHaveLength(2);
+  });
+
+  it('R27 — vaga adiada no Freela, conferida depois do início antigo → a linha volta a new (refaz), não cancela por "começou"', async () => {
+    const t = await setup();
+    const v = vac();
+    const p = await t.delivered(v, { status: 'scheduled' });
+    const row = t.rowOf(p.id);
+    const moved = { ...v, startTime: '2026-11-01T21:00:00Z', endTime: '2026-11-02T02:00:00Z' };
+    w.feed.state.byId.set(v.id, moved);
+    expect(await w.guard.blockReason(p, new Date(new Date(v.startTime).getTime() + 30 * MIN))).toBe(CHANGED);
+    expect(row).toMatchObject({ status: 'new', ig_post_id: null, redo_count: 1, starts_at: new Date(moved.startTime), skip_reason: null });
   });
 
   it('post de vaga sem vaga de origem (sem linha nem external_id) → não sai', async () => {

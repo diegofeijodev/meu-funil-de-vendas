@@ -21,10 +21,10 @@ const MIN = 60_000;
 
 /**
  * Guarda de origem dos stories das vagas (`PUBLISH_ORIGIN_GUARDS`), no núcleo (D10: sem `PublishingService`, sem ciclo). Logo antes
- * de criar o container (e no `catch` da fila): começou ou perto demais do início (pela data guardada, sem rede), fechada ou mudou (pela
- * vitrine) → o post é cancelado com o motivo, que fica também na LINHA (`skip_reason`, a tela lê de lá). Vitrine fora → `OriginUnavailable`
- * (a fila tenta de novo sem gastar tentativa). O `VacancySchedulerService` registra `onApproved` no `onModuleInit` para agendar logo
- * depois da aprovação.
+ * de criar o container (e no `catch` da fila) consulta a vitrine: fechada, mudou (refaz), começou ou perto demais do início → o post é
+ * cancelado com o motivo, que fica também na LINHA (`skip_reason`, a tela lê de lá). Vitrine fora → pela data guardada, começou ou em
+ * cima da hora cancela; senão `OriginUnavailable` (a fila tenta de novo sem gastar tentativa). O `VacancySchedulerService` registra
+ * `onApproved` no `onModuleInit` para agendar logo depois da aprovação.
  */
 @Injectable()
 export class VacancyGuardService implements PublishOriginGuard {
@@ -57,18 +57,18 @@ export class VacancyGuardService implements PublishOriginGuard {
       return null;
     };
 
-    // Primeiro o que não depende da vitrine: com ela fora depois do início, a fila tentaria a cada 10 min sem fim.
+    // Data guardada: só vale com a vitrine fora (R27) — encerra a repetição sem fim depois do início; vaga adiada no Freela é refeita.
     const stored = row?.starts_at ?? (brief?.starts_at ? new Date(brief.starts_at) : null);
     const known = stored && !Number.isNaN(stored.getTime()) ? stored : null;
-    const early = known ? timing(known) : null;
-    if (early) return block(early);
 
     let v: FreelaVacancy | null;
     try {
       v = await this.feed.byId(externalId);
     } catch (e) {
-      if (e instanceof FeedDownError) throw new OriginUnavailable(e.message);
-      throw e;
+      if (!(e instanceof FeedDownError)) throw e;
+      const early = known ? timing(known) : null;
+      if (early) return block(early);
+      throw new OriginUnavailable(e.message);
     }
     if (!v) return block(VACANCY_CLOSED_REASON);
 
@@ -91,8 +91,8 @@ export class VacancyGuardService implements PublishOriginGuard {
       return VACANCY_CHANGED_REASON;
     }
 
-    // Mesma assinatura = mesmo início; só falta conferir quando a data guardada não existia.
-    const late = known ? null : timing(new Date(v.startTime));
+    // Começou ou em cima da hora, pela data VIVA da vitrine.
+    const late = timing(new Date(v.startTime));
     return late ? block(late) : null;
   }
 
