@@ -32,11 +32,19 @@ export const GENERIC_LABELS = [
   'quando', 'onde', 'cidade', 'valor', 'valor para o freela', 'baixe nosso app', 'e confira esta e outras oportunidades',
 ];
 
-/** D2: proibidos sempre. Rótulos e lojas buscam-se em `norm`; links no texto cru (norm('.com') = 'com' casaria 'comida'). */
+const PHONE = /\(?\b\d{2}\)?\s?9?\d{4}-?\d{4}\b|\b9?\d{4}-\d{4}\b/;
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+
+/** D2: proibidos sempre. Rótulos e lojas buscam-se em `norm`; links e contatos no texto cru (norm('.com') = 'com' casaria 'comida'). */
 export const ALWAYS_FORBIDDEN = {
   labels: ['endereco', 'regiao', 'descricao', 'bairro'],
   stores: ['google play', 'app store'],
   links: /https?:|www\.|\.com\b/,
+  /**
+   * I3: telefone, e-mail ou sequência de 11+ dígitos (CPF, CNPJ, telefone colado) — tirando só `. - / ( )`, nunca os espaços (senão
+   * "R$ 1.500,00 · 31/10 · 18h" viraria uma sequência só).
+   */
+  contact: (t: string) => PHONE.test(t) || EMAIL.test(t) || /\d{11,}/.test(t.replace(/[.\-/()]/g, '')),
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -124,6 +132,15 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   fim: 'horário de fim',
 };
 
+const WEEKDAYS: Record<string, number> = {
+  dom: 0, domingo: 0, seg: 1, segunda: 1, ter: 2, terca: 2, qua: 3, quarta: 3, qui: 4, quinta: 4, sex: 5, sexta: 5, sab: 6, sabado: 6,
+};
+
+/** I3: o dia da semana lido na data, quando aparece, tem de ser o da data esperada ("Sex, 29/10" numa quinta reprova). */
+function weekdayMatches(read: string | null, expected: number): boolean {
+  return norm(read).split(' ').every((w) => !Object.hasOwn(WEEKDAYS, w) || WEEKDAYS[w] === expected);
+}
+
 function checkFields(read: ArtRead, f: VacancyFields): FieldCheck[] {
   const e = f.expected;
   const dm = parseDayMonth(read.data);
@@ -133,7 +150,7 @@ function checkFields(read: ArtRead, f: VacancyFields): FieldCheck[] {
     textField('estabelecimento', L.estabelecimento, read.estabelecimento, f.estabelecimento),
     textField('cidade', L.cidade, read.cidade, f.cidade, true),
     check('valor', L.valor, parseCents(read.valor) === e.cents, read.valor, f.valor),
-    check('data', L.data, !!dm && dm.day === e.day && dm.month === e.month, read.data, f.data),
+    check('data', L.data, !!dm && dm.day === e.day && dm.month === e.month && weekdayMatches(read.data, e.weekday), read.data, f.data),
     check('inicio', L.inicio, parseMinutes(read.inicio) === e.startMin, read.inicio, hourLabel(e.startMin)),
     check('fim', L.fim, parseMinutes(read.fim, 'last') === e.endMin, read.fim, hourLabel(e.endMin)),
   ];
@@ -201,6 +218,7 @@ function findForbidden(read: ArtRead, f: VacancyFields, templateTexts: string[])
     const nLabels = removePhrases(n, nameValues);
     const bad =
       ALWAYS_FORBIDDEN.links.test(text.toLowerCase()) ||
+      ALWAYS_FORBIDDEN.contact(text) ||
       [...ALWAYS_FORBIDDEN.labels, ...ALWAYS_FORBIDDEN.stores].some((p) => hasPhrase(nLabels, p)) ||
       banned.some((b) => hasPhrase(n, b.n)) ||
       // fragmento do modelo ("Rio abaixo", "Itupeva", "13299600"): bloco inteiro dentro de um item, com ao menos 1 palavra distintiva

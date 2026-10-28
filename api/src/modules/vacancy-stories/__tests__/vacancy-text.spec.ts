@@ -68,7 +68,7 @@ describe('vacancy-text', () => {
   it('vacancyFields junta tudo e os valores esperados', () =>
     expect(vacancyFields(vac({ title: 'Garçom', amountInCents: 15000, startTime: '2026-10-31T21:00:00Z', endTime: '2026-11-01T02:00:00Z', city: 'Campinas', contractorName: 'COCO BAMBU' })))
       .toEqual({ funcao: 'Garçom', estabelecimento: 'Coco Bambu', data: 'Sáb, 31/10', horario: '18h às 23h', valor: 'R$ 150', cidade: 'Campinas',
-        expected: { cents: 15000, day: 31, month: 10, startMin: 1080, endMin: 1380 } }));
+        expected: { cents: 15000, day: 31, month: 10, weekday: 6, startMin: 1080, endMin: 1380 } }));
   it('M7: serviceType com nome do protótipo do objeto ("constructor", "__proto__") não devolve o que está no protótipo', () => {
     const long = 'Uma função com um título comprido demais para a arte';
     expect(cleanFunction(long, 'constructor')).toBe('Constructor');

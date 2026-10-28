@@ -143,7 +143,7 @@ export function vacancyFields(v: FreelaVacancy): VacancyFields {
   const s = spParts(v.startTime);
   const e = spParts(v.endTime);
   const cents = v.amountInCents ?? 0;
-  const expected: ExpectedValues = { cents, day: s.day, month: s.month, startMin: s.minutes, endMin: e.minutes };
+  const expected: ExpectedValues = { cents, day: s.day, month: s.month, weekday: s.weekday, startMin: s.minutes, endMin: e.minutes };
   return {
     funcao: cleanFunction(v.title, v.serviceType),
     estabelecimento: cleanEstablishment(v.contractorName),

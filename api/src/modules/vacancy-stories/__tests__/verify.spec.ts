@@ -8,7 +8,7 @@ const TEMPLATE = ['freeLa serviços', 'VAGA', 'AUXILIAR DE LIMPEZA', 'FREELANCER
   'Ver vaga:', 'https://www.freelaservicosapp.com.br//freelancer/vagas/fdfa4ef5-d856-4be4-943c-6c0988c3e106', 'Frutá', 'FROZEN',
   'Baixe nosso app', 'Google Play', 'App Store'];
 const F = { funcao: 'Garçom', estabelecimento: 'Coco Bambu', data: 'Sáb, 31/10', horario: '18h às 23h', valor: 'R$ 150', cidade: 'Campinas',
-  expected: { cents: 15000, day: 31, month: 10, startMin: 1080, endMin: 1380 } };
+  expected: { cents: 15000, day: 31, month: 10, weekday: 6, startMin: 1080, endMin: 1380 } };
 const good: ArtRead = { textos: ['VAGA FREELA', 'GARÇOM', 'Coco Bambu', 'Sáb, 31/10', '18:00 às 23:00', 'Campinas', 'Valor para o freela', 'R$ 150,00'],
   funcao: 'GARÇOM', estabelecimento: 'Coco Bambu', data: '31/10', inicio: '18:00', fim: '23h', valor: 'R$ 150,00', cidade: 'CAMPINAS' };
 
@@ -43,6 +43,24 @@ describe('conferência da arte', () => {
   });
   it('estabelecimento: reprova se aparece quando devia ter saído', () =>
     expect(compareArt(good, { ...F, estabelecimento: null }, TEMPLATE).fields.find((x) => x.key === 'estabelecimento')!.ok).toBe(false));
+  it('I3: dia da semana lido na data tem de ser o da vaga ("Sex, 31/10" num sábado reprova); sem dia da semana, só a data conta', () => {
+    const data = (d: string) => compareArt({ ...good, data: d }, F, TEMPLATE).fields.find((x) => x.key === 'data')!.ok;
+    expect(data('Sex, 31/10')).toBe(false);
+    expect(data('SEXTA-FEIRA 31/10')).toBe(false);
+    expect(data('Sáb, 31/10')).toBe(true);
+    expect(data('SÁBADO, 31/10')).toBe(true);
+    expect(data('31/10')).toBe(true);
+    const r = compareArt({ ...good, data: 'Dom, 31/10' }, F, TEMPLATE);
+    expect(r.ok).toBe(false);
+    expect(r.hint).toMatch(/data/);
+  });
+  it('I3: telefone, e-mail ou sequência de 11/14 dígitos em qualquer texto reprova (também na reserva); valor, data e horário não', () => {
+    for (const t of ['(11) 97177-7563', 'Ligue 11 971777563', '97177-7563', 'vagas@bar.com.br', 'CPF 123.456.789-09', 'CNPJ 12.345.678/0001-90', '12345678901'])
+      expect(compareArt({ ...good, textos: [...good.textos, t] }, F, []).forbidden).toEqual([t]);
+    expect(compareArt({ ...good, textos: [...good.textos, '(11) 97177-7563'] }, F, [], { forbiddenOnly: true }).ok).toBe(false);
+    for (const t of ['R$ 1.500,00 · 31/10 · 18h às 23h', 'Sáb, 31/10/2026', '18:00 às 23:00', 'CEP 13.299-600', '@freela'])
+      expect(compareArt({ ...good, textos: [...good.textos, t] }, F, []).forbidden).toEqual([]);
+  });
   it('reserva: só texto proibido conta', () => expect(compareArt({ ...good, inicio: null, valor: null }, F, TEMPLATE, { forbiddenOnly: true }).ok).toBe(true));
   it('parsers', () => {
     expect(parseCents('R$ 1.500,00')).toBe(150000); expect(parseCents('R$150')).toBe(15000); expect(parseCents('cento e cinquenta')).toBeNull();

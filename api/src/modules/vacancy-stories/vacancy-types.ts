@@ -18,6 +18,8 @@ export type ExpectedValues = {
   cents: number;
   day: number;
   month: number;
+  /** Dia da semana de Brasília (0 = domingo): "Sex, 29/10" numa quinta reprova (I3). */
+  weekday: number;
   startMin: number;
   endMin: number;
 };

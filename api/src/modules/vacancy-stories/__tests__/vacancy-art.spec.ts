@@ -42,7 +42,7 @@ const fields: VacancyFields = {
   horario: '18h às 23h',
   valor: 'R$ 150',
   cidade: 'Campinas',
-  expected: { cents: 15000, day: 29, month: 10, startMin: 1080, endMin: 1380 },
+  expected: { cents: 15000, day: 29, month: 10, weekday: 4, startMin: 1080, endMin: 1380 },
 };
 
 describe('selos oficiais', () => {
