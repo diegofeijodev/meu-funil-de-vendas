@@ -53,6 +53,9 @@ async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {
   const refs = new RefsService(w.prisma, w.files, assets, w.images);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const gen = new VacancyGeneratorService(w.prisma, w.ai as any, w.images, w.files, assets, refs, w.store, w.feedClient, w.gate);
+  /** Relógio dos leases (a IA falsa pode avançá-lo no meio da geração). */
+  const clock = { t: NOW.getTime() };
+  gen.now = () => clock.t;
   const brand = w.brand({ primary_color: '#c2410c' });
   const key = `brands/${WS_A}/${uuid()}.png`;
   await w.files.put('creative-assets', key, await w.images.encode(w.images.blank(600, 900, 0xffd400ff), true));
@@ -78,7 +81,7 @@ async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {
   const mediaRows = () => w.t['media_assets']!.rows;
   const imageCalls = () => w.ai.image.mock.calls.map((c) => c[1]);
   const readCalls = () => w.ai.json.mock.calls.map((c) => c[1]).filter((r) => r.name === 'vacancy_art_read');
-  return { gen, assets, template, story, settings, row, posts, mediaRows, imageCalls, readCalls };
+  return { gen, clock, assets, template, story, settings, row, posts, mediaRows, imageCalls, readCalls };
 }
 
 describe('VacancyGeneratorService.generateDue', () => {
@@ -362,6 +365,127 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.mediaRows()).toHaveLength(0);
     expect(w.storedFiles().filter((f) => f.includes('media'))).toEqual([]);
     expect(w.t['vacancy_stories']!.rows.find((r) => r.id === r0.id)).toMatchObject({ status: 'cancelled', ig_post_id: null });
+  });
+
+  it('reserva com foto reprovada por texto proibido (foto com placa) → reserva sem foto; no modo sozinho, limpa, vai a ready', async () => {
+    const t = await setup({ settings: { auto_publish: true } });
+    const v = vac();
+    const r0 = await t.story(v);
+    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
+    await w.programArt({ reads: [copied, copied, copied, copied, readFor(v)] });
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+
+    expect(t.imageCalls()).toHaveLength(4);
+    expect(t.readCalls()).toHaveLength(5);
+    const row = t.row(r0.id);
+    expect(row.attempts_log.map((a: { kind: string }) => a.kind)).toEqual(['ai', 'ai', 'ai', 'fallback_photo', 'fallback_plain']);
+    expect(row.attempts_log[3]).toMatchObject({ n: 4, ok: false, forbidden: ['Estrada Joaquim Bueno Neto, 9999'] });
+    expect(row.attempts_log[3].error).toBeUndefined();
+    expect(row.attempts_log[4]).toMatchObject({ n: 5, ok: true, forbidden: [] });
+    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true });
+    const post = t.posts()[0]!;
+    expect(post).toMatchObject({ status: 'ready', ai_provider: 'sistema' });
+    expect(post.creative_brief.vacancy).toMatchObject({ used_fallback: true, requires_approval: false });
+    expect(t.mediaRows()[0]).toMatchObject({ source: 'other', provider: 'sistema' });
+  });
+
+  it('R22: reserva sem foto que a leitura reprova (texto proibido) espera aprovação mesmo no modo sozinho', async () => {
+    const t = await setup({ settings: { auto_publish: true } });
+    const v = vac();
+    const r0 = await t.story(v);
+    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
+    await w.programArt({ reads: [copied, copied, copied, copied, readFor(v, ['www.marca.com.br'])] });
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+
+    const row = t.row(r0.id);
+    expect(row.attempts_log[4]).toMatchObject({ kind: 'fallback_plain', ok: false, forbidden: ['www.marca.com.br'] });
+    const post = t.posts()[0]!;
+    expect(post.status).toBe('pending_approval');
+    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true });
+  });
+
+  it('lease renovado antes de cada chamada da IA e antes da entrega (o relógio anda durante a geração)', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    const seen: Record<string, number> = {};
+    const lease = () => (t.row(r0.id).lease_until as Date).getTime();
+    const baseImage = w.ai.image.getMockImplementation()!;
+    w.ai.image.mockImplementation(async (ws: string, req: unknown) => {
+      seen['image'] = lease();
+      t.clock.t += 10 * MIN;
+      return baseImage(ws, req);
+    });
+    const baseRead = w.jsonBy['vacancy_art_read']!;
+    w.jsonBy['vacancy_art_read'] = (req) => {
+      seen['read'] = lease();
+      t.clock.t += 5 * MIN;
+      return baseRead(req);
+    };
+    const real = t.assets.ingest.bind(t.assets);
+    jest.spyOn(t.assets, 'ingest').mockImplementation(async (i) => {
+      seen['handOff'] = lease();
+      return real(i);
+    });
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+    const at = (m: number) => NOW.getTime() + m * MIN;
+    // Pego às 10h00 (até 10h15); renovado na leitura (10h10 → 10h25) e antes da entrega (10h15 → 10h30).
+    expect(seen).toEqual({ image: at(15), read: at(25), handOff: at(30) });
+    expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', lease_until: null });
+  });
+
+  it('renovação do lease perdida (outro processo pegou a linha): para sem gravar nada e sem post', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    const foreign = new Date(NOW.getTime() + 99 * MIN);
+    const base = w.ai.image.getMockImplementation()!;
+    w.ai.image.mockImplementationOnce(async (ws: string, req: unknown) => {
+      Object.assign(t.row(r0.id), { lease_until: foreign });
+      return base(ws, req);
+    });
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 0, cancelled: 0 });
+    expect(w.ai.json).not.toHaveBeenCalled();
+    expect(t.posts()).toHaveLength(0);
+    expect(t.mediaRows()).toHaveLength(0);
+    expect(t.row(r0.id)).toMatchObject({ status: 'generating', lease_until: foreign, attempts_log: [], wait_reason: null, ai_error_count: 0 });
+  });
+
+  it('falha que não é da IA (arquivo da arte modelo sumiu): espera 10 min com o motivo, sem chamar a IA', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    await w.files.delete('creative-assets', t.template.storage_path);
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 1, cancelled: 0 });
+    expect(t.row(r0.id)).toMatchObject({
+      status: 'waiting', lease_until: null, next_attempt_at: new Date(NOW.getTime() + 10 * MIN), ai_error_count: 0,
+      wait_reason: 'A arte modelo não foi encontrada. Envie a arte modelo de novo em Ajustes.',
+    });
+    expect(w.ai.image).not.toHaveBeenCalled();
+    expect(t.settings().ai_error).toBeNull();
+  });
+
+  it('erro de IA depois de desligarem no meio: a linha fica cancelada e o aviso da IA não é gravado', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    w.ai.image.mockImplementationOnce(async () => {
+      await w.settings.turnOff(WS_A, null);
+      throw new VendorKeyError(NO_CREDIT, 'openai', 'noCredit');
+    });
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 0, cancelled: 0 });
+    expect(t.settings()).toMatchObject({ ai_error: null, ai_error_at: null });
+    expect(t.row(r0.id)).toMatchObject({ status: 'cancelled', skip_reason: DISABLED_REASON, ai_error_count: 0 });
   });
 
   it('modo "postar sozinho": post ready, sem exigir aprovação', async () => {

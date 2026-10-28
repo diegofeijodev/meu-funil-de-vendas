@@ -36,6 +36,8 @@ const TEMPLATE_BUCKET = 'creative-assets';
 const TEMPLATE_MISSING = 'A arte modelo não foi encontrada. Envie a arte modelo de novo em Ajustes.';
 /** Erro de IA sem mensagem pronta (resposta fora do formato, imagem ilegível): o detalhe fica no log. */
 const AI_UNUSABLE = 'A IA devolveu uma resposta que não conseguimos usar.';
+/** Falha que não é da IA e não tem mensagem pronta (banco, disco): o detalhe fica no log. */
+const RETRY_REASON = 'Não conseguimos criar a arte agora. Vamos tentar de novo em alguns minutos.';
 
 export type ArtOrigin = { source: 'chatgpt' | 'gemini' | 'other'; provider: string };
 /** Arte pronta (quadro 1080×1920 JPEG), a conferência da tentativa aceita, todas as tentativas e de onde a imagem veio. */
@@ -60,13 +62,43 @@ export class ArtAiError extends Error {
 export type VacancyGeneratorHooks = {
   /** Limite do dia: devolve até quando a linha espera (início da janela do dia seguinte) se a empresa já atingiu o limite; `null` = pode gerar. */
   capacityWait?: (row: StoryRow, s: SettingsRow, now: Date) => Promise<Date | null>;
-  /** Depois da entrega (modo "postar sozinho" → agenda o post). Falha aqui não desfaz a entrega. */
+  /**
+   * Depois da entrega (modo "postar sozinho" → agenda o post). Decida pelo PRÓPRIO post (`status`/`creative_brief.vacancy.
+   * requires_approval`), não pelo modo da empresa: reserva reprovada pela leitura sai `pending_approval` mesmo no modo sozinho (R22).
+   * Falha aqui não desfaz a entrega.
+   */
   afterHandOff?: (ws: string, postId: string) => Promise<unknown>;
 };
 
 type Outcome = 'handed' | 'waiting' | 'cancelled' | 'lost';
-/** Sinal interno para desfazer a transação da entrega quando a linha não é mais nossa. */
+/** A linha não é mais nossa (desligaram, ou outro processo a pegou depois de o lease vencer): para tudo sem gravar nada. */
 class LeaseLost extends Error {}
+
+/**
+ * Lease da linha durante a geração (molde do `PostLease`): renovado antes de cada chamada da IA e antes da entrega — uma linha pode
+ * passar de 15 min (até 4 imagens e 5 leituras). Renovação perdida → `LeaseLost`. Toda escrita na linha é condicionada a ele.
+ */
+class RowLease {
+  constructor(
+    private readonly prisma: PrismaService,
+    readonly id: string,
+    public until: Date,
+    private readonly clock: () => number,
+  ) {}
+
+  async renew(): Promise<void> {
+    const next = new Date(this.clock() + LEASE_MS);
+    const got = await this.prisma.vacancy_stories.updateMany({ where: { id: this.id, status: 'generating', lease_until: this.until }, data: { lease_until: next } });
+    if (!got.count) throw new LeaseLost();
+    this.until = next;
+  }
+
+  /** Grava só se a linha ainda é nossa (`generating` com o nosso `lease_until`). */
+  async write(data: Prisma.vacancy_storiesUpdateManyMutationInput): Promise<boolean> {
+    const r = await this.prisma.vacancy_stories.updateMany({ where: { id: this.id, status: 'generating', lease_until: this.until }, data });
+    return r.count > 0;
+  }
+}
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 const noPeriod = (s: string) => s.trim().replace(/[.\s]+$/, '');
@@ -97,6 +129,8 @@ export class VacancyGeneratorService {
   private readonly logger = new Logger(VacancyGeneratorService.name);
   /** Ganchos da Task 10 (trocados pelo `VacancySchedulerService` no `onModuleInit`). */
   readonly hooks: VacancyGeneratorHooks = {};
+  /** Relógio dos leases (o `now` da rodada só escolhe as candidatas); os testes trocam. */
+  now: () => number = () => Date.now();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -152,62 +186,67 @@ export class VacancyGeneratorService {
         out.waiting += r.count;
         continue;
       }
-      const lease = new Date(now.getTime() + LEASE_MS);
-      const got = await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { status: 'generating', lease_until: lease, wait_reason: null } });
+      // O lease conta do relógio de agora (a 2ª linha da rodada começa depois da 1ª), não do `now` da rodada.
+      const lease = new RowLease(this.prisma, row.id, new Date(this.now() + LEASE_MS), () => this.now());
+      const got = await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { status: 'generating', lease_until: lease.until, wait_reason: null } });
       if (!got.count) continue;
       out.started++;
-      const leased: StoryRow = { ...row, status: 'generating', lease_until: lease, wait_reason: null };
+      const leased: StoryRow = { ...row, status: 'generating', lease_until: lease.until, wait_reason: null };
       let r: Outcome;
       try {
-        r = await this.generateOne(leased, s, now);
+        r = await this.generateOne(leased, lease, s, now);
       } catch (e) {
-        // Falha que não é da IA (arte modelo sumiu, banco, disco): solta a linha e tenta de novo daqui a 10 min.
-        this.logger.error(`[vagas] ${ws}: geração da linha ${row.id} falhou: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
-        r = (await this.release(leased, { status: 'waiting', lease_until: null, next_attempt_at: new Date(now.getTime() + RETRY_MS) })) ? 'waiting' : 'lost';
+        if (e instanceof LeaseLost) r = 'lost';
+        else {
+          // Falha que não é da IA (arte modelo sumiu, banco, disco): solta a linha com o motivo e tenta de novo daqui a 10 min.
+          this.logger.error(`[vagas] ${ws}: geração da linha ${row.id} falhou: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
+          const reason = errMessage(e, RETRY_REASON);
+          r = (await lease.write({ status: 'waiting', lease_until: null, next_attempt_at: new Date(now.getTime() + RETRY_MS), wait_reason: reason })) ? 'waiting' : 'lost';
+        }
       }
       if (r !== 'lost') out[r]++;
     }
     return out;
   }
 
-  /** Escrita condicionada ao lease: só vale se a linha ainda é nossa (`generating` com o mesmo `lease_until`). */
-  private async release(row: StoryRow, data: Prisma.vacancy_storiesUpdateManyMutationInput): Promise<boolean> {
-    const r = await this.prisma.vacancy_stories.updateMany({ where: { id: row.id, status: 'generating', lease_until: row.lease_until }, data });
-    return r.count > 0;
-  }
-
-  private async generateOne(row: StoryRow, s: SettingsRow, now: Date): Promise<Outcome> {
+  /** Uma linha com o lease na mão. `LeaseLost` (renovação perdida) sobe para o `generateDue`, que conta como perdida. */
+  private async generateOne(row: StoryRow, lease: RowLease, s: SettingsRow, now: Date): Promise<Outcome> {
     let v: FreelaVacancy | null;
     try {
       v = await this.feed.byId(row.external_id);
     } catch (e) {
       // Vitrine fora do ar: não é culpa da vaga nem da IA — volta a esperar, sem gastar nada.
       this.logger.warn(`[vagas] ${row.workspace_id}: vitrine fora ao conferir ${row.external_id}: ${e instanceof Error ? e.message : String(e)}`);
-      return (await this.release(row, { status: 'waiting', lease_until: null, next_attempt_at: new Date(now.getTime() + RETRY_MS) })) ? 'waiting' : 'lost';
+      return (await lease.write({ status: 'waiting', lease_until: null, next_attempt_at: new Date(now.getTime() + RETRY_MS) })) ? 'waiting' : 'lost';
     }
-    if (!v) return (await this.release(row, { status: 'cancelled', skip_reason: VACANCY_CLOSED_REASON, lease_until: null })) ? 'cancelled' : 'lost';
+    if (!v) return (await lease.write({ status: 'cancelled', skip_reason: VACANCY_CLOSED_REASON, lease_until: null })) ? 'cancelled' : 'lost';
     const fp = fingerprint(v);
     if (fp !== row.fingerprint) {
       // A vaga mudou desde a triagem: a arte sai com os dados novos.
       const starts = new Date(v.startTime);
-      if (!(await this.release(row, { snapshot: json(v), fingerprint: fp, starts_at: starts }))) return 'lost';
+      if (!(await lease.write({ snapshot: json(v), fingerprint: fp, starts_at: starts }))) return 'lost';
       row = { ...row, snapshot: v as unknown as StoryRow['snapshot'], fingerprint: fp, starts_at: starts };
     }
     let art: ArtResult;
     try {
-      art = await this.makeArt(row.workspace_id, s, vacancyFields(v));
+      // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado).
+      art = await this.makeArt(row.workspace_id, s, vacancyFields(v), () => lease.renew());
     } catch (e) {
       if (!(e instanceof ArtAiError)) throw e;
-      return (await this.recordAiError(row, e, now)) ? 'waiting' : 'lost';
+      return (await this.recordAiError(row, lease, e, now)) ? 'waiting' : 'lost';
     }
-    return (await this.handOff(row, s, art, v)) === HANDOFF_LOST ? 'lost' : 'handed';
+    await lease.renew();
+    return (await this.handOff({ ...row, lease_until: lease.until }, s, art, v)) === HANDOFF_LOST ? 'lost' : 'handed';
   }
 
-  /** D9: linha volta a esperar 5/15/45 min com o motivo; a configuração guarda a última falha para o aviso vermelho. */
-  private async recordAiError(row: StoryRow, e: ArtAiError, now: Date): Promise<boolean> {
+  /**
+   * D9: linha volta a esperar 5/15/45 min com o motivo; a configuração guarda a última falha para o aviso vermelho (só se a linha
+   * ainda era nossa — desligaram no meio = nada muda).
+   */
+  private async recordAiError(row: StoryRow, lease: RowLease, e: ArtAiError, now: Date): Promise<boolean> {
     const n = row.ai_error_count + 1;
     const wait = AI_BACKOFF_MIN[Math.min(n - 1, AI_BACKOFF_MIN.length - 1)]!;
-    const ok = await this.release(row, {
+    const ok = await lease.write({
       status: 'waiting',
       lease_until: null,
       ai_error_count: n,
@@ -215,7 +254,7 @@ export class VacancyGeneratorService {
       wait_reason: `A IA não conseguiu criar a arte: ${noPeriod(e.message)}.`,
       attempts_log: json(e.attempts),
     });
-    await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: e.message, ai_error_at: now } });
+    if (ok) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: e.message, ai_error_at: now } });
     return ok;
   }
 
@@ -225,8 +264,8 @@ export class VacancyGeneratorService {
    * Arte do story: até 3 tentativas da IA com o modelo como referência, cada uma encaixada no quadro 1080×1920 e conferida pela
    * leitura às cegas (só a parte da arte, D3). Reprovou 3 vezes → reserva com foto da IA (conferida só por texto proibido); foto com
    * erro de IA ou reprovada → reserva sem foto (todo texto é do sistema; aceita mesmo se a leitura falhar). Erro da IA antes de
-   * existir arte aprovada ou de reserva → `ArtAiError`. `onStep` avisa a etapa (a prévia mostra); as tentativas da reserva seguem a
-   * numeração (4 = com foto, 5 = sem foto).
+   * existir arte aprovada ou de reserva → `ArtAiError`. `onStep` vem antes de cada chamada da IA (a prévia mostra a etapa; a geração
+   * renova o lease) e um erro dele sobe como está; as tentativas da reserva seguem a numeração (4 = com foto, 5 = sem foto).
    */
   async makeArt(
     ws: string,
@@ -365,8 +404,10 @@ export class VacancyGeneratorService {
     if (!row.lease_until || !(await this.prisma.vacancy_stories.count({ where: ours }))) return HANDOFF_LOST;
     const f = vacancyFields(v);
     const theme = `Vaga · ${f.funcao} · ${f.estabelecimento ?? f.cidade} · ${shortDay(v.startTime)}`;
-    // O modo pode ter mudado durante a geração: vale o de agora.
-    const auto = (await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { auto_publish: true } }))?.auto_publish ?? s.auto_publish;
+    // O modo pode ter mudado durante a geração: vale o de agora. Reserva que a leitura reprovou (texto proibido) nunca vai ao ar
+    // sozinha: espera aprovação mesmo no modo "postar sozinho" (R22).
+    const autoMode = (await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { auto_publish: true } }))?.auto_publish ?? s.auto_publish;
+    const auto = autoMode && !(art.usedFallback && !art.check.ok);
     const asset = await this.assets.ingest({
       workspaceId: ws, kind: 'image', targetFormat: 'ig_story', normalize: false, source: art.origin.source, provider: art.origin.provider,
       bytes: art.bytes, mime: 'image/jpeg', title: theme, brandId: s.brand_id,
