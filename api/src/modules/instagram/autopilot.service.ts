@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AutoCalendarService } from './auto-calendar.service';
 import { ContentService } from './content.service';
@@ -18,7 +18,9 @@ const pillarName = (p: any) => (typeof p === 'string' ? p : String(p?.name ?? p?
  * - optimize (segunda): ajusta horários e pesos dos pilares com base nos últimos 14 dias.
  */
 @Injectable()
-export class AutopilotService {
+export class AutopilotService implements OnModuleInit {
+  private readonly logger = new Logger(AutopilotService.name);
+
   constructor(
     private readonly store: IgStore,
     private readonly content: ContentService,
@@ -27,6 +29,12 @@ export class AutopilotService {
     private readonly autoCalendar: AutoCalendarService,
     @Optional() @Inject(PUBLISH_ORIGIN_GUARDS) private readonly guards: PublishOriginGuard | null = null,
   ) {}
+
+  /** Prova da injeção na subida (o smoke confere o log): sem a guarda, aprovar um story de vaga não o agendaria. */
+  onModuleInit() {
+    if (this.guards) this.logger.log('guarda de origem das vagas ativa no piloto automático');
+    else this.logger.warn('sem guarda de origem: story de vaga aprovado não seria agendado');
+  }
 
   private get prisma() {
     return this.store.prisma;

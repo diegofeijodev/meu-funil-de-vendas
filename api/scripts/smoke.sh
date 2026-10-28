@@ -1325,6 +1325,52 @@ check "publicações: só as do workspace (a outra empresa não vê)" "0" "$(cur
 PSQL "DELETE FROM publishing_jobs WHERE target LIKE 'smoke9a%'" >/dev/null
 check "limpeza Task 9a: sem chaves de IA nem publicações de teste" "0,0" "$(PSQL "SELECT count(*) FROM app_credentials WHERE key LIKE 'AI\\_%\\_KEY:$WID'"),$(PSQL "SELECT count(*) FROM publishing_jobs WHERE target LIKE 'smoke9a%'")"
 
+echo "── Stories das vagas do Freela (ajustes, arte modelo, ligar, cron, lista, desligar) ──"
+# A API sobe com VACANCY_STORIES_WORKSPACE_IDS='*' e FREELA_PUBLIC_API_URL=http://127.0.0.1:3097/freela (fake-providers: 3 vagas —
+# de teste, sem valor e uma válida daqui a 3 dias). Empresa nova (sem marca) só para esta seção; some com o dono na limpeza.
+if [ -z "${MF_API_LOG:-}" ]; then
+  check "vagas: log da API disponível (rode pelo api/scripts/smoke-capped.sh, que exporta MF_API_LOG)" "definido" "ausente"
+else
+  # `@Optional()`: sem a guarda injetada o Instagram publicaria story de vaga sem conferir a vaga — a subida registra as duas injeções.
+  check "vagas: guarda de origem injetada na publicação e no piloto automático (log da subida)" "2" "$(grep -c 'guarda de origem das vagas ativa' "$MF_API_LOG")"
+fi
+W26=$(curl -s -X POST $API/v1/workspaces -H "$H" -H "$J" -d '{"name":"Empresa Vagas Smoke"}' | jq -r .id)
+VS=$API/v1/workspaces/$W26/vacancy-stories
+check "vagas: GET settings 200, desligado, sem arte modelo" "200,false,null" "$(curl -s -o /dev/null -w '%{http_code}' $VS/settings -H "$H"),$(curl -s $VS/settings -H "$H" | jq -r '"\(.enabled),\(.template)"')"
+check "vagas: estranho não lê (403)" "403" "$(curl -s -o /dev/null -w '%{http_code}' $VS/settings -H "$HD")"
+check "vagas: ligar sem arte modelo → 400 com o texto" "400,Envie a arte modelo para poder ligar." "$(cc POST $VS/enable "$H" '{}'),$(cs POST $VS/enable "$H" '{}' | jq -r .error.message)"
+(cd "$(dirname "$0")/.." && node -e "const {Jimp}=require('jimp');new Jimp({width:600,height:900,color:0xffd400ff}).getBuffer('image/png').then((b)=>process.stdout.write(b))") > /tmp/mf-smoke-vaga.png
+check "vagas: arte modelo sem marca na empresa → 400 (D1)" "Cadastre uma marca em Marcas antes de enviar a arte modelo." "$(curl -s -X POST $VS/template -H "$H" -F "file=@/tmp/mf-smoke-vaga.png;type=image/png" | jq -r .error.message)"
+B26=$(curl -s -X POST $API/v1/workspaces/$W26/brands -H "$H" -H "$J" -d '{"name":"Marca Vagas Smoke"}' | jq -r .id)
+TPL=$(curl -s -w '\n%{http_code}' -X POST $VS/template -H "$H" -F "file=@/tmp/mf-smoke-vaga.png;type=image/png")
+if [ -n "${AI_GATEWAY_URL:-}" ]; then
+  check "vagas: arte modelo PNG 600×900 → 200 (template salvo)" "200,true" "$(echo "$TPL" | tail -1),$(echo "$TPL" | head -1 | jq -r '.template.asset_id != null')"
+else
+  # Sem gateway de IA (o smoke sobe assim): a leitura dos textos falha → 502 com o erro da IA e nada fica gravado (linha e arquivo
+  # desfeitos). O caminho 200 é coberto pelo browser-check (gateway falso na 3099). A arte é então semeada como o envio gravaria.
+  check "vagas: arte modelo PNG 600×900 sem IA → 502 com o erro da IA; nada gravado" "502,AI_NOT_CONFIGURED,0,0" "$(echo "$TPL" | tail -1),$(echo "$TPL" | head -1 | jq -r .error.code),$(PSQL "SELECT count(*) FROM brand_assets WHERE workspace_id='$W26' AND kind='vacancy_template'"),$(PSQL "SELECT count(*) FROM vacancy_story_settings WHERE workspace_id='$W26' AND template_asset_id IS NOT NULL")"
+  UPV=$(curl -s -X POST "$API/v1/workspaces/$W26/files?kind=brands" -H "$H" -F "file=@/tmp/mf-smoke-vaga.png;type=image/png")
+  KV=$(echo "$UPV" | jq -r .key)
+  TA=$(PSQL "INSERT INTO brand_assets(workspace_id,brand_id,kind,name,url,storage_path) VALUES ('$W26','$B26','vacancy_template','modelo.png','$(echo "$UPV" | jq -r .url)','$KV') RETURNING id" | head -1)
+  PSQL "UPDATE vacancy_story_settings SET template_asset_id='$TA', brand_id='$B26', template_bg='#ffd400' WHERE workspace_id='$W26'" >/dev/null
+  check "vagas: arte modelo semeada aparece no settings" "$TA" "$(curl -s $VS/settings -H "$H" | jq -r .template.asset_id)"
+fi
+check "vagas: ligar com arte modelo → 200, ligado" "200,true" "$(cc POST $VS/enable "$H" '{}'),$(curl -s $VS/settings -H "$H" | jq -r .enabled)"
+VCRON=$API/api/public/cron/vacancy-stories
+VTOK="smoke-vagas-cron-$SUF"; TV=$(PSQL "SELECT now()")
+check "vagas: cron sem segredo → 401" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $VCRON -H "$J" -d '{}')"
+PSQL "INSERT INTO cron_tokens(name,token) VALUES ('vacancy-stories','$VTOK') ON CONFLICT (name) DO UPDATE SET token=EXCLUDED.token" >/dev/null
+VC=$(curl -s -w '\n%{http_code}' -X POST $VCRON -H "x-cron-secret: $VTOK" -H "$J" -d '{}')
+check "vagas: cron com segredo → 200 (consulta sem erro) e heartbeat" "200,false,1" "$(echo "$VC" | tail -1),$(echo "$VC" | head -1 | jq -r '.poll | has("error")'),$(PSQL "SELECT count(*) FROM cron_heartbeats WHERE name='vacancy-stories' AND last_run_at >= '$TV'")"
+check "vagas: as 3 vagas da vitrine viraram linhas" "3" "$(curl -s "$VS/stories?filter=all" -H "$H" | jq length)"
+check "vagas: stories?filter=not_posted → 2 (teste e sem valor), com os motivos" "2|A vaga não tem valor informado.|Parece vaga de teste: o nome da empresa tem “teste”." "$(curl -s "$VS/stories?filter=not_posted" -H "$H" | jq -r '[length] + ([.[].reason] | sort) | join("|")')"
+DIS=$(curl -s -w '\n%{http_code}' -X POST $VS/disable -H "$H" -H "$J" -d '{}')
+check "vagas: desligar → 200 { ok: true }, desligado" "200,true,false" "$(echo "$DIS" | tail -1),$(echo "$DIS" | head -1 | jq -r .ok),$(curl -s $VS/settings -H "$H" | jq -r .enabled)"
+[ -n "${KV:-}" ] && curl -s -o /dev/null -X DELETE "$API/v1/workspaces/$W26/files?key=$KV" -H "$H"
+PSQL "DELETE FROM cron_tokens WHERE name='vacancy-stories' AND token='$VTOK'" >/dev/null
+PSQL "DELETE FROM cron_heartbeats WHERE name='vacancy-stories' AND last_run_at >= '$TV'" >/dev/null
+rm -f /tmp/mf-smoke-vaga.png
+
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
 check "refresh ok" "$EMAIL" "$(echo "$R" | jq -r .user.email)"

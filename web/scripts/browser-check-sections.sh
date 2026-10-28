@@ -4,7 +4,7 @@
 # sempre via `scripts/run-capped.sh 2400`, e derruba tudo pelos PIDs (trap EXIT). Os grupos rodam em sequência e os totais são somados.
 #
 #   bash web/scripts/browser-check-sections.sh            # todos os grupos (de qualquer diretório)
-#   bash web/scripts/browser-check-sections.sh 4 6        # só os grupos 4 (instagram) e 6 (crm)
+#   bash web/scripts/browser-check-sections.sh 4 6        # só os grupos 4 (instagram e vagas) e 6 (crm)
 #   BC_NO_AI=1 bash web/scripts/browser-check-sections.sh 2 3   # (campanhas e estudio) API sem gateway de IA (caminho "IA não configurada")
 #
 # Se um grupo morrer com 137 (estourou o teto), NÃO aumente o teto: reparta o grupo (GRUPOS abaixo).
@@ -18,7 +18,7 @@ GRUPOS=(
   "shell,overview,marcas,config,agencia"
   "campanhas"
   "estudio"
-  "instagram"
+  "instagram,vagas"
   "meta"
   "crm"
   "canais,integracoes"

@@ -13,7 +13,7 @@ MF_LOGS_OWNED=0   # 1 só se este script criou o diretório (mktemp): só então
 if [ -z "${MF_LOGS:-}" ]; then MF_LOGS=$(mktemp -d "${TMPDIR:-/tmp}/mf-stack-XXXXXX"); MF_LOGS_OWNED=1; fi
 
 # ── Ambiente da API em teste (todas as exigências dos scripts atuais, num lugar só) ──────────────
-# Provedores falsos: Graph da Meta (3098), Z-API/Resend/Cal.com (3097), gateway de IA e listagem de modelos (3099).
+# Provedores falsos: Graph da Meta (3098), Z-API/Resend/Cal.com/vitrine do Freela (3097), gateway de IA e listagem de modelos (3099).
 mf_api_env() {
   export META_APP_SECRET=${META_APP_SECRET:-smoke-meta-secret}
   export META_GRAPH_BASE_URL=${META_GRAPH_BASE_URL:-http://127.0.0.1:3098/v24.0}
@@ -29,6 +29,9 @@ mf_api_env() {
   # o browser-check/smoke assinam os links de descadastro com este segredo (mesmo padrão de desenvolvimento da API)
   export UNSUBSCRIBE_SECRET=${UNSUBSCRIBE_SECRET:-meu-funil-dev-unsubscribe-secret-not-for-production}
   export CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3025}
+  # stories das vagas: vitrine falsa do Freela (fake-providers, 3097) e todas as empresas liberadas ('*' só fora de produção)
+  export FREELA_PUBLIC_API_URL=${FREELA_PUBLIC_API_URL:-http://127.0.0.1:3097/freela}
+  export VACANCY_STORIES_WORKSPACE_IDS="${VACANCY_STORIES_WORKSPACE_IDS:-*}"
   export SCHEDULER_ENABLED=false   # jobs rodam só pelas rotas /api/public/cron/* (uma instância, sem agendador no teste)
 }
 

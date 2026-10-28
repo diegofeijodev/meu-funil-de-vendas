@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
@@ -73,7 +73,7 @@ export function fullCaption(post: PostRow) {
  * `sweepStalePublishing` (no início de cada ciclo da fila) leva a `failed` o post `publishing` sem lease vivo e sem job pending/running.
  */
 @Injectable()
-export class PublishingService {
+export class PublishingService implements OnModuleInit {
   private readonly logger = new Logger(PublishingService.name);
   /** Substituível nos testes. */
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -86,6 +86,12 @@ export class PublishingService {
     @Inject(EXTERNAL_FETCH) private readonly http: ExternalFetch,
     @Optional() @Inject(PUBLISH_ORIGIN_GUARDS) private readonly guards: PublishOriginGuard | null = null,
   ) {}
+
+  /** Prova da injeção na subida (o smoke confere o log): `@Optional()` deixaria a guarda nula em silêncio. */
+  onModuleInit() {
+    if (this.guards) this.logger.log('guarda de origem das vagas ativa na publicação');
+    else this.logger.warn('sem guarda de origem: posts de vaga sairiam sem conferir a vaga');
+  }
 
   private get prisma() {
     return this.store.prisma;

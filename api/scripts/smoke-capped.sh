@@ -17,6 +17,8 @@ export BC_NO_AI=1
 # o smoke usa o fake-ai (3099) para chaves e diagnóstico; Graph e provedores do CRM
 mf_start_fakes graph providers ai
 mf_start_api || exit 1
+# o smoke confere no log da subida que a guarda de origem das vagas chegou ao Instagram (injeção @Optional)
+export MF_API_LOG="$MF_LOGS/api.log"
 cd "$ROOT/api" && npm run smoke
 rc=$?
 echo "pico de memória do cgroup: $(mf_peak_mb) MB"

@@ -10,7 +10,7 @@
 //
 //   node scripts/browser-check.mjs
 //   BC_ONLY=marcas,campanhas node scripts/browser-check.mjs     # só essas seções (o login roda sempre)
-//   Seções: shell, overview, marcas, config, agencia, campanhas, estudio, instagram, meta, crm, canais, integracoes,
+//   Seções: shell, overview, marcas, config, agencia, campanhas, estudio, instagram, vagas, meta, crm, canais, integracoes,
 //   navegacao, refresh, sessao. O passeio inteiro NÃO cabe num processo sob o teto de memória: use
 //   `bash web/scripts/browser-check-sections.sh` (sobe fakes + API + web por grupo de seções e soma os totais).
 //   BC_NO_AI=1: API subida SEM gateway de IA → exercita o caminho "IA do app não configurada" (seções de IA).
@@ -241,7 +241,7 @@ await new Promise((resolve) => {
 });
 gateway.on('error', () => {});
 
-const SECOES = ['shell', 'overview', 'marcas', 'config', 'agencia', 'campanhas', 'estudio', 'instagram', 'meta', 'crm', 'canais', 'integracoes', 'navegacao', 'refresh', 'sessao'];
+const SECOES = ['shell', 'overview', 'marcas', 'config', 'agencia', 'campanhas', 'estudio', 'instagram', 'vagas', 'meta', 'crm', 'canais', 'integracoes', 'navegacao', 'refresh', 'sessao'];
 const SELECIONADAS = process.env.BC_ONLY ? new Set(process.env.BC_ONLY.split(',').map((s) => s.trim()).filter(Boolean)) : null;
 if (SELECIONADAS) {
   const desconhecidas = [...SELECIONADAS].filter((s) => !SECOES.includes(s));
@@ -1461,6 +1461,65 @@ try {
   if (fotoProduto?.key) await apiCall('DELETE', `/v1/workspaces/${wsId}/files?key=${encodeURIComponent(fotoProduto.key)}`);
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${marcaIg.id}`);
   check('limpeza do Instagram: nada sobrou do teste', igPsql(`SELECT count(*) FROM ig_posts WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM ig_auto_runs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0' && igPsql(`SELECT count(*) FROM publishing_jobs WHERE workspace_id='${wsId}' AND created_at >= '${igT0}'`) === '0');
+  });
+
+  await section('vagas', async () => {
+
+  // ── Stories das vagas do Freela: aba Vagas (primeira vez, arte modelo, Ajustes) ──────────────────────────
+  // A API sobe com VACANCY_STORIES_WORKSPACE_IDS='*' (test-stack.sh): a empresa demo tem a aba. A arte modelo é lida pelo gateway falso
+  // (resposta `{}` → sem textos do modelo).
+  console.log('-- Vagas (stories das vagas) --');
+  // Volta a empresa demo à "primeira vez" (rodada abortada deixava arte modelo e a primeira vez nunca aparecia) — antes e depois.
+  const zeraVagas = () => {
+    const chaves = igPsql(`SELECT storage_path FROM brand_assets WHERE workspace_id='${wsId}' AND kind='vacancy_template'`).split('\n');
+    for (const k of chaves.filter((c) => /^brands\/[0-9a-f-]{36}\/[\w.-]+$/.test(c))) {
+      try { rmSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../api/uploads/creative-assets', k), { force: true }); } catch { /* sem o arquivo */ }
+    }
+    igPsql(`DELETE FROM vacancy_stories WHERE workspace_id='${wsId}'`);
+    igPsql(`DELETE FROM vacancy_story_settings WHERE workspace_id='${wsId}'`);
+    igPsql(`DELETE FROM brand_assets WHERE workspace_id='${wsId}' AND kind='vacancy_template'`);
+  };
+  zeraVagas();
+  limpezas.push(zeraVagas);
+  // D1: a arte modelo pede uma marca na empresa (`Marca IG Check %` é varrida no fim da seção).
+  await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: `Marca IG Check Vagas ${Date.now()}`, segment: 'Bar' });
+  const { Jimp } = requireApi('jimp');
+  const modelo = path.join(tmp, 'modelo-vaga.png');
+  writeFileSync(modelo, await new Jimp({ width: 600, height: 900, color: 0xffd400ff }).getBuffer('image/png'));
+
+  await page.goto(`${BASE}/instagram?tab=vagas`);
+  await page.getByRole('heading', { name: 'Vagas do Freela nos stories' }).waitFor({ timeout: 30000 });
+  check('vagas: aba Vagas ativa em ?tab=vagas', (await page.getByRole('tab', { name: /Vagas/ }).getAttribute('aria-selected')) === 'true');
+  check('vagas: primeira vez com os 3 passos e o interruptor travado', tem(await corpo(), 'Envie a arte modelo') && (await page.locator('#vac-first-switch').isDisabled()));
+  if (!aiLive) {
+    console.log('  (sem gateway de IA: envio da arte modelo pulado — a leitura dos textos precisa da IA)');
+    return;
+  }
+  await page.locator('section[aria-labelledby="vac-first-title"] input[type="file"]').setInputFiles(modelo);
+  await page.getByText('Arte modelo salva. Gere uma prévia para ver como fica com uma vaga de verdade.').waitFor({ timeout: 30000 });
+  ok('vagas: arte modelo enviada → "Arte modelo salva…"');
+  const salva = (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body;
+  check('vagas: API guardou a arte modelo (em pé, sem textos do modelo)', !!salva?.template?.asset_id && salva.template.landscape === false && salva.template.texts_count === 0, JSON.stringify(salva?.template));
+
+  // Ajustes: abre (se ainda fechado), sobe o máximo por dia e salva.
+  const ajustes = page.locator('button[aria-controls="vac-settings-body"]');
+  await ajustes.waitFor({ timeout: 15000 });
+  if ((await ajustes.getAttribute('aria-expanded')) !== 'true') await ajustes.click();
+  const corpoAjustes = page.locator('#vac-settings-body');
+  await corpoAjustes.getByText('Máximo de stories de vagas por dia').waitFor({ timeout: 15000 });
+  const capAntes = salva.daily_cap;
+  await corpoAjustes.getByRole('button', { name: 'Aumentar' }).click();
+  await corpoAjustes.getByRole('button', { name: 'Salvar ajustes' }).click();
+  await page.getByText('Ajustes salvos.').waitFor({ timeout: 15000 });
+  const depois = (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body;
+  check('vagas: "Ajustes salvos." e o máximo por dia subiu 1', depois?.daily_cap === capAntes + 1, `${capAntes} → ${depois?.daily_cap}`);
+
+  // "Postar sozinho" pede confirmação; "Continuar aprovando" fecha sem mudar nada.
+  await corpoAjustes.getByRole('radio', { name: 'Postar sozinho' }).click();
+  await page.getByText('Postar sem sua aprovação?').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Continuar aprovando' }).click();
+  await page.getByText('Postar sem sua aprovação?').waitFor({ state: 'hidden', timeout: 15000 });
+  check('vagas: "Postar sozinho" abre a confirmação e "Continuar aprovando" mantém a aprovação', (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body?.auto_publish === false);
   });
 
   await section('meta', async () => {

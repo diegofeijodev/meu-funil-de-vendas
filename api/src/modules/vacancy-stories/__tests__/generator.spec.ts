@@ -9,7 +9,7 @@ import { ArtAiError, VacancyGeneratorService } from '../vacancy-generator.servic
 import { photoPrompt, readPrompt } from '../vacancy-prompts';
 import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
 import { fingerprint, hourLabel, vacancyFields } from '../vacancy-text';
-import type { ArtRead, FreelaVacancy } from '../vacancy-types';
+import type { ArtRead, FreelaVacancy, SettingsRow, StoryRow } from '../vacancy-types';
 import { vacancyWorld, type VacancyWorld } from './world';
 
 const NOW = new Date('2026-10-29T13:00:00Z'); // quinta, 10h em Brasília
@@ -74,7 +74,7 @@ async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {
       data: { workspace_id: WS_A, external_id: v.id, snapshot: v, fingerprint: fingerprint(v), starts_at: new Date(v.startTime), status: 'new', ...over },
     });
   };
-  const settings = () => w.t['vacancy_story_settings']!.rows.find((r) => r.workspace_id === WS_A)!;
+  const settings = () => w.t['vacancy_story_settings']!.rows.find((r) => r.workspace_id === WS_A) as SettingsRow;
   const row = (id: string) => w.t['vacancy_stories']!.rows.find((r) => r.id === id)!;
   const posts = () => w.t['ig_posts']!.rows;
   const mediaRows = () => w.t['media_assets']!.rows;
@@ -375,7 +375,7 @@ describe('VacancyGeneratorService.generateDue', () => {
     });
 
     const s = t.settings();
-    const leased = { ...t.row(r0.id), status: 'generating', lease_until: new Date(NOW.getTime() + 15 * MIN) };
+    const leased = { ...t.row(r0.id), status: 'generating', lease_until: new Date(NOW.getTime() + 15 * MIN) } as StoryRow;
     Object.assign(t.row(r0.id), { status: 'generating', lease_until: leased.lease_until });
     const art = await t.gen.makeArt(WS_A, s, vacancyFields(v));
     expect(await t.gen.handOff(leased, s, art, v)).toBe('lost');

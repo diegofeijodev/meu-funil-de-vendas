@@ -101,6 +101,8 @@ Nunca `next build` durante uma tarefa comum (a máquina trava).
 Plano de port **concluído** (Tasks 0 a 9 + onda final + correções da revisão final): API (auth, workspaces, marcas, estúdio criativo, biblioteca de mídia, campanhas,
 Instagram, anúncios/Meta, CRM com canais, SDR, integrações, agendador) e as 25 telas do protótipo, com jest, smoke e browser-check por seções. Contrato: `docs/api-contract.md`.
 
+Stories automáticos das vagas do Freela (out/2026, `api/src/modules/vacancy-stories` + aba Vagas do Instagram): cada vaga nova da vitrine vira um story no estilo da arte modelo, conferido às cegas, só para as empresas de `VACANCY_STORIES_WORKSPACE_IDS` (contrato §26).
+
 Desvios aceitos em relação ao protótipo (decididos nas revisões):
 - Upload de mídia pela API com teto de 100 MB (o protótipo aceitava 500 MB); vídeo do Instagram/Reels e criativos "ugc"/"story" tratados como vídeo; link do CapCut de 10 min.
 - `mcp-run` exige escrita; tokens MCP cifrados no cofre; URIs de retorno do OAuth saem de `PUBLIC_URL` (os cartões mostram o valor exato; passo 4 do Canva com texto novo).

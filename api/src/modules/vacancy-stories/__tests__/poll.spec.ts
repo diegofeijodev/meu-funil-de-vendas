@@ -24,7 +24,7 @@ function setup(list?: string) {
   const w = vacancyWorld({ list });
   const poll = new VacancyPollService(w.prisma, w.feedClient, w.gate, w.settings);
   const settings = (ws = WS_A, over: Record<string, unknown> = {}) => {
-    const row = { workspace_id: ws, enabled: true, enabled_at: ENABLED_AT, template_asset_id: uuid(), cities: [], min_lead_minutes: 120, daily_cap: 10, ...over };
+    const row: Record<string, unknown> = { workspace_id: ws, enabled: true, enabled_at: ENABLED_AT, template_asset_id: uuid(), cities: [], min_lead_minutes: 120, daily_cap: 10, ...over };
     w.t['vacancy_story_settings']!.rows.push(row);
     return row;
   };
