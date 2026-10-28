@@ -214,8 +214,10 @@ export async function composeFallback(
     return { fn, val, when, where, est, fnH, valH, whenH, whereH, estH, stack };
   };
   let m = measure(1);
-  const room = free - (!i.photo && logo ? (logo.bitmap.height as number) + GAP : 0);
-  for (let k = 0.96; m.stack > room && k > 0.2; k *= 0.96) m = measure(k);
+  // Válido se a foto cabe (>= 200 px, logo sobre ela) ou, sem foto, se a pilha + a logo no topo cabem em 250–1350.
+  const logoReserve = logo ? (logo.bitmap.height as number) + GAP : 0;
+  const fits = (x: { stack: number }) => (!!i.photo && free - x.stack - GAP >= 200) || x.stack <= free - logoReserve;
+  for (let k = 0.96; !fits(m) && k > 0.2; k *= 0.96) m = measure(k);
   const { fn, val, when, where, est, fnH, valH, whenH, whereH, estH, stack } = m;
 
   // Foto ocupa o que sobra em cima (até 550 px); sem espaço para ao menos 200 px, os cartões ficam sozinhos.

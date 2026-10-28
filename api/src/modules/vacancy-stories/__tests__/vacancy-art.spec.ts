@@ -188,4 +188,14 @@ describe('composeFallback', () => {
     expect(anyIn(img, 0, STORY_W, 0, ART_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
     expect(anyIn(img, 0, STORY_W, ART_BOX.bottom + 1, FOOTER_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
   });
+
+  it('foto + logo de 120 px + textos longos: a foto some, a logo vai ao topo e nada passa de y 1350', async () => {
+    const photo = await solid(800, 600, 0x2e7d32ff);
+    const logo = await images.encode(images.blank(300, 120, 0x6a1b9aff), true);
+    const long = { ...fields, funcao: 'AUXILIAR DE SERVIÇOS GERAIS E LIMPEZA PESADA', estabelecimento: 'Restaurante e Churrascaria Fogo de Chão Unidade Centro', cidade: 'São José do Rio Preto' };
+    const img = await images.read(await composeFallback(images, { ...base, fields: long, photo, logo }));
+    expect(anyIn(img, 0, STORY_W, 0, ART_BOX.top - 8, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
+    expect(anyIn(img, 0, STORY_W, ART_BOX.bottom + 1, FOOTER_BOX.top - 1, (p) => !near(p, [0xfd, 0xe6, 0x8a]))).toBe(false);
+    expect(anyIn(img, 0, STORY_W, 1390, 1470, isDark)).toBe(true); // rodapé intacto
+  });
 });
