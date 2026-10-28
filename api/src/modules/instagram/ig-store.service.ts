@@ -11,6 +11,10 @@ export class RateLimited extends Error {}
 export class PublishClaimLost extends Error {}
 /** Container ainda em processamento na Meta: a fila tenta de novo em 2 min sem contar tentativa. */
 export class ContainerPending extends Error {}
+/** A fonte da origem do post (ex.: vitrine do Freela) está fora do ar: não publica agora; a fila tenta de novo em 10 min sem contar tentativa. */
+export class OriginUnavailable extends Error {}
+/** O post não pôde ser pego para publicar (não aprovado): nada mudou nele. A fila trata como guardrail. */
+export class ClaimRefused extends Guardrail {}
 
 /**
  * Mensagem para o usuário/log (o `errMsg` do protótipo). Passam: erros HTTP de domínio, as classes acima, `MetaError`
@@ -103,9 +107,11 @@ export class IgStore {
 
   /**
    * Exigência de aprovação do post: a programação automática decide pelo próprio modo
-   * ("publish" publica sozinho, "approval" espera aprovação); sem ela, vale o plano.
+   * ("publish" publica sozinho, "approval" espera aprovação); sem ela, vale o plano. Story de vaga: o modo gravado no post
+   * (`creative_brief.vacancy.requires_approval`).
    */
   async approvalRequired(post: PostRow): Promise<boolean | null> {
+    if (post.source === 'vacancy') return post.creative_brief?.vacancy?.requires_approval === true;
     if (post.automation === 'publish') return false;
     if (post.automation === 'approval') return true;
     if (!post.plan_id) return null;

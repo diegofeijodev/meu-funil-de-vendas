@@ -506,6 +506,9 @@ export class MediaGenerationService {
     instructions?: string,
   ): Promise<{ ok: true; items: number; provider: string; pending?: boolean } | { ok: false; error: string }> {
     const post = await this.store.getPost(postId, workspaceId);
+    // Story de vaga: a arte é do módulo das vagas (modelo + conferência + rodapé), nunca do gerador comum. Vale também para
+    // `regenerate-media`, que chega aqui.
+    if (post.source === 'vacancy') return { ok: false, error: 'Story de vaga: use Refazer a arte na aba Vagas.' };
     const format = post.format as IgFormat;
     const brandId = await this.brandIdOfPost(post);
     const brand = await this.content.brandFor(workspaceId, brandId);

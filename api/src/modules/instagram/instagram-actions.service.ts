@@ -8,11 +8,14 @@ import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
 import { ApproveAutoStrategyDto, CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
 import { Engine } from './ig-types';
-import { IgStore, PublishClaimLost, errText } from './ig-store.service';
+import { ClaimRefused, IgStore, OriginUnavailable, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
 import { computeSlots } from './slots';
+
+/** "Publicar agora" num story de vaga com a vitrine do Freela fora do ar. */
+export const ORIGIN_UNAVAILABLE_MSG = 'Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos.';
 
 /**
  * Corpo das 21 server functions do Instagram (`instagram.functions` + `auto-calendar.functions`) com a autorização no servidor:
@@ -125,12 +128,18 @@ export class InstagramActionsService {
 
   async publishInstagramPost(userId: string, workspaceId: string, postId: string) {
     await this.access.require(userId, workspaceId, 'write');
-    await this.store.getPost(postId, workspaceId);
+    const before = await this.store.getPost(postId, workspaceId);
     try {
       return await this.publishing.publishInstagramPost(postId, workspaceId);
     } catch (e) {
       const msg = errText(e);
-      if (e instanceof PublishClaimLost) return { ok: false as const, sandbox: false, error: msg };
+      // Post já em uso/publicado/cancelado ou não aprovado: a publicação nem começou e nada mudou no post (não vira failed).
+      if (e instanceof PublishClaimLost || e instanceof ClaimRefused) return { ok: false as const, sandbox: false, error: msg };
+      if (e instanceof OriginUnavailable) {
+        // Fonte da origem fora do ar antes de criar o container: o post volta ao status de antes (o claim o pôs em "publishing").
+        await this.store.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: workspaceId, status: 'publishing' }, data: { status: before.status } });
+        return { ok: false as const, sandbox: false, error: ORIGIN_UNAVAILABLE_MSG };
+      }
       await this.store.patchPost(postId, { status: 'failed', last_error: msg, failure_kind: 'publish' });
       return { ok: false as const, sandbox: false, error: msg };
     }

@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AutoCalendarService } from './auto-calendar.service';
 import { ContentService } from './content.service';
 import { fmtDate, PostRow } from './ig-types';
 import { IgStore, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
+import { PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { PublishingService } from './publishing.service';
 
 const PILLAR_STOP = new Set(['de', 'da', 'do', 'e', 'a', 'o', 'para', 'com', 'em', 'dos', 'das']);
@@ -24,6 +25,7 @@ export class AutopilotService {
     private readonly mediaGen: MediaGenerationService,
     private readonly publishing: PublishingService,
     private readonly autoCalendar: AutoCalendarService,
+    @Optional() @Inject(PUBLISH_ORIGIN_GUARDS) private readonly guards: PublishOriginGuard | null = null,
   ) {}
 
   private get prisma() {
@@ -145,9 +147,17 @@ export class AutopilotService {
     return { media, rescheduled };
   }
 
-  /** Chamado quando um post é aprovado: agenda sozinho se o plano está no piloto automático. */
+  /**
+   * Chamado quando um post é aprovado: agenda sozinho se o plano está no piloto automático. Story de vaga: quem agenda é o módulo
+   * das vagas (guarda de origem).
+   */
   async afterApproval(workspaceId: string, postId: string) {
-    const post = await this.prisma.ig_posts.findFirst({ where: { id: postId, workspace_id: workspaceId }, select: { plan_id: true, scheduled_at: true, automation: true } });
+    const post = await this.prisma.ig_posts.findFirst({ where: { id: postId, workspace_id: workspaceId }, select: { plan_id: true, scheduled_at: true, automation: true, source: true } });
+    if (post?.source === 'vacancy') {
+      await this.store.logEvent({ workspace_id: workspaceId, plan_id: null, post_id: postId, kind: 'approval', message: 'Post aprovado.' });
+      await this.guards?.afterApproval?.(workspaceId, postId);
+      return;
+    }
     if (post?.automation) {
       await this.store.logEvent({ workspace_id: workspaceId, plan_id: post.plan_id, post_id: postId, kind: 'approval', message: 'Post aprovado.' });
       await this.publishing.scheduleAutomated(postId);

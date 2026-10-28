@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
-import { ContainerPending, Guardrail, IgStore, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
+import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
+import { PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
 import { dateIssues } from './content-strategy';
@@ -83,6 +84,7 @@ export class PublishingService {
     private readonly store: IgStore,
     private readonly graph: MetaGraphClient,
     @Inject(EXTERNAL_FETCH) private readonly http: ExternalFetch,
+    @Optional() @Inject(PUBLISH_ORIGIN_GUARDS) private readonly guards: PublishOriginGuard | null = null,
   ) {}
 
   private get prisma() {
@@ -247,8 +249,9 @@ export class PublishingService {
       if (cur?.status === 'published') throw new PublishClaimLost('Este post já foi publicado.');
       if (cur?.status === 'generating') throw new PublishClaimLost('A mídia deste post ainda está sendo gerada.');
       if (!cur || cur.status === 'cancelled') throw new PublishClaimLost('Este post foi cancelado.');
-      // idea / pending_approval / rejected…: mesma mensagem do guardrail de aprovação do protótipo.
-      throw new Guardrail('Post não aprovado — publicação bloqueada.');
+      // idea / pending_approval / rejected…: mesma mensagem do guardrail de aprovação do protótipo. ClaimRefused = nada mudou no
+      // post (o "publicar agora" não grava failed); a fila trata como guardrail.
+      throw new ClaimRefused('Post não aprovado — publicação bloqueada.');
     }
     // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha).
     if (!resume) {
@@ -463,8 +466,10 @@ export class PublishingService {
   /**
    * Motivo para NÃO devolver o post à agenda depois de uma falha: ele foi cancelado no meio da publicação, a programação dele foi
    * cancelada ou a campanha de origem (da programação ou do plano) foi encerrada. `null` = pode tentar de novo.
+   * Post de vaga: por último, a guarda de origem (`PUBLISH_ORIGIN_GUARDS`) decide para o instante `at`; ela lança
+   * `OriginUnavailable` quando a fonte está fora do ar.
    */
-  private async cancelledOrigin(post: { id: string; status: string; run_id?: string | null; plan_id?: string | null; workspace_id: string }): Promise<string | null> {
+  private async cancelledOrigin(post: PostRow, at = new Date()): Promise<string | null> {
     if (post.status === 'cancelled') return 'o post foi cancelado.';
     const ws = post.workspace_id;
     const run = post.run_id ? await this.prisma.ig_auto_runs.findFirst({ where: { id: post.run_id, workspace_id: ws }, select: { status: true, campaign_id: true } }) : null;
@@ -472,6 +477,7 @@ export class PublishingService {
     const plan = post.plan_id ? await this.prisma.ig_content_plans.findFirst({ where: { id: post.plan_id, workspace_id: ws }, select: { campaign_id: true } }) : null;
     const campaignIds = [run?.campaign_id, plan?.campaign_id].filter(Boolean) as string[];
     if (campaignIds.length && (await this.prisma.campaigns.count({ where: { id: { in: campaignIds }, workspace_id: ws, status: CAMPAIGN_FINISHED } }))) return 'a campanha foi encerrada.';
+    if (this.guards && post.source === 'vacancy') return await this.guards.blockReason(post, at);
     return null;
   }
 
@@ -533,13 +539,29 @@ export class PublishingService {
           results.push({ job: job.id, status: 'processing' });
           continue;
         }
+        if (e instanceof OriginUnavailable) {
+          // A fonte da origem (vitrine do Freela) está fora do ar: nada foi criado na Meta. Volta em 10 min sem contar tentativa;
+          // o post (que o claim pôs em "publishing") volta para a agenda nesse horário.
+          const runAt = new Date(Date.now() + 10 * 60e3);
+          await this.prisma.publishing_jobs.update({
+            where: { id: job.id },
+            data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: runAt, log: logWith(msg) },
+          });
+          if (job.ig_post_id) await this.prisma.ig_posts.updateMany({ where: { id: job.ig_post_id, status: 'publishing' }, data: { status: 'scheduled', scheduled_at: runAt, ig_creation_id: null } });
+          this.logger.warn(`[instagram] post ${job.ig_post_id}: origem indisponível (${msg}); nova tentativa às ${hhmmSp(runAt)}.`);
+          results.push({ job: job.id, status: 'retry', error: msg });
+          continue;
+        }
         const attempts = job.attempts + 1;
         const rate = e instanceof RateLimited;
         const tokenExpired = e instanceof MetaError && e.code === 190;
         const blocked = e instanceof Guardrail;
+        const delay = rate ? 60 * 60e3 : 5 * 60e3 * 2 ** (attempts - 1); // backoff 5, 10 min
         const post = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id } }) : null;
-        // O post saiu de cena enquanto publicava (campanha encerrada, programação cancelada): nada de voltar para a agenda.
-        const gone = post ? await this.cancelledOrigin(post) : null;
+        // O post saiu de cena enquanto publicava (campanha encerrada, programação cancelada, vaga fechada): nada de voltar para a
+        // agenda. No limite diário a guarda de origem olha o horário da próxima tentativa (a vaga pode já ter começado até lá).
+        // Guarda fora do ar aqui não muda o tratamento do erro.
+        const gone = post ? await this.cancelledOrigin(post, new Date(Date.now() + (rate ? delay : 0))).catch(() => null) : null;
         if (post && gone) {
           await this.prisma.publishing_jobs.update({ where: { id: job.id }, data: { status: 'cancelled', locked_at: null, attempts, log: logWith(`${msg} — cancelado: ${gone}`) } });
           await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { notIn: ['published'] } }, data: { status: 'cancelled', last_error: msg, ig_creation_id: null } });
@@ -551,7 +573,6 @@ export class PublishingService {
         if (tokenExpired && post) await this.store.handleTokenExpired(post.workspace_id, msg);
         // Post da programação sem conta/token: volta para "pronto" (sem refazer mídia) e é reagendado sozinho quando a conta reconectar.
         const backToReady = !!post?.run_id && (tokenExpired || (blocked && msg === NO_ACCOUNT_GUARDRAIL));
-        const delay = rate ? 60 * 60e3 : 5 * 60e3 * 2 ** (attempts - 1); // backoff 5, 10 min
         if (post)
           await this.store.logEvent({
             workspace_id: post.workspace_id,

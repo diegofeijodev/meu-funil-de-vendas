@@ -267,6 +267,7 @@ import { PublishingService } from '../publishing.service';
 import { PostContextService } from '../post-context.service';
 import { ProductionService, rankProductionCandidates } from '../production.service';
 import { OVERDUE_MS } from '../ig-types';
+import { PublishOriginGuard } from '../origin-guards';
 
 export const ART = {
   subject: 's', scene: 'c', composition: 'x', lighting: 'l', camera: '50mm', style: 'foto', color_palette: ['#fff'], mood: 'm', text_in_image: 'none', negative: 'blurry',
@@ -292,7 +293,8 @@ export const VIDEO_DIR = {
 };
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 
-export function igServices(w: IgWorld) {
+/** `guards`: guarda de origem falsa (`PUBLISH_ORIGIN_GUARDS`) injetada no `PublishingService` e no `AutopilotService`. */
+export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | null } = {}) {
   /** Respostas da IA por nome do schema (`ig_calendar`, `ig_caption`, `ig_pillars`, `ig_auto_calendar`). */
   const aiJson: Record<string, (req: any) => any> = {};
   const ai = {
@@ -339,7 +341,7 @@ export function igServices(w: IgWorld) {
   const conform = { ensureIgReady: jest.fn(async (a: any) => a) } as any;
 
   const content = new ContentService(w.prisma, ai, w.store);
-  const publishing = new PublishingService(w.store, w.graph, http as any);
+  const publishing = new PublishingService(w.store, w.graph, http as any, opts.guards ?? null);
   useVirtualClock(publishing);
   const postContext = new PostContextService(w.store, strategist);
   const mediaGen = new MediaGenerationService(w.store, ai, providers, refs, pipeline, extras, assets, content, publishing, images, postContext, quality, conform);
@@ -347,7 +349,7 @@ export function igServices(w: IgWorld) {
   const account = new AccountService(w.store, w.graph, metrics, assets);
   const contentStrategy = new ContentStrategyService(content);
   const auto = new AutoCalendarService(w.store, content, contentStrategy, strategist, mediaGen, publishing);
-  const autopilot = new AutopilotService(w.store, content, mediaGen, publishing, auto);
+  const autopilot = new AutopilotService(w.store, content, mediaGen, publishing, auto, opts.guards ?? null);
   const production = new ProductionService(w.store, mediaGen, publishing, { IG_PRODUCTION_PER_TICK: 4, IG_PRODUCTION_WINDOW_HOURS: 48, IG_PRODUCTION_TARGET_HOURS: 24 } as any);
   // A consulta real é SQL (ROW_NUMBER por empresa — conferida em production.spec e no smoke); aqui, o mesmo filtro e a mesma ordem em memória.
   production.candidates = async (now = new Date()) => {

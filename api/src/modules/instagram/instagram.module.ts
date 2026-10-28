@@ -51,6 +51,7 @@ import { PostContextService } from './post-context.service';
     InboundService,
     InstagramCronService,
   ],
-  exports: [MetaGraphClient, MetaConfigService, META_FETCH, IgStore, InboundService, IgCampaignService],
+  // PublishingService: o módulo dos stories das vagas agenda os posts aprovados (`schedulePost`).
+  exports: [MetaGraphClient, MetaConfigService, META_FETCH, IgStore, InboundService, IgCampaignService, PublishingService],
 })
 export class InstagramModule {}
