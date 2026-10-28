@@ -18,7 +18,7 @@ import { vacancyWorld, type VacancyWorld } from './world';
 
 const NOT_FOUND = '404:Página não encontrada.';
 const FORBIDDEN = '403:Seu perfil não tem permissão para esta ação.';
-const WRONG_TYPE = '400:Esse arquivo não serve. Envie uma imagem PNG, JPG ou WEBP.';
+const WRONG_TYPE = '400:Esse arquivo não serve. Envie uma imagem PNG ou JPG.';
 const NO_BRAND = '400:Cadastre uma marca em Marcas antes de enviar a arte modelo.';
 const YELLOW = 0xffd400ff;
 const DARK = 0x202030ff;
@@ -87,8 +87,26 @@ describe('isolamento (lista = só a empresa A)', () => {
     expect(v.gate.allowed(WS_B)).toBe(false);
   });
 
-  it('todas as rotas do controller (GET/PATCH settings, enable, template, stories…) passam pelo acesso e pelo portão', () => {
-    expect(Reflect.getMetadata('__guards__', VacancyStoriesController)).toEqual([WorkspaceAccessGuard, VacancyGateGuard]);
+  it('todas as rotas do controller (GET/PATCH settings, enable, template, stories…) passam pelo portão e depois pelo acesso (R20)', () => {
+    expect(Reflect.getMetadata('__guards__', VacancyStoriesController)).toEqual([VacancyGateGuard, WorkspaceAccessGuard]);
+  });
+
+  it('R20: o portão vem antes do acesso — viewer de B no PATCH e editor de B no ligar recebem 404, não 403', async () => {
+    const viewerB = uuid();
+    const editorB = uuid();
+    v.member(WS_B, viewerB, 'viewer');
+    v.member(WS_B, editorB, 'marketing');
+    // só o acesso barraria com 403
+    expect(await status(v.access.require(viewerB, WS_B, 'write'))).toBe(FORBIDDEN);
+    expect(await status(v.access.require(editorB, WS_B, 'manage'))).toBe(FORBIDDEN);
+
+    expect(await status(v.settings.update(viewerB, WS_B, { daily_cap: 5 }))).toBe(NOT_FOUND);
+    expect(await status(v.settings.enable(editorB, WS_B))).toBe(NOT_FOUND);
+    expect(await status(v.settings.disable(editorB, WS_B))).toBe(NOT_FOUND);
+    expect(await status(v.settings.setAutoPublish(viewerB, WS_B, true))).toBe(NOT_FOUND);
+    expect(await status(upload(await small(), 'modelo.png', 'image/png', viewerB, WS_B))).toBe(NOT_FOUND);
+    // empresa da lista: quem não é membro continua recebendo o erro de acesso
+    expect(await status(v.settings.enable(STRANGER, WS_A))).toBe('403:Você não tem acesso a esta empresa.');
   });
 
   it('os serviços também recusam B, mesmo para o dono de B', async () => {
@@ -290,13 +308,19 @@ describe('arte modelo', () => {
     expect(v.t['brand_assets']!.rows.at(-1)!.brand_id).toBe(nova.id);
   });
 
-  it('SVG/PDF/GIF disfarçado de .png → 400 e nada gravado', async () => {
+  it('SVG/PDF/GIF/WEBP disfarçado de .png (e WEBP com o próprio nome) → 400 e nada gravado', async () => {
     v.brand();
     v.jsonBy['vacancy_template_texts'] = () => ({ textos: [] });
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"></svg>');
     const pdf = Buffer.from('%PDF-1.4\n%âãÏÓ\n1 0 obj\n<<>>\nendobj\n');
     const gif = Buffer.concat([Buffer.from('GIF89a'), Buffer.from([0x38, 0x04, 0x80, 0x07, 0, 0, 0]), Buffer.alloc(64)]);
-    for (const bytes of [svg, pdf, gif]) expect(await status(upload(bytes))).toBe(WRONG_TYPE);
+    // WEBP de verdade (1×1, sem perdas): fora (R19), mesmo com nome e tipo de WEBP
+    const webp = Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64');
+    expect(webp.subarray(0, 4).toString('latin1')).toBe('RIFF');
+    expect(webp.subarray(8, 12).toString('latin1')).toBe('WEBP');
+    for (const bytes of [svg, pdf, gif, webp]) expect(await status(upload(bytes))).toBe(WRONG_TYPE);
+    expect(await status(upload(webp, 'arte.webp', 'image/webp'))).toBe(WRONG_TYPE);
+    expect(v.ai.json).not.toHaveBeenCalled();
     expect(v.t['brand_assets']!.rows).toHaveLength(0);
     expect(v.storedFiles()).toEqual([]);
   });

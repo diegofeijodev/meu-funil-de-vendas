@@ -715,7 +715,7 @@ Toda saída passa por `EXTERNAL_FETCH` (DNS verificado e fixado; rede interna re
 
 ## 26. Stories das vagas do Freela — `/v1/workspaces/:workspaceId/vacancy-stories/*`
 
-Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota) · `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `StoryView` e `StoryDetail` são definidos pela Task 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
+Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota, conferido ANTES do acesso — até membro sem papel recebe 404) · depois `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `StoryView` e `StoryDetail` são definidos pela Task 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
 
 `VacancySettingsView` (Task 7; a 1ª leitura cria a configuração com os padrões — desligado, aprovar antes, 08:00–21:00, até 10/dia,
 antecedência 120 min, OpenAI):
@@ -737,7 +737,7 @@ antecedência 120 min, OpenAI):
 }
 ```
 
-Erros do envio da arte modelo (400): "Esse arquivo não serve. Envie uma imagem PNG, JPG ou WEBP." (tipo pelo conteúdo) · "A imagem tem
+Erros do envio da arte modelo (400): "Esse arquivo não serve. Envie uma imagem PNG ou JPG." (tipo pelo conteúdo; WEBP fora — R19) · "A imagem tem
 {x} MB e o máximo é 10 MB. Envie uma menor." · "A arte modelo precisa ter pelo menos 600 px de largura." (lado menor) · "Cadastre uma
 marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos textos = o erro da IA (502), nada fica gravado.
 
@@ -748,7 +748,7 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | `POST enable` | manage | — | view; 400 "Envie a arte modelo para poder ligar." |
 | `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
 | `POST auto-publish` | manage | `{ auto_publish: boolean }` | view |
-| `POST template` | write | multipart `file` (PNG/JPG/WEBP, ≤ 10 MB) | view + `warning: "landscape" \| null` |
+| `POST template` | write | multipart `file` (PNG/JPG, ≤ 10 MB) | view + `warning: "landscape" \| null` |
 | `POST preview` | write | — | `{ ok: true }` (segundo plano); 409 se outra em andamento |
 | `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]` (100 mais novas) |
 | `GET stories/:id` | read | — | `StoryDetail` |

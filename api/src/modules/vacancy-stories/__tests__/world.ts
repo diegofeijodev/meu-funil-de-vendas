@@ -5,7 +5,7 @@ import { ActivityService } from '../../activity/activity.service';
 import { FilesService } from '../../files/files.service';
 import { IgTable, igWorld, uuid } from '../../instagram/__tests__/harness';
 import { ImageService } from '../../media/image.service';
-import { ENV_FOR_TESTS, WS_A } from '../../media/__tests__/mem';
+import { ENV_FOR_TESTS, WS_A, memMembers } from '../../media/__tests__/mem';
 import { VacancyFeedClient, type FreelaFetch } from '../vacancy-feed';
 import { VacancyGate } from '../vacancy-gate.service';
 import { VacancyGuardService } from '../vacancy-guard.service';
@@ -77,6 +77,17 @@ export function vacancyWorld(o: { list?: string } = {}) {
   const w = igWorld();
   w.t['activity_logs'] = new IgTable();
   w.prisma.activity_logs = w.t['activity_logs'];
+  // Membros além dos fixos de `mem.ts` (ex.: viewer/editor da empresa B), lidos antes deles.
+  const extraMembers: [string, string, string][] = [];
+  w.prisma.workspace_members = {
+    findUnique: async (a: Req) => {
+      const k = a.where.workspace_id_user_id;
+      const m = extraMembers.find(([ws, u]) => ws === k.workspace_id && u === k.user_id);
+      return m ? { role: m[2] } : memMembers.findUnique(a);
+    },
+    findMany: memMembers.findMany,
+  };
+  const member = (workspaceId: string, userId: string, role: 'owner' | 'admin' | 'marketing' | 'viewer') => extraMembers.push([workspaceId, userId, role]);
   const dir = mkdtempSync(path.join(tmpdir(), 'mf-vagas-'));
   const env = { ...ENV_FOR_TESTS, UPLOADS_DIR: dir, VACANCY_STORIES_WORKSPACE_IDS: o.list ?? WS_A, FREELA_PUBLIC_API_URL: 'http://freela.test' };
   const files = new FilesService(env);
@@ -110,6 +121,7 @@ export function vacancyWorld(o: { list?: string } = {}) {
     guard,
     settings,
     brand,
+    member,
     storedFiles: () => listFiles(dir),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };

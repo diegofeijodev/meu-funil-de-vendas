@@ -14,12 +14,13 @@ import { AutoPublishDto, UpdateVacancySettingsDto } from './vacancy-stories.dto'
 type FilePart = { file: AsyncIterable<Buffer> & { truncated?: boolean }; mimetype: string; filename: string };
 
 /**
- * Stories das vagas do Freela (contrato §26). Toda rota: membro da empresa (GET = read, resto = write; ligar/desligar/postar
- * sozinho = manage) e empresa na lista `VACANCY_STORIES_WORKSPACE_IDS` (fora = 404 "Página não encontrada."). Estáticas antes das `:id`.
+ * Stories das vagas do Freela (contrato §26). Toda rota: primeiro a empresa na lista `VACANCY_STORIES_WORKSPACE_IDS` (fora = 404
+ * "Página não encontrada.", para qualquer usuário — R20), depois membro da empresa (GET = read, resto = write; ligar/desligar/postar
+ * sozinho = manage). Estáticas antes das `:id`.
  */
 @ApiTags('Stories das vagas')
 @ApiBearerAuth()
-@UseGuards(WorkspaceAccessGuard, VacancyGateGuard)
+@UseGuards(VacancyGateGuard, WorkspaceAccessGuard)
 @Controller('v1/workspaces/:workspaceId/vacancy-stories')
 export class VacancyStoriesController {
   constructor(private readonly settings: VacancySettingsService) {}
@@ -49,7 +50,7 @@ export class VacancyStoriesController {
     return this.settings.setAutoPublish(u.id, ws, dto.auto_publish);
   }
 
-  /** Multipart (campo `file`): PNG/JPG/WEBP até 10 MB. O tipo é conferido pelo conteúdo no serviço. */
+  /** Multipart (campo `file`): PNG/JPG até 10 MB. O tipo é conferido pelo conteúdo no serviço. */
   @Post('template') @HttpCode(200)
   async template(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Req() req: FastifyRequest) {
     if (!req.isMultipart()) throw bad('Envie o arquivo como multipart/form-data.');

@@ -28,7 +28,8 @@ const QUEUED = ['new', 'waiting', 'generating'];
 /** Posts de vaga ainda não publicados que o "desligar" cancela. */
 const UNPUBLISHED = ['pending_approval', 'approved', 'ready', 'scheduled'];
 const READY = ['ready', 'approved', 'scheduled'];
-const TEMPLATE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' } as const;
+// Só PNG/JPG (R19): o jimp do projeto não decodifica WEBP (nem a leitura da cor da borda nem a redução para a IA funcionariam).
+const TEMPLATE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg' } as const;
 type TemplateMime = keyof typeof TEMPLATE_EXT;
 
 const MSG = {
@@ -38,7 +39,7 @@ const MSG = {
   cap: 'O máximo de stories de vagas por dia vai de 1 a 20.',
   lead: 'Escolha 1 h, 2 h, 4 h ou 6 h de antecedência.',
   vendor: 'Escolha OpenAI ou Gemini.',
-  wrongType: 'Esse arquivo não serve. Envie uma imagem PNG, JPG ou WEBP.',
+  wrongType: 'Esse arquivo não serve. Envie uma imagem PNG ou JPG.',
   tooSmall: 'A arte modelo precisa ter pelo menos 600 px de largura.',
   noBrand: 'Cadastre uma marca em Marcas antes de enviar a arte modelo.',
 };
@@ -46,12 +47,11 @@ const MSG = {
 export const tooBigMessage = (bytes: number) =>
   `A imagem tem ${(Math.ceil((bytes / 1048576) * 10) / 10).toFixed(1).replace('.', ',')} MB e o máximo é ${MAX_TEMPLATE_MB} MB. Envie uma menor.`;
 
-/** Tipo da arte modelo pelo CONTEÚDO (assinatura do arquivo), nunca pelo nome ou pelo tipo declarado. */
+/** Tipo da arte modelo pelo CONTEÚDO (assinatura do arquivo), nunca pelo nome ou pelo tipo declarado. WEBP, GIF, SVG, PDF… = null. */
 export function sniffTemplateMime(b: Uint8Array): TemplateMime | null {
   const ascii = (o: number, t: string) => b.length >= o + t.length && [...t].every((c, i) => b[o + i] === c.charCodeAt(0));
   if (b.length >= 8 && b[0] === 0x89 && ascii(1, 'PNG') && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) return 'image/png';
   if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  if (ascii(0, 'RIFF') && ascii(8, 'WEBP')) return 'image/webp';
   return null;
 }
 
@@ -117,7 +117,7 @@ export type VacancySettingsView = {
 
 /**
  * Ajustes dos stories das vagas (1 linha por empresa, criada com os padrões na 1ª leitura), arte modelo, ligar/desligar e
- * "postar sozinho". Toda entrada pública confere o portão (`VacancyGate`) além do acesso: fora da lista = 404.
+ * "postar sozinho". Toda entrada pública confere o portão (`VacancyGate`) ANTES do acesso (R20): fora da lista = 404, até para membro sem papel.
  */
 @Injectable()
 export class VacancySettingsService {
@@ -183,8 +183,8 @@ export class VacancySettingsService {
   }
 
   async update(userId: string, workspaceId: string, dto: UpdateVacancySettingsDto): Promise<VacancySettingsView> {
-    await this.access.require(userId, workspaceId, 'write');
     this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'write');
     const s = await this.get(workspaceId);
     const start = dto.window_start ?? s.window_start;
     const end = dto.window_end ?? s.window_end;
@@ -210,8 +210,8 @@ export class VacancySettingsService {
 
   /** Liga (exige a arte modelo). `enabled_at` = agora é a marca d'água: só vagas publicadas depois entram. Já ligado = nada muda. */
   async enable(userId: string, workspaceId: string): Promise<VacancySettingsView> {
-    await this.access.require(userId, workspaceId, 'manage');
     this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
     const s = await this.get(workspaceId);
     if (!s.template_asset_id) throw bad(MSG.noTemplate);
     if (!s.enabled) {
@@ -229,8 +229,8 @@ export class VacancySettingsService {
    * motivo na linha (a tela lê o `skip_reason` também para o post cancelado). Devolve quantos (linhas + posts) foram cancelados.
    */
   async disable(userId: string, workspaceId: string): Promise<{ ok: true; cancelled: number }> {
-    await this.access.require(userId, workspaceId, 'manage');
     this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
     await this.get(workspaceId);
     const cancelled = await this.prisma.$transaction(async (tx) => {
       const rows = await tx.vacancy_stories.updateMany({
@@ -257,8 +257,8 @@ export class VacancySettingsService {
   }
 
   async setAutoPublish(userId: string, workspaceId: string, value: boolean): Promise<VacancySettingsView> {
-    await this.access.require(userId, workspaceId, 'manage');
     this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
     await this.get(workspaceId);
     await this.prisma.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { auto_publish: value } });
     await this.activity.log(workspaceId, userId, 'vacancy_stories.auto_publish', 'vacancy_stories', { auto_publish: value });
@@ -266,7 +266,7 @@ export class VacancySettingsService {
   }
 
   /**
-   * Arte modelo: tipo pelo conteúdo, até 10 MB, lado menor ≥ 600 px, marca da empresa (D1). Grava o arquivo e a linha de
+   * Arte modelo: tipo pelo conteúdo (PNG/JPG), até 10 MB, lado menor ≥ 600 px, marca da empresa (D1). Grava o arquivo e a linha de
    * `brand_assets` (`vacancy_template`), lê os textos com a IA (imagem reduzida a 1024 px) e guarda a cor da borda. Falha da leitura
    * apaga a linha e o arquivo e repassa o erro da IA. Arte deitada salva, com o aviso `landscape`.
    */
@@ -275,8 +275,8 @@ export class VacancySettingsService {
     workspaceId: string,
     file: { bytes: Buffer; mime: string; filename: string },
   ): Promise<VacancySettingsView & { warning: 'landscape' | null }> {
-    await this.access.require(userId, workspaceId, 'write');
     this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'write');
     const bytes = file.bytes;
     const mime = sniffTemplateMime(bytes);
     if (!mime) throw bad(MSG.wrongType);
