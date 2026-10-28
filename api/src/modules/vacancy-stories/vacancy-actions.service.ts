@@ -150,6 +150,8 @@ export class VacancyActionsService {
     if (post) {
       const r = await this.scheduler.scheduleVacancyPost(ws, post.id, { force: true });
       if (r === 'no_account') throw bad(MSG.noAccount);
+      // R39: a empresa está em "Eu aprovo" e ninguém aprovou este story: ele voltou para "Para aprovar".
+      if (r === 'needs_approval') throw bad(MSG.stale);
     } else {
       const r = await this.prisma.vacancy_stories.updateMany({
         where: { id, workspace_id: ws, status: 'waiting', wait_reason: WAIT_CAP },

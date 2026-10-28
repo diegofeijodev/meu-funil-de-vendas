@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -9,6 +8,7 @@ import { FilesService } from '../files/files.service';
 import { IgStore } from '../instagram/ig-store.service';
 import { imageHeaderSize, ImageService } from '../media/image.service';
 import { bad } from '../media/user-error';
+import { holdForApproval } from './vacancy-approval';
 import { edgeColor } from './vacancy-art';
 import { countCities, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
@@ -281,18 +281,8 @@ export class VacancySettingsService {
         select: { id: true, status: true, creative_brief: true },
       });
       let n = 0;
-      for (const p of open) {
-        const brief = (p.creative_brief ?? {}) as Record<string, unknown>;
-        const vacancy = { ...((brief['vacancy'] ?? {}) as Record<string, unknown>), requires_approval: true };
-        // Condicional ao status lido: um post que virou `publishing` entre a leitura e aqui segue.
-        const got = await tx.ig_posts.updateMany({
-          where: { id: p.id, workspace_id: workspaceId, status: p.status, approved_at: null },
-          data: { status: 'pending_approval', scheduled_at: null, creative_brief: { ...brief, vacancy } as Prisma.InputJsonObject },
-        });
-        if (!got.count) continue;
-        await tx.publishing_jobs.updateMany({ where: { ig_post_id: p.id, workspace_id: workspaceId, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
-        n++;
-      }
+      // Condicional ao status lido: um post que virou `publishing` entre a leitura e aqui segue.
+      for (const p of open) if (await holdForApproval(tx, workspaceId, p)) n++;
       return n;
     });
     await this.activity.log(workspaceId, userId, 'vacancy_stories.auto_publish', 'vacancy_stories', { auto_publish: value, ...(value ? {} : { moved_to_approval: moved }) });

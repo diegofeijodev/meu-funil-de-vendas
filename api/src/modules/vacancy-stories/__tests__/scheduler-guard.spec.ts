@@ -406,6 +406,26 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     expect(ready.status).not.toBe('published');
   });
 
+  it('R39 — entrega em voo (pronto, requires_approval false) numa empresa já em "Eu aprovo": não agenda, volta para pending_approval, sem job', async () => {
+    const t = await setup({ settings: { auto_publish: false } });
+    // A entrega leu "postar sozinho" logo antes da troca: post pronto que não exige aprovação.
+    const late = await t.delivered(vac());
+    expect(await t.sched.afterHandOff(WS_A, late.id)).toBe('needs_approval');
+    expect(late).toMatchObject({ status: 'pending_approval', scheduled_at: null, approved_at: null });
+    expect(late.creative_brief.vacancy).toMatchObject({ requires_approval: true, external_id: expect.any(String), fingerprint: expect.any(String) });
+    expect(t.jobsOf(late.id)).toHaveLength(0);
+    // Agendado sem job que sobrou (job cancelado): o tick também segura em vez de reagendar.
+    const orphan = await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(30 * MIN) });
+    const dead = t.job(orphan.id, at(30 * MIN), 'cancelled');
+    expect(await t.sched.tick(NOW)).toEqual({ approved: 0, reconciled: 0 });
+    expect(orphan).toMatchObject({ status: 'pending_approval', scheduled_at: null });
+    expect(t.jobsOf(orphan.id)).toEqual([dead]);
+    // Aprovado por alguém: agenda normalmente.
+    expect(await t.s.actions.approvePost(OWNER, WS_A, late.id)).toEqual({ ok: true });
+    expect(late).toMatchObject({ status: 'scheduled', scheduled_at: at(MIN) });
+    expect(t.pending(late.id)).toHaveLength(1);
+  });
+
   it('empresa desligada ou fora da lista: o tick não mexe nos posts dela', async () => {
     const t = await setup({ settings: { enabled: false } });
     const p = await t.delivered(vac(), { status: 'approved', approved_at: NOW });

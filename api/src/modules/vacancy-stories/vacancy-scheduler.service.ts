@@ -7,6 +7,7 @@ import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../instagram/ig-types';
 import { PublishingService } from '../instagram/publishing.service';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
+import { holdForApproval } from './vacancy-approval';
 import { VacancyGuardService } from './vacancy-guard.service';
 import { capWaitReason, igLimitReason, leadDeadline, spacingReason, tooCloseReason, windowReason } from './vacancy-reasons';
 import { approveUntil, nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
@@ -30,7 +31,7 @@ const MSG = {
 };
 
 export type SlotPlan = { at: Date; waitingFor: 'none' | 'window' | 'cap' | 'ig_limit' } | { expire: string };
-export type ScheduleOutcome = 'scheduled' | 'cancelled' | 'no_account';
+export type ScheduleOutcome = 'scheduled' | 'cancelled' | 'no_account' | 'needs_approval';
 
 type VacancyBrief = { requires_approval?: boolean; starts_at?: string } | undefined;
 const briefOf = (p: { creative_brief: unknown }) => (p.creative_brief as { vacancy?: VacancyBrief } | null)?.vacancy;
@@ -201,7 +202,8 @@ export class VacancySchedulerService implements OnModuleInit {
 
   /**
    * Agenda um story de vaga no próximo horário livre (com `force`, ou se a linha pediu "Postar agora", em agora + 1 min). Sem conta
-   * conectada → `'no_account'` (o post fica, com o aviso). Não dá mais tempo → post cancelado e o motivo na linha → `'cancelled'`.
+   * conectada → `'no_account'` (o post fica, com o aviso). Não dá mais tempo → post cancelado e o motivo na linha → `'cancelled'`. Empresa
+   * em "Eu aprovo" e post que ninguém aprovou → volta para `pending_approval` → `'needs_approval'` (R39).
    */
   async scheduleVacancyPost(ws: string, postId: string, o: { force?: boolean } = {}): Promise<ScheduleOutcome> {
     return this.schedule(ws, postId, o, new Date(this.now()));
@@ -218,6 +220,12 @@ export class VacancySchedulerService implements OnModuleInit {
     // I1: empresa desligada ou fora da lista não agenda (a aprovação pelo editor também passa por aqui).
     const s = this.gate.allowed(ws) ? await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws } }) : null;
     if (!s?.enabled) throw new UserError(MSG.off);
+    // R39: "Eu aprovo" vale na hora de agendar — a entrega que leu "postar sozinho" logo antes da troca (ou um agendado sem job que
+    // sobrou) não fura: o que ninguém aprovou volta para "Para aprovar" em vez de ir para a agenda.
+    if (!s.auto_publish && !post.approved_at) {
+      await this.prisma.$transaction((tx) => holdForApproval(tx, ws, post));
+      return 'needs_approval';
+    }
     if (!(await this.store.liveAccount(ws))) {
       if (post.last_error !== NO_ACCOUNT_MSG && post.last_error !== TOKEN_EXPIRED_POST_MSG) {
         await this.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: post.status }, data: { last_error: NO_ACCOUNT_MSG } });
