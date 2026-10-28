@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { approvePost } from "@/lib/instagram/instagram.functions";
-import { APPROVED_TOAST, DONT_POST_UNDO_MS, createUndoQueue, postNowToast } from "@/lib/vacancy-stories";
+import { APPROVED_TOAST, DONT_POST_UNDO_MS, createUndoQueue, keepaliveOrFallback, postNowToast } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   vacancyCreateAnyway,
@@ -29,10 +29,18 @@ type Pending = { id: string; funcao: string };
  */
 const dontPostQueue = createUndoQueue();
 let listening = false;
+/** R40/M4: a página está indo embora (`pagehide`; volta a valer se o navegador a restaurar do cache — `pageshow`). */
+let leaving = false;
 function flushOnLeave() {
   if (listening || typeof window === "undefined") return;
   listening = true;
-  window.addEventListener("pagehide", () => dontPostQueue.flush());
+  window.addEventListener("pagehide", () => {
+    leaving = true;
+    dontPostQueue.flush();
+  });
+  window.addEventListener("pageshow", () => {
+    leaving = false;
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") dontPostQueue.flush();
   });
@@ -119,22 +127,22 @@ export function useStoryActions(ws: string) {
           },
         },
       });
+      const send = async () => {
+        try {
+          await vacancyDontPost(ws, story.id);
+          setFeedback({ id: story.id, funcao: story.funcao });
+        } catch (e) {
+          toast.error(apiErrorMessage(e, "Não conseguimos cancelar o story agora. Tente de novo."));
+        }
+      };
       dontPostQueue.add(
         story.id,
-        async () => {
-          try {
-            await vacancyDontPost(ws, story.id);
-            setFeedback({ id: story.id, funcao: story.funcao });
-          } catch (e) {
-            toast.error(apiErrorMessage(e, "Não conseguimos cancelar o story agora. Tente de novo."));
-          } finally {
-            await reshow();
-          }
-        },
-        // Aba indo para o fundo/fechando: envia já e tira o "Desfazer" (não dá mais para desfazer).
+        () => void send().finally(reshow),
+        // Aba indo para o fundo/fechando: envia já e tira o "Desfazer" (não dá mais para desfazer). Keepalive que falhou (ou não deu
+        // 2xx) com a página ainda viva — a aba só foi para o fundo — cai na chamada normal (R40/M4).
         () => {
           toast.dismiss(toastId);
-          void vacancyDontPostKeepalive(ws, story.id).then(reshow);
+          void keepaliveOrFallback(() => vacancyDontPostKeepalive(ws, story.id), () => !leaving, send).finally(reshow);
         },
         DONT_POST_UNDO_MS,
       );

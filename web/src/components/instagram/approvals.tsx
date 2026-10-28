@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import {
   batchErrorFallback,
   batchToast,
-  checkAlertLine,
+  checkWarning,
   checkedLine,
   funcaoOfTheme,
   isOwnArt,
@@ -154,7 +154,7 @@ export function IgApprovalList({
       {pending.map((p) => {
         const vac = postVacancy(p);
         const own = vac ? isOwnArt(p) : false;
-        const alerta = vac && !own && vac.check_alert ? checkAlertLine(vac.check_alert) : null;
+        const alerta = vac && !own ? checkWarning(vac) : null;
         const conferido = vac && !own && !alerta ? checkedLine(vac.checked_fields) : null;
         return (
         <div
@@ -187,7 +187,7 @@ export function IgApprovalList({
               own ? (
                 <p className="text-xs text-muted-foreground">A sua arte não passa pela conferência.</p>
               ) : alerta ? (
-                // A3: reserva que a leitura reprovou — nunca "✓ Conferido".
+                // A3/R40-M3: reserva que a leitura reprovou ou nem conseguiu ler — nunca "✓ Conferido".
                 <p className="text-xs font-medium">
                   <span className="text-warning" aria-hidden>
                     !

@@ -49,6 +49,10 @@ import {
   arrivedEmptyText,
   createUndoQueue,
   dontPostKeepaliveRequest,
+  CHECK_UNREAD_LINE,
+  checkWarning,
+  checkWarningDetail,
+  keepaliveOrFallback,
 } from '@/lib/vacancy-stories';
 
 describe('vacancy-stories (puro)', () => {
@@ -383,7 +387,11 @@ describe('vacancy-stories (puro)', () => {
       checked_fields: ['valor'],
       requires_approval: true,
       check_alert: null,
+      check_unread: false,
     });
+    // R40/M3: leitura que falhou.
+    expect(postVacancy({ source: 'vacancy', creative_brief: { vacancy: { ...brief.vacancy, check_unread: true } } })?.check_unread).toBe(true);
+    expect(postVacancy({ source: 'vacancy', creative_brief: { vacancy: { ...brief.vacancy, check_unread: 'sim' } } })?.check_unread).toBe(false);
     expect(postVacancy({ source: 'vacancy', creative_brief: { vacancy: { ...brief.vacancy, check_alert: ['@marca', 3] } } })?.check_alert).toEqual(['@marca']);
     expect(postVacancy({ source: 'vacancy', creative_brief: { vacancy: { ...brief.vacancy, check_alert: [] } } })?.check_alert).toBeNull();
     expect(postVacancy({ source: 'plan', creative_brief: brief })).toBeNull();
@@ -478,6 +486,35 @@ describe('vacancy-stories (puro)', () => {
     expect(q.size()).toBe(0);
     q.flush();
     expect(flushed).toEqual(['c']);
+  });
+
+  it('checkWarning / checkWarningDetail (A3 + R40/M3): leitura que falhou nunca vira "✓ Conferido"', () => {
+    expect(CHECK_UNREAD_LINE).toBe('A conferência não conseguiu ler esta arte. Olhe antes de aprovar.');
+    expect(checkWarning({ check_alert: null, check_unread: true })).toBe(CHECK_UNREAD_LINE);
+    expect(checkWarningDetail({ check_alert: null, check_unread: true })).toBe(CHECK_UNREAD_LINE);
+    // O alerta com os textos achados vem antes (os dois não coexistem na API, mas o texto achado diz mais).
+    expect(checkWarning({ check_alert: ['www.marca.com.br'], check_unread: true })).toBe(checkAlertLine(['www.marca.com.br']));
+    expect(checkWarningDetail({ check_alert: ['www.marca.com.br'], check_unread: false })).toBe(checkAlertDetail(['www.marca.com.br']));
+    // Conferida: `null` (a tela mostra "✓ Conferido").
+    expect(checkWarning({ check_alert: null, check_unread: false })).toBeNull();
+    expect(checkWarning({ check_alert: null })).toBeNull();
+    expect(checkWarningDetail({ check_alert: [], check_unread: false })).toBeNull();
+  });
+
+  it('keepaliveOrFallback (R40/M4): keepalive 2xx basta; falhou com a página viva → chamada normal; saindo da página → nada', async () => {
+    const calls: string[] = [];
+    const fallback = async () => void calls.push('normal');
+    expect(await keepaliveOrFallback(async () => true, () => true, fallback)).toBe('sent');
+    expect(calls).toEqual([]);
+    // Não deu 2xx (ex.: 401 do token vencido) com a aba só no fundo: a chamada normal renova o token e tenta de novo.
+    expect(await keepaliveOrFallback(async () => false, () => true, fallback)).toBe('fallback');
+    // Lançou (rede, CORS): idem.
+    expect(await keepaliveOrFallback(() => Promise.reject(new TypeError('Failed to fetch')), () => true, fallback)).toBe('fallback');
+    expect(calls).toEqual(['normal', 'normal']);
+    // No `pagehide` a página está indo embora: não há chamada normal a fazer.
+    expect(await keepaliveOrFallback(async () => false, () => false, fallback)).toBe('left');
+    expect(await keepaliveOrFallback(() => Promise.reject(new Error('x')), () => false, fallback)).toBe('left');
+    expect(calls).toEqual(['normal', 'normal']);
   });
 
   it('dontPostKeepaliveRequest (M3): mesma rota, bearer e keepalive', () => {

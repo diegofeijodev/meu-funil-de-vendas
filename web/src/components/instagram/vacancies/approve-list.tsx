@@ -2,7 +2,7 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { approvableStories, checkAlertLine } from "@/lib/vacancy-stories";
+import { approvableStories, checkWarning } from "@/lib/vacancy-stories";
 import type { VacancyStory } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { StoryThumb, useStoriesQuery, type OnStoryAction } from "./stories-list";
 import type { StoryActions } from "./use-story-actions";
@@ -72,12 +72,13 @@ export function ApproveList({
                     {s.cidade && <p>{s.cidade}</p>}
                     {s.own_art ? (
                       <p>A sua arte não passa pela conferência.</p>
-                    ) : s.check_alert ? (
+                    ) : checkWarning(s) ? (
+                      // A3/R40-M3: reserva que a leitura reprovou ou nem conseguiu ler — nunca "✓ Conferido".
                       <p className="font-medium">
                         <span className="text-warning" aria-hidden>
                           !
                         </span>{" "}
-                        {checkAlertLine(s.check_alert)}
+                        {checkWarning(s)}
                       </p>
                     ) : (
                       <p>

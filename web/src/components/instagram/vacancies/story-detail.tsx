@@ -6,7 +6,7 @@ import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { attemptItemLine, attemptsLine, capFirst, checkAlertDetail } from "@/lib/vacancy-stories";
+import { attemptItemLine, attemptsLine, capFirst, checkWarningDetail } from "@/lib/vacancy-stories";
 import { getVacancyStory, type VacancyStory } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { SituationLabel, StoryActionsBar, StoryBadges, type OnStoryAction } from "./stories-list";
 import { vacancyDetailKey, type StoryActions } from "./use-story-actions";
@@ -53,6 +53,7 @@ function DetailBody({
   const d = q.data;
   const s = d ?? story; // enquanto carrega, o cartão da lista já tem o essencial
   const line = d ? attemptsLine(d) : null;
+  const warning = d ? checkWarningDetail(d) : null;
   const busy = actions.busy.has(s.id);
 
   return (
@@ -138,13 +139,13 @@ function DetailBody({
 
             {d.used_fallback && (
               <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
-                {/* A3: reserva que a leitura reprovou — o alerta toma o lugar da linha da reserva ("Os textos estão certos"). */}
-                {d.check_alert ? (
+                {/* A3/R40-M3: reserva que a leitura reprovou ou nem conseguiu ler — o aviso toma o lugar da linha da reserva ("Os textos estão certos"). */}
+                {warning ? (
                   <p className="text-sm font-medium">
                     <span className="text-warning" aria-hidden>
                       !
                     </span>{" "}
-                    {checkAlertDetail(d.check_alert)}
+                    {warning}
                   </p>
                 ) : (
                   <p className="text-sm">{line}</p>

@@ -112,6 +112,8 @@ const story = z
     own_art: z.boolean(),
     /** A3: reserva que a leitura reprovou — os textos achados na arte. */
     check_alert: strList,
+    /** R40/M3: reserva cuja leitura falhou — nunca "✓ Conferido". */
+    check_unread: z.boolean().nullish().transform((v) => v === true),
     /** B1: reserva com foto ou sem foto. */
     fallback_kind: fallbackKind,
     /** B3: por que está esperando (diálogo do "Postar agora"). */
@@ -191,12 +193,12 @@ export async function vacancyDontPost(ws: string, id: string, feedback?: Vacancy
   ok.parse((await api.post(`${base(ws)}/stories/${id}/dont-post`, feedback ? { feedback } : {})).data);
 }
 /**
- * M3: o mesmo "Não postar" com `fetch(..., { keepalive: true })`, para sair mesmo com a aba fechando (o axios não garante). Sem
- * resposta útil: a tela atualiza na volta.
+ * M3: o mesmo "Não postar" com `fetch(..., { keepalive: true })`, para sair mesmo com a aba fechando (o axios não garante). `true` = 2xx;
+ * erro de rede sobe (quem chama decide se refaz pela chamada normal — R40/M4).
  */
-export function vacancyDontPostKeepalive(ws: string, id: string): Promise<unknown> {
+export function vacancyDontPostKeepalive(ws: string, id: string): Promise<boolean> {
   const [url, init] = dontPostKeepaliveRequest(API_URL, ws, id, bearerToken());
-  return fetch(url, init).catch(() => undefined);
+  return fetch(url, init).then((r) => r.ok);
 }
 export async function vacancyPostNow(ws: string, id: string): Promise<void> {
   ok.parse((await api.post(`${base(ws)}/stories/${id}/post-now`)).data);

@@ -202,6 +202,21 @@ export function checkAlertDetail(texts: string[]): string {
   return `Versão de reserva: o sistema escreveu os textos da vaga, mas a conferência achou também ${quoted(texts)}, que não ${n ? 'deviam' : 'devia'} estar na arte (${n ? 'podem' : 'pode'} vir da logo). Olhe antes de aprovar.`;
 }
 
+/** R40/M3: a reserva cuja leitura falhou (T9) nunca aparece como "✓ Conferido" — no cartão, em Aprovações e no detalhe. */
+export const CHECK_UNREAD_LINE = 'A conferência não conseguiu ler esta arte. Olhe antes de aprovar.';
+
+type CheckFlags = { check_alert: string[] | null; check_unread?: boolean };
+/** Aviso no lugar do "✓ Conferido" (cartão "Para aprovar" e Aprovações): o que a leitura achou (A3) ou que ela não leu (M3); `null` = conferida. */
+export function checkWarning(v: CheckFlags): string | null {
+  if (v.check_alert?.length) return checkAlertLine(v.check_alert);
+  return v.check_unread ? CHECK_UNREAD_LINE : null;
+}
+/** O mesmo no detalhe, no lugar da linha da reserva. */
+export function checkWarningDetail(v: CheckFlags): string | null {
+  if (v.check_alert?.length) return checkAlertDetail(v.check_alert);
+  return v.check_unread ? CHECK_UNREAD_LINE : null;
+}
+
 /** Selo "Refeita 1 vez" / "Refeita 2 vezes" (R4); nunca refeita = `null`. */
 export function redoLabel(n: number): string | null {
   return n > 0 ? `Refeita ${n} ${n === 1 ? 'vez' : 'vezes'}` : null;
@@ -420,7 +435,7 @@ export function sameCities(a: string[], b: string[]): boolean {
 }
 
 /** O que o post de vaga carrega em `creative_brief.vacancy`; `null` para qualquer outro post. */
-export type PostVacancy = { story_id: string; checked_fields: string[]; requires_approval: boolean; check_alert: string[] | null };
+export type PostVacancy = { story_id: string; checked_fields: string[]; requires_approval: boolean; check_alert: string[] | null; check_unread: boolean };
 export function postVacancy(post: { source?: string | null; creative_brief?: unknown }): PostVacancy | null {
   if (post.source !== 'vacancy') return null;
   const v = (post.creative_brief as { vacancy?: Record<string, unknown> } | null | undefined)?.vacancy;
@@ -430,6 +445,7 @@ export function postVacancy(post: { source?: string | null; creative_brief?: unk
     checked_fields: Array.isArray(v['checked_fields']) ? (v['checked_fields'] as unknown[]).filter((x): x is string => typeof x === 'string') : [],
     requires_approval: v['requires_approval'] === true,
     check_alert: textsOf(v['check_alert']),
+    check_unread: v['check_unread'] === true,
   };
 }
 
@@ -549,6 +565,28 @@ export function createUndoQueue(set: SetT = (f, m) => setTimeout(f, m), clear: C
     has: (id: string) => items.has(id),
     size: () => items.size,
   };
+}
+
+/**
+ * R40/M4: "Não postar" pelo `keepalive` (`send` = chegou com 2xx). Lançou ou não deu 2xx (ex.: 401 do token vencido, que o keepalive não
+ * renova) com a página ainda viva (`alive`: não estamos no `pagehide` — a aba só foi para o fundo) → a chamada normal (`fallback`, com o
+ * tratamento de erro de sempre). Saindo da página não há o que refazer.
+ */
+export async function keepaliveOrFallback(
+  send: () => Promise<boolean>,
+  alive: () => boolean,
+  fallback: () => Promise<void>,
+): Promise<'sent' | 'fallback' | 'left'> {
+  let sent = false;
+  try {
+    sent = await send();
+  } catch {
+    sent = false;
+  }
+  if (sent) return 'sent';
+  if (!alive()) return 'left';
+  await fallback();
+  return 'fallback';
 }
 
 /** Chamada do "Não postar" que sobrevive ao fechar a aba (`keepalive`), com o mesmo bearer do cliente http. */
