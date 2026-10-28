@@ -436,10 +436,12 @@ export class VacancyGeneratorService {
       url: asset.url, type: 'image', order: 0, width: asset.width, height: asset.height, duration: null, asset_id: asset.id, ig_ready: asset.ig_ready,
     }];
     const aiTries = art.attempts.filter((a) => a.kind === 'ai').length;
+    // A3: na reserva que a leitura reprovou, o que ela achou (Aprovações e a aba Vagas avisam em vez de "✓ Conferido").
+    const alert = art.usedFallback && !art.check.ok && art.check.forbidden.length ? art.check.forbidden : null;
     const vacancy = {
       story_id: row.id, external_id: row.external_id, fingerprint: fingerprint(v), requires_approval: !auto,
       checked_fields: art.check.fields.filter((x) => x.ok).map((x) => x.key), attempts: aiTries, used_fallback: art.usedFallback,
-      starts_at: v.startTime,
+      check_alert: alert, starts_at: v.startTime,
     };
     // D12: no post só o resumo de cada tentativa; o detalhe fica em `vacancy_stories.attempts_log`.
     const shortLog = art.attempts.map((a) => ({ at: a.at, step: 'vacancy_art', attempt: a.n, ok: a.ok, wrong: a.wrong, fallback: a.kind !== 'ai' }));

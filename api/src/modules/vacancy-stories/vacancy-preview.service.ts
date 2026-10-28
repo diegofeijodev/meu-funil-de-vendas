@@ -6,6 +6,7 @@ import { addDays, todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
 import { AssetsService } from '../media/assets.service';
 import { bad, errMessage } from '../media/user-error';
+import { fallbackKindOf } from './vacancy-display';
 import { VacancyFeedClient } from './vacancy-feed';
 import { ArtAiError, VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGate } from './vacancy-gate.service';
@@ -86,7 +87,7 @@ export class VacancyPreviewService {
     this.running.set(ws, { token, startedAt: now });
     const state: PreviewState = {
       run_id: token, status: 'running', step: 'art', attempt: 1, started_at: new Date(now).toISOString(), finished_at: null, media_url: null,
-      asset_id: null, checks: [], attempts: [], used_fallback: false, sample: false, vacancy: null, error: null,
+      asset_id: null, checks: [], attempts: [], used_fallback: false, fallback_kind: null, sample: false, vacancy: null, error: null,
     };
     try {
       await this.prisma.vacancy_story_settings.update({ where: { workspace_id: ws }, data: { preview: json(state) } });
@@ -141,7 +142,7 @@ export class VacancyPreviewService {
       });
       Object.assign(state, {
         status: 'done', finished_at: finished(), media_url: asset.url, asset_id: asset.id, checks: art.check.fields, attempts: art.attempts,
-        used_fallback: art.usedFallback, error: null,
+        used_fallback: art.usedFallback, fallback_kind: art.usedFallback ? fallbackKindOf(art.attempts) : null, error: null,
       } satisfies Partial<PreviewState>);
     } catch (e) {
       // Erro da IA: a mensagem pronta (chave, crédito…) e as tentativas; o resto vira texto genérico e o detalhe vai para o log.
@@ -160,6 +161,8 @@ export class VacancyPreviewService {
     let list: FreelaVacancy[] = [];
     try {
       list = await this.feed.recent();
+      // B6: a mesma consulta preenche as cidades sugeridas nos Ajustes (antes de ligar, o job ainda não consultou).
+      await this.settings.refreshRecentCities(ws, list);
     } catch (e) {
       this.logger.warn(`[vagas] ${ws}: vitrine fora na prévia, usando a vaga de exemplo: ${e instanceof Error ? e.message : String(e)}`);
     }

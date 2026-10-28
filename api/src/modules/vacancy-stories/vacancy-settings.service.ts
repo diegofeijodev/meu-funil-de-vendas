@@ -10,13 +10,14 @@ import { IgStore } from '../instagram/ig-store.service';
 import { imageHeaderSize, ImageService } from '../media/image.service';
 import { bad } from '../media/user-error';
 import { edgeColor } from './vacancy-art';
+import { countCities, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { templateReadPrompt } from './vacancy-prompts';
 import { LEAD_OPTIONS, UpdateVacancySettingsDto, VENDORS } from './vacancy-stories.dto';
 import { previewForView } from './vacancy-preview-state';
 import { DISABLED_REASON, DONT_POST_REASON } from './vacancy-reasons';
 import { norm } from './vacancy-text';
-import type { SettingsRow } from './vacancy-types';
+import type { FreelaVacancy, SettingsRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 import { TEMPLATE_TEXTS_SCHEMA } from './vacancy-verify';
 
@@ -132,6 +133,7 @@ export class VacancySettingsService {
     private readonly ai: AiService,
     private readonly store: IgStore,
     private readonly gate: VacancyGate,
+    private readonly feed: VacancyFeedClient,
   ) {}
 
   /** Configuração da empresa; cria com os padrões do banco na 1ª leitura (upsert: duas leituras ao mesmo tempo não colidem). */
@@ -349,7 +351,21 @@ export class VacancySettingsService {
       await this.files.delete(BUCKET, key).catch((err) => this.logger.warn(`arte modelo: arquivo ${key} não apagado: ${err}`));
       throw e;
     }
+    await this.refreshRecentCities(workspaceId);
     return { ...(await this.view(workspaceId)), warning: landscape ? 'landscape' : null };
+  }
+
+  /**
+   * B6: cidades das vagas recentes da vitrine (sugestões da lista de cidades dos Ajustes) também antes de ligar — no envio da arte
+   * modelo e na prévia (que já tem a lista: `list`). Vitrine fora: fica como está, sem derrubar quem chamou.
+   */
+  async refreshRecentCities(workspaceId: string, list?: FreelaVacancy[]): Promise<void> {
+    try {
+      const vacancies = list ?? (await this.feed.recent());
+      await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: workspaceId }, data: { recent_cities: countCities(vacancies) } });
+    } catch (e) {
+      this.logger.warn(`[vagas] ${workspaceId}: cidades recentes não atualizadas: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // ------------------------------------------------------------------ helpers

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { leaseFree } from '../instagram/ig-store.service';
-import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
+import { countCities, FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { capWaitReason, leadDeadline, noApprovalReason, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
@@ -15,16 +15,6 @@ const MIN = 60_000;
 const DEFAULT_TIMING = { min_lead_minutes: 120, window_start: '08:00', window_end: '21:00' };
 /** Posts de vaga entregues que ainda vão ao ar sem esperar aprovação. */
 const LATER = ['ready', 'approved', 'scheduled'];
-
-/** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada). */
-function countCities(list: FreelaVacancy[]): { city: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const v of list) {
-    const c = (v.city ?? '').trim();
-    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
-  }
-  return [...counts.entries()].map(([city, count]) => ({ city, count })).sort((a, b) => b.count - a.count);
-}
 
 /**
  * Consulta da vitrine (uma chamada por rodada para todas as empresas), triagem gravada na linha, expiração por antecedência e

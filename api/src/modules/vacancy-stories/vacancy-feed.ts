@@ -38,6 +38,16 @@ function parseItem(raw: unknown): FreelaVacancy | null {
   return r.success ? (r.data as FreelaVacancy) : null;
 }
 
+/** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada) — `settings.recent_cities`. */
+export function countCities(list: FreelaVacancy[]): { city: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const v of list) {
+    const c = (v.city ?? '').trim();
+    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([city, count]) => ({ city, count })).sort((a, b) => b.count - a.count);
+}
+
 /** Leitura da vitrine pública do Freela (vagas recentes e vaga por id). */
 @Injectable()
 export class VacancyFeedClient {

@@ -287,6 +287,22 @@ describe('arte modelo', () => {
     expect(settingsRow()).toMatchObject({ template_landscape: true, template_texts: [] });
   });
 
+  it('B6: o envio da arte modelo preenche as cidades das vagas recentes; vitrine fora não derruba o envio nem apaga as cidades', async () => {
+    v.brand();
+    v.jsonBy['vacancy_template_texts'] = () => ({ textos: [] });
+    const vac = (city: string | null) => ({
+      id: uuid(), title: 'Garçom', serviceType: 'garcom', city, date: '2026-10-31', startTime: '2026-10-31T21:00:00Z',
+      endTime: '2026-11-01T02:00:00Z', amountInCents: 15000, contractorName: null, publishedAt: '2026-10-29T10:00:00Z',
+    });
+    v.feed.state.vacancies = [vac('Jundiaí'), vac('Campinas'), vac('Campinas'), vac(null)];
+    const out = await upload(await small());
+    expect(out.recent_cities).toEqual([{ city: 'Campinas', count: 2 }, { city: 'Jundiaí', count: 1 }]);
+    v.feed.state.down = true;
+    const again = await upload(await small());
+    expect(again.template).not.toBeNull();
+    expect(again.recent_cities).toEqual([{ city: 'Campinas', count: 2 }, { city: 'Jundiaí', count: 1 }]);
+  });
+
   it('Review Focus #4: empresa sem marca → 400 e nada gravado (nem arquivo)', async () => {
     v.jsonBy['vacancy_template_texts'] = () => ({ textos: TEXTS });
     expect(await status(upload(await small()))).toBe(NO_BRAND);

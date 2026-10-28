@@ -196,7 +196,8 @@ describe('storyView / storyDetail', () => {
       funcao: 'Garçom', estabelecimento: 'Coco Bambu', valor: 'R$ 150', quando: 'Sáb 31/10 · 18h às 23h', cidade: 'Campinas',
       starts_at: new Date(v.startTime), approve_until: new Date('2026-10-31T18:45:00Z'), scheduled_at: null, published_at: null,
       permalink: null, thumb_url: 'https://cdn.test/story.jpg', media_url: 'https://cdn.test/story.jpg', attempts: 1, used_fallback: false,
-      redo_count: 0, ig_post_id: p.id, is_test: false, freela_url: `https://www.freelaservicosapp.com.br/vagas/${v.id}`, own_art: false,
+      redo_count: 0, ig_post_id: p.id, is_test: false, freela_url: `https://www.freelaservicos.com.br/vagas/${v.id}`, own_art: false,
+      check_alert: null, fallback_kind: null, wait_kind: null,
       can: { approve: true, dont_post: true, post_now: false, create_anyway: false, redo: true, retry: false },
     });
   });
@@ -282,6 +283,49 @@ describe('storyView / storyDetail', () => {
     // Gerada de novo depois do envio: o último passo volta a ser da arte.
     const again = post({ status: 'pending_approval', ai_generation_log: [{ step: 'upload' }, { step: 'vacancy_art', attempt: 1, ok: true }] });
     expect(storyDetail(delivered(again), again, s, NOW)).toMatchObject({ own_art: false, checks: expect.arrayContaining([expect.objectContaining({ ok: true })]) });
+  });
+});
+
+describe('campos novos para a tela (A3, B1, B3)', () => {
+  const s = settings();
+  const log = (kinds: [string, boolean, string[]][]) =>
+    kinds.map(([kind, ok, forbidden], i) => ({ n: i + 1, at: NOW.toISOString(), kind, ok, wrong: [], forbidden }));
+
+  it('B3 wait_kind: máximo do dia, limite da Meta, fora do horário e 15 min entre stories; o resto null', () => {
+    const wk = (r: StoryRow, p: StoryPost | null, now = NOW, ctx = {}) => storyView(r, p, s, now, ctx).wait_kind;
+    expect(wk(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null)).toBe('cap');
+    const p = post({ status: 'scheduled', scheduled_at: TOMORROW_8H });
+    expect(wk(delivered(p), p, NOW, { capFull: true })).toBe('cap');
+    expect(wk(delivered(p), p, NOW, { capFull: false, igFull: true })).toBe('instagram');
+    expect(wk(delivered(p), p, NOW, { capFull: false })).toBe('spacing');
+    expect(wk(delivered(p), p, new Date('2026-10-30T01:10:00Z'))).toBe('window'); // 22h10
+    expect(wk(delivered(p), p, new Date('2026-10-30T10:00:00Z'))).toBe('window'); // 7h do mesmo dia
+    const soon = post({ status: 'scheduled', scheduled_at: at(30 * MIN) });
+    expect(wk(delivered(soon), soon)).toBeNull();
+    expect(wk(row(), null)).toBeNull();
+    expect(wk(row({ status: 'waiting', wait_reason: 'Esperando o Instagram ser reconectado para criar a arte.' }), null)).toBeNull();
+  });
+
+  it('A3/B1: reserva reprovada pela leitura → check_alert do post; reserva com foto / sem foto; arte da IA → null', () => {
+    const alert = post({ status: 'pending_approval', creative_brief: { vacancy: { checked_fields: [], used_fallback: true, check_alert: ['www.marca.com.br'] } } });
+    const plainLog = log([['ai', false, []], ['ai', false, []], ['ai', false, []], ['fallback_photo', false, ['Rua X']], ['fallback_plain', false, ['www.marca.com.br']]]);
+    expect(storyView(delivered(alert, { used_fallback: true, attempts_log: plainLog }), alert, s, NOW)).toMatchObject({
+      check_alert: ['www.marca.com.br'], fallback_kind: 'plain',
+    });
+    expect(storyDetail(delivered(alert, { used_fallback: true, attempts_log: plainLog }), alert, s, NOW).check_alert).toEqual(['www.marca.com.br']);
+    // Entregue antes do campo existir: os `forbidden` da última tentativa.
+    const old = post({ status: 'pending_approval', creative_brief: { vacancy: { checked_fields: [], used_fallback: true } } });
+    expect(storyView(delivered(old, { used_fallback: true, attempts_log: plainLog }), old, s, NOW).check_alert).toEqual(['www.marca.com.br']);
+    // Reserva com foto aprovada pela leitura: sem alerta.
+    const photoLog = log([['ai', false, []], ['ai', false, []], ['ai', false, []], ['fallback_photo', true, []]]);
+    const photo = post({ status: 'ready', creative_brief: { vacancy: { checked_fields: [], used_fallback: true, check_alert: null } } });
+    expect(storyView(delivered(photo, { used_fallback: true, attempts_log: photoLog }), photo, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: 'photo' });
+    // Arte da IA, arte própria e linha antes da entrega: null.
+    const ai = post({ status: 'ready' });
+    expect(storyView(delivered(ai, { attempts_log: log([['ai', true, []]]) }), ai, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: null });
+    const own = post({ ...alert, ai_generation_log: [{ step: 'upload' }] });
+    expect(storyView(delivered(own, { used_fallback: true, attempts_log: plainLog }), own, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: null });
+    expect(storyView(row({ status: 'generating' }), null, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: null });
   });
 });
 

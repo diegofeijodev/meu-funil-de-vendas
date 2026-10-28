@@ -308,7 +308,7 @@ describe('VacancyActionsService — lista, detalhe e isolamento', () => {
     expect((await t.actions.list(WS_A, 'not_posted')).map((x) => [x.id, x.display])).toEqual([
       [failed.id, 'failed'], [mine.row.id, 'cancelled'], [skipped.id, 'skipped'],
     ]);
-    expect(all.find((x) => x.id === live.row.id)).toMatchObject({ display: 'live', label: 'No ar até amanhã às 9h', freela_url: `https://www.freelaservicosapp.com.br/vagas/${live.row.external_id}` });
+    expect(all.find((x) => x.id === live.row.id)).toMatchObject({ display: 'live', label: 'No ar até amanhã às 9h', freela_url: `https://www.freelaservicos.com.br/vagas/${live.row.external_id}` });
   });
 
   it('id de story de outra empresa → 404 em toda rota', async () => {
@@ -386,7 +386,29 @@ describe('VacancyPreviewService', () => {
     await t.preview.start(OWNER, WS_A);
     await t.preview.wait(WS_A);
     expect((t.makeArt.mock.calls[0]![2] as VacancyFields).funcao).toBe('Copeiro');
-    expect(previewOf()).toMatchObject({ status: 'done', sample: false });
+    expect(previewOf()).toMatchObject({ status: 'done', sample: false, fallback_kind: null });
+    // B6: a mesma consulta preenche as cidades sugeridas nos Ajustes (antes de ligar).
+    expect(t.settingsRow().recent_cities).toEqual([{ city: 'Campinas', count: 4 }]);
+  });
+
+  it('B1: reserva com foto / sem foto no estado da prévia; vitrine fora não apaga as cidades', async () => {
+    const t = await setup();
+    t.settingsRow().recent_cities = [{ city: 'Jundiaí', count: 3 }];
+    w.feed.state.down = true;
+    const ai = (n: number) => ({ n, at: NOW.toISOString(), kind: 'ai' as const, ok: false, wrong: ['data' as const], forbidden: [] });
+    t.makeArt.mockImplementationOnce(async () =>
+      art({ usedFallback: true, attempts: [ai(1), ai(2), ai(3), { n: 4, at: NOW.toISOString(), kind: 'fallback_photo', ok: true, wrong: [], forbidden: [] }] }),
+    );
+    await t.preview.start(OWNER, WS_A);
+    await t.preview.wait(WS_A);
+    expect(previewOf()).toMatchObject({ status: 'done', sample: true, used_fallback: true, fallback_kind: 'photo' });
+    expect(t.settingsRow().recent_cities).toEqual([{ city: 'Jundiaí', count: 3 }]);
+    t.makeArt.mockImplementationOnce(async () =>
+      art({ usedFallback: true, attempts: [ai(1), ai(2), ai(3), { n: 5, at: NOW.toISOString(), kind: 'fallback_plain', ok: true, wrong: [], forbidden: [] }] }),
+    );
+    await t.preview.start(OWNER, WS_A);
+    await t.preview.wait(WS_A);
+    expect(previewOf()).toMatchObject({ status: 'done', fallback_kind: 'plain' });
   });
 
   it('segunda prévia em andamento → 409; travada há mais de 10 min → começa outra; falha da IA fica no estado', async () => {

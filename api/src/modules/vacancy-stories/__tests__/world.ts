@@ -99,7 +99,7 @@ export function vacancyWorld(o: { list?: string } = {}) {
   const activity = new ActivityService(w.prisma);
   const guard = new VacancyGuardService(w.prisma, feedClient);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const settings = new VacancySettingsService(w.prisma, w.access, activity, files, images, ai as any, w.store, gate);
+  const settings = new VacancySettingsService(w.prisma, w.access, activity, files, images, ai as any, w.store, gate, feedClient);
   /** Marca da empresa (a arte modelo precisa de uma — D1). */
   const brand = (over: Record<string, unknown> = {}) => {
     const b = { id: uuid(), workspace_id: WS_A, name: 'Freela Serviços', primary_color: '#ff6600', created_at: new Date(), ...over };

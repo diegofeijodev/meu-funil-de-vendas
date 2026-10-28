@@ -17,6 +17,8 @@ export type PreviewState = {
   checks: FieldCheck[];
   attempts: AttemptLog[];
   used_fallback: boolean;
+  /** B1: reserva com foto (`photo`) ou sem foto (`plain`); `null` = arte da IA aprovada. */
+  fallback_kind: 'photo' | 'plain' | null;
   sample: boolean;
   /** Campos da vaga usada (a tela escreve "Usamos uma vaga de exemplo: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas."). */
   vacancy: { funcao: string; estabelecimento: string | null; valor: string; dia: string; horario: string; cidade: string } | null;

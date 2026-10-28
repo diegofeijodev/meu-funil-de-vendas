@@ -34,7 +34,22 @@ export type StoryPost = Pick<
   'id' | 'status' | 'scheduled_at' | 'published_at' | 'last_error' | 'rejection_reason' | 'ig_permalink' | 'media' | 'creative_brief' | 'ai_generation_log'
 >;
 
-export type DisplayResult = { display: Display; label: string; support: string | null; reason: string | null; approve_until: Date | null };
+/**
+ * B3 — por que um story espera (o diálogo do "Postar agora" muda): `cap` = máximo do dia; `instagram` = limite de publicações da Meta;
+ * `window` = fora do horário para postar; `spacing` = empurrado pelos 15 min entre stories com a janela aberta.
+ */
+export type WaitKind = 'cap' | 'instagram' | 'window' | 'spacing';
+/** B1 — de que jeito a versão de reserva foi feita: `photo` = textos do sistema sobre uma foto; `plain` = sobre as cores da arte. */
+export type FallbackKind = 'photo' | 'plain';
+
+export type DisplayResult = {
+  display: Display;
+  label: string;
+  support: string | null;
+  reason: string | null;
+  approve_until: Date | null;
+  wait_kind: WaitKind | null;
+};
 /**
  * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `igFull` = sem espaço no
  * limite de publicações da Meta.
@@ -73,6 +88,12 @@ export type StoryView = {
   freela_url: string;
   /** R29: a mídia veio de "Enviar minha própria" — ninguém conferiu a arte. */
   own_art: boolean;
+  /** A3: a reserva saiu, mas a leitura achou na arte texto que não devia estar lá (R22/T9) — os textos achados; senão `null`. */
+  check_alert: string[] | null;
+  /** B1: versão de reserva com foto ou sem foto; `null` = arte da IA aprovada (ou arte própria, ou ainda sem arte). */
+  fallback_kind: FallbackKind | null;
+  /** B3: por que espera (só em `waiting_window`/`waiting_cap`). */
+  wait_kind: WaitKind | null;
   can: StoryCan;
 };
 
@@ -80,7 +101,7 @@ export type StoryView = {
 export type StoryDetail = StoryView & { checks: FieldCheck[]; attempts_log: AttemptLog[]; alt: string };
 
 /** Página pública da vaga no Freela. */
-export const FREELA_VACANCY_URL = 'https://www.freelaservicosapp.com.br/vagas/';
+export const FREELA_VACANCY_URL = 'https://www.freelaservicos.com.br/vagas/';
 const MIN = 60_000;
 const DAY_MS = 24 * 60 * MIN;
 const AI_TRIES = 3;
@@ -159,15 +180,15 @@ const aiAttempts = (log: unknown) => asLog(log).filter((a) => a?.kind === 'ai').
  * ao vivo do gerador (`mismatch_attempts` + 1, máx. 3 — R28).
  */
 export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): DisplayResult {
-  const out = (display: Display, label: string, support: string | null = null, reason: string | null = null, approve_until: Date | null = null) =>
-    ({ display, label, support, reason, approve_until }) as DisplayResult;
+  const out = (display: Display, label: string, support: string | null = null, reason: string | null = null, approve_until: Date | null = null, wait_kind: WaitKind | null = null) =>
+    ({ display, label, support, reason, approve_until, wait_kind }) as DisplayResult;
   switch (row.status) {
     case 'new':
       return out('queued', LABEL.queued, row.wait_reason);
     case 'waiting': {
       if (row.wait_reason !== WAIT_CAP) return out('queued', LABEL.queued, row.wait_reason);
       const at = row.not_before ?? windowStartOn(addDays(spDay(now), 1), s.window_start);
-      return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
+      return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now), null, null, 'cap');
     }
     case 'generating':
       return out('generating', LABEL.generating, `Tentativa ${Math.min(AI_TRIES, row.mismatch_attempts + 1)} de ${AI_TRIES}`);
@@ -199,9 +220,10 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
   if (LATER.includes(post.status) && at && at.getTime() > now.getTime()) {
     const otherDay = spDay(at) !== spDay(now);
     const open = inWindow(now, s);
-    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
-    if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now));
-    if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`);
+    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now), null, null, 'cap');
+    if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now), null, null, 'instagram');
+    // Janela aberta e mesmo assim outro dia: foram os 15 min entre stories que empurraram.
+    if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`, null, null, open ? 'spacing' : 'window');
   }
   // Pronto (também `publishing`); sem horário (Instagram desconectado, token vencido) o apoio diz por quê.
   return at ? out('ready', `Pronto, vai ao ar ${atLabel(at, now)}`) : out('ready', LABEL.ready_no_time, post.last_error);
@@ -235,7 +257,28 @@ export function canRevive(row: StoryRow, post: StoryPost | null): boolean {
 
 const snap = (row: StoryRow) => (row.snapshot ?? {}) as unknown as Partial<FreelaVacancy>;
 const briefOf = (post: StoryPost | null) =>
-  (post?.creative_brief as unknown as { vacancy?: { checked_fields?: string[]; used_fallback?: boolean } } | null)?.vacancy;
+  (post?.creative_brief as unknown as { vacancy?: { checked_fields?: string[]; used_fallback?: boolean; check_alert?: unknown } } | null)?.vacancy;
+
+/** B1: a última tentativa diz de que jeito a reserva saiu (a tentativa aceita é sempre a última). */
+export function fallbackKindOf(attempts: unknown): FallbackKind | null {
+  const kind = asLog(attempts).at(-1)?.kind;
+  return kind === 'fallback_photo' ? 'photo' : kind === 'fallback_plain' ? 'plain' : null;
+}
+
+/**
+ * A3: textos que a leitura achou na reserva entregue (`creative_brief.vacancy.check_alert`, gravado na entrega; posts entregues antes
+ * do campo: os `forbidden` da última tentativa). Arte própria ou ainda sem arte: `null`.
+ */
+export function checkAlert(row: StoryRow, post: StoryPost | null): string[] | null {
+  if (row.status !== 'handed_off' || !post || ownArt(post)) return null;
+  const stored = briefOf(post)?.check_alert;
+  const list = Array.isArray(stored)
+    ? stored.filter((x): x is string => typeof x === 'string')
+    : row.used_fallback && asLog(row.attempts_log).at(-1)?.ok === false
+      ? (asLog(row.attempts_log).at(-1)?.forbidden ?? [])
+      : [];
+  return list.length ? list : null;
+}
 
 function whenOf(row: StoryRow): { day: string; horario: string } {
   const v = snap(row);
@@ -277,6 +320,9 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     is_test: isTestText(v.contractorName) || isTestText(v.title),
     freela_url: `${FREELA_VACANCY_URL}${encodeURIComponent(row.external_id)}`,
     own_art: ownArt(post),
+    check_alert: checkAlert(row, post),
+    fallback_kind: row.status === 'handed_off' && row.used_fallback && !ownArt(post) ? fallbackKindOf(row.attempts_log) : null,
+    wait_kind: d.wait_kind,
     can: canOf(row, post, d.display, s, now),
   };
 }

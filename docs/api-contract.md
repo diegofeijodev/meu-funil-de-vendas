@@ -727,7 +727,7 @@ antecedência 120 min, OpenAI):
   template_bg: string | null /* "#rrggbb", cor da borda do modelo */, cities: string[] /* vazio = todas */, daily_cap: number,
   window_start: "HH:MM", window_end: "HH:MM", min_lead_minutes: 60 | 120 | 240 | 360, vendor: "openai" | "gemini",
   last_poll_at: string | null, last_poll_ok_at: string | null, last_poll_error: string | null,
-  recent_cities: { city: string, count: number }[],
+  recent_cities: { city: string, count: number }[] /* vagas recentes da vitrine: pela consulta do job, pelo envio da arte modelo e pela prévia (B6) */,
   instagram: { connected: boolean, username: string | null },
   today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
@@ -748,7 +748,7 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | `POST enable` | manage | — | view; 400 "Envie a arte modelo para poder ligar." |
 | `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
 | `POST auto-publish` | manage | `{ auto_publish: boolean }` | view + `moved_to_approval: number` — voltar para "Eu aprovo" (`false`), na mesma transação: stories de vaga `ready\|approved\|scheduled` sem `approved_at` (ninguém aprovou) → `pending_approval` + `creative_brief.vacancy.requires_approval: true` + `scheduled_at: null`, jobs pendentes cancelados; `moved_to_approval` = quantos voltaram (0 ao ligar). Aprovados por alguém e `publishing` ficam |
-| `POST template` | write | multipart `file` (PNG/JPG, ≤ 10 MB) | view + `warning: "landscape" \| null` |
+| `POST template` | write | multipart `file` (PNG/JPG, ≤ 10 MB) | view + `warning: "landscape" \| null`; também preenche `recent_cities` com a vitrine (B6; vitrine fora = ficam como estavam) |
 | `POST preview` | write | — | `{ ok: true }` (segundo plano; o andamento fica em `settings.preview`); 409 "Já existe uma prévia sendo criada." se outra começou há < 10 min; 400 "Envie a arte modelo antes de gerar a prévia." |
 | `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]`: as 100 linhas mais novas (`created_at desc`), filtradas depois — `live` = `display: 'live'` (no ar agora), `not_posted` = `skipped\|cancelled\|failed` |
 | `GET stories/:id` | read | — | `StoryDetail`; id de outra empresa ou inexistente → 404 "Não achamos este story. Ele pode ter sido apagado; atualize a tela." (vale para toda rota `stories/:id`) |
@@ -786,8 +786,15 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
   starts_at: string, approve_until: string | null /* só em to_approve: início − antecedência − 15 min, puxado para dentro da janela */,
   scheduled_at: string | null, published_at: string | null, permalink: string | null, thumb_url: string | null, media_url: string | null,
   attempts: number /* tentativas da IA registradas */, used_fallback: boolean, redo_count: number, ig_post_id: string | null,
-  is_test: boolean /* "teste" no nome da empresa ou no título */, freela_url: string /* https://www.freelaservicosapp.com.br/vagas/{external_id} */,
+  is_test: boolean /* "teste" no nome da empresa ou no título */, freela_url: string /* https://www.freelaservicos.com.br/vagas/{external_id} (B7) */,
   own_art: boolean /* R29: mídia trocada por "Enviar minha própria" (último passo do ai_generation_log = upload) */,
+  check_alert: string[] | null /* A3: entregue na reserva e a leitura achou na arte texto que não devia estar lá (R22) — os textos achados
+                     (`creative_brief.vacancy.check_alert`; posts antigos: os `forbidden` da última tentativa); arte da IA aprovada, arte
+                     própria, leitura que falhou (T9: espera aprovação, mas não há texto a mostrar) ou antes da entrega: null */,
+  fallback_kind: "photo" | "plain" | null /* B1: versão de reserva com foto (textos do sistema sobre uma foto) ou sem foto (sobre as cores da
+                     arte); null = arte da IA, arte própria ou antes da entrega */,
+  wait_kind: "cap" | "instagram" | "window" | "spacing" | null /* B3, só em waiting_cap|waiting_window: máximo do dia · limite de 25
+                     publicações da Meta · fora do horário para postar · empurrado pelos 15 min entre stories com a janela aberta */,
   can: { approve /* to_approve e agora < approve_until (A4: depois do prazo some de "Para aprovar"; a expiração cancela na rodada seguinte) — aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
          post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, motivo ≠ fechada/sem valor/sem cidade, início − antecedência − 15 min > agora (R30) */,
          redo /* entregue e não publicado, redo_count < 3 */, retry /* linha ou post failed */: boolean }
@@ -807,11 +814,13 @@ linha `waiting` que não é do limite (erro da IA, vitrine fora) aparece como `q
 - `own_art` (R29): a mídia foi trocada por "Enviar minha própria" (último passo do `ai_generation_log` do post = `upload`) → `checks: []`
   (a tela mostra "A sua arte não passa pela conferência.").
 - `attempts_log`: `{ n, at, kind: "ai"|"fallback_photo"|"fallback_plain", ok, wrong: FieldKey[], forbidden: string[], error? }[]`.
+- `check_alert`/`fallback_kind`: como no `StoryView` (o detalhe mostra o alerta no lugar da linha da reserva).
 - `alt`: "Story: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas".
 
 `PreviewState` (em `settings.preview`; a prévia usa a vaga mais recente da vitrine com `isUpcoming`, valor e cidade, sem "teste"; sem
 nenhuma — ou vitrine fora — usa a vaga de exemplo Garçom, R$ 150, Campinas, próximo sábado 18h–23h; não precisa de Instagram conectado
-nem da função ligada; nunca cria `ig_posts`; a imagem vai para a Biblioteca com o título "Prévia · story de vaga"):
+nem da função ligada; nunca cria `ig_posts`; a imagem vai para a Biblioteca com o título "Prévia · story de vaga"; a consulta à vitrine
+também preenche `settings.recent_cities` — B6):
 
 ```ts
 {
@@ -819,7 +828,8 @@ nem da função ligada; nunca cria `ig_posts`; a imagem vai para a Biblioteca co
   step: "art" /* "Criando a arte (tentativa {attempt} de 3)" */ | "check" /* "Conferindo os textos" */ |
         "fallback" /* versão de reserva — a tela mostra "Conferindo os textos"; attempt fica em 3 (nunca "4 de 3") */,
   attempt: 1|2|3, started_at: string, finished_at: string | null, media_url: string | null, asset_id: string | null,
-  checks: FieldCheck[] /* da arte aceita (vazio na reserva) */, attempts: AttemptLog[], used_fallback: boolean, sample: boolean,
+  checks: FieldCheck[] /* da arte aceita (vazio na reserva) */, attempts: AttemptLog[], used_fallback: boolean,
+  fallback_kind: "photo" | "plain" | null /* B1: reserva com foto / sem foto; null = arte da IA */, sample: boolean,
   vacancy: { funcao, estabelecimento, valor, dia /* "Sáb 31/10" */, horario, cidade } | null,
   error: string | null /* erro da IA em pt-BR, ou "Não conseguimos criar a prévia. Tente de novo em alguns minutos." */
 }
