@@ -197,7 +197,7 @@ describe('storyView / storyDetail', () => {
       starts_at: new Date(v.startTime), approve_until: new Date('2026-10-31T18:45:00Z'), scheduled_at: null, published_at: null,
       permalink: null, thumb_url: 'https://cdn.test/story.jpg', media_url: 'https://cdn.test/story.jpg', attempts: 1, used_fallback: false,
       redo_count: 0, ig_post_id: p.id, is_test: false, freela_url: `https://www.freelaservicos.com.br/vagas/${v.id}`, own_art: false,
-      check_alert: null, fallback_kind: null, wait_kind: null,
+      check_alert: null, check_unread: false, fallback_kind: null, wait_kind: null,
       can: { approve: true, dont_post: true, post_now: false, create_anyway: false, redo: true, retry: false },
     });
   });
@@ -326,6 +326,26 @@ describe('campos novos para a tela (A3, B1, B3)', () => {
     const own = post({ ...alert, ai_generation_log: [{ step: 'upload' }] });
     expect(storyView(delivered(own, { used_fallback: true, attempts_log: plainLog }), own, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: null });
     expect(storyView(row({ status: 'generating' }), null, s, NOW)).toMatchObject({ check_alert: null, fallback_kind: null });
+  });
+
+  it('R40/M3: reserva cuja leitura falhou → check_unread (do post; posts antigos: erro na última tentativa); o resto false', () => {
+    const failedLog = [...log([['ai', false, []], ['ai', false, []], ['ai', false, []], ['fallback_photo', false, []]]),
+      { n: 5, at: NOW.toISOString(), kind: 'fallback_plain', ok: true, wrong: [], forbidden: [], error: 'A IA não respondeu.' }];
+    const unread = post({ status: 'pending_approval', creative_brief: { vacancy: { checked_fields: [], used_fallback: true, check_alert: null, check_unread: true } } });
+    expect(storyView(delivered(unread, { used_fallback: true, attempts_log: failedLog }), unread, s, NOW)).toMatchObject({ check_alert: null, check_unread: true });
+    expect(storyDetail(delivered(unread, { used_fallback: true, attempts_log: failedLog }), unread, s, NOW).check_unread).toBe(true);
+    // Entregue antes do campo existir: erro na última tentativa da reserva.
+    const old = post({ status: 'pending_approval', creative_brief: { vacancy: { checked_fields: [], used_fallback: true } } });
+    expect(storyView(delivered(old, { used_fallback: true, attempts_log: failedLog }), old, s, NOW).check_unread).toBe(true);
+    // Leitura que respondeu (com ou sem alerta), arte da IA, arte própria e linha antes da entrega: false.
+    const read = post({ status: 'ready', creative_brief: { vacancy: { checked_fields: [], used_fallback: true, check_alert: null, check_unread: false } } });
+    const okLog = log([['ai', false, []], ['ai', false, []], ['ai', false, []], ['fallback_photo', true, []]]);
+    expect(storyView(delivered(read, { used_fallback: true, attempts_log: okLog }), read, s, NOW).check_unread).toBe(false);
+    const ai = post({ status: 'ready' });
+    expect(storyView(delivered(ai, { attempts_log: log([['ai', true, []]]) }), ai, s, NOW).check_unread).toBe(false);
+    const own = post({ ...unread, ai_generation_log: [{ step: 'upload' }] });
+    expect(storyView(delivered(own, { used_fallback: true, attempts_log: failedLog }), own, s, NOW).check_unread).toBe(false);
+    expect(storyView(row({ status: 'generating' }), null, s, NOW).check_unread).toBe(false);
   });
 });
 

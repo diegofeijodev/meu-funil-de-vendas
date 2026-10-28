@@ -64,9 +64,9 @@ export const igLimitReason = (startsAt: Date, deadline: Date, freesAt: Date) =>
 export const spacingReason = (startsAt: Date, deadline: Date) =>
   `${leadIntro(startsAt, deadline)}, e os horários até lá já têm outros stories de vagas.`;
 
-/** A linha/post esperou a vez (limite do dia) e não coube antes do início. */
+/** A linha/post esperou a vez (limite do dia) e não coube antes do início ("1 story de vaga" no singular — R40/M2). */
 export const capWaitReason = (cap: number, startsAt: Date) =>
-  `Não coube no máximo de ${cap} stories de vagas por dia antes do início da vaga (${fullAt(startsAt)}).`;
+  `Não coube no máximo de ${cap === 1 ? '1 story de vaga' : `${cap} stories de vagas`} por dia antes do início da vaga (${fullAt(startsAt)}).`;
 
 /** Post que esperava aprovação e o prazo de aprovação (`approveUntil`) passou. */
 export const noApprovalReason = (deadline: Date, startsAt: Date) =>

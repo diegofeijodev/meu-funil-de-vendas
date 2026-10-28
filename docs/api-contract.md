@@ -790,7 +790,12 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
   own_art: boolean /* R29: mídia trocada por "Enviar minha própria" (último passo do ai_generation_log = upload) */,
   check_alert: string[] | null /* A3: entregue na reserva e a leitura achou na arte texto que não devia estar lá (R22) — os textos achados
                      (`creative_brief.vacancy.check_alert`; posts antigos: os `forbidden` da última tentativa); arte da IA aprovada, arte
-                     própria, leitura que falhou (T9: espera aprovação, mas não há texto a mostrar) ou antes da entrega: null */,
+                     própria, leitura que falhou (T9: espera aprovação, mas não há texto a mostrar — ver `check_unread`) ou antes da entrega: null */,
+  check_unread: boolean /* R40/M3: entregue na reserva e a leitura NÃO conseguiu ler a arte (erro na última leitura, T9 — espera aprovação)
+                     (`creative_brief.vacancy.check_unread`, gravado na entrega; posts antigos: erro na última tentativa da reserva). A tela
+                     mostra "A conferência não conseguiu ler esta arte. Olhe antes de aprovar." no lugar do "✓ Conferido" (cartão "Para
+                     aprovar", Aprovações e o detalhe, no lugar da linha da reserva). Arte da IA, arte própria, leitura que respondeu (com
+                     ou sem `check_alert`) ou antes da entrega: false */,
   fallback_kind: "photo" | "plain" | null /* B1: versão de reserva com foto (textos do sistema sobre uma foto) ou sem foto (sobre as cores da
                      arte); null = arte da IA, arte própria ou antes da entrega */,
   wait_kind: "cap" | "instagram" | "window" | "spacing" | null /* B3, só em waiting_cap|waiting_window: máximo do dia · limite de 25
@@ -816,7 +821,8 @@ linha `waiting` que não é do limite (erro da IA, vitrine fora) aparece como `q
 - `own_art` (R29): a mídia foi trocada por "Enviar minha própria" (último passo do `ai_generation_log` do post = `upload`) → `checks: []`
   (a tela mostra "A sua arte não passa pela conferência.").
 - `attempts_log`: `{ n, at, kind: "ai"|"fallback_photo"|"fallback_plain", ok, wrong: FieldKey[], forbidden: string[], error? }[]`.
-- `check_alert`/`fallback_kind`: como no `StoryView` (o detalhe mostra o alerta no lugar da linha da reserva).
+- `check_alert`/`check_unread`/`fallback_kind`: como no `StoryView` (o detalhe mostra o alerta — ou o aviso de leitura que falhou — no
+  lugar da linha da reserva).
 - `alt`: "Story: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas".
 
 `PreviewState` (em `settings.preview`; a prévia usa a vaga mais recente da vitrine com `isUpcoming`, valor e cidade, sem "teste"; sem
@@ -845,9 +851,11 @@ Brasília. A 1ª data do texto leva o dia ("Qua, 29/10 às 15h"); as seguintes s
 assim"; a triagem da consulta e a guarda medem só a antecedência):
 - antecedência (triagem, fila, guarda, "Criar story mesmo assim"): "A vaga começa {Qua, 29/10} às {15h}. Para dar tempo de divulgar, o story teria de ir ao ar até as {12h45}."
 - horário para postar (R23): "A vaga começa {Qui, 30/10} às {9h}. Para dar tempo de divulgar, o story teria de ir ao ar até as {6h45}, antes do seu horário para postar ({8h às 21h})."
-- espaço da Meta (R23): "… até as {6h45}, mas a conta só tem espaço no Instagram a partir das {7h}."
+- espaço da Meta (R23): "… até as {6h45}, mas a conta só tem espaço no Instagram a partir das {7h}." — só quando o espaço libera DEPOIS
+  do prazo (R40/M1); liberou antes e os 15 min entre stories (inclusive com a janela fechando) empurraram para depois → o motivo dos 15 min.
 - 15 min entre stories (R23): "… até as {12h45}, e os horários até lá já têm outros stories de vagas."
-- máximo do dia: "Não coube no máximo de {10} stories de vagas por dia antes do início da vaga ({Qui, 30/10} às {10h})."
+- máximo do dia: "Não coube no máximo de {10} stories de vagas por dia antes do início da vaga ({Qui, 30/10} às {10h})." (máximo 1: "Não
+  coube no máximo de 1 story de vaga por dia antes do início da vaga (…)." — R40/M2)
 - ninguém aprovou (o `pending_approval` é cancelado no próprio `approve_until`, A4): "Ninguém aprovou a tempo. O prazo era {Qua, 29/10} às {15h45}; a vaga começa às {18h}." (início em outro dia: "a vaga começa {Qui, 30/10} às {9h}")
 - os demais seguem: "A vaga começou antes de ir ao ar." · "A vaga não está mais aberta no Freela (preenchida ou cancelada)." · "Você escolheu não postar." · "Os stories das vagas foram desligados." · "Não conseguimos conferir a vaga deste story. Por segurança, ele não vai ao ar."
 
@@ -855,7 +863,8 @@ Geração (A4/C1/T9): antes de gastar IA o gerador confere a vaga VIVA na vitrin
 cidades, "teste", antecedência; a linha `forced` só valor, cidade e antecedência + 15 min, como o "Criar story mesmo assim") → pulada =
 linha `skipped` com o motivo; e não gera arte que não tem como ir ao ar — no modo "Eu aprovo" com o prazo de aprovação passado, ou com a
 agenda (`planSlot`) que já expiraria → linha `expired` com o motivo. Reserva cuja leitura reprovou (texto proibido, R22) ou nem conseguiu
-ler (erro na última leitura, T9) sai `pending_approval` mesmo no modo sozinho. A expiração (rodada do job) também cancela post de vaga
+ler (erro na última leitura, T9) sai `pending_approval` mesmo no modo sozinho; o post grava `creative_brief.vacancy.check_alert` (os textos
+achados, R22) e `creative_brief.vacancy.check_unread` (`true` = a leitura não leu, T9 — R40/M3). A expiração (rodada do job) também cancela post de vaga
 `ready|approved|scheduled` cuja vaga já começou (T10, "A vaga começou antes de ir ao ar.").
 Conferência (I3): além dos campos e dos textos proibidos, reprova o dia da semana errado na data lida ("Sex, 31/10" num sábado; sem dia
 da semana só a data conta) e telefone, e-mail ou sequência de 11+ dígitos (CPF/CNPJ/telefone colado) em qualquer texto lido — também

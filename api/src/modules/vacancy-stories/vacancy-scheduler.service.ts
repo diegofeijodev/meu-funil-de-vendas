@@ -166,7 +166,8 @@ export class VacancySchedulerService implements OnModuleInit {
     const deadline = leadDeadline(startsAt, s.min_lead_minutes, true);
     if (late(new Date(now.getTime() + MIN))) return { expire: tooCloseReason(startsAt, deadline) };
     if (late(opens)) return { expire: windowReason(startsAt, deadline, s.window_start, s.window_end) };
-    if (waitingFor === 'ig_limit' && ig.freesAt) return { expire: igLimitReason(startsAt, deadline, ig.freesAt) };
+    // R40/M1: o espaço da Meta só é o motivo quando ele libera depois do prazo; antes disso foram os 15 min (ou a janela) que empurraram.
+    if (waitingFor === 'ig_limit' && ig.freesAt && late(ig.freesAt)) return { expire: igLimitReason(startsAt, deadline, ig.freesAt) };
     return { expire: spacingReason(startsAt, deadline) };
   }
 

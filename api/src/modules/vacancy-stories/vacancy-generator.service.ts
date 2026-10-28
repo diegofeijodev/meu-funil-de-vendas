@@ -426,7 +426,8 @@ export class VacancyGeneratorService {
     // O modo pode ter mudado durante a geração: vale o de agora. Reserva que a leitura reprovou (texto proibido, R22) ou que a leitura
     // nem conseguiu conferir (erro na última leitura, T9) nunca vai ao ar sozinha: espera aprovação mesmo no modo "postar sozinho".
     const autoMode = (await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { auto_publish: true } }))?.auto_publish ?? s.auto_publish;
-    const unchecked = art.usedFallback && (!art.check.ok || !!art.attempts[art.attempts.length - 1]?.error);
+    const unread = art.usedFallback && !!art.attempts[art.attempts.length - 1]?.error;
+    const unchecked = unread || (art.usedFallback && !art.check.ok);
     const auto = autoMode && !unchecked;
     const asset = await this.assets.ingest({
       workspaceId: ws, kind: 'image', targetFormat: 'ig_story', normalize: false, source: art.origin.source, provider: art.origin.provider,
@@ -436,12 +437,13 @@ export class VacancyGeneratorService {
       url: asset.url, type: 'image', order: 0, width: asset.width, height: asset.height, duration: null, asset_id: asset.id, ig_ready: asset.ig_ready,
     }];
     const aiTries = art.attempts.filter((a) => a.kind === 'ai').length;
-    // A3: na reserva que a leitura reprovou, o que ela achou (Aprovações e a aba Vagas avisam em vez de "✓ Conferido").
+    // A3: na reserva que a leitura reprovou, o que ela achou (Aprovações e a aba Vagas avisam em vez de "✓ Conferido"). R40/M3: na que
+    // a leitura nem conseguiu ler, `check_unread` (a tela diz que a conferência não leu a arte, também no lugar do "✓ Conferido").
     const alert = art.usedFallback && !art.check.ok && art.check.forbidden.length ? art.check.forbidden : null;
     const vacancy = {
       story_id: row.id, external_id: row.external_id, fingerprint: fingerprint(v), requires_approval: !auto,
       checked_fields: art.check.fields.filter((x) => x.ok).map((x) => x.key), attempts: aiTries, used_fallback: art.usedFallback,
-      check_alert: alert, starts_at: v.startTime,
+      check_alert: alert, check_unread: unread, starts_at: v.startTime,
     };
     // D12: no post só o resumo de cada tentativa; o detalhe fica em `vacancy_stories.attempts_log`.
     const shortLog = art.attempts.map((a) => ({ at: a.at, step: 'vacancy_art', attempt: a.n, ok: a.ok, wrong: a.wrong, fallback: a.kind !== 'ai' }));

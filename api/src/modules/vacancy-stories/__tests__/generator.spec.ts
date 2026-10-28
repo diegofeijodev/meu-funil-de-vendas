@@ -104,7 +104,7 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(post.creative_brief.compose).toBe(false);
     expect(post.creative_brief.vacancy).toMatchObject({
       story_id: r0.id, external_id: v.id, fingerprint: fingerprint(v), requires_approval: true, attempts: 1, used_fallback: false, starts_at: v.startTime,
-      check_alert: null,
+      check_alert: null, check_unread: false,
     });
     expect([...post.creative_brief.vacancy.checked_fields].sort()).toEqual(ALL_KEYS);
     expect(post.ai_generation_log).toEqual([{ at: expect.any(String), step: 'vacancy_art', attempt: 1, ok: true, wrong: [], fallback: false }]);
@@ -495,7 +495,7 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(row.attempts_log[4]).toMatchObject({ kind: 'fallback_plain', ok: false, forbidden: ['www.marca.com.br'] });
     const post = t.posts()[0]!;
     expect(post.status).toBe('pending_approval');
-    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true, check_alert: ['www.marca.com.br'] });
+    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true, check_alert: ['www.marca.com.br'], check_unread: false });
   });
 
   it('T9: reserva sem foto cuja leitura FALHOU espera aprovação mesmo no modo sozinho', async () => {
@@ -514,7 +514,8 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.row(r0.id).attempts_log[4]).toMatchObject({ kind: 'fallback_plain', error: expect.any(String) });
     const post = t.posts()[0]!;
     expect(post.status).toBe('pending_approval');
-    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true });
+    // R40/M3: a tela não diz "✓ Conferido" — a leitura não respondeu.
+    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true, check_alert: null, check_unread: true });
   });
 
   it('lease renovado antes de cada chamada da IA e antes da entrega (o relógio anda durante a geração)', async () => {

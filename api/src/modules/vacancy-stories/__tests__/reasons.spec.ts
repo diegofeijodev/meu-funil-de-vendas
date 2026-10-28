@@ -40,6 +40,10 @@ describe('motivos gravados (A5): dia e hora absolutos, nunca "hoje"/"amanhã"', 
     expect(capWaitReason(10, new Date('2026-10-30T13:00:00Z'))).toBe(
       'Não coube no máximo de 10 stories de vagas por dia antes do início da vaga (Sex, 30/10 às 10h).',
     );
+    // R40/M2: concordância com o máximo de 1.
+    expect(capWaitReason(1, new Date('2026-10-30T13:00:00Z'))).toBe(
+      'Não coube no máximo de 1 story de vaga por dia antes do início da vaga (Sex, 30/10 às 10h).',
+    );
     const thu18 = new Date('2026-10-29T21:00:00Z');
     const s = { min_lead_minutes: 120, window_start: '08:00', window_end: '21:00' };
     expect(noApprovalReason(approveUntil(thu18, s), thu18)).toBe('Ninguém aprovou a tempo. O prazo era Qui, 29/10 às 15h45; a vaga começa às 18h.');

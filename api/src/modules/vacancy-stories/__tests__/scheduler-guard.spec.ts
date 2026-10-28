@@ -192,6 +192,27 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     });
   });
 
+  it('R40/M1 — espaço da Meta libera ANTES do prazo, mas os 15 min empurram para depois: motivo dos 15 min, não o da Meta', async () => {
+    const t = await setup();
+    for (let i = 1; i <= 20; i++) seedPost(w, { status: 'published', published_at: at(-i * HOUR) });
+    // A Meta libera às 14h; vaga às 16h30 (prazo 14h15). O story de vaga das 14h05 empurra o horário para 14h20.
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(4 * HOUR + 5 * MIN) });
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-29T19:30:00Z'), NOW)).toEqual({
+      expire: 'A vaga começa Qui, 29/10 às 16h30. Para dar tempo de divulgar, o story teria de ir ao ar até as 14h15, e os horários até lá já têm outros stories de vagas.',
+    });
+  });
+
+  it('R40/M1 — janela fechando com os 15 min e o espaço da Meta antes do prazo: motivo dos 15 min', async () => {
+    const t = await setup();
+    // A mais antiga das 20 publicações é de ontem 20h50: a Meta libera hoje às 20h50 (bem antes do prazo, amanhã 6h45).
+    for (let i = 0; i < 20; i++) seedPost(w, { status: 'published', published_at: at(-13 * HOUR - 10 * MIN + i * MIN) });
+    // Story de vaga às 20h55: o próximo horário (21h10) cai depois da janela (8h às 21h) → amanhã 8h, depois do prazo.
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(10 * HOUR + 55 * MIN) });
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-30T12:00:00Z'), NOW)).toEqual({
+      expire: 'A vaga começa Sex, 30/10 às 9h. Para dar tempo de divulgar, o story teria de ir ao ar até as 6h45, e os horários até lá já têm outros stories de vagas.',
+    });
+  });
+
   it('R26 — folga de 15 min além da antecedência: vaga às 10h (janela 8h, 2 h) expira; às 10h20 vai às 8h e a guarda às 8h05 libera', async () => {
     const t = await setup();
     t.clock.t = new Date('2026-10-30T01:10:00Z').getTime(); // 22h10

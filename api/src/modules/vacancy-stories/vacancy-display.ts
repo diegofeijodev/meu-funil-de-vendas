@@ -90,6 +90,8 @@ export type StoryView = {
   own_art: boolean;
   /** A3: a reserva saiu, mas a leitura achou na arte texto que não devia estar lá (R22/T9) — os textos achados; senão `null`. */
   check_alert: string[] | null;
+  /** R40/M3: a reserva saiu, mas a leitura não conseguiu ler a arte (T9) — a tela nunca diz "✓ Conferido" nesse caso. */
+  check_unread: boolean;
   /** B1: versão de reserva com foto ou sem foto; `null` = arte da IA aprovada (ou arte própria, ou ainda sem arte). */
   fallback_kind: FallbackKind | null;
   /** B3: por que espera (só em `waiting_window`/`waiting_cap`). */
@@ -257,7 +259,8 @@ export function canRevive(row: StoryRow, post: StoryPost | null): boolean {
 
 const snap = (row: StoryRow) => (row.snapshot ?? {}) as unknown as Partial<FreelaVacancy>;
 const briefOf = (post: StoryPost | null) =>
-  (post?.creative_brief as unknown as { vacancy?: { checked_fields?: string[]; used_fallback?: boolean; check_alert?: unknown } } | null)?.vacancy;
+  (post?.creative_brief as unknown as { vacancy?: { checked_fields?: string[]; used_fallback?: boolean; check_alert?: unknown; check_unread?: unknown } } | null)
+    ?.vacancy;
 
 /** B1: a última tentativa diz de que jeito a reserva saiu (a tentativa aceita é sempre a última). */
 export function fallbackKindOf(attempts: unknown): FallbackKind | null {
@@ -278,6 +281,17 @@ export function checkAlert(row: StoryRow, post: StoryPost | null): string[] | nu
       ? (asLog(row.attempts_log).at(-1)?.forbidden ?? [])
       : [];
   return list.length ? list : null;
+}
+
+/**
+ * R40/M3: a reserva entregue cuja leitura falhou (T9) — `creative_brief.vacancy.check_unread`, gravado na entrega; posts entregues antes
+ * do campo: erro na última tentativa da reserva. Arte própria ou ainda sem arte: `false`.
+ */
+export function checkUnread(row: StoryRow, post: StoryPost | null): boolean {
+  if (row.status !== 'handed_off' || !post || ownArt(post)) return false;
+  const stored = briefOf(post)?.check_unread;
+  if (typeof stored === 'boolean') return stored;
+  return row.used_fallback && !!asLog(row.attempts_log).at(-1)?.error;
 }
 
 function whenOf(row: StoryRow): { day: string; horario: string } {
@@ -321,6 +335,7 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     freela_url: `${FREELA_VACANCY_URL}${encodeURIComponent(row.external_id)}`,
     own_art: ownArt(post),
     check_alert: checkAlert(row, post),
+    check_unread: checkUnread(row, post),
     fallback_kind: row.status === 'handed_off' && row.used_fallback && !ownArt(post) ? fallbackKindOf(row.attempts_log) : null,
     wait_kind: d.wait_kind,
     can: canOf(row, post, d.display, s, now),
