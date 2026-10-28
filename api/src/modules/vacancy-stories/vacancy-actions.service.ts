@@ -10,12 +10,13 @@ import { canRevive, displayOf, POST_UNPUBLISHED, ROW_QUEUED, storyDetail, storyV
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { NO_ACCOUNT_WAIT } from './vacancy-generator.service';
 import { VacancyGate } from './vacancy-gate.service';
-import { WAIT_CAP } from './vacancy-poll.service';
-import { DONT_POST_REASON, MAX_REDOS, VACANCY_STARTED_REASON } from './vacancy-reasons';
+import { DONT_POST_REASON, MAX_REDOS, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 import { VacancySettingsService } from './vacancy-settings.service';
+import { PUBLISH_SLACK_MS } from './vacancy-slots';
 import type { StoryFeedback, StoryFilter } from './vacancy-stories.dto';
 import { fingerprint } from './vacancy-text';
+import { SKIP } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
@@ -161,9 +162,9 @@ export class VacancyActionsService {
   }
 
   /**
-   * "Criar story mesmo assim" — pulada, cancelada, expirada, ou entregue com o post cancelado: com a vaga ainda aberta na vitrine e
-   * por começar, a linha volta para a fila com `forced` e os dados vivos da vaga (solta o post cancelado). Vaga que já entrou na
-   * antecedência volta a expirar na próxima rodada (com o motivo de sempre).
+   * "Criar story mesmo assim" — pulada, cancelada, expirada, ou entregue com o post cancelado: confere a vaga VIVA na vitrine (R30:
+   * aberta, com valor e cidade, fora da antecedência + 15 min de folga — a triagem não roda de novo) e a linha volta para a fila com
+   * `forced` e os dados vivos (solta o post cancelado).
    */
   async createAnyway(userId: string, ws: string, id: string): Promise<{ ok: true }> {
     this.gate.assert(ws);
@@ -181,8 +182,11 @@ export class VacancyActionsService {
       throw e;
     }
     if (!v) throw bad(MSG.closed);
+    if (!v.amountInCents) throw bad(SKIP.noValue);
+    if (!(v.city ?? '').trim()) throw bad(SKIP.noCity);
     const startsAt = new Date(v.startTime);
     if (startsAt.getTime() <= now.getTime()) throw bad(VACANCY_STARTED_REASON);
+    if (startsAt.getTime() - now.getTime() < s.min_lead_minutes * 60_000 + PUBLISH_SLACK_MS) throw bad(tooCloseReason(startsAt, s.min_lead_minutes));
     const r = await this.prisma.vacancy_stories.updateMany({
       where: { id, workspace_id: ws, status: row.status, ig_post_id: row.ig_post_id },
       data: { ...REQUEUE, forced: true, snapshot: json(v), fingerprint: fingerprint(v), starts_at: startsAt },
@@ -247,10 +251,15 @@ export class VacancyActionsService {
     return { row, post };
   }
 
-  /** O limite de hoje já está cheio? (separa "esperando a vez" de "esperando o horário" num post empurrado para outro dia). */
+  /**
+   * Stories de vaga de hoje (R3) e se o limite do dia / o limite da Meta estão cheios — separa "esperando a vez" de "esperando o
+   * horário" num post empurrado para outro dia e põe o número real em "Hoje já foram {n}".
+   */
   private async context(ws: string, s: SettingsRow, now: Date): Promise<DisplayContext> {
     const c = await countVacancyStoriesOnDay(this.prisma, ws, todaySp(now));
-    return { capFull: c.posted + c.scheduled >= s.daily_cap };
+    const today = c.posted + c.scheduled;
+    const ig = await this.scheduler.igRoom(ws, now);
+    return { capFull: today >= s.daily_cap, todayCount: today, igFull: ig.room <= 0 };
   }
 }
 

@@ -754,7 +754,7 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | `GET stories/:id` | read | — | `StoryDetail`; id de outra empresa ou inexistente → 404 "Story não encontrado." (vale para toda rota `stories/:id`) |
 | `POST stories/:id/dont-post` | write | `{ feedback?: "texto_errado"\|"foto_estranha"\|"nao_divulgar" }` | `{ ok: true }` — antes da entrega (`new\|waiting\|generating`) a linha vira `cancelled`; entregue e não publicado (`pending_approval\|approved\|ready\|scheduled`) → post `cancelled` + jobs pendentes cancelados + `rejection_reason` e a linha (continua `handed_off`) com `skip_reason` = "Você escolheu não postar."; já não postado → só grava o `feedback` (idempotente) |
 | `POST stories/:id/post-now` | write | — | `{ ok: true }` — só `waiting_window\|waiting_cap`: post → agendado em agora + 1 min (fura janela, limite e espaço; a guarda ainda confere a vaga); linha esperando o limite → `new` com `post_now`; Instagram desconectado → 400 com o aviso vermelho |
-| `POST stories/:id/create-anyway` | write | — | `{ ok: true }` — só `skipped\|cancelled\|expired` (ou entregue com o post cancelado/apagado): confere a vaga na vitrine (fechada → 400 "A vaga não está mais aberta no Freela."; vitrine fora → 400 "Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos."; já começou → 400 "A vaga começou antes de ir ao ar.") e a linha volta a `new` com `forced: true`, `ig_post_id: null` e os dados vivos da vaga (se já estiver dentro da antecedência, expira de novo na próxima rodada) |
+| `POST stories/:id/create-anyway` | write | — | `{ ok: true }` — só `skipped\|cancelled\|expired` (ou entregue com o post cancelado/apagado): confere a vaga VIVA na vitrine (R30; a triagem não roda de novo): fechada → 400 "A vaga não está mais aberta no Freela."; vitrine fora → 400 "Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos."; sem valor → 400 "A vaga não tem valor informado."; sem cidade → 400 "A vaga não tem cidade informada."; já começou → 400 "A vaga começou antes de ir ao ar."; a menos de antecedência + 15 min → 400 "Começa às {h}, em menos de {2 h}. Não dá tempo de divulgar." Passou → a linha volta a `new` com `forced: true`, `ig_post_id: null` e os dados vivos da vaga |
 | `POST stories/:id/redo` | write | — | `{ ok: true }` — "Refazer a arte" (entregue e não publicado): post `cancelled` (+ jobs), linha `new` com `redo_count + 1`; no teto (D11, 3) → 400 "Esta vaga já foi refeita 3 vezes." · "Tentar de novo" (linha `failed` ou post `failed`): linha `new` sem contar refação |
 
 Erros comuns às ações (400): "A situação deste story mudou. Atualize a tela e tente de novo." (a ação não vale para a situação atual,
@@ -770,8 +770,11 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
   label: string   /* "Na fila para criar a arte" · "Criando a arte" · "Esperando o horário" · "Esperando a vez" · "Esperando sua aprovação" ·
                      "Pronto, vai ao ar às 14h50" (sem horário: "Pronto para ir ao ar") · "No ar até amanhã às 14h50" · "Ficou 24 h no ar" ·
                      "Não virou story" · "Não foi ao ar" · "Não conseguimos criar o story" */,
-  support: string | null /* apoio: "Tentativa 2 de 3" · "Vai ao ar às 8h" / "amanhã às 8h" / "dia 31/10 às 8h" ·
-                     "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado." (1: "Hoje já foi 1") ·
+  support: string | null /* apoio: "Tentativa 2 de 3" (contador ao vivo do gerador: `mismatch_attempts` + 1, máx. 3 — R28) ·
+                     "Vai ao ar às 8h" / "amanhã às 8h" / "dia 31/10 às 8h" ·
+                     "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado." (número = stories de vaga
+                     de hoje; 1: "Hoje já foi 1") · espera do limite da Meta: "O Instagram aceita até 25 publicações por dia na conta, somando
+                     os posts normais. Vai ao ar amanhã às 8h." ·
                      "Aprove até 16h. Depois disso não dá tempo de divulgar." · na fila depois de erro da IA/sem Instagram: o motivo da espera ·
                      pronto sem horário: o `last_error` do post */,
   reason: string | null  /* motivo de skipped/cancelled/failed: `skip_reason` da linha; post cancelado: `skip_reason` ?? ("Você escolheu
@@ -783,20 +786,23 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
   attempts: number /* tentativas da IA registradas */, used_fallback: boolean, redo_count: number, ig_post_id: string | null,
   is_test: boolean /* "teste" no nome da empresa ou no título */, freela_url: string /* https://www.freelaservicosapp.com.br/vagas/{external_id} */,
   can: { approve /* to_approve — aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
-         post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, vaga não fechada e por começar */,
+         post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, motivo ≠ fechada/sem valor/sem cidade, início − antecedência − 15 min > agora (R30) */,
          redo /* entregue e não publicado, redo_count < 3 */, retry /* linha ou post failed */: boolean }
          /* post_now, create_anyway, redo e retry: false com a função desligada */
 }
 ```
 
 Situação de post agendado para depois: mesmo dia com a janela aberta → `ready`; janela fechada agora → `waiting_window`; empurrado para
-outro dia com a janela aberta → `waiting_cap` se o limite de hoje está cheio, senão `waiting_window`. `expired` aparece como `cancelled`;
+outro dia com a janela aberta → `waiting_cap` se o limite de hoje está cheio (ou, sem ele, se a conta está sem espaço no limite da Meta),
+senão `waiting_window`. `expired` aparece como `cancelled`;
 linha `waiting` que não é do limite (erro da IA, vitrine fora) aparece como `queued` com o motivo no `support`.
 
-`StoryDetail` = `StoryView` & `{ checks: FieldCheck[], attempts_log: AttemptLog[], alt: string }`:
+`StoryDetail` = `StoryView` & `{ checks: FieldCheck[], attempts_log: AttemptLog[], alt: string, own_art: boolean }`:
 - `checks`: entregue → `{ key, label, ok, read: null, expected }` para função, valor, data, horário de início, horário de fim, cidade (e
   estabelecimento quando sai na arte); `ok` pelos `checked_fields` do post (reserva: todos `true`, texto do sistema). O texto lido pela IA
   não é guardado — o campo errado de cada tentativa está em `attempts_log[].wrong`. Antes da entrega: `[]`.
+- `own_art` (R29): a mídia foi trocada por "Enviar minha própria" (último passo do `ai_generation_log` do post = `upload`) → `checks: []`
+  (a tela mostra "A sua arte não passa pela conferência.").
 - `attempts_log`: `{ n, at, kind: "ai"|"fallback_photo"|"fallback_plain", ok, wrong: FieldKey[], forbidden: string[], error? }[]`.
 - `alt`: "Story: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas".
 

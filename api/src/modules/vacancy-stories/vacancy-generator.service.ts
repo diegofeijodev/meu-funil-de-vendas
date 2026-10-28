@@ -12,8 +12,7 @@ import { bad, errMessage } from '../media/user-error';
 import { composeFallback, composeStoryFrame, cropForCheck, loadBadges } from './vacancy-art';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
-import { WAIT_CAP } from './vacancy-poll.service';
-import { VACANCY_CLOSED_REASON } from './vacancy-reasons';
+import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
@@ -86,9 +85,10 @@ class RowLease {
     private readonly clock: () => number,
   ) {}
 
-  async renew(): Promise<void> {
+  /** `extra`: o que gravar junto (a tentativa em andamento, R28), na mesma escrita condicionada ao lease. */
+  async renew(extra: Prisma.vacancy_storiesUpdateManyMutationInput = {}): Promise<void> {
     const next = new Date(this.clock() + LEASE_MS);
-    const got = await this.prisma.vacancy_stories.updateMany({ where: { id: this.id, status: 'generating', lease_until: this.until }, data: { lease_until: next } });
+    const got = await this.prisma.vacancy_stories.updateMany({ where: { id: this.id, status: 'generating', lease_until: this.until }, data: { ...extra, lease_until: next } });
     if (!got.count) throw new LeaseLost();
     this.until = next;
   }
@@ -188,10 +188,11 @@ export class VacancyGeneratorService {
       }
       // O lease conta do relógio de agora (a 2ª linha da rodada começa depois da 1ª), não do `now` da rodada.
       const lease = new RowLease(this.prisma, row.id, new Date(this.now() + LEASE_MS), () => this.now());
-      const got = await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { status: 'generating', lease_until: lease.until, wait_reason: null } });
+      // `mismatch_attempts` zera ao pegar a linha: durante a geração é o contador ao vivo da tentativa (R28 — a tela mostra +1).
+      const got = await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { status: 'generating', lease_until: lease.until, wait_reason: null, mismatch_attempts: 0 } });
       if (!got.count) continue;
       out.started++;
-      const leased: StoryRow = { ...row, status: 'generating', lease_until: lease.until, wait_reason: null };
+      const leased: StoryRow = { ...row, status: 'generating', lease_until: lease.until, wait_reason: null, mismatch_attempts: 0 };
       let r: Outcome;
       try {
         r = await this.generateOne(leased, lease, s, now);
@@ -229,8 +230,11 @@ export class VacancyGeneratorService {
     }
     let art: ArtResult;
     try {
-      // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado).
-      art = await this.makeArt(row.workspace_id, s, vacancyFields(v), () => lease.renew());
+      // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado) e, na arte da tentativa n ≤ 3,
+      // grava n − 1 em `mismatch_attempts` (R28: as anteriores foram reprovadas; os passos da reserva não mexem — fica em 2).
+      art = await this.makeArt(row.workspace_id, s, vacancyFields(v), (step, n) =>
+        lease.renew(step === 'art' && n <= AI_TRIES ? { mismatch_attempts: n - 1 } : {}),
+      );
     } catch (e) {
       if (!(e instanceof ArtAiError)) throw e;
       return (await this.recordAiError(row, lease, e, now)) ? 'waiting' : 'lost';

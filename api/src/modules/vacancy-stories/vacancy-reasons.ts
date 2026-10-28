@@ -8,6 +8,9 @@ import { hourLabel, leadLabel, spParts } from './vacancy-text';
 /** Hora de Brasília de um instante ("18h", "9h30"). */
 const hourOf = (d: Date) => hourLabel(spParts(d.toISOString()).minutes);
 
+/** Marca de `wait_reason` da linha que espera a vez (limite do dia); a tela mostra "Esperando a vez". */
+export const WAIT_CAP = 'cap';
+
 /** D11: refações por mudança da vaga (e "Refazer a arte") por linha. */
 export const MAX_REDOS = 3;
 

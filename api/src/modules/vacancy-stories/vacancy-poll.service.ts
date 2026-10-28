@@ -4,12 +4,11 @@ import { leaseFree } from '../instagram/ig-store.service';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import { capWaitReason, noApprovalReason, tooCloseReason } from './vacancy-reasons';
+import { capWaitReason, noApprovalReason, tooCloseReason, WAIT_CAP } from './vacancy-reasons';
 import { fingerprint } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
 
-export const WAIT_CAP = 'cap';
 const MIN = 60_000;
 
 /** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada). */

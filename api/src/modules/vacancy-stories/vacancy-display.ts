@@ -1,9 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import { addDays } from '../../common/time/dates';
-import { WAIT_CAP } from './vacancy-poll.service';
-import { DONT_POST_REASON, MAX_REDOS, VACANCY_CLOSED_REASON } from './vacancy-reasons';
+import { DONT_POST_REASON, MAX_REDOS, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import { cleanEstablishment, cleanFunction, formatMoney, formatWhen, hourLabel, isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
+import { SKIP } from './vacancy-triage';
 import type { AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
 import { FIELD_LABELS } from './vacancy-verify';
 
@@ -28,12 +28,15 @@ export type Display =
 /** O que a tela lê do post de vaga. */
 export type StoryPost = Pick<
   Prisma.ig_postsGetPayload<object>,
-  'id' | 'status' | 'scheduled_at' | 'published_at' | 'last_error' | 'rejection_reason' | 'ig_permalink' | 'media' | 'creative_brief'
+  'id' | 'status' | 'scheduled_at' | 'published_at' | 'last_error' | 'rejection_reason' | 'ig_permalink' | 'media' | 'creative_brief' | 'ai_generation_log'
 >;
 
 export type DisplayResult = { display: Display; label: string; support: string | null; reason: string | null; approve_until: Date | null };
-/** `capFull`: o limite do dia de hoje já está cheio (distingue "esperando a vez" de "esperando o horário"). Ausente = cheio. */
-export type DisplayContext = { capFull?: boolean };
+/**
+ * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `todayCount` = stories de vaga
+ * de hoje (`countVacancyStoriesOnDay`, R3; ausente = o limite); `igFull` = sem espaço no limite de publicações da Meta.
+ */
+export type DisplayContext = { capFull?: boolean; todayCount?: number; igFull?: boolean };
 
 export type StoryCan = { approve: boolean; dont_post: boolean; post_now: boolean; create_anyway: boolean; redo: boolean; retry: boolean };
 
@@ -68,7 +71,8 @@ export type StoryView = {
   can: StoryCan;
 };
 
-export type StoryDetail = StoryView & { checks: FieldCheck[]; attempts_log: AttemptLog[]; alt: string };
+/** `own_art`: a mídia foi trocada por "Enviar minha própria" (R29) — ninguém conferiu, então `checks` vem vazio. */
+export type StoryDetail = StoryView & { checks: FieldCheck[]; attempts_log: AttemptLog[]; alt: string; own_art: boolean };
 
 /** Página pública da vaga no Freela. */
 export const FREELA_VACANCY_URL = 'https://www.freelaservicosapp.com.br/vagas/';
@@ -95,6 +99,8 @@ export const ROW_QUEUED = ['new', 'waiting', 'generating'];
 export const POST_UNPUBLISHED = ['pending_approval', 'approved', 'ready', 'scheduled'];
 /** Linhas que "Criar story mesmo assim" traz de volta (e a entregue cujo post foi cancelado). */
 const ROW_REVIVABLE = ['skipped', 'cancelled', 'expired'];
+/** Motivos que "Criar story mesmo assim" não desfaz (R30): a vaga continua sem como virar story. */
+const NO_REVIVE = [VACANCY_CLOSED_REASON, SKIP.noValue, SKIP.noCity];
 const LATER = ['approved', 'ready', 'scheduled'];
 
 // ------------------------------------------------------------------ horários (Brasília)
@@ -138,10 +144,15 @@ export function approveUntil(startsAt: Date, s: Pick<SettingsRow, 'min_lead_minu
   return t;
 }
 
-/** "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, …" — com 1, "já foi 1" (R4). */
-function capSupport(cap: number, at: Date, now: Date): string {
-  const done = cap === 1 ? 'Hoje já foi 1' : `Hoje já foram ${cap}`;
+/** "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, …" — `n` = a contagem real do dia; com 1, "já foi 1" (R4). */
+function capSupport(n: number, at: Date, now: Date): string {
+  const done = n === 1 ? 'Hoje já foi 1' : `Hoje já foram ${n}`;
   return `${done} (o máximo por dia). Vai ao ar ${atLabel(at, now)}, se a vaga ainda não tiver começado.`;
+}
+
+/** Espera pelo limite de publicações da Meta (não pelo limite do dia): a 1ª frase do aviso de limite dos Ajustes (UI §3) + o horário. */
+function igSupport(at: Date, now: Date): string {
+  return `O Instagram aceita até 25 publicações por dia na conta, somando os posts normais. Vai ao ar ${atLabel(at, now)}.`;
 }
 
 const noPeriod = (s: string) => s.trim().replace(/[.\s]+$/, '');
@@ -153,8 +164,8 @@ const aiAttempts = (log: unknown) => asLog(log).filter((a) => a?.kind === 'ai').
 /**
  * Situação, rótulo, apoio e motivo de um story (UI §4). Antes da entrega pela linha; depois, pelo post. Post agendado: hoje e com a
  * janela aberta → pronto; fora da janela → esperando o horário; empurrado para outro dia com a janela aberta → esperando a vez (se
- * o limite de hoje está cheio; senão o horário). "Tentativa {n} de 3" conta as tentativas que a linha já registrou (a geração em
- * andamento não grava as dela antes de terminar).
+ * o limite de hoje está cheio, ou se a conta está sem espaço no limite da Meta; senão o horário). "Tentativa {n} de 3" = o contador
+ * ao vivo do gerador (`mismatch_attempts` + 1, máx. 3 — R28).
  */
 export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): DisplayResult {
   const out = (display: Display, label: string, support: string | null = null, reason: string | null = null, approve_until: Date | null = null) =>
@@ -165,10 +176,10 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     case 'waiting': {
       if (row.wait_reason !== WAIT_CAP) return out('queued', LABEL.queued, row.wait_reason);
       const at = row.not_before ?? windowStartOn(addDays(spDay(now), 1), s.window_start);
-      return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
+      return out('waiting_cap', LABEL.waiting_cap, capSupport(ctx.todayCount ?? s.daily_cap, at, now));
     }
     case 'generating':
-      return out('generating', LABEL.generating, `Tentativa ${Math.min(AI_TRIES, aiAttempts(row.attempts_log) + 1)} de ${AI_TRIES}`);
+      return out('generating', LABEL.generating, `Tentativa ${Math.min(AI_TRIES, row.mismatch_attempts + 1)} de ${AI_TRIES}`);
     case 'skipped':
       return out('skipped', LABEL.skipped, null, row.skip_reason);
     case 'expired':
@@ -197,7 +208,8 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
   if (LATER.includes(post.status) && at && at.getTime() > now.getTime()) {
     const otherDay = spDay(at) !== spDay(now);
     const open = inWindow(now, s);
-    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
+    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(ctx.todayCount ?? s.daily_cap, at, now));
+    if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now));
     if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`);
   }
   // Pronto (também `publishing`); sem horário (Instagram desconectado, token vencido) o apoio diz por quê.
@@ -212,8 +224,10 @@ export function canOf(row: StoryRow, post: StoryPost | null, d: Display, s: Sett
     approve: d === 'to_approve',
     dont_post: ROW_QUEUED.includes(row.status) ? row.status !== 'generating' : unpublished,
     post_now: on && (d === 'waiting_window' || d === 'waiting_cap'),
+    // R30: some se a vaga não tem como virar story (fechada, sem valor, sem cidade, ou já dentro da antecedência + 15 min de folga).
     create_anyway:
-      on && (d === 'skipped' || d === 'cancelled') && canRevive(row, post) && row.starts_at.getTime() > now.getTime() && row.skip_reason !== VACANCY_CLOSED_REASON,
+      on && (d === 'skipped' || d === 'cancelled') && canRevive(row, post) && !NO_REVIVE.includes(row.skip_reason ?? '') &&
+      row.starts_at.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS > now.getTime(),
     redo: on && unpublished && row.redo_count < MAX_REDOS,
     retry: on && (row.status === 'failed' || (row.status === 'handed_off' && post?.status === 'failed')),
   };
@@ -277,11 +291,11 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
 /**
  * Conferência campo a campo da arte entregue: os valores esperados da vaga e se cada um conferiu (`checked_fields` do post; na
  * reserva todo texto é do sistema, então todos conferem). O que a leitura viu (`read`) não é guardado — só as chaves erradas de cada
- * tentativa ficam em `attempts_log`. Antes da entrega: vazia.
+ * tentativa ficam em `attempts_log`. Antes da entrega, ou com a arte trocada por "Enviar minha própria" (R29): vazia.
  */
 export function storyChecks(row: StoryRow, post: StoryPost | null): FieldCheck[] {
   const v = snap(row);
-  if (row.status !== 'handed_off' || !post || !v.startTime || !v.endTime) return [];
+  if (row.status !== 'handed_off' || !post || !v.startTime || !v.endTime || ownArt(post)) return [];
   const f = vacancyFields(v as FreelaVacancy);
   const brief = briefOf(post);
   const ok = new Set(brief?.checked_fields ?? []);
@@ -300,9 +314,15 @@ export function storyChecks(row: StoryRow, post: StoryPost | null): FieldCheck[]
     .map(([key, e]) => ({ key, label: FIELD_LABELS[key], ok: all || ok.has(key), read: null, expected: e }));
 }
 
+/** A mídia do post foi trocada por "Enviar minha própria" (último passo do `ai_generation_log` = `upload`): ninguém conferiu. */
+export function ownArt(post: StoryPost | null): boolean {
+  const log = Array.isArray(post?.ai_generation_log) ? (post!.ai_generation_log as unknown as { step?: unknown }[]) : [];
+  return log.length > 0 && log[log.length - 1]?.step === 'upload';
+}
+
 export function storyDetail(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryDetail {
   const view = storyView(row, post, s, now, ctx);
   const when = whenOf(row);
   const alt = `Story: ${[view.funcao, view.valor, when.day, when.horario, view.cidade].filter(Boolean).join(', ')}`;
-  return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt };
+  return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt, own_art: ownArt(post) };
 }

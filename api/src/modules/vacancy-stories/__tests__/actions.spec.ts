@@ -4,7 +4,7 @@ import { igServices, seedPost, uuid } from '../../instagram/__tests__/harness';
 import { OWNER, STRANGER, VIEWER, WS_A, WS_B, status } from '../../media/__tests__/mem';
 import { VacancyActionsService } from '../vacancy-actions.service';
 import { ArtAiError, type ArtResult, type VacancyGeneratorService } from '../vacancy-generator.service';
-import { WAIT_CAP } from '../vacancy-poll.service';
+import { WAIT_CAP } from '../vacancy-reasons';
 import { VacancyPreviewService } from '../vacancy-preview.service';
 import { VacancySchedulerService } from '../vacancy-scheduler.service';
 import { fingerprint } from '../vacancy-text';
@@ -191,6 +191,31 @@ describe('VacancyActionsService — Criar story mesmo assim', () => {
       '400:Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos.',
     );
     expect(t.row(other.id).status).toBe('cancelled');
+  });
+
+  it('R30: confere a vaga VIVA — sem valor, sem cidade, já começou ou dentro da antecedência + 15 min → 400 e nada muda', async () => {
+    const t = await setup();
+    const off = 'Os stories das vagas foram desligados.';
+    const cases: [Partial<FreelaVacancy>, string][] = [
+      [{ amountInCents: null }, 'A vaga não tem valor informado.'],
+      [{ amountInCents: 0 }, 'A vaga não tem valor informado.'],
+      [{ city: '  ' }, 'A vaga não tem cidade informada.'],
+      [{ startTime: at(-HOUR).toISOString(), endTime: at(3 * HOUR).toISOString() }, 'A vaga começou antes de ir ao ar.'],
+      [{ startTime: at(2 * HOUR + 10 * MIN).toISOString(), endTime: at(6 * HOUR).toISOString() }, 'Começa às 12h10, em menos de 2 h. Não dá tempo de divulgar.'],
+    ];
+    for (const [live, msg] of cases) {
+      const v = vac();
+      const r = await t.queued(v, { status: 'cancelled', skip_reason: off });
+      w.feed.state.byId.set(v.id, { ...v, ...live });
+      expect(await status(t.actions.createAnyway(OWNER, WS_A, r.id))).toBe(`400:${msg}`);
+      expect(t.row(r.id)).toMatchObject({ status: 'cancelled', skip_reason: off, forced: false });
+    }
+    // Com folga (2 h 20 min antes): volta para a fila.
+    const v = vac();
+    const r = await t.queued(v, { status: 'cancelled', skip_reason: off });
+    w.feed.state.byId.set(v.id, { ...v, startTime: at(2 * HOUR + 20 * MIN).toISOString(), endTime: at(6 * HOUR).toISOString() });
+    expect(await t.actions.createAnyway(OWNER, WS_A, r.id)).toEqual({ ok: true });
+    expect(t.row(r.id)).toMatchObject({ status: 'new', forced: true, starts_at: at(2 * HOUR + 20 * MIN) });
   });
 
   it('depois de "Não postar" na entrega: a linha solta o post cancelado e volta para a fila com os dados vivos da vaga', async () => {

@@ -19,7 +19,6 @@ import type { SettingsRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 import { TEMPLATE_TEXTS_SCHEMA } from './vacancy-verify';
 
-export { DISABLED_REASON, DONT_POST_REASON };
 
 const BUCKET = 'creative-assets';
 const MAX_TEMPLATE_MB = 10;

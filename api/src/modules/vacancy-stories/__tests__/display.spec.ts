@@ -2,7 +2,7 @@ import { uuid } from '../../instagram/__tests__/harness';
 import { WS_A } from '../../media/__tests__/mem';
 import { approveUntil, displayOf, storyDetail, storyView, type StoryPost } from '../vacancy-display';
 import { previewForView } from '../vacancy-preview-state';
-import { WAIT_CAP } from '../vacancy-poll.service';
+import { WAIT_CAP } from '../vacancy-reasons';
 import { fingerprint } from '../vacancy-text';
 import type { FreelaVacancy, SettingsRow, StoryRow } from '../vacancy-types';
 
@@ -36,7 +36,7 @@ const row = (o: Partial<StoryRow> = {}, v: FreelaVacancy = vac()): StoryRow => (
 
 const ALL_KEYS = ['funcao', 'estabelecimento', 'cidade', 'valor', 'data', 'inicio', 'fim'];
 const post = (o: Partial<StoryPost> = {}): StoryPost => ({
-  id: uuid(), status: 'ready', scheduled_at: null, published_at: null, last_error: null, rejection_reason: null, ig_permalink: null,
+  id: uuid(), status: 'ready', scheduled_at: null, published_at: null, last_error: null, rejection_reason: null, ig_permalink: null, ai_generation_log: [],
   media: [{ url: 'https://cdn.test/story.jpg', type: 'image', order: 0 }],
   creative_brief: { compose: false, vacancy: { checked_fields: ALL_KEYS, used_fallback: false, attempts: 1 } },
   ...o,
@@ -57,14 +57,16 @@ describe('displayOf — situações da lista (UI §4)', () => {
     });
   });
 
-  it('gerando: "Criando a arte" / "Tentativa {n} de 3" (n pelas tentativas registradas, no máximo 3)', () => {
+  it('gerando: "Criando a arte" / "Tentativa {n} de 3" pelo contador ao vivo do gerador (R28: mismatch_attempts + 1, máx. 3)', () => {
     expect(pick(displayOf(row({ status: 'generating' }), null, s, NOW))).toEqual({
       display: 'generating', label: 'Criando a arte', support: 'Tentativa 1 de 3', reason: null,
     });
-    const one = { n: 1, at: NOW.toISOString(), kind: 'ai', ok: false, wrong: ['valor'], forbidden: [] };
-    expect(displayOf(row({ status: 'generating', attempts_log: [one] }), null, s, NOW).support).toBe('Tentativa 2 de 3');
-    const many = [1, 2, 3].map((n) => ({ ...one, n }));
-    expect(displayOf(row({ status: 'generating', attempts_log: many }), null, s, NOW).support).toBe('Tentativa 3 de 3');
+    expect(displayOf(row({ status: 'generating', mismatch_attempts: 1 }), null, s, NOW).support).toBe('Tentativa 2 de 3');
+    expect(displayOf(row({ status: 'generating', mismatch_attempts: 2 }), null, s, NOW).support).toBe('Tentativa 3 de 3');
+    // O log de uma rodada anterior (erro da IA) não conta: só o contador ao vivo.
+    const old = [1, 2].map((n) => ({ n, at: NOW.toISOString(), kind: 'ai', ok: false, wrong: ['valor'], forbidden: [] }));
+    expect(displayOf(row({ status: 'generating', attempts_log: old }), null, s, NOW).support).toBe('Tentativa 1 de 3');
+    expect(displayOf(row({ status: 'generating', mismatch_attempts: 3 }), null, s, NOW).support).toBe('Tentativa 3 de 3');
   });
 
   it('esperando o horário: chegou às 22h10 → "Vai ao ar amanhã às 8h"; chegou às 7h → "Vai ao ar às 8h"', () => {
@@ -89,6 +91,18 @@ describe('displayOf — situações da lista (UI §4)', () => {
     expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null, settings({ daily_cap: 1 }), NOW).support).toBe(
       'Hoje já foi 1 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
     );
+    // Contagem real do dia (pode passar do limite depois de um "Postar agora").
+    expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null, s, NOW, { todayCount: 11 }).support).toBe(
+      'Hoje já foram 11 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
+    );
+    expect(displayOf(delivered(p), p, settings({ daily_cap: 1 }), NOW, { capFull: true, todayCount: 1 }).support).toBe(
+      'Hoje já foi 1 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
+    );
+    // Empurrado pelo limite de publicações da Meta (não pelo do dia): o aviso do limite da conta.
+    expect(pick(displayOf(delivered(p), p, s, NOW, { capFull: false, todayCount: 3, igFull: true }))).toEqual({
+      display: 'waiting_cap', label: 'Esperando a vez', reason: null,
+      support: 'O Instagram aceita até 25 publicações por dia na conta, somando os posts normais. Vai ao ar amanhã às 8h.',
+    });
     // Dois dias depois: sem "amanhã".
     expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: new Date('2026-10-31T11:00:00Z') }), null, s, NOW).support).toBe(
       'Hoje já foram 10 (o máximo por dia). Vai ao ar dia 31/10 às 8h, se a vaga ainda não tiver começado.',
@@ -204,6 +218,13 @@ describe('storyView / storyDetail', () => {
     expect(can(test, null, { now: new Date('2026-11-01T00:00:00Z') })).toMatchObject({ create_anyway: false });
     expect(can(row({ status: 'cancelled', skip_reason: 'A vaga não está mais aberta no Freela (preenchida ou cancelada).' }), null)).toMatchObject({ create_anyway: false });
     expect(can(test, null, { s: settings({ enabled: false }) })).toMatchObject({ create_anyway: false });
+    // R30: sem valor ou sem cidade não volta; dentro da antecedência + 15 min também não.
+    expect(can(row({ status: 'skipped', skip_reason: 'A vaga não tem valor informado.' }), null)).toMatchObject({ create_anyway: false });
+    expect(can(row({ status: 'skipped', skip_reason: 'A vaga não tem cidade informada.' }), null)).toMatchObject({ create_anyway: false });
+    const soonVac = (ms: number) => vac({ startTime: at(ms).toISOString(), endTime: at(ms + 4 * HOUR).toISOString() });
+    const close = 'Começa às 12h10, em menos de 2 h. Não dá tempo de divulgar.';
+    expect(can(row({ status: 'skipped', skip_reason: close }, soonVac(2 * HOUR + 10 * MIN)), null)).toMatchObject({ create_anyway: false });
+    expect(can(row({ status: 'skipped', skip_reason: close }, soonVac(2 * HOUR + 20 * MIN)), null)).toMatchObject({ create_anyway: true });
     // Não postado depois da entrega: volta pelo "Criar story mesmo assim".
     const mine = post({ status: 'cancelled', rejection_reason: 'Você escolheu não postar.' });
     expect(can(delivered(mine, { skip_reason: 'Você escolheu não postar.' }), mine)).toMatchObject({ create_anyway: true, redo: false });
@@ -241,6 +262,19 @@ describe('storyView / storyDetail', () => {
     const fb = post({ status: 'pending_approval', creative_brief: { vacancy: { checked_fields: [], used_fallback: true } } });
     expect(storyDetail(delivered(fb, { used_fallback: true }, vac()), fb, s, NOW).checks.every((c) => c.ok)).toBe(true);
     expect(storyDetail(row(), null, s, NOW).checks).toEqual([]);
+    expect(d.own_art).toBe(false);
+  });
+
+  it('R29: arte trocada por "Enviar minha própria" → sem conferência (checks vazio) e own_art', () => {
+    const p = post({
+      status: 'pending_approval',
+      ai_generation_log: [{ at: NOW.toISOString(), step: 'vacancy_art', attempt: 1, ok: true }, { at: NOW.toISOString(), step: 'upload', file: 'minha.jpg' }],
+    });
+    const d = storyDetail(delivered(p), p, s, NOW);
+    expect(d).toMatchObject({ checks: [], own_art: true, display: 'to_approve' });
+    // Gerada de novo depois do envio: o último passo volta a ser da arte.
+    const again = post({ status: 'pending_approval', ai_generation_log: [{ step: 'upload' }, { step: 'vacancy_art', attempt: 1, ok: true }] });
+    expect(storyDetail(delivered(again), again, s, NOW)).toMatchObject({ own_art: false, checks: expect.arrayContaining([expect.objectContaining({ ok: true })]) });
   });
 });
 

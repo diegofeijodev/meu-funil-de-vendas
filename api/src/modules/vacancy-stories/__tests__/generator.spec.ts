@@ -6,9 +6,8 @@ import { uuid } from '../../instagram/__tests__/harness';
 import { AssetsService } from '../../media/assets.service';
 import { WS_A } from '../../media/__tests__/mem';
 import { ArtAiError, VacancyGeneratorService } from '../vacancy-generator.service';
-import { WAIT_CAP } from '../vacancy-poll.service';
 import { photoPrompt, readPrompt } from '../vacancy-prompts';
-import { DISABLED_REASON } from '../vacancy-settings.service';
+import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
 import { fingerprint, hourLabel, vacancyFields } from '../vacancy-text';
 import type { ArtRead, FreelaVacancy } from '../vacancy-types';
 import { vacancyWorld, type VacancyWorld } from './world';
@@ -158,6 +157,26 @@ describe('VacancyGeneratorService.generateDue', () => {
     const post = t.posts()[0]!;
     expect(post.creative_brief.vacancy).toMatchObject({ attempts: 2, used_fallback: false });
     expect(post.ai_generation_log.map((x: { ok: boolean }) => x.ok)).toEqual([false, true]);
+  });
+
+  it('R28: mismatch_attempts é o contador ao vivo — zera ao pegar a linha, anda 0→1→2, a reserva não passa de 2, a entrega grava o final', async () => {
+    const t = await setup();
+    const v = vac();
+    // Valor velho de uma rodada anterior (erro da IA no meio): zera ao pegar a linha.
+    const r0 = await t.story(v, { status: 'waiting', mismatch_attempts: 2 });
+    const wrong = { ...readFor(v), inicio: '19h', textos: readFor(v).textos.map((x) => x.replace('18h', '19h')) };
+    await w.programArt({ reads: [wrong, wrong, wrong, readFor(v)] });
+    // A imagem é pedida logo depois do `onStep('art', n)`: o que a tela leria naquela hora.
+    const seen: number[] = [];
+    const draw = w.ai.image.getMockImplementation()!;
+    w.ai.image.mockImplementation(async (...a) => {
+      seen.push(t.row(r0.id).mismatch_attempts);
+      return draw(...a);
+    });
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+    expect(seen).toEqual([0, 1, 2, 2]);
+    expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 3 });
   });
 
   it('texto copiado do modelo nas 3 tentativas → reserva com foto (sem texto)', async () => {

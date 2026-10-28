@@ -9,7 +9,7 @@ import { ImageService, imageHeaderSize } from '../../media/image.service';
 import { MARKETING, OWNER, STRANGER, VIEWER, WS_A, WS_B, status } from '../../media/__tests__/mem';
 import { VacancyGateGuard } from '../vacancy-gate.service';
 import { templateReadPrompt } from '../vacancy-prompts';
-import { DISABLED_REASON, DONT_POST_REASON } from '../vacancy-settings.service';
+import { DISABLED_REASON, DONT_POST_REASON } from '../vacancy-reasons';
 import { UpdateVacancySettingsDto } from '../vacancy-stories.dto';
 import { VacancyStoriesController } from '../vacancy-stories.controller';
 import { countVacancyStoriesOnDay } from '../vacancy-usage';
