@@ -6,7 +6,7 @@ import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { attemptsLine, fieldLabel } from "@/lib/vacancy-stories";
+import { attemptItemLine, attemptsLine, capFirst, checkAlertDetail } from "@/lib/vacancy-stories";
 import { getVacancyStory, type VacancyStory } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { SituationLabel, StoryActionsBar, StoryBadges, type OnStoryAction } from "./stories-list";
 import { vacancyDetailKey, type StoryActions } from "./use-story-actions";
@@ -79,9 +79,9 @@ function DetailBody({
               <img src={s.media_url} alt={d?.alt ?? `Story: ${s.funcao}, ${s.quando}`} className="size-full object-cover" />
               {cover && (
                 <>
-                  {/* O Instagram cobre ~14% no topo (perfil) e ~20% embaixo (resposta). */}
-                  <div className="absolute inset-x-0 top-0 h-[14%] bg-black/50" aria-hidden />
-                  <div className="absolute inset-x-0 bottom-0 h-[20%] bg-black/50" aria-hidden />
+                  {/* O Instagram cobre ~13% no topo (250 px: perfil) e ~16,7% embaixo (320 px: resposta) do quadro de 1920 px. */}
+                  <div className="absolute inset-x-0 top-0 h-[13%] bg-black/50" aria-hidden />
+                  <div className="absolute inset-x-0 bottom-0 h-[16.7%] bg-black/50" aria-hidden />
                 </>
               )}
             </div>
@@ -114,8 +114,8 @@ function DetailBody({
                 <tbody>
                   {d.checks.map((c) => (
                     <tr key={c.key} className="border-t">
-                      <th scope="row" className="py-2 pr-3 text-left font-medium capitalize">
-                        {c.label}
+                      <th scope="row" className="py-2 pr-3 text-left font-medium">
+                        {capFirst(c.label)}
                       </th>
                       <td className="py-2">
                         {c.ok ? (
@@ -138,7 +138,17 @@ function DetailBody({
 
             {d.used_fallback && (
               <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
-                <p className="text-sm">{line}</p>
+                {/* A3: reserva que a leitura reprovou — o alerta toma o lugar da linha da reserva ("Os textos estão certos"). */}
+                {d.check_alert ? (
+                  <p className="text-sm font-medium">
+                    <span className="text-warning" aria-hidden>
+                      !
+                    </span>{" "}
+                    {checkAlertDetail(d.check_alert)}
+                  </p>
+                ) : (
+                  <p className="text-sm">{line}</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {d.can.redo && (
                     <Button className="h-11" variant="outline" disabled={busy} onClick={() => onAction("redo", d)}>
@@ -154,10 +164,7 @@ function DetailBody({
                     {d.attempts_log
                       .filter((a) => a.kind === "ai")
                       .map((a) => (
-                        <li key={a.n}>
-                          Tentativa {a.n}:{" "}
-                          {a.ok ? "confere" : a.wrong.length ? `errou ${a.wrong.map(fieldLabel).join(" e ")}` : a.error ?? "não passou na conferência"}
-                        </li>
+                        <li key={a.n}>{attemptItemLine(a)}</li>
                       ))}
                   </ol>
                 )}

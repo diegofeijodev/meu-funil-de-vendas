@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspace } from "@/lib/workspace";
-import { postNowDialog, vagasTabState } from "@/lib/vacancy-stories";
+import { useNavigate, useSearch } from "@/lib/router";
+import { approvableStories, postNowDialog, vagasTabState } from "@/lib/vacancy-stories";
+import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,12 +19,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  getVacancyStory,
   useVacancySettings,
   type VacancyStory,
   type VacancyStoryFilter,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { ApproveList } from "./approve-list";
-import { StoriesList, type StoryActionKind } from "./stories-list";
+import { StoriesList, useStoriesQuery, type StoryActionKind } from "./stories-list";
 import { StoryDetailSheet } from "./story-detail";
 import { useStoryActions } from "./use-story-actions";
 import { VacanciesFirstRun } from "./first-run";
@@ -31,7 +35,9 @@ import { VacanciesSettingsPanel } from "./settings-panel";
 type Confirm = { kind: "post_now" | "create_anyway"; story: VacancyStory };
 
 /**
- * Aba "Vagas" do Instagram. Ordem no celular: situação → "Para aprovar" → "Vagas que chegaram" → "Ajustes".
+ * Aba "Vagas" do Instagram. Ordem no celular: situação → "Para aprovar" → "Vagas que chegaram" → "Ajustes"; com story esperando
+ * aprovação, "Para aprovar" vem antes da situação (B5a). Sem arte modelo, só a primeira vez e os Ajustes. `?story=<id>` (vindo de
+ * Aprovações) abre o detalhe desse story (B5e).
  */
 export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   const { role, canEdit } = useWorkspace();
@@ -43,6 +49,23 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   const [filter, setFilter] = useState<VacancyStoryFilter>("all");
   const [open, setOpen] = useState<VacancyStory | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const stories = useStoriesQuery(workspaceId, "all"); // mesma consulta do "Para aprovar" (cache compartilhado)
+  const waiting = approvableStories(stories.data ?? [], actions.hidden).length > 0;
+  const search = useSearch();
+  const navigate = useNavigate({ from: "/instagram" });
+  const deepLink = typeof search["story"] === "string" ? search["story"] : null;
+
+  // B5e: abre o detalhe do story pedido e tira o `story` da URL (voltar à aba não reabre). Fora das 100 mais novas: busca o detalhe.
+  useEffect(() => {
+    if (!deepLink || !stories.data) return;
+    navigate({ search: { tab: "vagas" }, replace: true });
+    const found = stories.data.find((s) => s.id === deepLink);
+    if (found) setOpen(found);
+    else
+      getVacancyStory(workspaceId, deepLink).then(setOpen, (e) =>
+        toast.error(apiErrorMessage(e, "Não achamos este story. Ele pode ter sido apagado; atualize a tela.")),
+      );
+  }, [deepLink, stories.data, workspaceId, navigate]);
 
   // Postar agora e vaga de teste pedem confirmação. O painel de detalhe fecha antes: nada de diálogo dentro de diálogo.
   const onAction = (kind: StoryActionKind, story: VacancyStory) => {
@@ -84,27 +107,36 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   // 404 = empresa fora da lista: sem aba (a página já cai em "Visão geral").
   if (state === "hidden" || !settings) return null;
 
+  const status = settings.template ? (
+    <VacanciesStatusCard workspaceId={workspaceId} settings={settings} canManage={canManage} />
+  ) : (
+    <VacanciesFirstRun workspaceId={workspaceId} canEdit={canEdit} />
+  );
+  const approve = (
+    <div data-vac-section="approve">
+      <ApproveList workspaceId={workspaceId} actions={actions} onAction={onAction} onOpen={setOpen} />
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {settings.template ? (
-        <VacanciesStatusCard workspaceId={workspaceId} settings={settings} canManage={canManage} />
-      ) : (
-        <VacanciesFirstRun workspaceId={workspaceId} canEdit={canEdit} />
+      {settings.template && waiting && approve}
+      {status}
+      {/* Sem arte modelo não há story: "Para aprovar" e "Vagas que chegaram" só repetiriam o vazio. */}
+      {settings.template && !waiting && approve}
+      {settings.template && (
+        <div data-vac-section="arrived">
+          <StoriesList
+            workspaceId={workspaceId}
+            settings={settings}
+            filter={filter}
+            onFilter={setFilter}
+            actions={actions}
+            onAction={onAction}
+            onOpen={setOpen}
+          />
+        </div>
       )}
-      <div data-vac-section="approve">
-        <ApproveList workspaceId={workspaceId} actions={actions} onAction={onAction} onOpen={setOpen} />
-      </div>
-      <div data-vac-section="arrived">
-        <StoriesList
-          workspaceId={workspaceId}
-          settings={settings}
-          filter={filter}
-          onFilter={setFilter}
-          actions={actions}
-          onAction={onAction}
-          onOpen={setOpen}
-        />
-      </div>
       <StoryDetailSheet workspaceId={workspaceId} story={open} actions={actions} onAction={onAction} onClose={() => setOpen(null)} />
       <ConfirmStory confirm={confirm} settings={settings} onClose={() => setConfirm(null)} actions={actions} />
       <div data-vac-section="settings">
@@ -114,7 +146,7 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-/** Diálogos de "Postar agora" (fora do horário / acima do limite) e "Criar story" em vaga de teste (UI §4). */
+/** Diálogos de "Postar agora" (pelo motivo da espera, B3) e "Criar story" em vaga de teste (UI §4). */
 function ConfirmStory({
   confirm,
   settings,
@@ -128,7 +160,7 @@ function ConfirmStory({
 }) {
   let text = { title: "", description: "", confirm: "", cancel: "" };
   if (confirm?.kind === "post_now") {
-    text = postNowDialog(confirm.story.display === "waiting_cap" ? "waiting_cap" : "waiting_window", settings, new Date());
+    text = postNowDialog(confirm.story, settings, new Date());
   } else if (confirm) {
     text = {
       title: "Criar story numa vaga de teste?",
@@ -150,7 +182,7 @@ function ConfirmStory({
             className="h-11"
             onClick={() => {
               if (!confirm) return;
-              if (confirm.kind === "post_now") void actions.postNow(confirm.story);
+              if (confirm.kind === "post_now") void actions.postNow(confirm.story, settings.auto_publish);
               else void actions.createAnyway(confirm.story);
             }}
           >

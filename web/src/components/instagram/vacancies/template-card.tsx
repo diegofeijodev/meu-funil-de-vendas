@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LANDSCAPE_WARNING, templateFileError } from "@/lib/vacancy-stories";
+import { LANDSCAPE_WARNING, templateFileError, templateTextsWarning } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   uploadVacancyTemplate,
@@ -52,10 +52,11 @@ export function useTemplateUpload(workspaceId: string) {
   return { isPending: mutation.isPending, open: () => input.current?.click(), fileInput };
 }
 
-/** Arte modelo nos Ajustes: miniatura, aviso de deitada e "Trocar arte modelo". */
+/** Arte modelo nos Ajustes: miniatura, avisos (deitada; sem textos lidos — I5) e "Trocar arte modelo". */
 export function TemplateCard({ workspaceId, settings, canEdit }: { workspaceId: string; settings: VacancySettings; canEdit: boolean }) {
   const upload = useTemplateUpload(workspaceId);
   const t = settings.template;
+  const semTextos = templateTextsWarning(t);
   return (
     <div className="space-y-3">
       <div>
@@ -74,6 +75,7 @@ export function TemplateCard({ workspaceId, settings, canEdit }: { workspaceId: 
             <ImagePlus /> {upload.isPending ? "Enviando…" : t ? "Trocar arte modelo" : "Enviar arte modelo"}
           </Button>
           {t?.landscape && <p className="rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">{LANDSCAPE_WARNING}</p>}
+          {semTextos && <p className="rounded-md border border-warning/40 bg-warning/10 p-2 text-sm">{semTextos}</p>}
           {!canEdit && <p className="text-xs text-muted-foreground">Só quem pode editar troca a arte modelo.</p>}
         </div>
       </div>

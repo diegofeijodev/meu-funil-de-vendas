@@ -2,18 +2,15 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { dmLabel, hhLabel } from "@/lib/vacancy-stories";
+import { approvableStories, checkAlertLine } from "@/lib/vacancy-stories";
 import type { VacancyStory } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { StoryThumb, useStoriesQuery, type OnStoryAction } from "./stories-list";
 import type { StoryActions } from "./use-story-actions";
 
-/** "Aprove até 16h" (com o dia quando não é hoje). */
-function untilLabel(iso: string): string {
-  const hoje = dmLabel(new Date().toISOString());
-  return dmLabel(iso) === hoje ? `Aprove até ${hhLabel(iso)}` : `Aprove até ${dmLabel(iso)} às ${hhLabel(iso)}`;
-}
-
-/** Cartão "Para aprovar" (UI §2): um por story esperando, com a conferência e os botões Não postar / Aprovar. */
+/**
+ * Cartão "Para aprovar" (UI §2): um por story esperando E ainda no prazo (A4: depois do prazo sai daqui, mesmo antes da expiração),
+ * com a conferência (ou o alerta da reserva reprovada — A3), o prazo dito pela API e os botões Não postar / Aprovar.
+ */
 export function ApproveList({
   workspaceId,
   actions,
@@ -26,7 +23,7 @@ export function ApproveList({
   onOpen: (story: VacancyStory) => void;
 }) {
   const q = useStoriesQuery(workspaceId, "all");
-  const rows = (q.data ?? []).filter((s) => s.display === "to_approve" && !actions.hidden.has(s.id));
+  const rows = approvableStories(q.data ?? [], actions.hidden);
 
   return (
     <section className="panel space-y-4 p-5" aria-labelledby="vac-approve-title">
@@ -51,7 +48,16 @@ export function ApproveList({
             return (
               <li key={s.id} className="rounded-lg border p-3">
                 <div className="flex gap-3">
-                  <StoryThumb story={s} className="w-24" alt={`Story: ${s.funcao}${s.valor ? `, ${s.valor}` : ""}, ${s.quando}${s.cidade ? `, ${s.cidade}` : ""}`} />
+                  {/* B5b: a miniatura é o caminho natural para ver a arte grande antes de aprovar. */}
+                  <button
+                    type="button"
+                    className="w-24 shrink-0 space-y-1 rounded-md text-center text-xs font-medium text-primary focus-visible:outline focus-visible:outline-2"
+                    onClick={() => onOpen(s)}
+                    aria-label={`Ver a arte: ${s.funcao}${s.valor ? `, ${s.valor}` : ""}, ${s.quando}${s.cidade ? `, ${s.cidade}` : ""}`}
+                  >
+                    <StoryThumb story={s} className="w-24" />
+                    <span className="block underline-offset-4 hover:underline">Ver a arte</span>
+                  </button>
                   <div className="min-w-0 flex-1 space-y-1 text-sm">
                     <button
                       type="button"
@@ -66,6 +72,13 @@ export function ApproveList({
                     {s.cidade && <p>{s.cidade}</p>}
                     {s.own_art ? (
                       <p>A sua arte não passa pela conferência.</p>
+                    ) : s.check_alert ? (
+                      <p className="font-medium">
+                        <span className="text-warning" aria-hidden>
+                          !
+                        </span>{" "}
+                        {checkAlertLine(s.check_alert)}
+                      </p>
                     ) : (
                       <p>
                         <span className="text-success" aria-hidden>
@@ -74,12 +87,12 @@ export function ApproveList({
                         Conferido: função, valor, data, horário, cidade
                       </p>
                     )}
-                    {s.approve_until && (
+                    {s.support && (
                       <p className="font-medium">
                         <span className="text-warning" aria-hidden>
                           !
                         </span>{" "}
-                        {untilLabel(s.approve_until)}
+                        {s.support}
                       </p>
                     )}
                   </div>

@@ -21,7 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { noStoriesYet, reasonChipsFeedback, redoLabel } from "@/lib/vacancy-stories";
+import { arrivedEmptyText, reasonChipsFeedback, redoLabel } from "@/lib/vacancy-stories";
 import {
   listVacancyStories,
   type VacancySettings,
@@ -141,7 +141,10 @@ const FILTERS: { value: VacancyStoryFilter; label: string }[] = [
   { value: "not_posted", label: "Não postadas" },
 ];
 
-/** "Vagas que chegaram": filtros, cartões com situação/apoio/motivo/selos/ações; toque no cartão abre o detalhe. */
+/**
+ * "Vagas que chegaram": filtros, cartões com situação/apoio/motivo/selos/ações; toque no cartão abre o detalhe. Story esperando
+ * aprovação fica sem botões aqui (B5c): aprovar é em "Para aprovar" ou no detalhe, olhando a arte.
+ */
 export function StoriesList({
   workspaceId,
   settings,
@@ -211,15 +214,7 @@ export function StoriesList({
           </Button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {filter === "all"
-            ? settings.enabled
-              ? noStoriesYet(settings)
-              : "Desligado. Nenhuma vaga vira story agora."
-            : filter === "live"
-              ? "Nenhum story no ar agora."
-              : "Nenhuma vaga deixou de ir ao ar."}
-        </p>
+        <p className="text-sm text-muted-foreground">{arrivedEmptyText(filter, settings)}</p>
       ) : (
         <ul className="space-y-3">
           {rows.map((s) => (
@@ -248,7 +243,7 @@ export function StoriesList({
                   <StoryBadges story={s} />
                 </div>
               </div>
-              <StoryActionsBar story={s} onAction={onAction} actions={actions} className="mt-3" />
+              {s.display !== "to_approve" && <StoryActionsBar story={s} onAction={onAction} actions={actions} className="mt-3" />}
             </li>
           ))}
         </ul>

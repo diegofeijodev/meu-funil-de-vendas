@@ -16,7 +16,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { autoPublishSummary, capWarning, settingsSummary, sameCities, weeklyFallbackWarning, windowError } from "@/lib/vacancy-stories";
+import {
+  CITIES_EMPTY,
+  autoPublishOffToast,
+  autoPublishSummary,
+  capWarning,
+  settingsSummary,
+  sameCities,
+  weeklyFallbackWarning,
+  windowError,
+  windowHint,
+} from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   patchVacancySettings,
@@ -27,6 +37,7 @@ import {
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { TemplateCard } from "./template-card";
 import { PreviewCard } from "./preview-card";
+import { vacancyListKey } from "./use-story-actions";
 
 const LEADS = [
   { value: 60, label: "1 h" },
@@ -126,6 +137,13 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
     onSuccess: (view) => {
       qc.setQueryData(key, view);
       setAutoDialog(false);
+      if (!view.auto_publish) {
+        // A1: os prontos que ninguém aprovou voltaram para "Para aprovar" — lista, Aprovações e selo do menu mudam.
+        toast.success(autoPublishOffToast(view.moved_to_approval));
+        qc.invalidateQueries({ queryKey: vacancyListKey(workspaceId) });
+        qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
+        qc.invalidateQueries({ queryKey: ["ig-pending-badge", workspaceId] });
+      }
     },
     onError: (e) => {
       setAutoDialog(false);
@@ -181,7 +199,11 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
             <Option type="checkbox" checked={cities.length === 0} disabled={disabled} onChange={() => set("cities", [])}>
               Todas as cidades
             </Option>
-            {options.length > 0 && <p className="text-xs text-muted-foreground">Cidades das vagas recentes</p>}
+            {options.length > 0 ? (
+              <p className="text-xs text-muted-foreground">Cidades das vagas recentes</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">{CITIES_EMPTY}</p>
+            )}
             {options.map((c) => (
               <Option key={c.city} type="checkbox" checked={cities.includes(c.city)} disabled={disabled} onChange={() => toggleCity(c.city)}>
                 {c.city}
@@ -192,15 +214,17 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
 
           <Field
             title="Horário para postar"
-            hint={`Vaga que chegar fora desse horário espera e vai ao ar às ${start}.`}
+            hint={windowHint(start)}
             error={winErr}
           >
             <div className="flex items-center gap-2 text-sm">
               <label htmlFor="vac-win-start">Das</label>
               <Input id="vac-win-start" type="time" className="h-11 w-32" value={start} disabled={disabled} aria-invalid={!!winErr}
+                aria-label="Início do horário para postar"
                 onChange={(e) => set("window_start", e.target.value)} />
               <label htmlFor="vac-win-end">às</label>
               <Input id="vac-win-end" type="time" className="h-11 w-32" value={end} disabled={disabled} aria-invalid={!!winErr}
+                aria-label="Fim do horário para postar"
                 onChange={(e) => set("window_end", e.target.value)} />
             </div>
           </Field>

@@ -2,12 +2,11 @@
 
 import { ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { useTemplateUpload } from "./template-card";
 
 const STEPS = ["Envie a arte modelo", "Veja uma prévia", "Ligue"];
 
-/** Primeira vez (sem arte modelo): passos, envio da arte e interruptor travado. */
+/** Primeira vez (sem arte modelo): passos e envio da arte. O interruptor só aparece depois, no cartão de situação. */
 export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: string; canEdit: boolean }) {
   const upload = useTemplateUpload(workspaceId);
 
@@ -34,13 +33,6 @@ export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: strin
         </Button>
         <p className="text-xs text-muted-foreground">PNG ou JPG, em pé.</p>
         {!canEdit && <p className="text-xs text-muted-foreground">Só quem pode editar envia a arte modelo.</p>}
-      </div>
-      <div className="flex items-center gap-3 border-t border-border pt-4">
-        <Switch id="vac-first-switch" checked={false} disabled aria-describedby="vac-first-hint" />
-        <div>
-          <label htmlFor="vac-first-switch" className="text-sm font-medium">Postar as vagas do Freela nos stories</label>
-          <p id="vac-first-hint" className="text-xs text-muted-foreground">Envie a arte modelo para poder ligar.</p>
-        </div>
       </div>
     </section>
   );

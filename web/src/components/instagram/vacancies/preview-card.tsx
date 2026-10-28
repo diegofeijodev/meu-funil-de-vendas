@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, Eye, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { previewProgress, sampleLine } from "@/lib/vacancy-stories";
+import { capFirst, fallbackLine, previewProgress, sampleLine } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   startVacancyPreview,
@@ -91,19 +91,14 @@ export function PreviewCard({ workspaceId, settings, canEdit }: { workspaceId: s
             />
             <span className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs font-semibold text-white">PRÉVIA · não foi postada</span>
           </div>
-          {p.used_fallback && (
-            <p className="text-sm text-muted-foreground">
-              Versão de reserva: a IA errou nas 3 tentativas, então o sistema escreveu os textos por cima de uma foto. Os textos estão certos; o
-              visual é mais simples.
-            </p>
-          )}
+          {p.used_fallback && <p className="text-sm text-muted-foreground">{fallbackLine({ attempts: p.attempts, fallback_kind: p.fallback_kind })}</p>}
           {p.checks.length > 0 && (
             <table className="w-full max-w-md text-left text-sm">
               <caption className="pb-1 text-left text-sm font-medium">Confira com a vaga</caption>
               <tbody>
                 {p.checks.map((c) => (
                   <tr key={c.key} className="border-t border-border">
-                    <th scope="row" className="py-2 pr-3 font-medium">{c.label}</th>
+                    <th scope="row" className="py-2 pr-3 font-medium">{capFirst(c.label)}</th>
                     <td className="py-2">
                       {c.ok ? (
                         <span className="inline-flex items-center gap-1"><Check className="size-4" aria-hidden /> confere</span>

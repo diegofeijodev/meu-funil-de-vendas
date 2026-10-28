@@ -18,7 +18,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { dayLine, dmLabel, hhLabel, pollStale } from "@/lib/vacancy-stories";
+import {
+  INSTAGRAM_DISCONNECTED,
+  aiErrorWantsIntegrations,
+  dayLine,
+  disableDialogText,
+  dmLabel,
+  hhLabel,
+  pollLine,
+  pollStale,
+  sinceLabel,
+  staleNotice,
+} from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   disableVacancies,
@@ -82,8 +93,8 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
     },
   });
 
-  const stale = pollStale(s, new Date());
-  const lastOk = s.last_poll_ok_at;
+  const now = new Date();
+  const stale = pollStale(s, now);
 
   return (
     <section className="panel space-y-4 p-5" aria-labelledby="vac-status-title">
@@ -102,14 +113,15 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
           <h2 id="vac-status-title" className="text-base font-semibold">
             <label htmlFor="vac-switch">Postar as vagas do Freela nos stories</label>
           </h2>
-          <div id="vac-status-text" className="space-y-1 text-sm text-muted-foreground" aria-live="polite">
+          {/* Sem aria-live aqui: a cada 30 s a linha da consulta muda e o leitor de tela repetiria tudo. Avisos têm a sua região. */}
+          <div id="vac-status-text" className="space-y-1 text-sm text-muted-foreground">
             {s.enabled ? (
               <>
                 <p className="font-medium text-foreground">
                   {s.auto_publish ? "Ligado · posta sozinho depois da conferência" : "Ligado · você aprova cada story antes"}
                 </p>
                 <p>{dayLine(s)}</p>
-                {s.last_poll_at && <p>Última consulta: {hhLabel(s.last_poll_at)} (a cada 10 minutos)</p>}
+                <p>{pollLine(s)}</p>
                 {s.enabled_at && (
                   <p>
                     Ligado desde {dmLabel(s.enabled_at)} às {hhLabel(s.enabled_at)}. Vagas publicadas antes disso não entram.
@@ -125,12 +137,7 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
       </div>
 
       <div className="space-y-2" aria-live="polite">
-        {s.enabled && stale && (
-          <Notice tone="warn">
-            Não conseguimos consultar as vagas do Freela{lastOk ? ` desde as ${hhLabel(lastOk)}` : " ainda"}. Tentamos de novo sozinhos a cada 10
-            minutos. Quando voltar, as vagas novas entram normalmente.
-          </Notice>
-        )}
+        {s.enabled && stale && <Notice tone="warn">{staleNotice(s, now)}</Notice>}
         {s.enabled && !s.instagram.connected && (
           <Notice
             tone="error"
@@ -140,20 +147,23 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
               </Button>
             }
           >
-            O Instagram está desconectado. Os stories ficam prontos aqui, mas só vão ao ar depois que você reconectar.
+            {INSTAGRAM_DISCONNECTED}
           </Notice>
         )}
         {s.enabled && s.ai_error && (
           <Notice
             tone="error"
             action={
-              <Button asChild variant="outline" className="h-11">
-                <Link to="/integrations">Abrir Integrações</Link>
-              </Button>
+              // Só erro de chave/crédito se resolve em Integrações; o "não devolveu uma arte" tenta de novo sozinho.
+              aiErrorWantsIntegrations(s.ai_error) ? (
+                <Button asChild variant="outline" className="h-11">
+                  <Link to="/integrations">Abrir Integrações</Link>
+                </Button>
+              ) : undefined
             }
           >
             {s.ai_error}
-            {s.ai_error_at ? ` Nenhum story novo está sendo criado desde as ${hhLabel(s.ai_error_at)}.` : ""}
+            {s.ai_error_at ? ` Nenhum story novo está sendo criado ${sinceLabel(s.ai_error_at, now)}.` : ""}
           </Notice>
         )}
       </div>
@@ -169,9 +179,10 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
                 : "Cada story espera sua aprovação antes de ir ao ar."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Agora não</AlertDialogCancel>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="h-11">Agora não</AlertDialogCancel>
             <AlertDialogAction
+              className="h-11"
               disabled={enable.isPending}
               onClick={(e) => {
                 e.preventDefault();
@@ -188,14 +199,12 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Desligar os stories das vagas?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {s.counts.ready} stories prontos e {s.counts.to_approve} esperando aprovação não vão ao ar. Os que já foram postados continuam no
-              Instagram até sumirem sozinhos (24 h). Vagas publicadas enquanto estiver desligado não entram depois, mesmo se você ligar de novo.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{disableDialogText(s.counts)}</AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Manter ligado</AlertDialogCancel>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="h-11">Manter ligado</AlertDialogCancel>
             <AlertDialogAction
+              className="h-11"
               disabled={disable.isPending}
               onClick={(e) => {
                 e.preventDefault();
