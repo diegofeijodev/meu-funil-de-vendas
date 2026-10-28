@@ -20,6 +20,8 @@ const CLOSED = 'A vaga não está mais aberta no Freela (preenchida ou cancelada
 const CHANGED = 'A vaga mudou no Freela (valor ou horário). Vamos criar o story de novo.';
 const TOO_MANY = 'A vaga mudou muitas vezes no Freela. Crie o story de novo quando ela estiver definida.';
 const STARTED = 'A vaga começou antes de ir ao ar.';
+/** Guarda (sem a folga da fila): vaga de sábado 18h com antecedência de 2 h. */
+const TOO_CLOSE_18H = 'A vaga começa Sáb, 31/10 às 18h. Para dar tempo de divulgar, o story teria de ir ao ar até as 16h.';
 
 /** Sábado 31/10, 18h às 23h em Brasília, Coco Bambu em Campinas, R$ 150. */
 const vac = (o: Partial<FreelaVacancy> = {}): FreelaVacancy => ({
@@ -115,7 +117,7 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     const p3early = await t.delivered(early);
     expect(await t.sched.afterHandOff(WS_A, p3early.id)).toBe('cancelled');
     expect(p3early.status).toBe('cancelled');
-    expect(t.rowOf(p3early.id).skip_reason).toBe('Ficou esperando a vez (máximo de 2 por dia) e a vaga começou antes.');
+    expect(t.rowOf(p3early.id).skip_reason).toBe('Não coube no máximo de 2 stories de vagas por dia antes do início da vaga (Sex, 30/10 às 9h30).');
     expect(t.jobsOf(p3early.id)).toHaveLength(0);
 
     const p3 = await t.delivered(vac());
@@ -163,7 +165,31 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     const v = vac({ startTime: '2026-10-30T12:00:00Z', endTime: '2026-10-30T18:00:00Z' }); // amanhã 9h
     const p = await t.delivered(v);
     expect(await t.sched.afterHandOff(WS_A, p.id)).toBe('cancelled');
-    expect(t.rowOf(p.id).skip_reason).toBe('O próximo horário livre (8h) fica a menos de 2 h do início (9h). Não dá tempo de divulgar.');
+    expect(t.rowOf(p.id).skip_reason).toBe(
+      'A vaga começa Sex, 30/10 às 9h. Para dar tempo de divulgar, o story teria de ir ao ar até as 6h45, antes do seu horário para postar (8h às 21h).',
+    );
+  });
+
+  it('A5/R23 — motivo verdadeiro: nem agora daria tempo; 15 min entre stories; espaço da Meta', async () => {
+    const t = await setup();
+    // Vaga hoje às 12h10: nem às 10h01 daria tempo (antecedência + 15 min de folga).
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-29T15:10:00Z'), NOW)).toEqual({
+      expire: 'A vaga começa Qui, 29/10 às 12h10. Para dar tempo de divulgar, o story teria de ir ao ar até as 9h55.',
+    });
+    // Vaga às 12h30 (prazo 10h15) com story de vaga às 10h05: o próximo horário (10h20) passa do prazo.
+    await t.delivered(vac(), { status: 'scheduled', scheduled_at: at(5 * MIN) });
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-29T15:30:00Z'), NOW)).toEqual({
+      expire: 'A vaga começa Qui, 29/10 às 12h30. Para dar tempo de divulgar, o story teria de ir ao ar até as 10h15, e os horários até lá já têm outros stories de vagas.',
+    });
+  });
+
+  it('A5/R23 — limite da Meta só libera depois do prazo: motivo com o horário em que a conta tem espaço', async () => {
+    const t = await setup();
+    for (let i = 1; i <= 20; i++) seedPost(w, { status: 'published', published_at: at(-i * HOUR) });
+    // A de 20 h atrás sai da janela de 24 h às 14h; vaga às 15h (prazo 12h45).
+    expect(await t.sched.planSlot(WS_A, t.settings(), new Date('2026-10-29T18:00:00Z'), NOW)).toEqual({
+      expire: 'A vaga começa Qui, 29/10 às 15h. Para dar tempo de divulgar, o story teria de ir ao ar até as 12h45, mas a conta só tem espaço no Instagram a partir das 14h.',
+    });
   });
 
   it('R26 — folga de 15 min além da antecedência: vaga às 10h (janela 8h, 2 h) expira; às 10h20 vai às 8h e a guarda às 8h05 libera', async () => {
@@ -171,7 +197,9 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     t.clock.t = new Date('2026-10-30T01:10:00Z').getTime(); // 22h10
     const ten = await t.delivered(vac({ startTime: '2026-10-30T13:00:00Z', endTime: '2026-10-30T18:00:00Z' })); // amanhã 10h
     expect(await t.sched.afterHandOff(WS_A, ten.id)).toBe('cancelled');
-    expect(t.rowOf(ten.id).skip_reason).toBe('O próximo horário livre (8h) fica a menos de 2 h do início (10h). Não dá tempo de divulgar.');
+    expect(t.rowOf(ten.id).skip_reason).toBe(
+      'A vaga começa Sex, 30/10 às 10h. Para dar tempo de divulgar, o story teria de ir ao ar até as 7h45, antes do seu horário para postar (8h às 21h).',
+    );
     expect(t.jobsOf(ten.id)).toHaveLength(0);
 
     const tenTwenty = await t.delivered(vac({ startTime: '2026-10-30T13:20:00Z', endTime: '2026-10-30T18:00:00Z' })); // amanhã 10h20
@@ -334,7 +362,7 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
     w.feed.state.down = true;
     expect(await w.guard.blockReason(p, new Date(new Date(v.startTime).getTime() + MIN))).toBe(STARTED);
     expect(t.rowOf(p.id).skip_reason).toBe(STARTED);
-    expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe('Começa às 18h, em menos de 2 h. Não dá tempo de divulgar.');
+    expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe(TOO_CLOSE_18H);
     // R27: a vitrine é consultada primeiro; a data guardada só decide porque ela está fora.
     expect(w.feed.state.urls).toHaveLength(2);
   });
@@ -353,7 +381,7 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
   it('post de vaga sem vaga de origem (sem linha nem external_id) → não sai', async () => {
     await setup();
     const p = seedPost(w, { source: 'vacancy', format: 'story_image', status: 'scheduled', creative_brief: {} });
-    expect(await w.guard.blockReason(p, NOW)).toBe('Não conseguimos conferir a vaga deste story.');
+    expect(await w.guard.blockReason(p, NOW)).toBe('Não conseguimos conferir a vaga deste story. Por segurança, ele não vai ao ar.');
     expect(w.feed.state.urls).toEqual([]);
   });
 
@@ -410,8 +438,8 @@ describe('VacancyGuardService — guarda antes de publicar', () => {
     expect(await w.guard.blockReason(p, new Date(new Date(v.startTime).getTime() + MIN))).toBe(STARTED);
     expect(t.rowOf(p.id).skip_reason).toBe(STARTED);
     const q = await t.delivered(vac(), { status: 'scheduled' });
-    expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe('Começa às 18h, em menos de 2 h. Não dá tempo de divulgar.');
-    expect(t.rowOf(q.id).skip_reason).toBe('Começa às 18h, em menos de 2 h. Não dá tempo de divulgar.');
+    expect(await w.guard.blockReason(q, new Date(new Date(v.startTime).getTime() - 90 * MIN))).toBe(TOO_CLOSE_18H);
+    expect(t.rowOf(q.id).skip_reason).toBe(TOO_CLOSE_18H);
   });
 
   it('pela fila de publicação: vaga fechada → post e job cancelados, nenhum container, motivo na linha', async () => {

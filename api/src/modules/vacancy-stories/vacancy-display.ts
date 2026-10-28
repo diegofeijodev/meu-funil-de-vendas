@@ -1,11 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { addDays } from '../../common/time/dates';
 import { DONT_POST_REASON, MAX_REDOS, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
-import { PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
+import { approveUntil, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import { cleanEstablishment, cleanFunction, formatMoney, formatWhen, hourLabel, isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
 import { SKIP } from './vacancy-triage';
 import type { AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
 import { FIELD_LABELS } from './vacancy-verify';
+
+/** Prazo de aprovação (mora em `vacancy-slots`: a expiração e a geração também usam). */
+export { approveUntil };
 
 /**
  * Situação de cada story de vaga na tela (UI §4), calculada da linha (`vacancy_stories`) e, depois da entrega, do post (`ig_posts`):
@@ -33,10 +36,10 @@ export type StoryPost = Pick<
 
 export type DisplayResult = { display: Display; label: string; support: string | null; reason: string | null; approve_until: Date | null };
 /**
- * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `todayCount` = stories de vaga
- * de hoje (`countVacancyStoriesOnDay`, R3; ausente = o limite); `igFull` = sem espaço no limite de publicações da Meta.
+ * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `igFull` = sem espaço no
+ * limite de publicações da Meta.
  */
-export type DisplayContext = { capFull?: boolean; todayCount?: number; igFull?: boolean };
+export type DisplayContext = { capFull?: boolean; igFull?: boolean };
 
 export type StoryCan = { approve: boolean; dont_post: boolean; post_now: boolean; create_anyway: boolean; redo: boolean; retry: boolean };
 
@@ -133,28 +136,14 @@ const inWindow = (now: Date, s: Pick<SettingsRow, 'window_start' | 'window_end'>
   return m >= minutesOf(s.window_start) && m < minutesOf(s.window_end);
 };
 
-/**
- * Até quando dá para aprovar: o início menos a antecedência e a folga de 15 min da fila (R26 — aprovar depois disso cancela o story
- * na agenda), puxado para dentro da janela (depois do fim → fim da janela; antes do início → fim da janela do dia anterior).
- */
-export function approveUntil(startsAt: Date, s: Pick<SettingsRow, 'min_lead_minutes' | 'window_start' | 'window_end'>): Date {
-  const t = new Date(startsAt.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS);
-  const day = spDay(t);
-  const end = windowStartOn(day, s.window_end);
-  if (t.getTime() >= end.getTime()) return end;
-  if (t.getTime() < windowStartOn(day, s.window_start).getTime()) return windowStartOn(addDays(day, -1), s.window_end);
-  return t;
+/** B4: "O máximo de hoje (10) já está preenchido. Vai ao ar amanhã às 8h, …" — calculado na hora (pode dizer "amanhã"). */
+function capSupport(cap: number, at: Date, now: Date): string {
+  return `O máximo de hoje (${cap}) já está preenchido. Vai ao ar ${atLabel(at, now)}, se ainda der tempo de divulgar.`;
 }
 
-/** "Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, …" — `n` = a contagem real do dia; com 1, "já foi 1" (R4). */
-function capSupport(n: number, at: Date, now: Date): string {
-  const done = n === 1 ? 'Hoje já foi 1' : `Hoje já foram ${n}`;
-  return `${done} (o máximo por dia). Vai ao ar ${atLabel(at, now)}, se a vaga ainda não tiver começado.`;
-}
-
-/** Espera pelo limite de publicações da Meta (não pelo limite do dia): a 1ª frase do aviso de limite dos Ajustes (UI §3) + o horário. */
+/** B4: espera pelo limite de publicações da Meta (não pelo limite do dia). */
 function igSupport(at: Date, now: Date): string {
-  return `O Instagram aceita até 25 publicações por dia na conta, somando os posts normais. Vai ao ar ${atLabel(at, now)}.`;
+  return `A conta está perto do limite do Instagram (25 publicações em 24 h, somando os posts normais). Vai ao ar ${atLabel(at, now)}.`;
 }
 
 const noPeriod = (s: string) => s.trim().replace(/[.\s]+$/, '');
@@ -178,7 +167,7 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     case 'waiting': {
       if (row.wait_reason !== WAIT_CAP) return out('queued', LABEL.queued, row.wait_reason);
       const at = row.not_before ?? windowStartOn(addDays(spDay(now), 1), s.window_start);
-      return out('waiting_cap', LABEL.waiting_cap, capSupport(ctx.todayCount ?? s.daily_cap, at, now));
+      return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
     }
     case 'generating':
       return out('generating', LABEL.generating, `Tentativa ${Math.min(AI_TRIES, row.mismatch_attempts + 1)} de ${AI_TRIES}`);
@@ -210,7 +199,7 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
   if (LATER.includes(post.status) && at && at.getTime() > now.getTime()) {
     const otherDay = spDay(at) !== spDay(now);
     const open = inWindow(now, s);
-    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(ctx.todayCount ?? s.daily_cap, at, now));
+    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now));
     if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now));
     if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`);
   }
@@ -223,7 +212,8 @@ export function canOf(row: StoryRow, post: StoryPost | null, d: Display, s: Sett
   const on = s.enabled;
   const unpublished = row.status === 'handed_off' && !!post && POST_UNPUBLISHED.includes(post.status);
   return {
-    approve: d === 'to_approve',
+    // A4: só até o prazo de aprovação; depois dele a expiração cancela o story (na próxima rodada do job).
+    approve: d === 'to_approve' && now.getTime() < approveUntil(row.starts_at, s).getTime(),
     dont_post: ROW_QUEUED.includes(row.status) ? row.status !== 'generating' : unpublished,
     post_now: on && (d === 'waiting_window' || d === 'waiting_cap'),
     // R30: some se a vaga não tem como virar story (fechada, sem valor, sem cidade, ou já dentro da antecedência + 15 min de folga).

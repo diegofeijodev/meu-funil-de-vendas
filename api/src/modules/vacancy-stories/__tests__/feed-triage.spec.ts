@@ -54,7 +54,7 @@ describe('triage', () => {
     expect(triage(vac({ city: null }), S, NOW)).toEqual({ status: 'skipped', reason: SKIP.noCity });
     expect(triage(vac({ city: '  ' }), { ...S, cities: ['Campinas'] }, NOW)).toEqual({ status: 'skipped', reason: SKIP.noCity });
     expect(triage(vac({ startTime: '2026-10-29T18:00:00Z' }), { ...S, min_lead_minutes: 240 }, NOW))
-      .toEqual({ status: 'skipped', reason: 'Começa às 15h, em menos de 4 h. Não dá tempo de divulgar.' });
+      .toEqual({ status: 'skipped', reason: 'A vaga começa Qui, 29/10 às 15h. Para dar tempo de divulgar, o story teria de ir ao ar até as 11h.' });
     expect(triage(vac(), S, NOW)).toEqual({ status: 'new' });
   });
   it('marca-d\'água', () => {

@@ -24,7 +24,7 @@ function setup(list?: string) {
   const w = vacancyWorld({ list });
   const poll = new VacancyPollService(w.prisma, w.feedClient, w.gate, w.settings);
   const settings = (ws = WS_A, over: Record<string, unknown> = {}) => {
-    const row: Record<string, unknown> = { workspace_id: ws, enabled: true, enabled_at: ENABLED_AT, template_asset_id: uuid(), cities: [], min_lead_minutes: 120, daily_cap: 10, ...over };
+    const row: Record<string, unknown> = { workspace_id: ws, enabled: true, enabled_at: ENABLED_AT, template_asset_id: uuid(), cities: [], min_lead_minutes: 120, daily_cap: 10, window_start: '08:00', window_end: '21:00', ...over };
     w.t['vacancy_story_settings']!.rows.push(row);
     return row;
   };
@@ -127,7 +127,7 @@ describe('VacancyPollService.expireDue', () => {
     const near = story({ status: 'new', starts_at: new Date('2026-10-29T16:30:00Z') }); // 13h30
     const far = story({ status: 'waiting', starts_at: new Date(NOW.getTime() + 180 * 60_000) });
     expect(await poll.expireDue(NOW)).toBe(1);
-    expect(near).toMatchObject({ status: 'expired', skip_reason: 'Começa às 13h30, em menos de 2 h. Não dá tempo de divulgar.' });
+    expect(near).toMatchObject({ status: 'expired', skip_reason: 'A vaga começa Qui, 29/10 às 13h30. Para dar tempo de divulgar, o story teria de ir ao ar até as 11h30.' });
     expect(far.status).toBe('waiting');
   });
 
@@ -136,7 +136,7 @@ describe('VacancyPollService.expireDue', () => {
     settings(WS_A, { daily_cap: 7 });
     const r = story({ status: 'waiting', wait_reason: 'cap', starts_at: new Date(NOW.getTime() + 30 * 60_000) });
     await poll.expireDue(NOW);
-    expect(r).toMatchObject({ status: 'expired', skip_reason: 'Ficou esperando a vez (máximo de 7 por dia) e a vaga começou antes.' });
+    expect(r).toMatchObject({ status: 'expired', skip_reason: 'Não coube no máximo de 7 stories de vagas por dia antes do início da vaga (Qui, 29/10 às 12h30).' });
   });
 
   it('generating com lease vivo não expira; com lease livre expira', async () => {
@@ -151,7 +151,7 @@ describe('VacancyPollService.expireDue', () => {
 });
 
 describe('VacancyPollService.expireDue (aprovação)', () => {
-  it('texto da spec: "a vaga começou às 18h."', async () => {
+  it('A4/A5: cancelado no prazo de aprovação, com o prazo e o início no motivo', async () => {
     const { w, poll, settings, story } = setup();
     settings();
     const post = { id: uuid(), workspace_id: WS_A, source: 'vacancy', status: 'pending_approval' };
@@ -162,8 +162,27 @@ describe('VacancyPollService.expireDue (aprovação)', () => {
     expect(await poll.expireDue(new Date('2026-10-29T19:30:00Z'))).toBe(1); // 90 min antes
     expect(post.status).toBe('cancelled');
     expect(job.status).toBe('cancelled');
-    expect(row.skip_reason).toBe('Ninguém aprovou a tempo: a vaga começou às 18h.');
+    expect(row.skip_reason).toBe('Ninguém aprovou a tempo. O prazo era Qui, 29/10 às 15h45; a vaga começa às 18h.');
     expect(row.status).toBe('handed_off');
+  });
+
+  it('A4: cancela no prazo de aprovação, antes da antecedência (15h50 com a vaga às 18h); prazo na véspera às 21h', async () => {
+    const { w, poll, settings, story } = setup();
+    settings();
+    const mk = (startsAt: string) => {
+      const post = { id: uuid(), workspace_id: WS_A, source: 'vacancy', status: 'pending_approval' };
+      w.t['ig_posts']!.rows.push(post);
+      return { post, row: story({ status: 'handed_off', ig_post_id: post.id, starts_at: new Date(startsAt) }) };
+    };
+    const today = mk('2026-10-29T21:00:00Z'); // 18h → prazo 15h45
+    const tomorrow = mk('2026-10-30T12:00:00Z'); // sexta 9h → prazo quinta 21h
+    expect(await poll.expireDue(new Date('2026-10-29T18:40:00Z'))).toBe(0); // 15h40
+    expect(await poll.expireDue(new Date('2026-10-29T18:50:00Z'))).toBe(1); // 15h50 (antes, a antecedência só cancelava às 16h)
+    expect(today.post.status).toBe('cancelled');
+    expect(tomorrow.post.status).toBe('pending_approval');
+    expect(await poll.expireDue(new Date('2026-10-30T00:05:00Z'))).toBe(1); // 21h05
+    expect(tomorrow.post.status).toBe('cancelled');
+    expect(tomorrow.row.skip_reason).toBe('Ninguém aprovou a tempo. O prazo era Qui, 29/10 às 21h; a vaga começa Sex, 30/10 às 9h.');
   });
 
   it('post pendente que ainda tem tempo não é tocado', async () => {

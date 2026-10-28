@@ -4,12 +4,15 @@ import { leaseFree } from '../instagram/ig-store.service';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import { capWaitReason, noApprovalReason, tooCloseReason, WAIT_CAP } from './vacancy-reasons';
+import { capWaitReason, leadDeadline, noApprovalReason, tooCloseReason, WAIT_CAP } from './vacancy-reasons';
+import { approveUntil } from './vacancy-slots';
 import { fingerprint } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
 
 const MIN = 60_000;
+/** Prazo de aprovação de uma empresa sem configuração (não deveria acontecer: post de vaga só existe com ela). */
+const DEFAULT_TIMING = { min_lead_minutes: 120, window_start: '08:00', window_end: '21:00' };
 
 /** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada). */
 function countCities(list: FreelaVacancy[]): { city: string; count: number }[] {
@@ -87,8 +90,9 @@ export class VacancyPollService {
   }
 
   /**
-   * Quem entrou na antecedência mínima sem ser publicado: linhas da fila viram `expired`; posts de vaga ainda `pending_approval`
-   * são cancelados e o motivo vai na LINHA (a tela lê `skip_reason`). Devolve quantas linhas + posts mudaram.
+   * Quem não tem mais como ir ao ar: linhas da fila que entraram na antecedência mínima viram `expired`; posts de vaga ainda
+   * `pending_approval` são cancelados no PRAZO DE APROVAÇÃO (`approveUntil`, A4 — não só na antecedência). O motivo vai na LINHA
+   * (a tela lê `skip_reason`). Devolve quantas linhas + posts mudaram.
    */
   async expireDue(now = new Date()): Promise<number> {
     const settings = new Map((await this.prisma.vacancy_story_settings.findMany({})).map((s) => [s.workspace_id, s]));
@@ -102,8 +106,8 @@ export class VacancyPollService {
       if (r.starts_at.getTime() - now.getTime() >= lead(r.workspace_id)) continue;
       const s = settings.get(r.workspace_id);
       const reason = r.wait_reason === WAIT_CAP
-        ? capWaitReason(s?.daily_cap ?? 10)
-        : tooCloseReason(r.starts_at, s?.min_lead_minutes ?? 120);
+        ? capWaitReason(s?.daily_cap ?? 10, r.starts_at)
+        : tooCloseReason(r.starts_at, leadDeadline(r.starts_at, s?.min_lead_minutes ?? 120));
       // Condicional ao estado lido: se o gerador pegou a linha entre a leitura e aqui, ela segue.
       const got = await this.prisma.vacancy_stories.updateMany({
         where: { id: r.id, AND: [{ OR: [{ status: { in: ['new', 'waiting'] } }, { status: 'generating', ...leaseFree(now) }] }] },
@@ -116,22 +120,24 @@ export class VacancyPollService {
     if (pending.length) {
       const rows = await this.prisma.vacancy_stories.findMany({ where: { ig_post_id: { in: pending.map((p) => p.id) } } });
       for (const r of rows) {
-        if (!r.ig_post_id || r.starts_at.getTime() - now.getTime() >= lead(r.workspace_id)) continue;
-        const postId = r.ig_post_id;
-        const done = await this.prisma.$transaction(async (tx) => {
-          const got = await tx.ig_posts.updateMany({ where: { id: postId, workspace_id: r.workspace_id, status: 'pending_approval' }, data: { status: 'cancelled' } });
-          if (!got.count) return 0;
-          await tx.publishing_jobs.updateMany({ where: { ig_post_id: postId, workspace_id: r.workspace_id, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
-          await tx.vacancy_stories.updateMany({
-            where: { id: r.id },
-            data: { skip_reason: noApprovalReason(r.starts_at) },
-          });
-          return 1;
-        });
-        n += done;
+        if (!r.ig_post_id) continue;
+        const until = approveUntil(r.starts_at, settings.get(r.workspace_id) ?? DEFAULT_TIMING);
+        if (until.getTime() > now.getTime()) continue;
+        n += await this.cancelPost(r.workspace_id, r.ig_post_id, r.id, ['pending_approval'], noApprovalReason(until, r.starts_at));
       }
     }
     return n;
+  }
+
+  /** Post cancelado (só se ainda está num de `from`) + jobs pendentes, e o motivo na linha. Devolve 1 se cancelou. */
+  private cancelPost(ws: string, postId: string, rowId: string, from: string[], reason: string): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const got = await tx.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: { in: from } }, data: { status: 'cancelled' } });
+      if (!got.count) return 0;
+      await tx.publishing_jobs.updateMany({ where: { ig_post_id: postId, workspace_id: ws, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
+      await tx.vacancy_stories.updateMany({ where: { id: rowId }, data: { skip_reason: reason } });
+      return 1;
+    });
   }
 
   /** `generating` com lease vencido (a geração morreu no meio) volta para `waiting`. */

@@ -11,13 +11,13 @@ import { Engine } from './ig-types';
 import { ClaimRefused, IgStore, OriginUnavailable, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
+import { VACANCY_SCHEDULE_MSG } from './origin-guards';
 import { PublishingService } from './publishing.service';
 import { computeSlots } from './slots';
 
 /** "Publicar agora" num story de vaga com a vitrine do Freela fora do ar. */
 export const ORIGIN_UNAVAILABLE_MSG = 'Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos.';
-/** Agendar à mão um story de vaga pularia janela, limite e espaço (R25). */
-export const VACANCY_SCHEDULE_MSG = 'Story de vaga: o horário é definido na aba Vagas.';
+export { VACANCY_SCHEDULE_MSG };
 
 /**
  * Corpo das 21 server functions do Instagram (`instagram.functions` + `auto-calendar.functions`) com a autorização no servidor:

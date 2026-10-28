@@ -1,4 +1,5 @@
 import { addDays, todaySp } from '../../common/time/dates';
+import type { SettingsRow } from './vacancy-types';
 
 const MIN = 60_000;
 
@@ -31,4 +32,18 @@ export function nextWindowSlot(o: { now: Date; windowStart: string; windowEnd: s
   if (lower < start.getTime()) return start;
   if (lower < windowStartOn(day, o.windowEnd).getTime()) return t;
   return windowStartOn(addDays(day, 1), o.windowStart);
+}
+
+/**
+ * Até quando dá para aprovar um story de vaga: o início menos a antecedência e a folga de 15 min da fila (R26 — aprovar depois disso
+ * cancela o story na agenda), puxado para dentro da janela (depois do fim → fim da janela; antes do início → fim da janela do dia
+ * anterior). Depois dele o story sai de "Para aprovar" e a expiração o cancela (A4).
+ */
+export function approveUntil(startsAt: Date, s: Pick<SettingsRow, 'min_lead_minutes' | 'window_start' | 'window_end'>): Date {
+  const t = new Date(startsAt.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS);
+  const day = spDay(t);
+  const end = windowStartOn(day, s.window_end);
+  if (t.getTime() >= end.getTime()) return end;
+  if (t.getTime() < windowStartOn(day, s.window_start).getTime()) return windowStartOn(addDays(day, -1), s.window_end);
+  return t;
 }

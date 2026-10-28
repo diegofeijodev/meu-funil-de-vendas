@@ -46,7 +46,8 @@ export function cleanFunction(title: string | null, serviceType: string | null):
     .trim();
   if (t && t.length <= 40) return t;
   const st = (serviceType ?? '').trim();
-  if (SERVICE_NAMES[st]) return SERVICE_NAMES[st];
+  // `Object.hasOwn`: "constructor"/"__proto__" vindos da vitrine não podem devolver o que está no protótipo do objeto.
+  if (Object.hasOwn(SERVICE_NAMES, st)) return SERVICE_NAMES[st]!;
   if (st) return capFirst(st.replace(/-/g, ' '));
   return t.slice(0, 40).trim();
 }
@@ -101,6 +102,12 @@ export function formatWhen(startIso: string, endIso: string): { data: string; ho
     data: `${DAYS[s.weekday]}, ${two(s.day)}/${two(s.month)}`,
     horario: `${hourLabel(s.minutes)} às ${hourLabel(e.minutes)}`,
   };
+}
+
+/** "Qua, 29/10" (dia da semana com vírgula, como na arte) — os motivos gravados usam este formato com a hora. */
+export function dayLabel(iso: string): string {
+  const p = spParts(iso);
+  return `${DAYS[p.weekday]}, ${two(p.day)}/${two(p.month)}`;
 }
 
 export function shortDay(iso: string): string {

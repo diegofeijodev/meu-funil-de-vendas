@@ -19,7 +19,6 @@ import type { SettingsRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 import { TEMPLATE_TEXTS_SCHEMA } from './vacancy-verify';
 
-
 const BUCKET = 'creative-assets';
 const MAX_TEMPLATE_MB = 10;
 const MIN_TEMPLATE_SIDE = 600;
@@ -40,7 +39,7 @@ const MSG = {
   lead: 'Escolha 1 h, 2 h, 4 h ou 6 h de antecedência.',
   vendor: 'Escolha OpenAI ou Gemini.',
   wrongType: 'Esse arquivo não serve. Envie uma imagem PNG ou JPG.',
-  tooSmall: 'A arte modelo precisa ter pelo menos 600 px de largura.',
+  tooSmall: 'A imagem é pequena demais. Envie uma arte com pelo menos 600 pixels de largura e de altura.',
   noBrand: 'Cadastre uma marca em Marcas antes de enviar a arte modelo.',
 };
 /** "A imagem tem 10,6 MB…" — arredonda para cima (10 MB + 1 byte não vira "10,0 MB"). */

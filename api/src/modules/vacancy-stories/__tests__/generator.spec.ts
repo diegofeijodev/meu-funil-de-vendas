@@ -14,7 +14,7 @@ import { vacancyWorld, type VacancyWorld } from './world';
 
 const NOW = new Date('2026-10-29T13:00:00Z'); // quinta, 10h em Brasília
 const MIN = 60_000;
-const NO_IG = 'O Instagram está desconectado. Os stories ficam prontos aqui, mas só vão ao ar depois que você reconectar.';
+const NO_IG = 'Esperando o Instagram ser reconectado para criar a arte.';
 const CLOSED = 'A vaga não está mais aberta no Freela (preenchida ou cancelada).';
 const NO_CREDIT = vendorMessage('openai', 'noCredit');
 /** Textos lidos da arte modelo do dono (endereço, região e valores de outra vaga). */

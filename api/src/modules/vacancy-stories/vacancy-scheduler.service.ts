@@ -8,7 +8,7 @@ import { PublishingService } from '../instagram/publishing.service';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGuardService } from './vacancy-guard.service';
-import { capWaitReason, slotTooCloseReason } from './vacancy-reasons';
+import { capWaitReason, igLimitReason, leadDeadline, spacingReason, tooCloseReason, windowReason } from './vacancy-reasons';
 import { nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import type { SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
@@ -126,7 +126,8 @@ export class VacancySchedulerService implements OnModuleInit {
    * Horário do story de uma vaga que começa em `startsAt`: janela + folga de 15 min → espaço da Meta → limite do dia (dia do horário
    * cheio → janela do dia seguinte). `force` ("Postar agora") ignora janela, limite e espaço: agora + 1 min (a guarda ainda confere a
    * vaga na hora de publicar). Não dá mais tempo (`at` + antecedência + 15 min de folga da fila > início, R26) → `{ expire }` com o
-   * motivo verdadeiro (limite do dia, ou o próximo horário livre — R23). `postId` = o post sendo agendado (não conta contra ele mesmo).
+   * motivo verdadeiro (A5/R23): já não daria tempo nem agora, a janela só abre depois do prazo, o espaço da Meta só libera depois,
+   * os 15 min entre stories empurraram para depois, ou o limite do dia. `postId` = o post sendo agendado (não conta contra ele mesmo).
    */
   async planSlot(ws: string, s: SettingsRow, startsAt: Date, now: Date, o: { force?: boolean; postId?: string } = {}): Promise<SlotPlan> {
     if (o.force) return { at: new Date(now.getTime() + MIN), waitingFor: 'none' };
@@ -144,19 +145,23 @@ export class VacancySchedulerService implements OnModuleInit {
 
     // Antecedência + folga da fila (R26): o story precisa sair com a antecedência medida na hora REAL da publicação.
     const lead = s.min_lead_minutes * MIN + PUBLISH_SLACK_MS;
+    const late = (t: Date) => t.getTime() + lead > startsAt.getTime();
+    const capFull = { expire: capWaitReason(s.daily_cap, startsAt) };
     for (let i = 0; ; i++) {
       const { used, cap } = await this.capacityFor(ws, s, spDay(at), o.postId);
       if (used < cap) break;
-      if (i >= MAX_DAYS) return { expire: capWaitReason(s.daily_cap) };
+      if (i >= MAX_DAYS) return capFull;
       // Dia cheio: a folga a partir do início da janela do dia seguinte.
       at = free(new Date(windowStartOn(addDays(spDay(at), 1), s.window_start).getTime() - MIN));
       waitingFor = 'cap';
-      if (at.getTime() + lead > startsAt.getTime()) return { expire: capWaitReason(s.daily_cap) };
+      if (late(at)) return capFull;
     }
-    if (at.getTime() + lead > startsAt.getTime()) {
-      return { expire: waitingFor === 'cap' ? capWaitReason(s.daily_cap) : slotTooCloseReason(at, startsAt, s.min_lead_minutes) };
-    }
-    return { at, waitingFor };
+    if (!late(at)) return { at, waitingFor };
+    const deadline = leadDeadline(startsAt, s.min_lead_minutes, true);
+    if (late(new Date(now.getTime() + MIN))) return { expire: tooCloseReason(startsAt, deadline) };
+    if (late(opens)) return { expire: windowReason(startsAt, deadline, s.window_start, s.window_end) };
+    if (waitingFor === 'ig_limit' && ig.freesAt) return { expire: igLimitReason(startsAt, deadline, ig.freesAt) };
+    return { expire: spacingReason(startsAt, deadline) };
   }
 
   /**

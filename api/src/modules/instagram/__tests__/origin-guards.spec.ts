@@ -284,7 +284,7 @@ describe('R25 — agendar à mão um story de vaga', () => {
     const { w, s } = setup();
     const p = vacancyPost(w, { status: 'ready', scheduled_at: null });
     const when = new Date(Date.now() + 3600e3).toISOString();
-    expect(await status(s.actions.schedulePost(OWNER, WS_A, p.id, when))).toBe('400:Story de vaga: o horário é definido na aba Vagas.');
+    expect(await status(s.actions.schedulePost(OWNER, WS_A, p.id, when))).toBe('400:O horário dos stories de vagas segue os Ajustes da aba Vagas.');
     expect(p).toMatchObject({ status: 'ready', scheduled_at: null });
     expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
     const regular = seedPost(w, { status: 'approved' });

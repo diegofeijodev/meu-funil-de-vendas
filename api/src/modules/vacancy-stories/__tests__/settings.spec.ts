@@ -330,7 +330,7 @@ describe('arte modelo', () => {
     v.jsonBy['vacancy_template_texts'] = () => ({ textos: [] });
     const big = Buffer.concat([await small(), Buffer.alloc(Math.round(10.5 * 1024 * 1024))]);
     expect(await status(upload(big))).toBe('400:A imagem tem 10,6 MB e o máximo é 10 MB. Envie uma menor.');
-    expect(await status(upload(await template(500, 800)))).toBe('400:A arte modelo precisa ter pelo menos 600 px de largura.');
+    expect(await status(upload(await template(500, 800)))).toBe('400:A imagem é pequena demais. Envie uma arte com pelo menos 600 pixels de largura e de altura.');
     expect(v.storedFiles()).toEqual([]);
   });
 

@@ -1,6 +1,6 @@
 import {
   norm, isTestText, cleanFunction, cleanEstablishment, formatWhen, formatMoney,
-  fingerprint, cityMatches, vacancyFields, hourLabel, leadLabel, shortDay, spParts,
+  fingerprint, cityMatches, vacancyFields, hourLabel, leadLabel, shortDay, spParts, dayLabel,
 } from '../vacancy-text';
 import type { FreelaVacancy } from '../vacancy-types';
 
@@ -69,7 +69,15 @@ describe('vacancy-text', () => {
     expect(vacancyFields(vac({ title: 'Garçom', amountInCents: 15000, startTime: '2026-10-31T21:00:00Z', endTime: '2026-11-01T02:00:00Z', city: 'Campinas', contractorName: 'COCO BAMBU' })))
       .toEqual({ funcao: 'Garçom', estabelecimento: 'Coco Bambu', data: 'Sáb, 31/10', horario: '18h às 23h', valor: 'R$ 150', cidade: 'Campinas',
         expected: { cents: 15000, day: 31, month: 10, startMin: 1080, endMin: 1380 } }));
-  it('auxiliares: hourLabel, leadLabel, shortDay, spParts', () => {
+  it('M7: serviceType com nome do protótipo do objeto ("constructor", "__proto__") não devolve o que está no protótipo', () => {
+    const long = 'Uma função com um título comprido demais para a arte';
+    expect(cleanFunction(long, 'constructor')).toBe('Constructor');
+    expect(cleanFunction(long, '__proto__')).toBe('__proto__');
+    expect(cleanFunction(long, 'toString')).toBe('ToString');
+    expect(cleanFunction(long, 'garcom')).toBe('Garçom');
+  });
+  it('auxiliares: hourLabel, leadLabel, shortDay, dayLabel, spParts', () => {
+    expect(dayLabel('2026-10-29T14:30:00Z')).toBe('Qui, 29/10');
     expect(hourLabel(690)).toBe('11h30');
     expect(hourLabel(1080)).toBe('18h');
     expect([60, 120, 240, 360].map(leadLabel)).toEqual(['1 h', '2 h', '4 h', '6 h']);

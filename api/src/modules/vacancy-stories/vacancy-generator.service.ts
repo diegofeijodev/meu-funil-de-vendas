@@ -18,7 +18,8 @@ import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
 import { compareArt, READ_SCHEMA } from './vacancy-verify';
 
-export const NO_ACCOUNT_WAIT = 'O Instagram está desconectado. Os stories ficam prontos aqui, mas só vão ao ar depois que você reconectar.';
+/** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
+export const NO_ACCOUNT_WAIT = 'Esperando o Instagram ser reconectado para criar a arte.';
 /** `handOff` perdeu a linha (desligaram no meio): nada foi entregue. */
 export const HANDOFF_LOST = 'lost';
 
@@ -34,7 +35,7 @@ const QUEUE = ['new', 'waiting'];
 const TEMPLATE_BUCKET = 'creative-assets';
 const TEMPLATE_MISSING = 'A arte modelo não foi encontrada. Envie a arte modelo de novo em Ajustes.';
 /** Erro de IA sem mensagem pronta (resposta fora do formato, imagem ilegível): o detalhe fica no log. */
-const AI_UNUSABLE = 'A IA devolveu uma resposta que não conseguimos usar.';
+export const AI_UNUSABLE = 'A IA não devolveu uma arte que dê para usar. Tentamos de novo sozinhos em alguns minutos.';
 /** Falha que não é da IA e não tem mensagem pronta (banco, disco): o detalhe fica no log. */
 const RETRY_REASON = 'Não conseguimos criar a arte agora. Vamos tentar de novo em alguns minutos.';
 
@@ -255,7 +256,8 @@ export class VacancyGeneratorService {
       lease_until: null,
       ai_error_count: n,
       next_attempt_at: new Date(now.getTime() + wait * MIN),
-      wait_reason: `A IA não conseguiu criar a arte: ${noPeriod(e.message)}.`,
+      // A mensagem genérica já é uma frase completa para a fila; a do provedor (chave, crédito) ganha o prefixo.
+      wait_reason: e.message === AI_UNUSABLE ? AI_UNUSABLE : `A IA não conseguiu criar a arte: ${noPeriod(e.message)}.`,
       attempts_log: json(e.attempts),
     });
     if (ok) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: e.message, ai_error_at: now } });

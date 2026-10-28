@@ -8,9 +8,8 @@ import { ORIGIN_UNAVAILABLE_MSG } from '../instagram/instagram-actions.service';
 import { bad, notFound } from '../media/user-error';
 import { canRevive, displayOf, POST_UNPUBLISHED, ROW_QUEUED, storyDetail, storyView, type DisplayContext, type StoryDetail, type StoryPost, type StoryView } from './vacancy-display';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
-import { NO_ACCOUNT_WAIT } from './vacancy-generator.service';
 import { VacancyGate } from './vacancy-gate.service';
-import { DONT_POST_REASON, MAX_REDOS, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { DONT_POST_REASON, leadDeadline, MAX_REDOS, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { PUBLISH_SLACK_MS } from './vacancy-slots';
@@ -24,12 +23,14 @@ const LIST_SIZE = 100;
 const NOT_POSTED = new Set(['skipped', 'cancelled', 'failed']);
 
 const MSG = {
-  notFound: 'Story não encontrado.',
+  notFound: 'Não achamos este story. Ele pode ter sido apagado; atualize a tela.',
   /** A tela estava velha: o story mudou de situação entre a lista e o toque (ou a ação não vale para ela). */
-  stale: 'A situação deste story mudou. Atualize a tela e tente de novo.',
+  stale: 'A situação deste story mudou enquanto você olhava. Já atualizamos a tela; confira e tente de novo.',
   off: 'Ligue os stories das vagas para usar esta ação.',
   closed: 'A vaga não está mais aberta no Freela.',
-  redoCap: `Esta vaga já foi refeita ${MAX_REDOS} vezes.`,
+  redoCap: `A arte desta vaga já foi refeita ${MAX_REDOS} vezes, o máximo. Aprove, toque em Não postar ou envie a sua própria arte pelo editor.`,
+  /** "Postar agora" sem Instagram conectado (A6). */
+  noAccount: 'O Instagram está desconectado. Reconecte em Visão geral e tente de novo.',
 };
 
 /** Volta para a fila do zero (o gerador confere a vaga na vitrine de novo antes de gerar). */
@@ -149,7 +150,7 @@ export class VacancyActionsService {
     if (d.display !== 'waiting_window' && d.display !== 'waiting_cap') throw bad(MSG.stale);
     if (post) {
       const r = await this.scheduler.scheduleVacancyPost(ws, post.id, { force: true });
-      if (r === 'no_account') throw bad(NO_ACCOUNT_WAIT);
+      if (r === 'no_account') throw bad(MSG.noAccount);
     } else {
       const r = await this.prisma.vacancy_stories.updateMany({
         where: { id, workspace_id: ws, status: 'waiting', wait_reason: WAIT_CAP },
@@ -186,7 +187,9 @@ export class VacancyActionsService {
     if (!(v.city ?? '').trim()) throw bad(SKIP.noCity);
     const startsAt = new Date(v.startTime);
     if (startsAt.getTime() <= now.getTime()) throw bad(VACANCY_STARTED_REASON);
-    if (startsAt.getTime() - now.getTime() < s.min_lead_minutes * 60_000 + PUBLISH_SLACK_MS) throw bad(tooCloseReason(startsAt, s.min_lead_minutes));
+    if (startsAt.getTime() - now.getTime() < s.min_lead_minutes * 60_000 + PUBLISH_SLACK_MS) {
+      throw bad(tooCloseReason(startsAt, leadDeadline(startsAt, s.min_lead_minutes, true)));
+    }
     const r = await this.prisma.vacancy_stories.updateMany({
       where: { id, workspace_id: ws, status: row.status, ig_post_id: row.ig_post_id },
       data: { ...REQUEUE, forced: true, snapshot: json(v), fingerprint: fingerprint(v), starts_at: startsAt },
@@ -252,14 +255,13 @@ export class VacancyActionsService {
   }
 
   /**
-   * Stories de vaga de hoje (R3) e se o limite do dia / o limite da Meta estão cheios — separa "esperando a vez" de "esperando o
-   * horário" num post empurrado para outro dia e põe o número real em "Hoje já foram {n}".
+   * Se o limite do dia (stories de vaga de hoje, R3) e o limite da Meta estão cheios — separa "esperando a vez" de "esperando o
+   * horário" num post empurrado para outro dia.
    */
   private async context(ws: string, s: SettingsRow, now: Date): Promise<DisplayContext> {
     const c = await countVacancyStoriesOnDay(this.prisma, ws, todaySp(now));
-    const today = c.posted + c.scheduled;
     const ig = await this.scheduler.igRoom(ws, now);
-    return { capFull: today >= s.daily_cap, todayCount: today, igFull: ig.room <= 0 };
+    return { capFull: c.posted + c.scheduled >= s.daily_cap, igFull: ig.room <= 0 };
   }
 }
 

@@ -18,7 +18,7 @@ const at = (ms: number) => new Date(NOW.getTime() + ms);
 const TOMORROW_8H = new Date('2026-10-30T11:00:00Z');
 const NIGHT = new Date('2026-10-30T01:10:00Z'); // 22h10 de quinta
 const DONT = 'Você escolheu não postar.';
-const STALE = 'A situação deste story mudou. Atualize a tela e tente de novo.';
+const STALE = 'A situação deste story mudou enquanto você olhava. Já atualizamos a tela; confira e tente de novo.';
 const TEST_SKIP = 'Parece vaga de teste: o nome da empresa tem “teste”.';
 
 /** Sábado 31/10, 18h às 23h em Brasília, Coco Bambu em Campinas, R$ 150. */
@@ -151,7 +151,7 @@ describe('VacancyActionsService — Postar agora', () => {
     const { post, row } = await t.delivered(vac(), { status: 'scheduled', scheduled_at: TOMORROW_8H });
     t.job(post.id, TOMORROW_8H);
     expect(await t.actions.detail(WS_A, row.id)).toMatchObject({
-      display: 'waiting_cap', support: 'Hoje já foi 1 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
+      display: 'waiting_cap', support: 'O máximo de hoje (1) já está preenchido. Vai ao ar amanhã às 8h, se ainda der tempo de divulgar.',
     });
     await t.actions.postNow(OWNER, WS_A, row.id);
     expect(post).toMatchObject({ status: 'scheduled', scheduled_at: at(MIN) });
@@ -161,6 +161,15 @@ describe('VacancyActionsService — Postar agora', () => {
     expect(t.row(waiting.id)).toMatchObject({ status: 'new', post_now: true, not_before: null, wait_reason: null });
     // Já na fila de novo: "Postar agora" não vale mais.
     expect(await status(t.actions.postNow(OWNER, WS_A, waiting.id))).toBe(`400:${STALE}`);
+  });
+
+  it('A6: sem Instagram conectado → 400 com o caminho para reconectar; nada é agendado', async () => {
+    const t = await setup({ ig: false });
+    t.clock.t = NIGHT.getTime();
+    const { post, row } = await t.delivered(vac(), { status: 'scheduled', scheduled_at: TOMORROW_8H });
+    expect(await status(t.actions.postNow(OWNER, WS_A, row.id))).toBe('400:O Instagram está desconectado. Reconecte em Visão geral e tente de novo.');
+    expect(post).toMatchObject({ status: 'scheduled', scheduled_at: TOMORROW_8H });
+    expect(t.jobsOf(post.id)).toHaveLength(0);
   });
 
   it('pronto para daqui a pouco: "Postar agora" não vale (400)', async () => {
@@ -180,7 +189,7 @@ describe('VacancyActionsService — Criar story mesmo assim', () => {
     expect(t.row(r.id)).toMatchObject({ status: 'new', forced: true, ig_post_id: null, skip_reason: null });
 
     const closed = vac();
-    const c = await t.queued(closed, { status: 'expired', skip_reason: 'Começa às 15h, em menos de 2 h. Não dá tempo de divulgar.' });
+    const c = await t.queued(closed, { status: 'expired', skip_reason: 'A vaga começa Sáb, 31/10 às 15h. Para dar tempo de divulgar, o story teria de ir ao ar até as 13h.' });
     w.feed.state.closed.add(closed.id);
     expect(await status(t.actions.createAnyway(OWNER, WS_A, c.id))).toBe('400:A vaga não está mais aberta no Freela.');
     expect(t.row(c.id).status).toBe('expired');
@@ -201,7 +210,7 @@ describe('VacancyActionsService — Criar story mesmo assim', () => {
       [{ amountInCents: 0 }, 'A vaga não tem valor informado.'],
       [{ city: '  ' }, 'A vaga não tem cidade informada.'],
       [{ startTime: at(-HOUR).toISOString(), endTime: at(3 * HOUR).toISOString() }, 'A vaga começou antes de ir ao ar.'],
-      [{ startTime: at(2 * HOUR + 10 * MIN).toISOString(), endTime: at(6 * HOUR).toISOString() }, 'Começa às 12h10, em menos de 2 h. Não dá tempo de divulgar.'],
+      [{ startTime: at(2 * HOUR + 10 * MIN).toISOString(), endTime: at(6 * HOUR).toISOString() }, 'A vaga começa Qui, 29/10 às 12h10. Para dar tempo de divulgar, o story teria de ir ao ar até as 9h55.'],
     ];
     for (const [live, msg] of cases) {
       const v = vac();
@@ -234,7 +243,7 @@ describe('VacancyActionsService — Criar story mesmo assim', () => {
 });
 
 describe('VacancyActionsService — Refazer a arte / Tentar de novo', () => {
-  it('refaz até o teto (D11): a 4ª vez → 400 "Esta vaga já foi refeita 3 vezes."', async () => {
+  it('refaz até o teto (D11): a 4ª vez → 400 com o texto do máximo', async () => {
     const t = await setup();
     const v = vac();
     let { post, row } = await t.delivered(v);
@@ -249,7 +258,7 @@ describe('VacancyActionsService — Refazer a arte / Tentar de novo', () => {
     }
     expect(j.status).toBe('cancelled');
     expect(await t.actions.detail(WS_A, row.id)).toMatchObject({ redo_count: 3, can: { redo: false } });
-    expect(await status(t.actions.redo(OWNER, WS_A, row.id))).toBe('400:Esta vaga já foi refeita 3 vezes.');
+    expect(await status(t.actions.redo(OWNER, WS_A, row.id))).toBe('400:A arte desta vaga já foi refeita 3 vezes, o máximo. Aprove, toque em Não postar ou envie a sua própria arte pelo editor.');
     expect(post.status).toBe('pending_approval');
     row = t.row(row.id) as typeof row;
     expect(row.status).toBe('handed_off');
@@ -307,7 +316,7 @@ describe('VacancyActionsService — lista, detalhe e isolamento', () => {
     await w.prisma.vacancy_story_settings.create({ data: { workspace_id: WS_B, enabled: true, template_asset_id: uuid() } });
     const a = await t.queued(vac());
     const b = await t.queued(vac(), {}, WS_B);
-    const nf = '404:Story não encontrado.';
+    const nf = '404:Não achamos este story. Ele pode ter sido apagado; atualize a tela.';
     expect(await status(t.actions.detail(WS_B, a.id))).toBe(nf);
     expect(await status(t.actions.dontPost(STRANGER, WS_B, a.id))).toBe(nf);
     expect(await status(t.actions.postNow(STRANGER, WS_B, a.id))).toBe(nf);

@@ -81,31 +81,27 @@ describe('displayOf — situações da lista (UI §4)', () => {
     expect(displayOf(delivered(p), p, s, NOW, { capFull: false }).display).toBe('waiting_window');
   });
 
-  it('esperando a vez: linha no limite e post empurrado para amanhã com o limite cheio (R4 com 1)', () => {
-    const cap = 'Hoje já foram 10 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.';
+  it('esperando a vez: linha no limite e post empurrado para amanhã com o limite cheio (B4: o máximo, não a contagem)', () => {
+    const cap = 'O máximo de hoje (10) já está preenchido. Vai ao ar amanhã às 8h, se ainda der tempo de divulgar.';
     expect(pick(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null, s, NOW))).toEqual({
       display: 'waiting_cap', label: 'Esperando a vez', support: cap, reason: null,
     });
     const p = post({ status: 'scheduled', scheduled_at: TOMORROW_8H });
     expect(pick(displayOf(delivered(p), p, s, NOW, { capFull: true }))).toEqual({ display: 'waiting_cap', label: 'Esperando a vez', support: cap, reason: null });
     expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null, settings({ daily_cap: 1 }), NOW).support).toBe(
-      'Hoje já foi 1 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
+      'O máximo de hoje (1) já está preenchido. Vai ao ar amanhã às 8h, se ainda der tempo de divulgar.',
     );
-    // Contagem real do dia (pode passar do limite depois de um "Postar agora").
-    expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: TOMORROW_8H }), null, s, NOW, { todayCount: 11 }).support).toBe(
-      'Hoje já foram 11 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
-    );
-    expect(displayOf(delivered(p), p, settings({ daily_cap: 1 }), NOW, { capFull: true, todayCount: 1 }).support).toBe(
-      'Hoje já foi 1 (o máximo por dia). Vai ao ar amanhã às 8h, se a vaga ainda não tiver começado.',
+    expect(displayOf(delivered(p), p, settings({ daily_cap: 1 }), NOW, { capFull: true }).support).toBe(
+      'O máximo de hoje (1) já está preenchido. Vai ao ar amanhã às 8h, se ainda der tempo de divulgar.',
     );
     // Empurrado pelo limite de publicações da Meta (não pelo do dia): o aviso do limite da conta.
-    expect(pick(displayOf(delivered(p), p, s, NOW, { capFull: false, todayCount: 3, igFull: true }))).toEqual({
+    expect(pick(displayOf(delivered(p), p, s, NOW, { capFull: false, igFull: true }))).toEqual({
       display: 'waiting_cap', label: 'Esperando a vez', reason: null,
-      support: 'O Instagram aceita até 25 publicações por dia na conta, somando os posts normais. Vai ao ar amanhã às 8h.',
+      support: 'A conta está perto do limite do Instagram (25 publicações em 24 h, somando os posts normais). Vai ao ar amanhã às 8h.',
     });
     // Dois dias depois: sem "amanhã".
     expect(displayOf(row({ status: 'waiting', wait_reason: WAIT_CAP, not_before: new Date('2026-10-31T11:00:00Z') }), null, s, NOW).support).toBe(
-      'Hoje já foram 10 (o máximo por dia). Vai ao ar dia 31/10 às 8h, se a vaga ainda não tiver começado.',
+      'O máximo de hoje (10) já está preenchido. Vai ao ar dia 31/10 às 8h, se ainda der tempo de divulgar.',
     );
   });
 
@@ -117,6 +113,13 @@ describe('displayOf — situações da lista (UI §4)', () => {
       display: 'to_approve', label: 'Esperando sua aprovação', support: 'Aprove até 16h. Depois disso não dá tempo de divulgar.', reason: null,
     });
     expect(d.approve_until).toEqual(new Date('2026-10-29T19:00:00Z'));
+  });
+
+  it('A4: "Aprovar" só até o prazo de aprovação (16h para a vaga das 18h15)', () => {
+    const v = vac({ startTime: '2026-10-29T21:15:00Z', endTime: '2026-10-30T02:00:00Z' });
+    const p = post({ status: 'pending_approval' });
+    expect(storyView(delivered(p, {}, v), p, s, new Date('2026-10-29T18:59:00Z')).can.approve).toBe(true);
+    expect(storyView(delivered(p, {}, v), p, s, new Date('2026-10-29T19:00:00Z')).can.approve).toBe(false);
   });
 
   it('prazo de aprovação respeita a janela: vaga amanhã às 9h → até 21h de hoje; vaga às 23h30 → até 21h', () => {
@@ -163,7 +166,7 @@ describe('displayOf — situações da lista (UI §4)', () => {
     expect(c(delivered(p2), p2).reason).toBe('Você escolheu não postar.');
     const p3 = post({ status: 'cancelled', last_error: 'Post cancelado.' });
     expect(c(delivered(p3), p3).reason).toBe('Post cancelado.');
-    const expired = 'Ficou esperando a vez (máximo de 10 por dia) e a vaga começou antes.';
+    const expired = 'Não coube no máximo de 10 stories de vagas por dia antes do início da vaga (Sáb, 31/10 às 18h).';
     expect(c(row({ status: 'expired', skip_reason: expired }), null)).toEqual({ display: 'cancelled', label: 'Não foi ao ar', support: null, reason: expired });
   });
 
@@ -222,7 +225,7 @@ describe('storyView / storyDetail', () => {
     expect(can(row({ status: 'skipped', skip_reason: 'A vaga não tem valor informado.' }), null)).toMatchObject({ create_anyway: false });
     expect(can(row({ status: 'skipped', skip_reason: 'A vaga não tem cidade informada.' }), null)).toMatchObject({ create_anyway: false });
     const soonVac = (ms: number) => vac({ startTime: at(ms).toISOString(), endTime: at(ms + 4 * HOUR).toISOString() });
-    const close = 'Começa às 12h10, em menos de 2 h. Não dá tempo de divulgar.';
+    const close = 'A vaga começa Qui, 29/10 às 12h10. Para dar tempo de divulgar, o story teria de ir ao ar até as 10h10.';
     expect(can(row({ status: 'skipped', skip_reason: close }, soonVac(2 * HOUR + 10 * MIN)), null)).toMatchObject({ create_anyway: false });
     expect(can(row({ status: 'skipped', skip_reason: close }, soonVac(2 * HOUR + 20 * MIN)), null)).toMatchObject({ create_anyway: true });
     // Não postado depois da entrega: volta pelo "Criar story mesmo assim".
@@ -288,6 +291,6 @@ describe('previewForView', () => {
     const fresh = { status: 'running', step: 'art', attempt: 1, started_at: at(-5 * MIN).toISOString() };
     expect(previewForView(fresh, NOW)).toEqual(fresh);
     const stuck = { ...fresh, started_at: at(-11 * MIN).toISOString() };
-    expect(previewForView(stuck, NOW)).toEqual({ ...stuck, status: 'failed', error: 'A prévia não terminou. Gere de novo.' });
+    expect(previewForView(stuck, NOW)).toEqual({ ...stuck, status: 'failed', error: 'A prévia não terminou. Toque em Gerar prévia com uma vaga real para tentar de novo.' });
   });
 });

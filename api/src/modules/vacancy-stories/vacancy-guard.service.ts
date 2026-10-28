@@ -6,6 +6,7 @@ import type { PostRow } from '../instagram/ig-types';
 import type { PublishOriginGuard } from '../instagram/origin-guards';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import {
+  leadDeadline,
   MAX_REDOS,
   tooCloseReason,
   VACANCY_CHANGED_REASON,
@@ -53,7 +54,7 @@ export class VacancyGuardService implements PublishOriginGuard {
     const lead = s?.min_lead_minutes ?? 120;
     const timing = (startsAt: Date): string | null => {
       if (startsAt.getTime() <= at.getTime()) return VACANCY_STARTED_REASON;
-      if (startsAt.getTime() - at.getTime() < lead * MIN) return tooCloseReason(startsAt, lead);
+      if (startsAt.getTime() - at.getTime() < lead * MIN) return tooCloseReason(startsAt, leadDeadline(startsAt, lead));
       return null;
     };
 
