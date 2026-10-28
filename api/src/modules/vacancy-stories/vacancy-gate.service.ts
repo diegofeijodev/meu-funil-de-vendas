@@ -1,8 +1,8 @@
 import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import type { Env } from '../../common/config/env.validation';
+import { parseVacancyWorkspaces } from '../../common/config/vacancy-workspaces';
 import { notFound } from '../media/user-error';
-import { parseVacancyWorkspaces } from './vacancy-env';
 
 export const GATE_NOT_FOUND = 'Página não encontrada.';
 

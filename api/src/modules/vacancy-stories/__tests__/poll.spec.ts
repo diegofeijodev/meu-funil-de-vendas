@@ -304,6 +304,23 @@ describe('cron dos stories das vagas', () => {
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'vacancy-stories', last_status: 'ok' });
   });
 
+  it('M10: etapa com erro (ou vitrine fora) → heartbeat "error" com o resultado, no job agendado e na rota', async () => {
+    const { svc, scheduler, auth, poll, w } = cronSetup();
+    svc.onModuleInit();
+    poll.expireDue.mockRejectedValueOnce(new Error('banco caiu'));
+    expect(await scheduler.run('vacancy-stories-10min')).toBe(true);
+    const beat = () => w.t['cron_heartbeats']!.rows.find((r) => r.name === 'vacancy-stories')!;
+    expect(beat()).toMatchObject({ last_status: 'error', last_detail: expect.stringContaining('"expired":{"error":"banco caiu"}') });
+    expect(await scheduler.run('vacancy-stories-10min')).toBe(true);
+    expect(beat()).toMatchObject({ last_status: 'ok' });
+
+    const ctl = new VacancyStoriesCronController(auth, svc);
+    poll.pollAll.mockResolvedValueOnce({ workspaces: 1, inserted: 0, skipped: 0, error: 'Não conseguimos consultar as vagas do Freela.' } as never);
+    const out = (await ctl.run('segredo')) as Record<string, unknown>;
+    expect(out['poll']).toMatchObject({ error: 'Não conseguimos consultar as vagas do Freela.' });
+    expect(beat()).toMatchObject({ last_status: 'error', last_detail: expect.stringContaining('Não conseguimos consultar as vagas do Freela.') });
+  });
+
   it('rota: sem segredo 401; com segredo roda; heartbeat gravado', async () => {
     const { svc, auth, w } = cronSetup();
     const ctl = new VacancyStoriesCronController(auth, svc);

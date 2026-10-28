@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { parseVacancyWorkspaces } from '../../modules/vacancy-stories/vacancy-env';
+import { parseVacancyWorkspaces } from './vacancy-workspaces';
 
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
 const opt = () => z.string().optional();

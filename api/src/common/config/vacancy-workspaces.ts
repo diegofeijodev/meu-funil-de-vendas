@@ -1,4 +1,4 @@
-import { isUuid } from '../../common/ids/uuid';
+import { isUuid } from '../ids/uuid';
 
 /**
  * Lista de empresas com stories das vagas (`VACANCY_STORIES_WORKSPACE_IDS`): ids separados por vírgula.

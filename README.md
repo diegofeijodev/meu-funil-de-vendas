@@ -102,6 +102,9 @@ Plano de port **concluído** (Tasks 0 a 9 + onda final + correções da revisão
 Instagram, anúncios/Meta, CRM com canais, SDR, integrações, agendador) e as 25 telas do protótipo, com jest, smoke e browser-check por seções. Contrato: `docs/api-contract.md`.
 
 Stories automáticos das vagas do Freela (out/2026, `api/src/modules/vacancy-stories` + aba Vagas do Instagram): cada vaga nova da vitrine vira um story no estilo da arte modelo, conferido às cegas, só para as empresas de `VACANCY_STORIES_WORKSPACE_IDS` (contrato §26).
+Para tirar uma empresa da função: primeiro **Desligar** na aba Vagas (cancela a fila e os stories ainda não publicados, com os jobs), e só
+depois tirar o id de `VACANCY_STORIES_WORKSPACE_IDS` e reiniciar a API — fora da lista o job e as rotas não tocam mais na empresa, e o que
+estivesse pronto ou agendado ficaria parado sem ninguém ver.
 
 Desvios aceitos em relação ao protótipo (decididos nas revisões):
 - Upload de mídia pela API com teto de 100 MB (o protótipo aceitava 500 MB); vídeo do Instagram/Reels e criativos "ugc"/"story" tratados como vídeo; link do CapCut de 10 min.

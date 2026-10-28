@@ -6,6 +6,13 @@ import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyPollService } from './vacancy-poll.service';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 
+/** Etapas da rodada que falharam (`{ error }` — inclusive a consulta com a vitrine fora). */
+export function failedSteps(out: Record<string, unknown>): string[] {
+  return Object.entries(out)
+    .filter(([, v]) => !!v && typeof v === 'object' && 'error' in v)
+    .map(([k]) => k);
+}
+
 /**
  * Rodada de 10 minutos dos stories das vagas: consulta → desliga órfãs → expira → varre leases → agenda → geração.
  * Cada etapa falha sozinha: o erro vira `{ error }` no resultado e as demais seguem.
@@ -41,6 +48,15 @@ export class VacancyStoriesCronService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.scheduler.register({ ...JOB_SCHEDULES['vacancy-stories-10min'], handler: async () => JSON.stringify(await this.tick()).slice(0, 300) });
+    this.scheduler.register({
+      ...JOB_SCHEDULES['vacancy-stories-10min'],
+      handler: async () => {
+        const out = await this.tick();
+        const detail = JSON.stringify(out).slice(0, 300);
+        // M10: etapa com erro não aparece como "ok" — o agendador grava o heartbeat "error" com o resultado.
+        if (failedSteps(out).length) throw new Error(detail);
+        return detail;
+      },
+    });
   }
 }
