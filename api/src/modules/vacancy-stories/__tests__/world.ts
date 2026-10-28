@@ -10,7 +10,7 @@ import { VacancyFeedClient, type FreelaFetch } from '../vacancy-feed';
 import { VacancyGate } from '../vacancy-gate.service';
 import { VacancyGuardService } from '../vacancy-guard.service';
 import { VacancySettingsService } from '../vacancy-settings.service';
-import type { FreelaVacancy } from '../vacancy-types';
+import type { ArtRead, FreelaVacancy } from '../vacancy-types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Req = any;
@@ -106,6 +106,26 @@ export function vacancyWorld(o: { list?: string } = {}) {
     w.t['brands']!.rows.push(b);
     return b;
   };
+  /**
+   * IA da arte das vagas, programável: cada chamada de `image` tira o próximo item de `images` — `Error` lança, qualquer outro valor
+   * (ou fila vazia) devolve um PNG de verdade feito com jimp (2:3 como o gpt-image-1; pequeno para o jest andar). Cada leitura
+   * `json('vacancy_art_read')` devolve o próximo item de `reads` (`Error` lança; o último se repete).
+   */
+  const programArt = async (o: { reads: (ArtRead | Error)[]; images?: (Error | null)[] }) => {
+    const png = Buffer.from(await images.encode(images.blank(256, 384, 0x2b6cb0ff), true));
+    const queue = [...(o.images ?? [])];
+    ai.image.mockImplementation(async () => {
+      const next = queue.shift();
+      if (next instanceof Error) throw next;
+      return { bytes: Buffer.from(png), mime: 'image/png', ext: 'png', cost: 0, note: null };
+    });
+    const reads = [...o.reads];
+    jsonBy['vacancy_art_read'] = () => {
+      const r = reads.length > 1 ? reads.shift()! : reads[0]!;
+      if (r instanceof Error) throw r;
+      return structuredClone(r);
+    };
+  };
   return {
     ...w,
     dir,
@@ -121,6 +141,7 @@ export function vacancyWorld(o: { list?: string } = {}) {
     guard,
     settings,
     brand,
+    programArt,
     member,
     storedFiles: () => listFiles(dir),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),

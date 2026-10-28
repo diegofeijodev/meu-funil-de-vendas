@@ -8,6 +8,7 @@ import { PUBLISH_ORIGIN_GUARDS } from '../instagram/origin-guards';
 import { MediaModule } from '../media/media.module';
 import { FREELA_VACANCIES_FETCH, FreelaFetch, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate, VacancyGateGuard } from './vacancy-gate.service';
+import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGuardService } from './vacancy-guard.service';
 import { VacancyPollService } from './vacancy-poll.service';
 import { VacancySettingsService } from './vacancy-settings.service';
@@ -34,11 +35,11 @@ import { VacancyStoriesCronService } from './vacancy-stories-cron.service';
 })
 export class VacancyStoriesCoreModule {}
 
-/** Stories das vagas do Freela: ajustes, arte modelo, ligar/desligar (as Tasks 8–11 somam consulta, geração, agenda e ações). */
+/** Stories das vagas do Freela: ajustes, arte modelo, ligar/desligar, consulta e geração (as Tasks 10–11 somam agenda e ações). */
 @Module({
   imports: [VacancyStoriesCoreModule, InstagramModule, AiModule, MediaModule, CreativeModule, AccessModule, ActivityModule],
   controllers: [VacancyStoriesController, VacancyStoriesCronController],
-  providers: [VacancySettingsService, VacancyPollService, VacancyStoriesCronService],
-  exports: [VacancySettingsService, VacancyPollService],
+  providers: [VacancySettingsService, VacancyPollService, VacancyGeneratorService, VacancyStoriesCronService],
+  exports: [VacancySettingsService, VacancyPollService, VacancyGeneratorService],
 })
 export class VacancyStoriesModule {}
