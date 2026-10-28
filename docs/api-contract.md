@@ -795,7 +795,9 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
                      arte); null = arte da IA, arte própria ou antes da entrega */,
   wait_kind: "cap" | "instagram" | "window" | "spacing" | null /* B3, só em waiting_cap|waiting_window: máximo do dia · limite de 25
                      publicações da Meta · fora do horário para postar · empurrado pelos 15 min entre stories com a janela aberta */,
-  can: { approve /* to_approve e agora < approve_until (A4: depois do prazo some de "Para aprovar"; a expiração cancela na rodada seguinte) — aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
+  can: { approve /* to_approve e agora < approve_until (A4). Depois do prazo o `display` CONTINUA `to_approve` até a expiração cancelar
+                     (rodada seguinte do job, ≤ 10 min): a lista "Para aprovar" do web = `display === 'to_approve' && can.approve` —
+                     aprovar = POST /v1/instagram/approve-post */, dont_post /* na fila, esperando, para aprovar, pronto (não publicando) */,
          post_now /* waiting_window|waiting_cap */, create_anyway /* skipped|cancelled, motivo ≠ fechada/sem valor/sem cidade, início − antecedência − 15 min > agora (R30) */,
          redo /* entregue e não publicado, redo_count < 3 */, retry /* linha ou post failed */: boolean }
          /* post_now, create_anyway, redo e retry: false com a função desligada */
