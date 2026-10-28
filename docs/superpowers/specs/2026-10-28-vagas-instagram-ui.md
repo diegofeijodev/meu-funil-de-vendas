@@ -24,8 +24,8 @@ Campos, em ordem de destaque (até ~20 palavras no total):
 - Texto de corpo ≥ 48 px, sempre sobre cartão de fundo sólido.
 - **Rodapé (sistema, não IA):** linha 1 **Candidate-se pelo app**; linha 2 **Procure Freela Serviços na loja**; selos oficiais
   "DISPONÍVEL NO Google Play" e "Baixar na App Store" (arquivos oficiais, nunca redesenhados). Sem link, sem QR (o freelancer vê o story no
-  mesmo celular que teria de escanear), sem domínio (ninguém digita em 2 s; `/vagas` sem id nem existe no web do Freela). *Pendente: OK do
-  dono — ver design §10.* Falta testar se a busca "Freela Serviços" mostra o app em 1º na Play Store (na App Store o nome confere).
+  mesmo celular que teria de escanear), sem domínio (ninguém digita em 2 s; `/vagas` sem id nem existe no web do Freela). Aprovado pelo dono
+  em 28/10. Falta testar se a busca "Freela Serviços" mostra o app em 1º na Play Store (na App Store o nome confere).
 - Fora da arte, como complemento: o link da bio do @ do Freela apontando para a loja.
 
 ## 2. Onde fica

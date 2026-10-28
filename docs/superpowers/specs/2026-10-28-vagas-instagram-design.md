@@ -91,7 +91,9 @@ modelo, sem ninguém abrir o Canva.
 |---|---|
 | Formato | Um story por vaga (resposta a "quando entram várias vagas no mesmo dia, como aparece?"). |
 | Modelo | O dono envia uma arte pronta; ela fica salva; a IA segue o estilo dela em toda vaga. |
-| Como a arte é feita | IA de imagem gera a arte (foto + textos), como no exemplo. *Rodapé: ver §10.* |
+| Como a arte é feita | IA de imagem gera a arte (foto + textos), como no exemplo, **menos o rodapé**. |
+| Rodapé (28/10) | Desenhado pelo sistema, sempre igual: "Candidate-se pelo app / Procure Freela Serviços na loja" + selos oficiais do Google Play e da App Store ("pode ser assim o rodapé"). Sem link nem QR. |
+| Aviso de pagamento depois da fatura (28/10) | **Fora da arte** ("Não precisa, na página da vaga já vamos avisar"). `payoutTiming` é ignorado. |
 | Conferência | O sistema lê o texto da arte; se sair errado, refaz até 2 vezes; se continuar errado, usa uma versão em que o próprio sistema escreve os textos por cima de uma foto. |
 | Detecção | Automática, consultando a vitrine periodicamente. |
 | Configuração | Configurável (pedido recorrente do dono: "deixa tudo configurável"). |
@@ -243,11 +245,10 @@ Nome dos arquivos, prompt exato, geometria exata da área livre, normalização 
 modelo), testes (fakes da vitrine e da IA; fuso com `startTime` perto da meia-noite UTC; vaga que muda de valor; lote de 10; isolamento
 entre empresas; aprovação que não agenda; "Publicar agora" duas vezes), textos finais (seguir o arquivo da tela).
 
-## 10. Pendente com o dono
+## 10. Decidido com o dono em 28/10
 
-- **Rodapé desenhado pelo sistema** ("Candidate-se pelo app / Procure Freela Serviços na loja" + selos oficiais), em vez de link/selos
-  desenhados pela IA. Recomendado por designer e arquiteto; muda um pouco o "a IA gera a arte inteira".
-- **Aviso "Pagamento depois da fatura da empresa"** (`payoutTiming`) dentro ou fora da arte. Designer recomenda fora na v1.
+Rodapé desenhado pelo sistema (aprovado) e aviso de pagamento depois da fatura fora da arte (o Freela avisa na página da vaga) — ver §4.
+Os selos usam os arquivos oficiais das lojas, guardados no repositório; nunca redesenhados.
 
 ## 11. Depois (depende de outra decisão)
 
