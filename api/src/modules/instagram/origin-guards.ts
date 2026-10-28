@@ -20,3 +20,5 @@ export const PUBLISH_ORIGIN_GUARDS = Symbol('PUBLISH_ORIGIN_GUARDS');
 export const ORIGIN_UNVERIFIABLE_MSG = 'Não conseguimos conferir a vaga deste story. Por segurança, ele não vai ao ar.';
 /** Agendar à mão (ou trocar o horário pelo editor) um story de vaga pularia janela, limite e espaço (R25). */
 export const VACANCY_SCHEDULE_MSG = 'O horário dos stories de vagas segue os Ajustes da aba Vagas.';
+/** Aprovar story de vaga fora de "esperando aprovação" o agendaria de novo (publicado sairia duplicado; cancelado ressuscitaria). */
+export const VACANCY_NOT_PENDING_MSG = 'Este story não está esperando aprovação.';

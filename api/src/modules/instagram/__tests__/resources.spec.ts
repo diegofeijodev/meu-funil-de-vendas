@@ -43,6 +43,28 @@ describe('PATCH ig-posts (editor do post)', () => {
     expect(free.creative_brief).toEqual({ prompt: 'z' }); // nem criar
   });
 
+  it('I4 — story de vaga: o editor não troca o horário nem o creative_brief.vacancy (preservado como o pending_job)', async () => {
+    const { w, r } = setup();
+    const at = new Date('2030-05-05T15:00:00Z');
+    const vacancy = { story_id: 's1', external_id: 'v1', requires_approval: true, checked_fields: ['valor'] };
+    const p = seedPost(w, { source: 'vacancy', format: 'story_image', status: 'pending_approval', scheduled_at: at, creative_brief: { compose: false, vacancy } });
+    expect(await status(r.patchPost(WS_A, p.id, { scheduled_at: '2030-05-06T12:00:00-03:00' }))).toBe('400:O horário dos stories de vagas segue os Ajustes da aba Vagas.');
+    expect(await status(r.patchPost(WS_A, p.id, { scheduled_at: null }))).toBe('400:O horário dos stories de vagas segue os Ajustes da aba Vagas.');
+    expect(p.scheduled_at).toEqual(at);
+    // O mesmo horário (o editor salvando o resto) passa.
+    await r.patchPost(WS_A, p.id, { scheduled_at: at.toISOString(), caption: 'x' });
+    expect(p).toMatchObject({ caption: 'x', scheduled_at: at });
+    await r.patchPost(WS_A, p.id, { creative_brief: { compose: true, vacancy: { requires_approval: false, checked_fields: ['funcao', 'valor'] } } });
+    expect(p.creative_brief).toEqual({ compose: true, vacancy });
+    await r.patchPost(WS_A, p.id, { creative_brief: { compose: false } });
+    expect(p.creative_brief).toEqual({ compose: false, vacancy }); // não pode "apagar"
+    // Post comum: não ganha `vacancy` pelo editor e continua trocando o horário.
+    const regular = seedPost(w, { creative_brief: { prompt: 'a' } });
+    await r.patchPost(WS_A, regular.id, { creative_brief: { prompt: 'b', vacancy: { requires_approval: false } }, scheduled_at: '2030-05-06T12:00:00-03:00' });
+    expect(regular.creative_brief).toEqual({ prompt: 'b' });
+    expect(regular.scheduled_at.toISOString()).toBe('2030-05-06T15:00:00.000Z');
+  });
+
   it('DTO: tamanhos, tipos e campos desconhecidos são recusados', async () => {
     expect(await errs(PatchIgPostDto, { caption: 'x', hashtags: ['a'], scheduled_at: '2030-05-05T12:00:00Z', creative_brief: {} })).toEqual([]);
     expect(await errs(PatchIgPostDto, { hashtags: Array.from({ length: 31 }, () => 'a') })).toEqual(['hashtags']);

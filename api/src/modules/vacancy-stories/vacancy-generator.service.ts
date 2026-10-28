@@ -15,6 +15,7 @@ import { VacancyGate } from './vacancy-gate.service';
 import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
+import { forcedTriage, triage } from './vacancy-triage';
 import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
 import { compareArt, READ_SCHEMA } from './vacancy-verify';
 
@@ -62,6 +63,11 @@ export class ArtAiError extends Error {
 export type VacancyGeneratorHooks = {
   /** Limite do dia: devolve até quando a linha espera (início da janela do dia seguinte) se a empresa já atingiu o limite; `null` = pode gerar. */
   capacityWait?: (row: StoryRow, s: SettingsRow, now: Date) => Promise<Date | null>;
+  /**
+   * A4 — antes de gastar IA, com a data VIVA da vaga na linha: o story ainda tem como ir ao ar? Devolve o motivo (a linha vira
+   * `expired`) ou `null` (pode gerar).
+   */
+  beforeGenerate?: (row: StoryRow, s: SettingsRow, now: Date) => Promise<string | null>;
   /**
    * Depois da entrega (modo "postar sozinho" → agenda o post). Decida pelo PRÓPRIO post (`status`/`creative_brief.vacancy.
    * requires_approval`), não pelo modo da empresa: reserva reprovada pela leitura sai `pending_approval` mesmo no modo sozinho (R22).
@@ -229,6 +235,13 @@ export class VacancyGeneratorService {
       if (!(await lease.write({ snapshot: json(v), fingerprint: fp, starts_at: starts }))) return 'lost';
       row = { ...row, snapshot: v as unknown as StoryRow['snapshot'], fingerprint: fp, starts_at: starts };
     }
+    // C1: a triagem roda de novo na vaga VIVA (valor apagado, cidade fora da lista, "teste" no nome, em cima da hora). A linha `forced`
+    // ("Criar story mesmo assim", R30) só confere valor, cidade e antecedência.
+    const t = row.forced ? forcedTriage(v, s, now) : triage(v, s, now);
+    if (t.status === 'skipped') return (await lease.write({ status: 'skipped', skip_reason: t.reason, lease_until: null })) ? 'cancelled' : 'lost';
+    // A4: sem como ir ao ar (prazo de aprovação passado, ou nenhum horário livre a tempo) → não gera a arte.
+    const late = await this.hooks.beforeGenerate?.(row, s, now);
+    if (late) return (await lease.write({ status: 'expired', skip_reason: late, lease_until: null })) ? 'cancelled' : 'lost';
     let art: ArtResult;
     try {
       // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado) e, na arte da tentativa n ≤ 3,
@@ -410,10 +423,11 @@ export class VacancyGeneratorService {
     if (!row.lease_until || !(await this.prisma.vacancy_stories.count({ where: ours }))) return HANDOFF_LOST;
     const f = vacancyFields(v);
     const theme = `Vaga · ${f.funcao} · ${f.estabelecimento ?? f.cidade} · ${shortDay(v.startTime)}`;
-    // O modo pode ter mudado durante a geração: vale o de agora. Reserva que a leitura reprovou (texto proibido) nunca vai ao ar
-    // sozinha: espera aprovação mesmo no modo "postar sozinho" (R22).
+    // O modo pode ter mudado durante a geração: vale o de agora. Reserva que a leitura reprovou (texto proibido, R22) ou que a leitura
+    // nem conseguiu conferir (erro na última leitura, T9) nunca vai ao ar sozinha: espera aprovação mesmo no modo "postar sozinho".
     const autoMode = (await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { auto_publish: true } }))?.auto_publish ?? s.auto_publish;
-    const auto = autoMode && !(art.usedFallback && !art.check.ok);
+    const unchecked = art.usedFallback && (!art.check.ok || !!art.attempts[art.attempts.length - 1]?.error);
+    const auto = autoMode && !unchecked;
     const asset = await this.assets.ingest({
       workspaceId: ws, kind: 'image', targetFormat: 'ig_story', normalize: false, source: art.origin.source, provider: art.origin.provider,
       bytes: art.bytes, mime: 'image/jpeg', title: theme, brandId: s.brand_id,

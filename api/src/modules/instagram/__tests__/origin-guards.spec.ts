@@ -175,12 +175,20 @@ describe('guarda de origem na fila', () => {
     expect(guard!.blockReason).not.toHaveBeenCalled();
   });
 
-  it('sem guarda injetada: post de vaga publica normalmente (nada consulta a origem)', async () => {
-    const { w, s } = setup(null);
+  it('M2 — sem guarda injetada: post de vaga NÃO sai (ninguém confere a vaga); post comum publica como hoje', async () => {
+    const { w, s, created } = setup(null);
     const p = vacancyPost(w);
-    job(w, p.id);
+    const j = job(w, p.id);
+    expect((await s.publishing.runPublishingQueue())[0]!.status).toBe('skipped');
+    expect(created()).toHaveLength(0);
+    expect([p.status, j.status]).toEqual(['cancelled', 'cancelled']);
+    expect(w.t['ig_autopilot_events']!.rows.find((e) => e.kind === 'guardrail')!.message).toBe(
+      'Post cancelado: Não conseguimos conferir a vaga deste story. Por segurança, ele não vai ao ar.',
+    );
+    const regular = seedPost(w, { status: 'scheduled' });
+    job(w, regular.id);
     expect((await s.publishing.runPublishingQueue())[0]!.status).toBe('done');
-    expect(p.status).toBe('published');
+    expect(regular.status).toBe('published');
   });
 });
 
@@ -269,6 +277,20 @@ describe('aprovação de story de vaga', () => {
     expect(guard!.afterApproval).toHaveBeenCalledWith(WS_A, p.id);
     expect(w.t['ig_autopilot_events']!.rows.map((e) => e.message)).toEqual(['Post aprovado.']);
     expect(w.t['publishing_jobs']!.rows).toHaveLength(0);
+  });
+
+  it('I1/A2 — story de vaga fora de "esperando aprovação" (publicado, cancelado, pronto) → 400, nada muda; post comum aprova em qualquer status', async () => {
+    const { w, s, guard } = setup();
+    for (const st of ['published', 'cancelled', 'ready']) {
+      const p = vacancyPost(w, { status: st, approved_at: null, ig_media_id: st === 'published' ? 'm9' : null });
+      expect(await status(s.actions.approvePost(OWNER, WS_A, p.id))).toBe('400:Este story não está esperando aprovação.');
+      expect(p).toMatchObject({ status: st, approved_at: null });
+    }
+    expect(guard!.afterApproval).not.toHaveBeenCalled();
+    expect(w.t['ig_autopilot_events']!.rows).toHaveLength(0);
+    const regular = seedPost(w, { status: 'ready', approved_at: null });
+    expect(await s.actions.approvePost(OWNER, WS_A, regular.id)).toEqual({ ok: true });
+    expect(regular.status).toBe('approved');
   });
 
   it('sem guarda: aprovar continua funcionando (nada é agendado aqui)', async () => {

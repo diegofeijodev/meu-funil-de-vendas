@@ -4,6 +4,7 @@ import { notFound, UserError } from '../media/user-error';
 import { AutoCalendarService } from './auto-calendar.service';
 import { CreateIgPlanDto, PatchIgPlanDto, PatchIgPostDto } from './instagram.dto';
 import { IgStore } from './ig-store.service';
+import { VACANCY_SCHEDULE_MSG } from './origin-guards';
 
 const FREQ_KEYS = ['feed_image', 'feed_carousel', 'feed', 'reels', 'stories'] as const;
 
@@ -62,12 +63,24 @@ export class InstagramResourcesService {
     if (dto.caption !== undefined) data.caption = dto.caption;
     if (dto.hashtags !== undefined) data.hashtags = dto.hashtags;
     if (dto.cta !== undefined) data.cta = dto.cta;
-    if (dto.scheduled_at !== undefined) data.scheduled_at = dto.scheduled_at ? new Date(dto.scheduled_at) : null;
+    if (dto.scheduled_at !== undefined) {
+      const next = dto.scheduled_at ? new Date(dto.scheduled_at) : null;
+      // Story de vaga: o horário é da agenda das vagas (R25). Mandar o mesmo horário (o editor salvando o resto) continua valendo.
+      if (post.source === 'vacancy' && (next?.getTime() ?? null) !== ((post.scheduled_at as Date | null)?.getTime() ?? null)) {
+        throw new UserError(VACANCY_SCHEDULE_MSG);
+      }
+      data.scheduled_at = next;
+    }
     if (dto.creative_brief !== undefined) {
-      // `pending_job` é estado do servidor (id do job no provedor): o cliente não define nem apaga.
-      const { pending_job: _ignored, ...brief } = dto.creative_brief as Record<string, unknown>;
+      // `pending_job` (id do job no provedor) e `vacancy` (story de vaga: conferência, aprovação exigida, vaga de origem) são estado do
+      // servidor: o cliente não define nem apaga.
+      const { pending_job: _ignored, vacancy: _vacancy, ...brief } = dto.creative_brief as Record<string, unknown>;
       const current = (post.creative_brief ?? {}) as Record<string, unknown>;
-      data.creative_brief = { ...brief, ...(current['pending_job'] ? { pending_job: current['pending_job'] } : {}) } as Prisma.InputJsonObject;
+      data.creative_brief = {
+        ...brief,
+        ...(current['pending_job'] ? { pending_job: current['pending_job'] } : {}),
+        ...(current['vacancy'] !== undefined ? { vacancy: current['vacancy'] } : {}),
+      } as Prisma.InputJsonObject;
     }
     return this.prisma.ig_posts.update({ where: { id }, data });
   }

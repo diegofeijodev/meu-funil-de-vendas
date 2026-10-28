@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/comm
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
-import { PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
+import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
 import { dateIssues } from './content-strategy';
@@ -483,7 +483,8 @@ export class PublishingService implements OnModuleInit {
     const plan = post.plan_id ? await this.prisma.ig_content_plans.findFirst({ where: { id: post.plan_id, workspace_id: ws }, select: { campaign_id: true } }) : null;
     const campaignIds = [run?.campaign_id, plan?.campaign_id].filter(Boolean) as string[];
     if (campaignIds.length && (await this.prisma.campaigns.count({ where: { id: { in: campaignIds }, workspace_id: ws, status: CAMPAIGN_FINISHED } }))) return 'a campanha foi encerrada.';
-    if (this.guards && post.source === 'vacancy') return await this.guards.blockReason(post, at);
+    // Story de vaga sem a guarda (módulo das vagas fora): ninguém confere a vaga → não sai (falha fechada).
+    if (post.source === 'vacancy') return this.guards ? await this.guards.blockReason(post, at) : ORIGIN_UNVERIFIABLE_MSG;
     return null;
   }
 

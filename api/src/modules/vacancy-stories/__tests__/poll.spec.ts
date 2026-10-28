@@ -197,6 +197,34 @@ describe('VacancyPollService.expireDue (aprovação)', () => {
   });
 });
 
+describe('VacancyPollService.expireDue (T10: pronto que não saiu antes do início)', () => {
+  it('pronto/aprovado/agendado com a vaga já começada → cancelado (+ job) com o motivo; com tempo ou publicando fica', async () => {
+    const { w, poll, settings, story } = setup();
+    settings();
+    const mk = (status: string, startsAt: Date) => {
+      const post = { id: uuid(), workspace_id: WS_A, source: 'vacancy', status };
+      w.t['ig_posts']!.rows.push(post);
+      const job = { id: uuid(), workspace_id: WS_A, ig_post_id: post.id, status: 'pending' };
+      w.t['publishing_jobs']!.rows.push(job);
+      return { post, job, row: story({ status: 'handed_off', ig_post_id: post.id, starts_at: startsAt }) };
+    };
+    const started = new Date(NOW.getTime() - 60_000);
+    const ready = mk('ready', started);
+    const approved = mk('approved', started);
+    const scheduled = mk('scheduled', started);
+    const publishing = mk('publishing', started);
+    const later = mk('scheduled', new Date(NOW.getTime() + 6 * 3_600_000));
+    expect(await poll.expireDue(NOW)).toBe(3);
+    for (const x of [ready, approved, scheduled]) {
+      expect(x.post.status).toBe('cancelled');
+      expect(x.job.status).toBe('cancelled');
+      expect(x.row).toMatchObject({ status: 'handed_off', skip_reason: 'A vaga começou antes de ir ao ar.' });
+    }
+    expect([publishing.post.status, later.post.status]).toEqual(['publishing', 'scheduled']);
+    expect([publishing.job.status, later.job.status]).toEqual(['pending', 'pending']);
+  });
+});
+
 describe('sweepLeases e disableOrphans', () => {
   it('generating com lease vencido volta a waiting', async () => {
     const { poll, story } = setup();

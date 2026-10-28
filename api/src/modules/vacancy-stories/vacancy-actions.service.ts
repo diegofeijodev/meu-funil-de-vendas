@@ -9,13 +9,12 @@ import { bad, notFound } from '../media/user-error';
 import { canRevive, displayOf, POST_UNPUBLISHED, ROW_QUEUED, storyDetail, storyView, type DisplayContext, type StoryDetail, type StoryPost, type StoryView } from './vacancy-display';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
-import { DONT_POST_REASON, leadDeadline, MAX_REDOS, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { DONT_POST_REASON, MAX_REDOS, WAIT_CAP } from './vacancy-reasons';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import { PUBLISH_SLACK_MS } from './vacancy-slots';
 import type { StoryFeedback, StoryFilter } from './vacancy-stories.dto';
 import { fingerprint } from './vacancy-text';
-import { SKIP } from './vacancy-triage';
+import { forcedTriage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
@@ -183,13 +182,10 @@ export class VacancyActionsService {
       throw e;
     }
     if (!v) throw bad(MSG.closed);
-    if (!v.amountInCents) throw bad(SKIP.noValue);
-    if (!(v.city ?? '').trim()) throw bad(SKIP.noCity);
+    // Mesma regra que o gerador aplica à linha `forced` (R30).
+    const t = forcedTriage(v, s, now);
+    if (t.status === 'skipped') throw bad(t.reason);
     const startsAt = new Date(v.startTime);
-    if (startsAt.getTime() <= now.getTime()) throw bad(VACANCY_STARTED_REASON);
-    if (startsAt.getTime() - now.getTime() < s.min_lead_minutes * 60_000 + PUBLISH_SLACK_MS) {
-      throw bad(tooCloseReason(startsAt, leadDeadline(startsAt, s.min_lead_minutes, true)));
-    }
     const r = await this.prisma.vacancy_stories.updateMany({
       where: { id, workspace_id: ws, status: row.status, ig_post_id: row.ig_post_id },
       data: { ...REQUEUE, forced: true, snapshot: json(v), fingerprint: fingerprint(v), starts_at: startsAt },

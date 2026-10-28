@@ -8,6 +8,7 @@ import { WS_A } from '../../media/__tests__/mem';
 import { ArtAiError, VacancyGeneratorService } from '../vacancy-generator.service';
 import { photoPrompt, readPrompt } from '../vacancy-prompts';
 import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
+import { SKIP } from '../vacancy-triage';
 import { fingerprint, hourLabel, vacancyFields } from '../vacancy-text';
 import type { ArtRead, FreelaVacancy, SettingsRow, StoryRow } from '../vacancy-types';
 import { vacancyWorld, type VacancyWorld } from './world';
@@ -300,6 +301,77 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.posts()[0]!.creative_brief.vacancy.fingerprint).toBe(fingerprint(changed));
   });
 
+  it('C1: a vaga perdeu o valor no Freela (assinatura velha) → triagem na vaga viva: linha pulada, nenhuma IA, nenhum post', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    w.feed.state.byId.set(v.id, { ...v, amountInCents: null });
+    await w.programArt({ reads: [readFor(v)] });
+    const after = jest.fn(async () => undefined);
+    t.gen.hooks.afterHandOff = after;
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 0, cancelled: 1 });
+    expect(t.row(r0.id)).toMatchObject({ status: 'skipped', skip_reason: SKIP.noValue, lease_until: null, ig_post_id: null });
+    expect(w.ai.image).not.toHaveBeenCalled();
+    expect(w.ai.json).not.toHaveBeenCalled();
+    expect(t.posts()).toHaveLength(0);
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  it('C1: a vaga mudou para uma cidade fora da lista → pulada com o motivo; "teste" no nome também', async () => {
+    const t = await setup({ settings: { cities: ['Campinas'] } });
+    const v = vac();
+    const r0 = await t.story(v);
+    w.feed.state.byId.set(v.id, { ...v, city: 'Sorocaba' });
+    const u = vac();
+    const r1 = await t.story(u);
+    w.feed.state.byId.set(u.id, { ...u, contractorName: 'Bar Teste' });
+    await w.programArt({ reads: [readFor(v)] });
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 2, handed: 0, waiting: 0, cancelled: 2 });
+    expect(t.row(r0.id)).toMatchObject({ status: 'skipped', skip_reason: 'Cidade fora da sua lista: Sorocaba.' });
+    expect(t.row(r1.id)).toMatchObject({ status: 'skipped', skip_reason: SKIP.test });
+    expect(w.ai.image).not.toHaveBeenCalled();
+    expect(t.posts()).toHaveLength(0);
+  });
+
+  it('C1/R30: linha "forced" de vaga de teste fora da lista continua gerando (só valor, cidade e antecedência valem)', async () => {
+    const t = await setup({ settings: { cities: ['Jundiaí'] } });
+    const v = vac({ contractorName: 'Bar Teste' });
+    const r0 = await t.story(v, { forced: true });
+    await w.programArt({ reads: [readFor(v)] });
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+    expect(t.row(r0.id).status).toBe('handed_off');
+    // Sem valor, nem a forçada gera.
+    const u = vac({ contractorName: 'Bar Teste' });
+    const r1 = await t.story(u, { forced: true });
+    w.feed.state.byId.set(u.id, { ...u, amountInCents: 0 });
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 0, cancelled: 1 });
+    expect(t.row(r1.id)).toMatchObject({ status: 'skipped', skip_reason: SKIP.noValue });
+  });
+
+  it('A4: sem como ir ao ar (gancho da agenda devolve o motivo) → linha expirada, nenhuma IA; o gancho vê a data viva', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    const moved = { ...v, startTime: '2026-11-01T21:00:00Z', endTime: '2026-11-02T02:00:00Z' };
+    w.feed.state.byId.set(v.id, moved);
+    await w.programArt({ reads: [readFor(moved)] });
+    const reason = 'A vaga começa Dom, 01/11 às 18h. Para dar tempo de divulgar, o story teria de ir ao ar até as 15h45.';
+    const seen: Date[] = [];
+    t.gen.hooks.beforeGenerate = jest.fn(async (row) => {
+      seen.push(row.starts_at);
+      return reason;
+    });
+
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 0, cancelled: 1 });
+    expect(seen).toEqual([new Date(moved.startTime)]);
+    expect(t.row(r0.id)).toMatchObject({ status: 'expired', skip_reason: reason, lease_until: null });
+    expect(w.ai.image).not.toHaveBeenCalled();
+    expect(t.posts()).toHaveLength(0);
+  });
+
   it('sem Instagram conectado: nada é gerado e a linha diz por quê', async () => {
     const t = await setup({ ig: false });
     const v = vac();
@@ -420,6 +492,25 @@ describe('VacancyGeneratorService.generateDue', () => {
 
     const row = t.row(r0.id);
     expect(row.attempts_log[4]).toMatchObject({ kind: 'fallback_plain', ok: false, forbidden: ['www.marca.com.br'] });
+    const post = t.posts()[0]!;
+    expect(post.status).toBe('pending_approval');
+    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true });
+  });
+
+  it('T9: reserva sem foto cuja leitura FALHOU espera aprovação mesmo no modo sozinho', async () => {
+    const t = await setup({ settings: { auto_publish: true } });
+    const v = vac();
+    const r0 = await t.story(v);
+    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
+    await w.programArt({
+      images: [null, null, null, new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')],
+      reads: [copied, copied, copied, new Error('leitura caiu')],
+    });
+    const after = jest.fn(async () => undefined);
+    t.gen.hooks.afterHandOff = after;
+
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+    expect(t.row(r0.id).attempts_log[4]).toMatchObject({ kind: 'fallback_plain', error: expect.any(String) });
     const post = t.posts()[0]!;
     expect(post.status).toBe('pending_approval');
     expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true });

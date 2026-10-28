@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -261,13 +262,39 @@ export class VacancySettingsService {
     return cancelled;
   }
 
-  async setAutoPublish(userId: string, workspaceId: string, value: boolean): Promise<VacancySettingsView> {
+  /**
+   * "Postar sozinho" liga/desliga. Voltar para "Eu aprovo" (C2/A1), na mesma transação: os stories de vaga prontos, aprovados pelo
+   * modo sozinho ou agendados que NINGUÉM aprovou (`approved_at` nulo) voltam para `pending_approval` com `requires_approval: true`
+   * (sem horário) e os jobs pendentes deles são cancelados. `moved_to_approval` = quantos voltaram (0 ao ligar).
+   */
+  async setAutoPublish(userId: string, workspaceId: string, value: boolean): Promise<VacancySettingsView & { moved_to_approval: number }> {
     this.gate.assert(workspaceId);
     await this.access.require(userId, workspaceId, 'manage');
     await this.get(workspaceId);
-    await this.prisma.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { auto_publish: value } });
-    await this.activity.log(workspaceId, userId, 'vacancy_stories.auto_publish', 'vacancy_stories', { auto_publish: value });
-    return this.view(workspaceId);
+    const moved = await this.prisma.$transaction(async (tx) => {
+      await tx.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { auto_publish: value } });
+      if (value) return 0;
+      const open = await tx.ig_posts.findMany({
+        where: { workspace_id: workspaceId, source: 'vacancy', status: { in: READY }, approved_at: null },
+        select: { id: true, status: true, creative_brief: true },
+      });
+      let n = 0;
+      for (const p of open) {
+        const brief = (p.creative_brief ?? {}) as Record<string, unknown>;
+        const vacancy = { ...((brief['vacancy'] ?? {}) as Record<string, unknown>), requires_approval: true };
+        // Condicional ao status lido: um post que virou `publishing` entre a leitura e aqui segue.
+        const got = await tx.ig_posts.updateMany({
+          where: { id: p.id, workspace_id: workspaceId, status: p.status, approved_at: null },
+          data: { status: 'pending_approval', scheduled_at: null, creative_brief: { ...brief, vacancy } as Prisma.InputJsonObject },
+        });
+        if (!got.count) continue;
+        await tx.publishing_jobs.updateMany({ where: { ig_post_id: p.id, workspace_id: workspaceId, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
+        n++;
+      }
+      return n;
+    });
+    await this.activity.log(workspaceId, userId, 'vacancy_stories.auto_publish', 'vacancy_stories', { auto_publish: value, ...(value ? {} : { moved_to_approval: moved }) });
+    return { ...(await this.view(workspaceId)), moved_to_approval: moved };
   }
 
   /**

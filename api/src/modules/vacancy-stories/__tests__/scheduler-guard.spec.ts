@@ -4,7 +4,7 @@ import { ORIGIN_UNAVAILABLE_MSG } from '../../instagram/instagram-actions.servic
 import { OriginUnavailable } from '../../instagram/ig-store.service';
 import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../../instagram/ig-types';
 import { igServices, seedPost, uuid } from '../../instagram/__tests__/harness';
-import { OWNER, WS_A } from '../../media/__tests__/mem';
+import { OWNER, WS_A, status } from '../../media/__tests__/mem';
 import type { VacancyGeneratorService } from '../vacancy-generator.service';
 import { VacancySchedulerService } from '../vacancy-scheduler.service';
 import { fingerprint } from '../vacancy-text';
@@ -320,6 +320,90 @@ describe('VacancySchedulerService — horário livre, limite do dia e agenda', (
     expect(await t.sched.tick(NOW)).toEqual({ approved: 0, reconciled: 1 });
     expect(p).toMatchObject({ status: 'scheduled', scheduled_at: at(MIN) });
     expect(t.pending(p.id)).toEqual([expect.objectContaining({ run_at: at(MIN) })]);
+  });
+
+  it('A4 — gancho antes de gerar: planSlot que expira → o motivo dele; modo "Eu aprovo" com o prazo passado (Postar agora) → o prazo; com tempo → null', async () => {
+    const t = await setup({ settings: { auto_publish: false } });
+    const block = t.generator.hooks.beforeGenerate!;
+    expect(block).toBeInstanceOf(Function);
+    const mk = (startsAt: string, over: Record<string, unknown> = {}) =>
+      w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, external_id: uuid(), snapshot: {}, fingerprint: 'f', starts_at: new Date(startsAt), ...over } });
+    // Sexta 9h, às 22h10 de quinta: a janela só abre às 8h.
+    const night = new Date('2026-10-30T01:10:00Z');
+    expect(await block(await mk('2026-10-30T12:00:00Z'), t.settings(), night)).toBe(
+      'A vaga começa Sex, 30/10 às 9h. Para dar tempo de divulgar, o story teria de ir ao ar até as 6h45, antes do seu horário para postar (8h às 21h).',
+    );
+    // Hoje 12h10 com "Postar agora" (o planSlot não expira): no modo aprovar o prazo de aprovação (9h55) já passou.
+    const postNow = await mk('2026-10-29T15:10:00Z', { post_now: true });
+    expect(await block(postNow, t.settings(), NOW)).toBe('A vaga começa Qui, 29/10 às 12h10. Para dar tempo de divulgar, o story teria de ir ao ar até as 9h55.');
+    expect(await block(postNow, { ...t.settings(), auto_publish: true }, NOW)).toBeNull();
+    // Sábado 18h: com tempo.
+    expect(await block(await mk('2026-10-31T21:00:00Z'), t.settings(), NOW)).toBeNull();
+  });
+
+  it('I1 — agenda recusa story já publicado, empresa desligada e empresa fora da lista (sem job)', async () => {
+    const t = await setup();
+    const published = await t.delivered(vac(), { status: 'approved', approved_at: NOW, ig_media_id: 'm1', published_at: at(-HOUR) });
+    await expect(t.sched.scheduleVacancyPost(WS_A, published.id)).rejects.toThrow('Este story já foi publicado.');
+    expect(t.jobsOf(published.id)).toHaveLength(0);
+    const p = await t.delivered(vac());
+    t.settings().enabled = false;
+    await expect(t.sched.scheduleVacancyPost(WS_A, p.id)).rejects.toThrow('Os stories das vagas estão desligados nesta empresa.');
+    t.settings().enabled = true;
+    jest.spyOn(w.gate, 'allowed').mockReturnValue(false);
+    await expect(t.sched.scheduleVacancyPost(WS_A, p.id)).rejects.toThrow('Os stories das vagas estão desligados nesta empresa.');
+    expect(p).toMatchObject({ status: 'ready', scheduled_at: null });
+    expect(t.jobsOf(p.id)).toHaveLength(0);
+  });
+
+  it('I1/A2 — aprovar pelo editor um story já publicado ou cancelado → 400, nada muda nem é agendado', async () => {
+    const t = await setup();
+    const published = await t.delivered(vac(), { status: 'published', ig_media_id: 'm1', published_at: at(-HOUR) });
+    const cancelled = await t.delivered(vac(), { status: 'cancelled' });
+    for (const p of [published, cancelled]) {
+      const before = p.status;
+      expect(await status(t.s.actions.approvePost(OWNER, WS_A, p.id))).toBe('400:Este story não está esperando aprovação.');
+      expect(p).toMatchObject({ status: before, approved_at: null });
+      expect(t.jobsOf(p.id)).toHaveLength(0);
+    }
+    expect(published.ig_media_id).toBe('m1');
+  });
+
+  it('C2/A1 — voltar para "Eu aprovo" segura os prontos e agendados sem aprovação: pending_approval, job cancelado, a fila não publica', async () => {
+    const t = await setup();
+    const ready = await t.delivered(vac());
+    expect(await t.sched.afterHandOff(WS_A, ready.id)).toBe('scheduled');
+    const readyJob = t.pending(ready.id)[0]!;
+    const noAccount = await t.delivered(vac(), { status: 'ready', last_error: NO_ACCOUNT_MSG });
+    // Aprovado por alguém: fica como está.
+    const human = await t.delivered(vac(), { status: 'scheduled', approved_at: NOW, scheduled_at: at(30 * MIN) });
+    const humanJob = t.job(human.id, at(30 * MIN));
+    const publishing = await t.delivered(vac(), { status: 'publishing' });
+
+    const view = await w.settings.setAutoPublish(OWNER, WS_A, false);
+    expect(view).toMatchObject({ auto_publish: false, moved_to_approval: 2 });
+    for (const p of [ready, noAccount]) {
+      expect(p).toMatchObject({ status: 'pending_approval', scheduled_at: null });
+      expect(p.creative_brief.vacancy).toMatchObject({ requires_approval: true, external_id: expect.any(String), fingerprint: expect.any(String) });
+    }
+    expect(readyJob.status).toBe('cancelled');
+    expect(human).toMatchObject({ status: 'scheduled', scheduled_at: at(30 * MIN) });
+    expect(humanJob.status).toBe('pending');
+    expect(publishing.status).toBe('publishing');
+    expect(w.t['activity_logs']!.rows.find((r) => r.action === 'vacancy_stories.auto_publish')!.metadata).toEqual({ auto_publish: false, moved_to_approval: 2 });
+
+    // O tick não agenda o que agora espera aprovação.
+    expect(await t.sched.tick(NOW)).toMatchObject({ approved: 0 });
+    expect(t.pending(ready.id)).toHaveLength(0);
+    // Ligar de novo não mexe em nada.
+    expect(await w.settings.setAutoPublish(OWNER, WS_A, true)).toMatchObject({ auto_publish: true, moved_to_approval: 0 });
+    expect(ready.status).toBe('pending_approval');
+    // Um job que tivesse escapado também não publica: a fila recusa o post que exige aprovação (nenhum container).
+    const stray = t.job(ready.id, new Date(Date.now() - MIN));
+    await t.s.publishing.runPublishingQueue();
+    expect(w.calls.filter((c) => c.path.endsWith('/media'))).toHaveLength(0);
+    expect(stray.status).toBe('failed');
+    expect(ready.status).not.toBe('published');
   });
 
   it('empresa desligada ou fora da lista: o tick não mexe nos posts dela', async () => {

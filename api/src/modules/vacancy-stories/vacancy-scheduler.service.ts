@@ -9,7 +9,7 @@ import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGuardService } from './vacancy-guard.service';
 import { capWaitReason, igLimitReason, leadDeadline, spacingReason, tooCloseReason, windowReason } from './vacancy-reasons';
-import { nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
+import { approveUntil, nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import type { SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
@@ -24,6 +24,10 @@ const IG_RESERVE = 5;
 const MAX_DAYS = 14;
 /** Mesmos status que o `PublishingService.schedulePost` aceita. */
 const SCHEDULABLE = ['approved', 'ready', 'scheduled', 'failed'];
+const MSG = {
+  published: 'Este story já foi publicado.',
+  off: 'Os stories das vagas estão desligados nesta empresa.',
+};
 
 export type SlotPlan = { at: Date; waitingFor: 'none' | 'window' | 'cap' | 'ig_limit' } | { expire: string };
 export type ScheduleOutcome = 'scheduled' | 'cancelled' | 'no_account';
@@ -59,6 +63,7 @@ export class VacancySchedulerService implements OnModuleInit {
     this.guard.onApproved = (ws, id) => this.scheduleVacancyPost(ws, id);
     this.generator.hooks.capacityWait = (row, s, now) => this.capacityWait(row, s, now);
     this.generator.hooks.afterHandOff = (ws, id) => this.afterHandOff(ws, id);
+    this.generator.hooks.beforeGenerate = (row, s, now) => this.generationBlock(row, s, now);
   }
 
   /** Stories de vaga do dia `day` (Brasília) contra o limite do dia; `exceptPostId` = o post que está sendo agendado. */
@@ -181,6 +186,20 @@ export class VacancySchedulerService implements OnModuleInit {
   }
 
   /**
+   * Gancho do gerador (A4, antes de gastar IA): o story ainda tem como ir ao ar? `planSlot` já daria `expire` → o motivo dele; no modo
+   * "Eu aprovo", o prazo de aprovação já passou (com "Postar agora" o `planSlot` não expira) → o motivo da antecedência com esse prazo.
+   */
+  async generationBlock(row: StoryRow, s: SettingsRow, now: Date): Promise<string | null> {
+    const plan = await this.planSlot(row.workspace_id, s, row.starts_at, now, { force: row.post_now });
+    if ('expire' in plan) return plan.expire;
+    if (!s.auto_publish) {
+      const until = approveUntil(row.starts_at, s);
+      if (until.getTime() <= now.getTime()) return tooCloseReason(row.starts_at, until);
+    }
+    return null;
+  }
+
+  /**
    * Agenda um story de vaga no próximo horário livre (com `force`, ou se a linha pediu "Postar agora", em agora + 1 min). Sem conta
    * conectada → `'no_account'` (o post fica, com o aviso). Não dá mais tempo → post cancelado e o motivo na linha → `'cancelled'`.
    */
@@ -191,17 +210,20 @@ export class VacancySchedulerService implements OnModuleInit {
   private async schedule(ws: string, postId: string, o: { force?: boolean }, now: Date): Promise<ScheduleOutcome> {
     const post = await this.store.getPost(postId, ws);
     if (post.source !== 'vacancy') throw new UserError('Este post não é um story de vaga.');
+    // I1: um story que já foi ao ar nunca volta para a agenda (sairia duplicado e o `ig_media_id` seria sobrescrito).
+    if (post.published_at || post.ig_media_id) throw new UserError(MSG.published);
     // Mesmas mensagens do `schedulePost`, antes de qualquer escrita (o cancelamento por prazo também só vale para post agendável).
     if (!SCHEDULABLE.includes(post.status)) throw new UserError('O post precisa estar aprovado para ser agendado.');
     if (needsApproval(post)) throw new UserError('Este post exige aprovação antes de agendar.');
+    // I1: empresa desligada ou fora da lista não agenda (a aprovação pelo editor também passa por aqui).
+    const s = this.gate.allowed(ws) ? await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws } }) : null;
+    if (!s?.enabled) throw new UserError(MSG.off);
     if (!(await this.store.liveAccount(ws))) {
       if (post.last_error !== NO_ACCOUNT_MSG && post.last_error !== TOKEN_EXPIRED_POST_MSG) {
         await this.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: post.status }, data: { last_error: NO_ACCOUNT_MSG } });
       }
       return 'no_account';
     }
-    const s = await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws } });
-    if (!s) throw new UserError('Os stories das vagas não estão configurados nesta empresa.');
     const row = await this.prisma.vacancy_stories.findFirst({ where: { ig_post_id: postId, workspace_id: ws } });
     const startsAt = row?.starts_at ?? new Date(briefOf(post)?.starts_at ?? NaN);
     if (Number.isNaN(startsAt.getTime())) throw new Error(`story de vaga ${postId} sem início da vaga`);

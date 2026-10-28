@@ -11,7 +11,7 @@ import { Engine } from './ig-types';
 import { ClaimRefused, IgStore, OriginUnavailable, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
-import { VACANCY_SCHEDULE_MSG } from './origin-guards';
+import { VACANCY_NOT_PENDING_MSG, VACANCY_SCHEDULE_MSG } from './origin-guards';
 import { PublishingService } from './publishing.service';
 import { computeSlots } from './slots';
 
@@ -106,7 +106,14 @@ export class InstagramActionsService {
     await this.access.require(userId, workspaceId, 'write');
     const post = await this.store.getPost(postId, workspaceId);
     if (!(post.media as unknown[] | null)?.length) throw new UserError('Gere a mídia antes de aprovar.');
-    await this.store.patchPost(postId, { status: 'approved', rejection_reason: null, review_reason: null, approved_at: new Date() });
+    const approved = { status: 'approved', rejection_reason: null, review_reason: null, approved_at: new Date() };
+    if (post.source === 'vacancy') {
+      // Story de vaga só se aprova esperando aprovação (condicional ao status: duas abas/expiração ao mesmo tempo não se atropelam).
+      const got = await this.store.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: workspaceId, status: 'pending_approval' }, data: approved });
+      if (!got.count) throw new UserError(VACANCY_NOT_PENDING_MSG);
+    } else {
+      await this.store.patchPost(postId, approved);
+    }
     try {
       await this.autopilot.afterApproval(workspaceId, postId);
     } catch (e) {
