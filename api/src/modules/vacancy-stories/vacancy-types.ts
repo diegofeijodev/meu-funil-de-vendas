@@ -1,3 +1,5 @@
+import type { Prisma } from '@prisma/client';
+
 export type FreelaVacancy = {
   id: string;
   title: string | null;
@@ -57,3 +59,7 @@ export type AttemptLog = {
   forbidden: string[];
   error?: string;
 };
+
+/** Linhas do banco (configuração por empresa e fila de stories). */
+export type SettingsRow = Prisma.vacancy_story_settingsGetPayload<object>;
+export type StoryRow = Prisma.vacancy_storiesGetPayload<object>;

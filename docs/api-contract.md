@@ -715,7 +715,31 @@ Toda saída passa por `EXTERNAL_FETCH` (DNS verificado e fixado; rede interna re
 
 ## 26. Stories das vagas do Freela — `/v1/workspaces/:workspaceId/vacancy-stories/*`
 
-Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota) · `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `VacancySettingsView`, `StoryView` e `StoryDetail` são definidos pelas Tasks 7 e 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
+Só empresas de `VACANCY_STORIES_WORKSPACE_IDS` (fora da lista: 404 `NOT_FOUND` "Página não encontrada." em toda rota) · `WorkspaceAccessGuard` (GET = read, resto = write) · `manage` = enable/disable/auto-publish. Os campos de `StoryView` e `StoryDetail` são definidos pela Task 11 de `docs/superpowers/plans/2026-10-28-vagas-instagram.md` (serão preenchidos aqui).
+
+`VacancySettingsView` (Task 7; a 1ª leitura cria a configuração com os padrões — desligado, aprovar antes, 08:00–21:00, até 10/dia,
+antecedência 120 min, OpenAI):
+
+```ts
+{
+  enabled: boolean, enabled_at: string | null /* marca d'água: só vagas publicadas depois */, auto_publish: boolean,
+  template: { asset_id: string, url: string | null, landscape: boolean, texts_count: number } | null,
+  template_bg: string | null /* "#rrggbb", cor da borda do modelo */, cities: string[] /* vazio = todas */, daily_cap: number,
+  window_start: "HH:MM", window_end: "HH:MM", min_lead_minutes: 60 | 120 | 240 | 360, vendor: "openai" | "gemini",
+  last_poll_at: string | null, last_poll_ok_at: string | null, last_poll_error: string | null,
+  recent_cities: { city: string, count: number }[],
+  instagram: { connected: boolean, username: string | null },
+  today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
+  pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
+  ai_error: string | null, ai_error_at: string | null, preview: object /* estado da prévia (Task 11) */,
+  recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
+  week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */
+}
+```
+
+Erros do envio da arte modelo (400): "Esse arquivo não serve. Envie uma imagem PNG, JPG ou WEBP." (tipo pelo conteúdo) · "A imagem tem
+{x} MB e o máximo é 10 MB. Envie uma menor." · "A arte modelo precisa ter pelo menos 600 px de largura." (lado menor) · "Cadastre uma
+marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos textos = o erro da IA (502), nada fica gravado.
 
 | Rota | Nível | Corpo | Resposta |
 |---|---|---|---|

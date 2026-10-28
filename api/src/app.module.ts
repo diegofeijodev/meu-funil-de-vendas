@@ -31,6 +31,7 @@ import { OverviewModule } from './modules/overview/overview.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { SetupModule } from './modules/setup/setup.module';
 import { StrategistModule } from './modules/strategist/strategist.module';
+import { VacancyStoriesCoreModule, VacancyStoriesModule } from './modules/vacancy-stories/vacancy-stories.module';
 import { VaultModule } from './modules/vault/vault.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
@@ -69,6 +70,9 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     CrmChannelsCoreModule,
     CrmChannelsModule,
     IntegrationsModule,
+    // Núcleo @Global (guarda de origem `PUBLISH_ORIGIN_GUARDS` do Instagram) + módulo da função, que importa o Instagram.
+    VacancyStoriesCoreModule,
+    VacancyStoriesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
