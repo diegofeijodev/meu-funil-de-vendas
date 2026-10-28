@@ -142,9 +142,10 @@ export class IgStore {
       where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending' },
       data: { status: 'cancelled', locked_at: null },
     });
-    // Posts da programação que já estavam na fila voltam para "pronto" (com o motivo): reagendados sozinhos quando o token for renovado.
+    // Posts da programação e stories de vaga que já estavam na fila voltam para "pronto" (com o motivo): reagendados sozinhos quando o
+    // token for renovado.
     await this.prisma.ig_posts.updateMany({
-      where: { workspace_id: workspaceId, run_id: { not: null }, status: 'scheduled' },
+      where: { workspace_id: workspaceId, status: 'scheduled', OR: [{ run_id: { not: null } }, { source: 'vacancy' }] },
       data: { status: 'ready', last_error: TOKEN_EXPIRED_POST_MSG },
     });
     await this.logEvent({

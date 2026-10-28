@@ -560,8 +560,13 @@ export class PublishingService {
         const post = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id } }) : null;
         // O post saiu de cena enquanto publicava (campanha encerrada, programação cancelada, vaga fechada): nada de voltar para a
         // agenda. No limite diário a guarda de origem olha o horário da próxima tentativa (a vaga pode já ter começado até lá).
-        // Guarda fora do ar aqui não muda o tratamento do erro.
-        const gone = post ? await this.cancelledOrigin(post, new Date(Date.now() + (rate ? delay : 0))).catch(() => null) : null;
+        // Guarda fora do ar aqui não muda o tratamento do erro (fica só no log).
+        const gone = post
+          ? await this.cancelledOrigin(post, new Date(Date.now() + (rate ? delay : 0))).catch((err) => {
+              this.logger.warn(`[instagram] post ${post.id}: cancelledOrigin falhou no catch da fila: ${errText(err)}`);
+              return null;
+            })
+          : null;
         if (post && gone) {
           await this.prisma.publishing_jobs.update({ where: { id: job.id }, data: { status: 'cancelled', locked_at: null, attempts, log: logWith(`${msg} — cancelado: ${gone}`) } });
           await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { notIn: ['published'] } }, data: { status: 'cancelled', last_error: msg, ig_creation_id: null } });
@@ -571,8 +576,9 @@ export class PublishingService {
         }
         const retry = !tokenExpired && !blocked && (rate || attempts < MAX_ATTEMPTS);
         if (tokenExpired && post) await this.store.handleTokenExpired(post.workspace_id, msg);
-        // Post da programação sem conta/token: volta para "pronto" (sem refazer mídia) e é reagendado sozinho quando a conta reconectar.
-        const backToReady = !!post?.run_id && (tokenExpired || (blocked && msg === NO_ACCOUNT_GUARDRAIL));
+        // Post da programação ou story de vaga sem conta/token: volta para "pronto" (sem refazer mídia) e é reagendado sozinho quando
+        // a conta reconectar (a programação pelo calendário automático; a vaga pelo job dos stories).
+        const backToReady = (!!post?.run_id || post?.source === 'vacancy') && (tokenExpired || (blocked && msg === NO_ACCOUNT_GUARDRAIL));
         if (post)
           await this.store.logEvent({
             workspace_id: post.workspace_id,

@@ -1,4 +1,6 @@
 import { ClaimRefused, Guardrail, OriginUnavailable } from '../ig-store.service';
+import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../ig-types';
+import { MetaError } from '../meta-graph';
 import { PublishOriginGuard } from '../origin-guards';
 import { OWNER, WS_A } from '../../media/__tests__/mem';
 import { igServices, igWorld, IgWorld, seedPost, uuid } from './harness';
@@ -37,8 +39,9 @@ const vacancyPost = (w: IgWorld, over: Record<string, unknown> = {}, requiresApp
     ...over,
   });
 
+type JobRow = { id: string; status: string; attempts: number; run_at: Date; locked_at: Date | null; log: string | null; [k: string]: unknown };
 const job = (w: IgWorld, postId: string, over: Record<string, unknown> = {}) => {
-  const j: any = { id: uuid(), workspace_id: WS_A, channel: 'instagram_organic', ig_post_id: postId, target: 'instagram', status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null, ...over };
+  const j = { id: uuid(), workspace_id: WS_A, channel: 'instagram_organic', ig_post_id: postId, target: 'instagram', status: 'pending', mode: 'live', run_at: new Date(Date.now() - 1000), attempts: 0, locked_at: null, log: null, ...over } as JobRow;
   w.t['publishing_jobs']!.rows.push(j);
   return j;
 };
@@ -141,11 +144,25 @@ describe('guarda de origem na fila', () => {
       throw new Error('vitrine caiu');
     }));
     w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new Error('A Meta recusou') : undefined));
+    const warn = jest.spyOn(s.publishing['logger'], 'warn').mockImplementation(() => undefined);
     const p = vacancyPost(w);
     const j = job(w, p.id);
     expect((await s.publishing.runPublishingQueue())[0]).toMatchObject({ status: 'retry', error: 'A Meta recusou' });
     expect(j).toMatchObject({ status: 'pending', attempts: 1 });
     expect(p.status).toBe('scheduled');
+    // R15: a falha da guarda não some sem rastro.
+    expect(warn).toHaveBeenCalledWith(`[instagram] post ${p.id}: cancelledOrigin falhou no catch da fila: vitrine caiu`);
+  });
+
+  it('R18 — story que exige aprovação, sem aprovação, agendado com job: a fila nunca cria container nem publica', async () => {
+    const { w, s, created } = setup();
+    const p = vacancyPost(w, { status: 'scheduled', approved_at: null }, true);
+    const j = job(w, p.id);
+    await s.publishing.runPublishingQueue();
+    expect(created()).toHaveLength(0);
+    expect(w.calls.some((c) => c.path === `/${IG}/media_publish`)).toBe(false);
+    expect(p.status).not.toBe('published');
+    expect(j.status).toBe('failed');
   });
 
   it('post que não é de vaga nunca chega à guarda; publica como hoje', async () => {
@@ -167,7 +184,48 @@ describe('guarda de origem na fila', () => {
   });
 });
 
+describe('R16 — conta/token em story de vaga', () => {
+  it('token vencido (190): o post da fila e os outros stories de vaga agendados voltam para "pronto" com o motivo; os do plano ficam como estavam', async () => {
+    const { w, s } = setup();
+    w.respond((path, opts) => (path === `/${IG}/media` && opts.method === 'POST' ? new MetaError('O token da Meta é inválido ou expirou.', 190) : undefined));
+    const p = vacancyPost(w);
+    const j = job(w, p.id);
+    const other = vacancyPost(w, { scheduled_at: new Date(Date.now() + 3600e3) });
+    const otherJob = job(w, other.id, { run_at: new Date(Date.now() + 3600e3) });
+    const plan = { id: uuid(), workspace_id: WS_A, requires_approval: false, status: 'active' };
+    w.t['ig_content_plans']!.rows.push(plan);
+    const fromPlan = seedPost(w, { plan_id: plan.id, status: 'scheduled' });
+    expect((await s.publishing.runPublishingQueue())[0]!.status).toBe('waiting_account');
+    expect(p).toMatchObject({ status: 'ready', last_error: TOKEN_EXPIRED_POST_MSG, ig_creation_id: null });
+    expect(j.status).toBe('failed');
+    expect(other).toMatchObject({ status: 'ready', last_error: TOKEN_EXPIRED_POST_MSG });
+    expect(otherJob.status).toBe('cancelled');
+    expect(fromPlan.status).toBe('scheduled');
+  });
+
+  it('sem conta conectada: o story de vaga da fila volta para "pronto" com o aviso (nunca failed)', async () => {
+    const { w, s } = setup();
+    w.t['instagram_accounts']!.rows = [];
+    const p = vacancyPost(w);
+    job(w, p.id);
+    expect((await s.publishing.runPublishingQueue())[0]!.status).toBe('waiting_account');
+    expect(p).toMatchObject({ status: 'ready', last_error: NO_ACCOUNT_MSG, ig_creation_id: null });
+  });
+});
+
 describe('"Publicar agora" num story de vaga', () => {
+  it('R18 — a partir de "scheduled" com a vitrine fora: post volta a scheduled e o job pendente fica cancelado (a T10 reconcilia)', async () => {
+    const { w, s, created } = setup(fakeGuard(async () => { throw new OriginUnavailable('HTTP 503'); }));
+    const at = new Date(Date.now() + 3600e3);
+    const p = vacancyPost(w, { status: 'scheduled', scheduled_at: at });
+    const j = job(w, p.id, { run_at: at });
+    const r = await s.actions.publishInstagramPost(OWNER, WS_A, p.id);
+    expect(r).toEqual({ ok: false, sandbox: false, error: 'Não conseguimos consultar a vaga no Freela agora. Tente de novo em alguns minutos.' });
+    expect(p).toMatchObject({ status: 'scheduled', scheduled_at: at });
+    expect(j.status).toBe('cancelled');
+    expect(created()).toHaveLength(0);
+  });
+
   it('fonte fora do ar: devolve a mensagem própria e o post volta ao status de antes (sem failed)', async () => {
     const { w, s, created } = setup(fakeGuard(async () => { throw new OriginUnavailable('HTTP 503'); }));
     const p = vacancyPost(w, { status: 'approved' });
