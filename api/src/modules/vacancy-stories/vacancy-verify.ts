@@ -179,7 +179,8 @@ function findForbidden(read: ArtRead, f: VacancyFields, templateTexts: string[])
     .map((t) => ({ raw: t, n: norm(t) }))
     .filter(({ n }) => !exempt(n));
   const banned = items.filter(({ raw, n }) => !(isValueLike(n) && valueMatchesExpected(raw, f)));
-  const wordSets = items.filter(({ n }) => !isValueLike(n)).map(({ n }) => distinctive(n, expectedTokens));
+  const textItems = items.filter(({ n }) => !isValueLike(n));
+  const wordSets = textItems.map(({ n }) => distinctive(n, expectedTokens));
   for (const raw of read.textos ?? []) {
     const text = String(raw ?? '').trim();
     if (!text) continue;
@@ -190,6 +191,8 @@ function findForbidden(read: ArtRead, f: VacancyFields, templateTexts: string[])
       ALWAYS_FORBIDDEN.links.test(text.toLowerCase()) ||
       [...ALWAYS_FORBIDDEN.labels, ...ALWAYS_FORBIDDEN.stores].some((p) => hasPhrase(nLabels, p)) ||
       banned.some((b) => hasPhrase(n, b.n)) ||
+      // fragmento do modelo ("Rio abaixo", "Itupeva", "13299600"): bloco inteiro dentro de um item, com ao menos 1 palavra distintiva
+      (distinctive(n, expectedTokens).size >= 1 && textItems.some((it) => hasPhrase(it.n, n))) ||
       // cópia editada do modelo: ≥ 2 palavras distintivas em comum com um mesmo item
       (() => {
         const mine = distinctive(n, expectedTokens);

@@ -95,4 +95,18 @@ describe('conferência da arte', () => {
     expect(parseMinutes('24:00')).toBe(0);
     expect(parseMinutes('24h')).toBe(0);
   });
+
+  it('R2: fragmento do modelo é barrado mesmo sem item separado', () => {
+    const tpl = ['Frutá Frozen Outlet Premium Itupeva', 'Rio abaixo, Itupeva',
+      'Estrada Joaquim Bueno Neto, 9999, Rio abaixo, Itupeva/SP, 13299600'];
+    for (const t of ['Frutá', 'FRUTÁ', 'FROZEN', 'Rio abaixo', 'Itupeva', 'Itupeva/SP', '13299600', '9999'])
+      expect(withText(t, F, tpl).forbidden).toEqual([t]);
+    expect(withText('Itupeva/SP', F, tpl, { forbiddenOnly: true }).ok).toBe(false);
+    expect(withText('Rio abaixo', F, tpl, { forbiddenOnly: true }).ok).toBe(false);
+    expect(withText('Itupeva/SP', F).forbidden).toEqual(['Itupeva/SP']);
+    expect(withText('13299600', F).forbidden).toEqual(['13299600']);
+    expect(withText('Itupeva/SP', { ...F, cidade: 'Itupeva' }, tpl).forbidden).toEqual([]);
+    const f10 = { ...F, horario: '10h às 16h', expected: { ...F.expected, startMin: 600, endMin: 960 } };
+    for (const t of ['VAGAS', 'Sábado', '10:00', '10:00 às 16:00']) expect(withText(t, f10, [...TEMPLATE, 'Sábado, 25/10']).forbidden).toEqual([]);
+  });
 });
