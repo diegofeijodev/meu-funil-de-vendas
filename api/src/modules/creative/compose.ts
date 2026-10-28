@@ -132,7 +132,7 @@ export function fillPolys(img: Img, polys: Pt[][], color: RGB, alpha = 1): void 
   }
 }
 
-function rect(img: Img, x: number, y: number, w: number, h: number, color: RGB, alpha: number, r = 0) {
+export function rect(img: Img, x: number, y: number, w: number, h: number, color: RGB, alpha: number, r = 0) {
   const pts: Pt[] = [];
   if (r <= 0) pts.push([x, y], [x + w, y], [x + w, y + h], [x, y + h]);
   else {
