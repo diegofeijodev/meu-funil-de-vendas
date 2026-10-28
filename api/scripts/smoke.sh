@@ -1363,6 +1363,7 @@ PSQL "INSERT INTO cron_tokens(name,token) VALUES ('vacancy-stories','$VTOK') ON 
 VC=$(curl -s -w '\n%{http_code}' -X POST $VCRON -H "x-cron-secret: $VTOK" -H "$J" -d '{}')
 check "vagas: cron com segredo → 200 (consulta sem erro) e heartbeat" "200,false,1" "$(echo "$VC" | tail -1),$(echo "$VC" | head -1 | jq -r '.poll | has("error")'),$(PSQL "SELECT count(*) FROM cron_heartbeats WHERE name='vacancy-stories' AND last_run_at >= '$TV'")"
 check "vagas: as 3 vagas da vitrine viraram linhas" "3" "$(curl -s "$VS/stories?filter=all" -H "$H" | jq length)"
+check "vagas: StoryView traz check_unread (R40/M3; false antes da entrega)" "false" "$(curl -s "$VS/stories?filter=all" -H "$H" | jq -r '[.[].check_unread] | unique | map(tostring) | join(",")')"
 check "vagas: stories?filter=not_posted → 2 (teste e sem valor), com os motivos" "2|A vaga não tem valor informado.|Parece vaga de teste: o nome da empresa tem “teste”." "$(curl -s "$VS/stories?filter=not_posted" -H "$H" | jq -r '[length] + ([.[].reason] | sort) | join("|")')"
 DIS=$(curl -s -w '\n%{http_code}' -X POST $VS/disable -H "$H" -H "$J" -d '{}')
 check "vagas: desligar → 200 { ok: true }, desligado" "200,true,false" "$(echo "$DIS" | tail -1),$(echo "$DIS" | head -1 | jq -r .ok),$(curl -s $VS/settings -H "$H" | jq -r .enabled)"

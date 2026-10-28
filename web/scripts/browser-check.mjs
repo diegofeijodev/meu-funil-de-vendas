@@ -1248,7 +1248,8 @@ try {
     await page.getByRole('button', { name: /Aprovar selecionados/ }).waitFor({ timeout: 10000 });
     await page.locator('label', { hasText: 'Selecionar todos' }).locator('button[role="checkbox"]').click();
     await page.getByRole('button', { name: /Aprovar selecionados \(\d+\)/ }).click();
-    await page.getByText(/\d+ post\(s\) aprovado\(s\)\./).waitFor({ timeout: 30000 });
+    // Texto do lote desde a revisão final das vagas (`batchToast`): "1 post aprovado." / "N posts aprovados.".
+    await page.getByText(/(1 post aprovado|\d+ posts aprovados)\./).waitFor({ timeout: 30000 });
     check('API: aprovação em lote', (await apiCall('GET', `/v1/workspaces/${wsId}/ig-posts`)).body.filter((x) => x.plan_id === planoIg.id && x.status === 'approved').length >= 1);
   }
 
@@ -1521,6 +1522,44 @@ try {
   await page.getByRole('button', { name: 'Continuar aprovando' }).click();
   await page.getByText('Postar sem sua aprovação?').waitFor({ state: 'hidden', timeout: 15000 });
   check('vagas: "Postar sozinho" abre a confirmação e "Continuar aprovando" mantém a aprovação', (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body?.auto_publish === false);
+
+  // R40/M4: "Não postar" e sair da página dentro dos 6 s do Desfazer → o `pagehide` manda a chamada já, com `fetch(..., { keepalive })`
+  // e o bearer, de outra origem (web 3025 → API 3015: com preflight). A prova é o banco: a linha fica cancelada com "Você escolheu não
+  // postar." — a página saiu antes do timer de 6 s, então só o keepalive poderia ter chegado. Linha semeada na fila (`new`), sem cron.
+  const extKa = `bc-keepalive-${Date.now()}`;
+  const iniKa = new Date(Date.now() + 3 * 24 * 3600e3);
+  const snapKa = JSON.stringify({
+    id: extKa, title: 'Garçom', serviceType: 'garcom', city: 'Campinas', date: iniKa.toISOString().slice(0, 10), startTime: iniKa.toISOString(),
+    endTime: new Date(iniKa.getTime() + 5 * 3600e3).toISOString(), amountInCents: 15000, contractorName: 'Bar Keepalive', publishedAt: new Date().toISOString(),
+  });
+  const kaId = igPsql(
+    `INSERT INTO vacancy_stories(workspace_id, external_id, status, snapshot, fingerprint, starts_at) VALUES ('${wsId}', '${extKa}', 'new', '${snapKa}'::jsonb, 'bc-keepalive', '${iniKa.toISOString()}') RETURNING id`,
+  ).split('\n')[0];
+  check('vagas (keepalive): linha semeada na fila', /^[0-9a-f-]{36}$/.test(kaId ?? ''), kaId);
+  await page.goto(`${BASE}/instagram?tab=vagas`);
+  const naoPostar = page.locator('[data-vac-section="arrived"]').getByRole('button', { name: 'Não postar' }).first();
+  await naoPostar.waitFor({ timeout: 30000 });
+  await naoPostar.click();
+  const tClique = Date.now();
+  await page.getByText('O story da vaga Garçom não vai ao ar.').waitFor({ timeout: 5000 });
+  const antesDeSair = igPsql(`SELECT status FROM vacancy_stories WHERE id='${kaId}'`);
+  await page.goto('about:blank'); // navegação de verdade: `pagehide` com o "Não postar" ainda esperando o Desfazer
+  const saiuEm = Date.now() - tClique;
+  let stKa = '';
+  for (let i = 0; i < 20; i++) {
+    stKa = igPsql(`SELECT status || '|' || coalesce(skip_reason, '') FROM vacancy_stories WHERE id='${kaId}'`);
+    if (stKa.startsWith('cancelled')) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  check(
+    'vagas (keepalive): "Não postar" + sair da página nos 6 s → o pedido com keepalive e bearer chega à API (linha cancelada)',
+    antesDeSair === 'new' && saiuEm < 5500 && stKa === 'cancelled|Você escolheu não postar.',
+    `antes de sair: ${antesDeSair}; saiu ${saiuEm} ms depois do clique; banco: ${stKa || '(vazio)'}`,
+  );
+  console.log(`  (keepalive: saiu da página ${saiuEm} ms depois do clique; linha no banco: ${stKa || '(vazio)'})`);
+  // O Playwright vê o keepalive como `net::ERR_ABORTED` (o documento que o pediu foi embora), mas o pedido seguiu e chegou (banco acima).
+  // Só tolera esse eco quando o banco provou a entrega — senão ele fica nos erros e ajuda a ver o que o Chrome fez.
+  if (stKa.startsWith('cancelled')) tolera(new RegExp(`^\\[rede\\] POST api/v1/workspaces/${wsId}/vacancy-stories/stories/${kaId}/dont-post — net::ERR_ABORTED$`));
   });
 
   await section('meta', async () => {

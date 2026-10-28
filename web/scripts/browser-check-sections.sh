@@ -4,7 +4,7 @@
 # sempre via `scripts/run-capped.sh 2400`, e derruba tudo pelos PIDs (trap EXIT). Os grupos rodam em sequência e os totais são somados.
 #
 #   bash web/scripts/browser-check-sections.sh            # todos os grupos (de qualquer diretório)
-#   bash web/scripts/browser-check-sections.sh 4 6        # só os grupos 4 (instagram e vagas) e 6 (crm)
+#   bash web/scripts/browser-check-sections.sh 4 9        # só os grupos 4 (instagram) e 9 (vagas)
 #   BC_NO_AI=1 bash web/scripts/browser-check-sections.sh 2 3   # (campanhas e estudio) API sem gateway de IA (caminho "IA não configurada")
 #
 # Se um grupo morrer com 137 (estourou o teto), NÃO aumente o teto: reparta o grupo (GRUPOS abaixo).
@@ -13,16 +13,17 @@ set -uo pipefail
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
 ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
 
-# Grupos (1–5 seções (campanhas e estudio também ficam sozinhos: juntos morriam com 137 no teto; instagram e meta ficam sozinhos: juntos o Chrome morria por OOM dentro do cgroup), só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
+# Grupos (1–5 seções (campanhas e estudio também ficam sozinhos: juntos morriam com 137 no teto; instagram e meta ficam sozinhos: juntos o Chrome morria por OOM dentro do cgroup; vagas saiu do grupo 4 para o 9 em 28/10: instagram + vagas morreu com 137), só as rotas que elas visitam são compiladas pelo `next dev`): número → seções
 GRUPOS=(
   "shell,overview,marcas,config,agencia"
   "campanhas"
   "estudio"
-  "instagram,vagas"
+  "instagram"
   "meta"
   "crm"
   "canais,integracoes"
   "navegacao,refresh,sessao"
+  "vagas"
 )
 
 if [ "${1:-}" = "--inner" ]; then
