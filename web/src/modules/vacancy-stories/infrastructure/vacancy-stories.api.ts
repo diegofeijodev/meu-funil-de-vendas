@@ -139,6 +139,8 @@ export type VacancySettingsPatch = Partial<{
 }>;
 
 const ok = z.object({ ok: z.literal(true) }).passthrough();
+/** Chave da consulta das configurações (compartilhada por aba, cartão, menu e mutações). */
+export const vacancySettingsKey = (ws: string | null) => ["vacancy-settings", ws] as const;
 const base = (ws: string) => `/v1/workspaces/${ws}/vacancy-stories`;
 
 export async function getVacancySettings(ws: string): Promise<VacancySettings> {
@@ -191,7 +193,7 @@ export async function vacancyRedo(ws: string, id: string): Promise<void> {
  */
 export function useVacancySettings(ws: string | null) {
   return useQuery<VacancySettings | null>({
-    queryKey: ["vacancy-settings", ws],
+    queryKey: vacancySettingsKey(ws),
     enabled: !!ws,
     retry: false,
     refetchInterval: (q) => (q.state.data ? 30_000 : false),

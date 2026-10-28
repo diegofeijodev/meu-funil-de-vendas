@@ -7,7 +7,7 @@ import { ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
-import { uploadVacancyTemplate } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
+import { uploadVacancyTemplate, vacancySettingsKey } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 
 const STEPS = ["Envie a arte modelo", "Veja uma prévia", "Ligue"];
 
@@ -19,7 +19,7 @@ export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: strin
   const upload = useMutation({
     mutationFn: (file: File) => uploadVacancyTemplate(workspaceId, file),
     onSuccess: (res) => {
-      qc.setQueryData(["vacancy-settings", workspaceId], res);
+      qc.setQueryData(vacancySettingsKey(workspaceId), res);
       toast.success("Arte modelo salva. Gere uma prévia para ver como fica com uma vaga de verdade.");
       if (res.warning === "landscape")
         toast.warning("Essa arte está deitada. Story é em pé: envie uma arte em pé para não sobrar faixa grande em cima e embaixo.");
@@ -60,6 +60,7 @@ export function VacanciesFirstRun({ workspaceId, canEdit }: { workspaceId: strin
           <ImagePlus /> {upload.isPending ? "Enviando…" : "Enviar arte modelo"}
         </Button>
         <p className="text-xs text-muted-foreground">PNG ou JPG, em pé.</p>
+        {!canEdit && <p className="text-xs text-muted-foreground">Só quem pode editar envia a arte modelo.</p>}
       </div>
       <div className="flex items-center gap-3 border-t border-border pt-4">
         <Switch id="vac-first-switch" checked={false} disabled aria-describedby="vac-first-hint" />

@@ -14,6 +14,7 @@ import { IgApprovalList } from "@/components/instagram/approvals";
 import { IgResults } from "@/components/instagram/results";
 import { IgAccountInsights } from "@/components/instagram/account-insights";
 import { VacanciesTab } from "@/components/instagram/vacancies/vacancies-tab";
+import { vagasTabState } from "@/lib/vacancy-stories";
 import { useVacancySettings } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
@@ -33,14 +34,17 @@ export function InstagramPage() {
   const { data: account } = useIgAccount(workspaceId);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = posts.find((p) => p.id === openId) ?? null;
-  const { data: vacancySettings, isLoading: vacanciesLoading } = useVacancySettings(workspaceId);
-  const hasVagas = !!vacancySettings;
+  const vacancyQuery = useVacancySettings(workspaceId);
+  const vacancySettings = vacancyQuery.data;
+  const vagasState = vagasTabState(vacancyQuery);
+  // Aba existe com dados ou com erro de carga (o painel "Tentar de novo" aparece em ?tab=vagas); 404 esconde.
+  const hasVagas = vagasState === "ready" || vagasState === "error";
   const search = useSearch();
   const tab = tabOf(search, hasVagas) ?? "overview";
   const navigate = useNavigate({ from: "/instagram" });
 
   // `?tab=vagas` espera a resposta das configurações para não piscar "Visão geral" antes de a aba existir.
-  if (!workspaceId || isLoading || (search["tab"] === "vagas" && vacanciesLoading)) return <div className="panel h-64 animate-pulse" />;
+  if (!workspaceId || isLoading || (search["tab"] === "vagas" && vagasState === "loading")) return <div className="panel h-64 animate-pulse" />;
 
   return (
     <>
@@ -57,7 +61,7 @@ export function InstagramPage() {
           <TabsTrigger value="overview">Visão geral</TabsTrigger>
           {hasVagas && (
             <TabsTrigger value="vagas">
-              Vagas{vacancySettings.pending_approval > 0 ? ` (${vacancySettings.pending_approval})` : ""}
+              Vagas{vacancySettings && vacancySettings.pending_approval > 0 ? ` (${vacancySettings.pending_approval})` : ""}
             </TabsTrigger>
           )}
           <TabsTrigger value="strategy">Estratégia</TabsTrigger>

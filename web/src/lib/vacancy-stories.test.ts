@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayLine, hhLabel, pollStale, settingsSummary } from '@/lib/vacancy-stories';
+import { dayLine, hhLabel, pollStale, settingsSummary, vagasTabState } from '@/lib/vacancy-stories';
 
 describe('vacancy-stories (puro)', () => {
   it('settingsSummary', () => {
@@ -32,5 +32,13 @@ describe('vacancy-stories (puro)', () => {
     expect(pollStale({ last_poll_ok_at: '2026-10-29T13:10:00Z', enabled: true }, now)).toBe(false);
     expect(pollStale({ last_poll_ok_at: '2026-10-29T13:00:00Z', enabled: false }, now)).toBe(false);
     expect(pollStale({ last_poll_ok_at: null, enabled: true }, now)).toBe(true);
+  });
+
+  it('vagasTabState', () => {
+    expect(vagasTabState({ data: null, isLoading: false, isError: false })).toBe('hidden');
+    expect(vagasTabState({ data: undefined, isLoading: true, isError: false })).toBe('loading');
+    expect(vagasTabState({ data: undefined, isLoading: false, isError: true })).toBe('error');
+    expect(vagasTabState({ data: {}, isLoading: false, isError: true })).toBe('ready');
+    expect(vagasTabState({ data: {}, isLoading: false, isError: false })).toBe('ready');
   });
 });

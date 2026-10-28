@@ -23,6 +23,7 @@ import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   disableVacancies,
   enableVacancies,
+  vacancySettingsKey,
   type VacancySettings,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 
@@ -51,14 +52,14 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
   const conta = s.instagram.username ? `@${s.instagram.username}` : "conectado";
 
   const refreshAll = () => {
-    qc.invalidateQueries({ queryKey: ["vacancy-settings", workspaceId] });
+    qc.invalidateQueries({ queryKey: vacancySettingsKey(workspaceId) });
     qc.invalidateQueries({ queryKey: ["ig-pending-badge", workspaceId] });
   };
 
   const enable = useMutation({
     mutationFn: () => enableVacancies(workspaceId),
     onSuccess: (view) => {
-      qc.setQueryData(["vacancy-settings", workspaceId], view);
+      qc.setQueryData(vacancySettingsKey(workspaceId), view);
       refreshAll();
       setDialog(null);
       toast.success("Stories das vagas ligados.");
@@ -87,14 +88,16 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
   return (
     <section className="panel space-y-4 p-5" aria-labelledby="vac-status-title">
       <div className="flex items-start gap-3">
+        {/* Alvo de toque de 44 px em volta do interruptor de 36x20 (WCAG 2.2). */}
+        <label htmlFor="vac-switch" className="flex size-11 shrink-0 cursor-pointer items-center justify-center">
         <Switch
           id="vac-switch"
-          className="mt-1"
           checked={s.enabled}
           disabled={!canManage || enable.isPending || disable.isPending}
           onCheckedChange={() => setDialog(s.enabled ? "disable" : "enable")}
           aria-describedby="vac-status-text"
         />
+        </label>
         <div className="min-w-0 space-y-1">
           <h2 id="vac-status-title" className="text-base font-semibold">
             <label htmlFor="vac-switch">Postar as vagas do Freela nos stories</label>
@@ -132,7 +135,7 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
           <Notice
             tone="error"
             action={
-              <Button variant="outline" className="h-11 sm:h-9" onClick={() => navigate({ search: { tab: "overview" } })}>
+              <Button variant="outline" className="h-11" onClick={() => navigate({ search: { tab: "overview" } })}>
                 Reconectar Instagram
               </Button>
             }
@@ -144,7 +147,7 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
           <Notice
             tone="error"
             action={
-              <Button asChild variant="outline" className="h-11 sm:h-9">
+              <Button asChild variant="outline" className="h-11">
                 <Link to="/integrations">Abrir Integrações</Link>
               </Button>
             }

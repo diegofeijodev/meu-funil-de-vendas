@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspace } from "@/lib/workspace";
+import { vagasTabState } from "@/lib/vacancy-stories";
 import { useVacancySettings } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { VacanciesFirstRun } from "./first-run";
 import { VacanciesStatusCard } from "./status-card";
@@ -14,9 +15,11 @@ import { VacanciesStatusCard } from "./status-card";
 export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
   const { role, canEdit } = useWorkspace();
   const canManage = role === "owner" || role === "admin";
-  const { data: settings, isLoading, isError, refetch, isFetching } = useVacancySettings(workspaceId);
+  const query = useVacancySettings(workspaceId);
+  const { data: settings, refetch, isFetching } = query;
+  const state = vagasTabState(query);
 
-  if (isLoading)
+  if (state === "loading")
     return (
       <div className="space-y-4" aria-busy="true" aria-label="Carregando as vagas">
         <Skeleton className="h-40 w-full" />
@@ -28,7 +31,7 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
       </div>
     );
 
-  if (isError)
+  if (state === "error")
     return (
       <div className="panel space-y-3 p-5" role="alert">
         <p className="text-sm">Não conseguimos carregar as vagas. Verifique a conexão e toque em Tentar de novo.</p>
@@ -39,7 +42,7 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
     );
 
   // 404 = empresa fora da lista: sem aba (a página já cai em "Visão geral").
-  if (!settings) return null;
+  if (state === "hidden" || !settings) return null;
 
   return (
     <div className="space-y-6">

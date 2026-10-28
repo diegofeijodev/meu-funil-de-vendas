@@ -54,3 +54,16 @@ export function pollStale(s: { last_poll_ok_at: string | null; enabled: boolean 
   if (!s.last_poll_ok_at) return true;
   return now.getTime() - new Date(s.last_poll_ok_at).getTime() > STALE_MS;
 }
+
+export type VagasTabState = 'hidden' | 'loading' | 'error' | 'ready';
+
+/**
+ * Estado da aba "Vagas" a partir da consulta das configurações: 404 (`data === null`) esconde a aba; erro SEM dados (1ª carga)
+ * mostra o painel de erro; erro de um refetch com dados continua `ready` (o usuário não perde a tela por um soluço).
+ */
+export function vagasTabState(q: { data: unknown; isLoading: boolean; isError: boolean }): VagasTabState {
+  if (q.data === null) return 'hidden';
+  if (q.data !== undefined) return 'ready';
+  if (q.isError) return 'error';
+  return 'loading';
+}
