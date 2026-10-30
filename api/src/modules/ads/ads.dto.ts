@@ -35,6 +35,14 @@ export class MetaSetStatusDto {
   @IsUUID() workspaceId!: string;
   @IsUUID() campaignId!: string;
   @IsIn(['ACTIVE', 'PAUSED']) status!: 'ACTIVE' | 'PAUSED';
+  /** Conferência: "Confirmo que o Freela cumpre essa oferta" (só vale ao ligar uma campanha com condições de oferta). */
+  @IsOptional() @IsBoolean() confirmOffer?: boolean;
+}
+
+export class MetaExcludeCreativeDto {
+  @IsUUID() workspaceId!: string;
+  @IsUUID() campaignId!: string;
+  @IsUUID() creativeId!: string;
 }
 
 export class MetaSaveAppDto {

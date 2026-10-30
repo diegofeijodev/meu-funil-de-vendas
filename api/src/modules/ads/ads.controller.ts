@@ -10,7 +10,7 @@ import { AdsOpsService } from './ads-ops.service';
 import { CampaignEndService } from './campaign-end.service';
 import {
   ChannelDto, ChannelLoginUrlDto, CreateExternalCampaignDto, DecideRecommendationDto, GenerateRecommendationsDto, LinkExternalCampaignDto, MetaCampaignDto,
-  MetaInsightsDto, MetaLoginUrlDto, MetaSaveAppDto, MetaSaveAssetsDto, MetaSaveCredentialsDto, MetaSetStatusDto, SaveCampaignAdsSettingsDto, SaveChannelAppDto,
+  MetaInsightsDto, MetaLoginUrlDto, MetaSaveAppDto, MetaSaveAssetsDto, MetaSaveCredentialsDto, MetaSetStatusDto, MetaExcludeCreativeDto, SaveCampaignAdsSettingsDto, SaveChannelAppDto,
   SetExternalStatusDto, SyncCrmAudienceDto, WorkspaceDto,
 } from './ads.dto';
 import { MetaAdsService } from './meta-ads.service';
@@ -45,7 +45,10 @@ export class MetaAdsController {
   publish(@CurrentUser() u: AuthUser, @Body() d: MetaCampaignDto) { return this.meta.publish(u.id, d.workspaceId, d.campaignId); }
 
   @Post('meta-ads-set-status') @HttpCode(200)
-  setStatus(@CurrentUser() u: AuthUser, @Body() d: MetaSetStatusDto) { return this.meta.setStatus(u.id, d.workspaceId, d.campaignId, d.status); }
+  setStatus(@CurrentUser() u: AuthUser, @Body() d: MetaSetStatusDto) { return this.meta.setStatus(u.id, d.workspaceId, d.campaignId, d.status, { confirmOffer: d.confirmOffer }); }
+
+  @Post('meta-ads-exclude-creative') @HttpCode(200)
+  excludeCreative(@CurrentUser() u: AuthUser, @Body() d: MetaExcludeCreativeDto) { return this.meta.excludeCreative(u.id, d.workspaceId, d.campaignId, d.creativeId); }
 
   @Post('meta-save-app') @HttpCode(200)
   saveApp(@CurrentUser() u: AuthUser, @Body() d: MetaSaveAppDto) { return this.meta.saveApp(u.id, d.workspaceId, d.appId, d.appSecret); }

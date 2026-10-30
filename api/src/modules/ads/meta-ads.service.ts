@@ -122,7 +122,22 @@ export class MetaAdsService {
     }
   }
 
-  private async publishLocked(userId: string, ws: string, campaignId: string) {
+  /**
+   * Piloto do estrategista (Fatia 4): mesmo miolo e mesma trava do "Publicar na Meta", sem papel de tela (o pacote foi aprovado por
+   * dono/admin em Aprovações). Tudo nasce PAUSADO; ligar continua só pelo `setStatus` (manage). Auditoria sem ator, com a origem.
+   */
+  async publishAsSystem(ws: string, campaignId: string, via: { runId: string }) {
+    const lock = `${ws}:${campaignId}`;
+    if (this.publishing.has(lock)) throw new ConflictException({ code: 'CONFLICT', message: 'Esta campanha já está sendo enviada para a Meta. Aguarde.' });
+    this.publishing.add(lock);
+    try {
+      return await this.publishLocked(null, ws, campaignId, via);
+    } finally {
+      this.publishing.delete(lock);
+    }
+  }
+
+  private async publishLocked(userId: string | null, ws: string, campaignId: string, via?: { runId: string }) {
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: ws } });
     if (!c) throw notFound('Campanha não encontrada.');
     if (c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
@@ -146,7 +161,7 @@ export class MetaAdsService {
     const privacyUrl = ((c.ads_config ?? {}) as { privacyUrl?: string | null }).privacyUrl ?? null;
     const landing = withUtm(c.landing_url, 'meta', 'paid', c.name);
     // Publicar cria tudo PAUSADO (meta_delivery_status = PAUSED): o guarda de entrega não bloqueia, mas fica registrado aqui.
-    await this.guards.assertCanSetDelivery(userId, ws, c.meta_delivery_status, 'PAUSED');
+    if (userId) await this.guards.assertCanSetDelivery(userId, ws, c.meta_delivery_status, 'PAUSED');
 
     let result;
     try {
@@ -193,12 +208,12 @@ export class MetaAdsService {
       },
     });
     // No protótipo o navegador gravava a auditoria depois de publicar; agora é daqui.
-    await this.activity.log(ws, userId, 'campaign.published', 'campaign', { campaign_id: c.id, mode: 'live' });
+    await this.activity.log(ws, userId, 'campaign.published', 'campaign', { campaign_id: c.id, mode: 'live', ...(via ? { via: 'pilot', run_id: via.runId } : {}) });
     return result;
   }
 
   /** Ativa/pausa na Meta — somente campanhas aprovadas. */
-  async setStatus(userId: string, ws: string, campaignId: string, status: 'ACTIVE' | 'PAUSED') {
+  async setStatus(userId: string, ws: string, campaignId: string, status: 'ACTIVE' | 'PAUSED', opts: { confirmOffer?: boolean } = {}) {
     await this.member(userId, ws, true);
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: ws } });
     if (!c?.meta_campaign_id) throw new UserError('Campanha ainda não publicada na Meta.');
@@ -212,6 +227,17 @@ export class MetaAdsService {
     const newStatus = status === 'ACTIVE' ? 'active' : c.status === 'active' ? 'approved' : c.status;
     await this.guards.assertCanSetCampaignStatus(userId, ws, c.status, newStatus);
 
+    // Oferta definida no intake (`offer_terms`): ligar exige o "Confirmo que o Freela cumpre" de quem liga (dono/admin), gravado aqui (§0.7 #1).
+    const terms = c.offer_terms && typeof c.offer_terms === 'object' ? (c.offer_terms as Record<string, unknown>) : null;
+    if (status === 'ACTIVE' && terms && !terms['confirmed_at']) {
+      if (!opts.confirmOffer) throw new BadRequestException({ code: 'OFFER_UNCONFIRMED', message: 'Confirme que o Freela cumpre a oferta antes de ligar.' });
+      await this.prisma.campaigns.updateMany({
+        where: { id: c.id, workspace_id: ws },
+        data: { offer_terms: { ...terms, confirmed_by: userId, confirmed_at: new Date().toISOString() } as Prisma.InputJsonObject },
+      });
+    }
+    // "Não usar esta arte" (conferência): o anúncio dessa arte continua pausado ao ligar.
+    const excludedAds = await this.excludedAdIds(ws, c.id, c.meta_ad_map);
     const paused = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws, campaign_id: c.id, action: 'pause_ad', status: 'applied' }, select: { payload: true } });
     const pausedByOptimizer = new Set(paused.map((r) => (r.payload as { adId?: string } | null)?.adId).filter(Boolean) as string[]);
     const adsetIds = (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[];
@@ -222,7 +248,7 @@ export class MetaAdsService {
           campaignId: c.meta_campaign_id!,
           adsetIds,
           // Ao ativar, anúncios pausados pelo otimizador/regras continuam pausados.
-          adIds: (c.meta_ad_ids ?? []).filter((id) => status === 'PAUSED' || !pausedByOptimizer.has(id)),
+          adIds: (c.meta_ad_ids ?? []).filter((id) => status === 'PAUSED' || (!pausedByOptimizer.has(id) && !excludedAds.has(id))),
         },
         status,
       ),
@@ -241,6 +267,30 @@ export class MetaAdsService {
       await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { meta_delivery_status: status } });
     }
     return { ok: true };
+  }
+
+  /** Ids dos anúncios (na Meta) de criativos marcados "Não usar esta arte". `meta_ad_map` = { adId: { creativeId, … } }. */
+  private async excludedAdIds(ws: string, campaignId: string, adMap: unknown): Promise<Set<string>> {
+    const rows = await this.prisma.creatives.findMany({ where: { campaign_id: campaignId, workspace_id: ws }, select: { id: true, extras: true } });
+    const excluded = new Set(rows.filter((r) => (r.extras as { excluded_from_ads_at?: string } | null)?.excluded_from_ads_at).map((r) => r.id));
+    const map = (adMap && typeof adMap === 'object' ? adMap : {}) as Record<string, { creativeId?: string }>;
+    return new Set(Object.entries(map).filter(([, v]) => v?.creativeId && excluded.has(v.creativeId)).map(([adId]) => adId));
+  }
+
+  /** "Não usar esta arte" na conferência: pausa na Meta os anúncios dessa arte e marca o criativo, para o "Ligar" não os reativar. */
+  async excludeCreative(userId: string, ws: string, campaignId: string, creativeId: string) {
+    await this.member(userId, ws, true);
+    const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: ws }, select: { id: true, meta_ad_map: true } });
+    if (!c) throw notFound('Campanha não encontrada.');
+    const cr = await this.prisma.creatives.findFirst({ where: { id: creativeId, campaign_id: c.id, workspace_id: ws }, select: { id: true, extras: true } });
+    if (!cr) throw notFound('Criativo não encontrado.');
+    const map = (c.meta_ad_map && typeof c.meta_ad_map === 'object' ? c.meta_ad_map : {}) as Record<string, { creativeId?: string }>;
+    const adIds = Object.entries(map).filter(([, v]) => v?.creativeId === cr.id).map(([adId]) => adId);
+    for (const adId of adIds) await guarded(() => this.ops.setAdStatus(ws, adId, 'PAUSED'));
+    const extras = { ...((cr.extras as Record<string, unknown> | null) ?? {}), excluded_from_ads_at: new Date().toISOString() };
+    await this.prisma.creatives.updateMany({ where: { id: cr.id, workspace_id: ws }, data: { extras: extras as Prisma.InputJsonObject } });
+    await this.activity.log(ws, userId, 'campaign.creative_excluded', 'campaign', { campaign_id: c.id, creative_id: cr.id, ad_ids: adIds });
+    return { ok: true, paused: adIds.length };
   }
 
   async saveApp(userId: string, ws: string, appId: string, appSecret: string) {

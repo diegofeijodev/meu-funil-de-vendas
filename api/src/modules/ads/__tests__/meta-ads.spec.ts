@@ -506,3 +506,54 @@ describe('status da Meta — redirectUri', () => {
     expect(await status(w.meta.status(STRANGER, WS_A))).toBe('403:Você não tem acesso a esta área de trabalho.');
   });
 });
+
+describe('Piloto e conferência (Fatia 4)', () => {
+  const published = (w: ReturnType<typeof adsWorld>, over: Record<string, any> = {}) =>
+    w.seedCampaign({ status: 'approved', meta_campaign_id: '9001', meta_adset_id: '9101', meta_adset_ids: ['9101'], meta_ad_ids: ['9301', '9302'], meta_delivery_status: 'PAUSED', ...over });
+
+  it('publishAsSystem: publica PAUSADO sem papel de tela; nenhuma chamada liga nada; auditoria via pilot', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign({ objective: 'traffic', budget_daily: 40 });
+    w.seedCreative(c.id);
+    const RUN = uid();
+    const r = await w.meta.publishAsSystem(WS_A, c.id, { runId: RUN });
+    expect(r.campaignId).toBe('9001');
+    expect(w.calls.some((x) => x.opts?.params?.status === 'ACTIVE')).toBe(false);
+    expect(w.t['campaigns']!.rows.find((x) => x.id === c.id)).toMatchObject({ meta_campaign_id: '9001', meta_delivery_status: 'PAUSED' });
+    expect(w.activity.log).toHaveBeenCalledWith(WS_A, null, 'campaign.published', 'campaign', { campaign_id: c.id, mode: 'live', via: 'pilot', run_id: RUN });
+  });
+
+  it('ligar com a oferta do intake sem confirmar = OFFER_UNCONFIRMED; confirmar grava quem e quando, e liga', async () => {
+    const w = adsWorld();
+    const c = published(w, { offer_promise: '1ª contratação grátis', offer_terms: { what: 'ambas', valid_until: '2026-11-28', new_only: true } });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe('400:Confirme que o Freela cumpre a oferta antes de ligar.');
+    expect(w.calls).toHaveLength(0);
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE', { confirmOffer: true }))).toBe('ok');
+    const row = w.t['campaigns']!.rows.find((x) => x.id === c.id)!;
+    expect(row.offer_terms).toMatchObject({ what: 'ambas', confirmed_by: OWNER });
+    expect(typeof row.offer_terms.confirmed_at).toBe('string');
+    expect(row.meta_delivery_status).toBe('ACTIVE');
+    // campanha sem condições de oferta (caminho antigo) continua ligando como antes
+    const old = published(w, { offer_promise: 'Chopp em dobro', offer_terms: null });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, old.id, 'ACTIVE'))).toBe('ok');
+  });
+
+  it('"Não usar esta arte": pausa o anúncio dela na Meta e o Ligar não o reativa', async () => {
+    const w = adsWorld();
+    const cr1 = uid();
+    const cr2 = uid();
+    const c = published(w, { meta_ad_map: { '9301': { creativeId: cr1, adsetId: '9101' }, '9302': { creativeId: cr2, adsetId: '9101' } } });
+    w.t['creatives']!.rows.push({ id: cr1, workspace_id: WS_A, campaign_id: c.id, status: 'approved', extras: { pilot: { run_id: 'r', slot: 1 } } });
+    w.t['creatives']!.rows.push({ id: cr2, workspace_id: WS_A, campaign_id: c.id, status: 'approved', extras: {} });
+    expect(await status(w.meta.excludeCreative(VIEWER, WS_A, c.id, cr1))).toBe('403:Seu perfil não pode alterar campanhas.');
+    await w.meta.excludeCreative(OWNER, WS_A, c.id, cr1);
+    expect(w.calls.filter((x) => x.path === '/9301' && x.opts.params?.status === 'PAUSED')).toHaveLength(1);
+    expect(w.t['creatives']!.rows.find((x) => x.id === cr1)!.extras).toMatchObject({ pilot: { run_id: 'r', slot: 1 }, excluded_from_ads_at: expect.any(String) });
+    w.calls.length = 0;
+    await w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE');
+    const activated = w.calls.filter((x) => x.opts.params?.status === 'ACTIVE').map((x) => x.path);
+    expect(activated).toContain('/9302');
+    expect(activated).not.toContain('/9301');
+  });
+});
