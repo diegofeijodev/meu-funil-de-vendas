@@ -9,9 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { brl } from "@/lib/format";
 import { parseMoneyInput } from "@/lib/money-input";
 import { cn } from "@/lib/utils";
+import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import {
   intakeCampaign,
   type CampaignIntake,
+  type GeoTargetInput,
   type NewCampaignInput,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
@@ -65,7 +67,8 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
   const [offerText, setOfferText] = useState("");
   const [offerUntil, setOfferUntil] = useState("");
   const [newOnly, setNewOnly] = useState<boolean | null>(null);
-  const [city, setCity] = useState("");
+  // Região: a cidade que o estrategista entendeu, com +20 km (igual a hoje); a pessoa confere na lista da Meta e escolhe o raio.
+  const [geo, setGeo] = useState<GeoTargetInput | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -97,7 +100,8 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
       setOfferText("");
       setOfferUntil(r.draft.end_date);
       setNewOnly(null);
-      setCity(r.draft.audience.localizacao);
+      const place = splitCityUf(r.draft.audience.localizacao.split(/[;\n]/)[0] ?? "");
+      setGeo(place.name ? { type: "city", name: place.name, uf: place.uf, meta_key: null, radius_km: 20 } : null);
       setErrors({});
     } catch (e) {
       setAiError(`${apiErrorMessage(e, "Não conseguimos ler o pedido agora.")} Seu texto continua aqui.`);
@@ -134,7 +138,8 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
       landing_url: landingValue(),
       start_date: d.start_date,
       end_date: d.end_date,
-      audience: { ...d.audience, localizacao: city.trim() },
+      audience: { ...d.audience, localizacao: geo ? (geo.uf ? `${geo.name}, ${geo.uf}` : geo.name) : "" },
+      geo_targets: geo ? [geo] : [],
       budget_total: total,
       budget_daily: daily,
       goal_leads: d.goal_leads,
@@ -157,7 +162,8 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
       else if (!offerUntil) errs["q-offer-until"] = "Informe até quando a oferta vale.";
       else if (newOnly === null) errs["q-offer-new"] = "Responda se vale só para empresa nova.";
     }
-    if (city.trim().length < 2) errs["q-city"] = "Escreva a cidade (ex.: Jundiaí, SP).";
+    if ((geo?.name.length ?? 0) < 2) errs["q-city"] = "Escreva a cidade (ex.: Jundiaí, SP).";
+    else if (geo?.radius_km != null && (geo.radius_km < 17 || geo.radius_km > 80)) errs["q-city"] = "A Meta aceita de 17 a 80 km em volta de uma cidade.";
     setErrors(errs);
     const first = Object.keys(errs)[0];
     if (first) {
@@ -363,21 +369,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
             </fieldset>
           )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="q-city">Região</Label>
-            <Input
-              id="q-city"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              placeholder="Jundiaí, SP"
-              aria-invalid={!!errors["q-city"]}
-              aria-describedby={errors["q-city"] ? "q-city-help q-city-err" : "q-city-help"}
-            />
-            <p id="q-city-help" className="text-xs text-muted-foreground">
-              Cidade e estado, como no endereço. O anúncio aparece nela e em até 20 km em volta.
-            </p>
-            {fieldError("q-city")}
-          </div>
+          <RegionPicker key={res.draft.intake_text} workspaceId={workspaceId} value={geo} onChange={setGeo} inputId="q-city" error={errors["q-city"]} />
 
           <p className="text-xs text-muted-foreground">
             Período: {ddmmyyyy(res.draft.start_date)} a {ddmmyyyy(res.draft.end_date)} ({res.days} dias). Nada vai para o Instagram ou para a Meta sem você conferir.

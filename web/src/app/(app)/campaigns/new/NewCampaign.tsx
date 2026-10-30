@@ -8,6 +8,7 @@ import { Sparkles } from "lucide-react";
 import {
   createCampaign,
   createCopy,
+  type GeoTargetInput,
   type NewCampaignInput,
   type OfferTermsInput,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
@@ -30,6 +31,7 @@ import { HowTo } from "@/components/how-to";
 import { GUIDES } from "@/lib/guides";
 
 const STEPS = ["Objetivo", "Oferta", "Público", "Verba e metas", "Formatos"];
+const geoText = (g: GeoTargetInput[]) => g.map((t) => (t.uf ? `${t.name}, ${t.uf}` : t.name)).join("; ");
 
 export function NewCampaign() {
   const { workspaceId } = useWorkspace();
@@ -47,7 +49,7 @@ export function NewCampaign() {
   const [budget, setBudget] = useState({ total: "", daily: "", leads: "", sales: "", ticket: "", margin: "", cac: "" });
   const [formats, setFormats] = useState<string[]>(["static_image", "video"]);
   // Vindos do "Conte o que você quer": continuam valendo se a pessoa abrir o formulário para ajustar.
-  const [extras, setExtras] = useState<{ intake_text?: string | null; offer_terms?: OfferTermsInput | null }>({});
+  const [extras, setExtras] = useState<{ intake_text?: string | null; offer_terms?: OfferTermsInput | null; geo_targets?: GeoTargetInput[] }>({});
   const { data: features } = useFeatures(workspaceId);
   const [mode, setMode] = useState<"intake" | "form" | null>(null);
   const currentMode = mode ?? (features?.campaign_intake ? "intake" : "form");
@@ -90,6 +92,8 @@ export function NewCampaign() {
     max_cac: budget.cac ? Number(budget.cac) : null,
     formats,
     ...extras,
+    // A região da conversa só vale se a cidade do formulário continua a mesma (senão o texto novo manda).
+    geo_targets: extras.geo_targets?.length && geoText(extras.geo_targets) === audience.localizacao.trim() ? extras.geo_targets : [],
   });
 
   /** "Ver/ajustar todos os detalhes": o formulário abre já preenchido com o que o estrategista entendeu. */
@@ -103,7 +107,7 @@ export function NewCampaign() {
     setAudience({ persona: "", idade: "25-45", localizacao: "", interesses: "", tipo: "B2C", ...d.audience });
     setBudget({ total: n(d.budget_total), daily: n(d.budget_daily), leads: n(d.goal_leads), sales: "", ticket: "", margin: "", cac: "" });
     setFormats(d.formats);
-    setExtras({ intake_text: d.intake_text ?? null, offer_terms: d.offer_terms ?? null });
+    setExtras({ intake_text: d.intake_text ?? null, offer_terms: d.offer_terms ?? null, geo_targets: d.geo_targets ?? [] });
     setStep(0);
     setMode("form");
   };

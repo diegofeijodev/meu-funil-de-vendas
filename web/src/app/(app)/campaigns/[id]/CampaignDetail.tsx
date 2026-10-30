@@ -13,7 +13,8 @@ import {
   requestCampaignApproval,
   setCampaignBudget,
   setCampaignLandingUrl,
-  setCampaignLocation,
+  setCampaignGeoTargets,
+  type GeoTargetInput,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import {
   AlertDialog,
@@ -34,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
 import { parseMoneyInput } from "@/lib/money-input";
+import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
@@ -72,7 +74,7 @@ export function CampaignDetail() {
   const [landing, setLanding] = useState("");
   const [budgetIn, setBudgetIn] = useState("");
   const [budgetTotalIn, setBudgetTotalIn] = useState("");
-  const [cityIn, setCityIn] = useState<string | null>(null);
+  const [geoIn, setGeoIn] = useState<GeoTargetInput | null>(null);
   // A Meta não achou a cidade no último "Publicar": o aviso da cidade aparece mesmo com o campo preenchido.
   const [geoProblem, setGeoProblem] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
@@ -194,15 +196,19 @@ export function CampaignDetail() {
     }
   };
 
-  const saveCity = async (current: string) => {
+  const saveRegion = async (target: GeoTargetInput | null) => {
     if (!workspaceId) return;
+    if (!target?.name) {
+      toast.error("Escreva a cidade (ex.: Jundiaí, SP).");
+      return;
+    }
     setBusy("city");
     try {
-      await setCampaignLocation(workspaceId, id, cityIn ?? current);
-      setCityIn(null);
+      await setCampaignGeoTargets(workspaceId, id, [target]);
+      setGeoIn(null);
       setGeoProblem(false);
       await qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success("Cidade salva. Já dá para publicar na Meta.");
+      toast.success("Região salva. Já dá para publicar na Meta.");
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível salvar a cidade"));
     } finally {
@@ -425,6 +431,13 @@ export function CampaignDetail() {
   // Verba vazia pode ser preenchida mesmo já na Meta (campanha antiga com o R$ 20 silencioso): Google e TikTok precisam dela.
   const budgetFixable = canChangeTerms && !ended && (fixableBeforeMeta || !!metaId);
   const city = String(((c.audience ?? {}) as Record<string, unknown>).localizacao ?? "").trim();
+  // Região de partida do seletor: a 1ª cidade gravada (Fatia 2) ou o texto antigo, com +20 km (igual a hoje).
+  const savedGeo = (c.geo_targets ?? [])[0] as GeoTargetInput | undefined;
+  const regionFromCampaign: GeoTargetInput | null = savedGeo?.name
+    ? savedGeo
+    : city
+      ? { type: "city", ...splitCityUf(city.split(";")[0] ?? ""), meta_key: null, radius_km: 20 }
+      : null;
   const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
   const ext = c as { google_campaign_id?: string | null; google_status?: string | null; tiktok_campaign_id?: string | null; tiktok_status?: string | null };
   // Canais em que a campanha existe (o diálogo de encerrar cita só esses) e os que ainda estão no ar.
@@ -628,24 +641,20 @@ export function CampaignDetail() {
         <div id="fix-city" className="panel mb-6 border-amber-500/40 p-5">
           <p className="text-sm font-semibold">{city ? "A Meta não achou esta cidade" : "Em que cidade o anúncio aparece"}</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Escreva a cidade como no mapa, com o estado (ex.: Jundiaí, SP). O anúncio aparece nela e em até 20 km em volta.
+            Escolha a cidade na lista da Meta e quanto em volta dela o anúncio aparece.
           </p>
           <form
-            className="mt-3 flex flex-col gap-2 sm:flex-row"
+            className="mt-3 space-y-3 sm:max-w-md"
             onSubmit={(e) => {
               e.preventDefault();
-              void saveCity(city);
+              void saveRegion(geoIn ?? regionFromCampaign);
             }}
           >
-            <Input
-              placeholder="Jundiaí, SP"
-              value={cityIn ?? city}
-              onChange={(e) => setCityIn(e.target.value)}
-              aria-label="Cidade do anúncio"
-              className="sm:max-w-sm"
-            />
-            <Button type="submit" disabled={busy === "city" || !(cityIn ?? city).trim()}>
-              {busy === "city" ? "Salvando..." : "Salvar cidade"}
+            {workspaceId && (
+              <RegionPicker workspaceId={workspaceId} value={geoIn ?? regionFromCampaign} onChange={setGeoIn} inputId="fix-city-input" />
+            )}
+            <Button type="submit" disabled={busy === "city" || !(geoIn ?? regionFromCampaign)?.name}>
+              {busy === "city" ? "Salvando..." : "Salvar região"}
             </Button>
           </form>
         </div>

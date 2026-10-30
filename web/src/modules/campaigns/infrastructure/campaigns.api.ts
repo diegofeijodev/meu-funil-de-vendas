@@ -45,6 +45,7 @@ const campaign = z
     max_cac: num.nullish(),
     formats: z.array(z.string()),
     audience: z.record(z.string(), z.unknown()).nullish(),
+    geo_targets: z.array(z.record(z.string(), z.unknown())).nullish(),
     meta_campaign_id: str,
     meta_delivery_status: str,
     last_insights_sync_at: str,
@@ -149,7 +150,29 @@ export type NewCampaignInput = {
   intake_text?: string | null;
   /** Condições da oferta: viram regra obrigatória nos prompts ("prometa só isto"). */
   offer_terms?: OfferTermsInput | null;
+  /** Região estruturada (Fatia 2): cidades da Meta com raio. */
+  geo_targets?: GeoTargetInput[];
 };
+
+/** Cidade da região: `meta_key` = escolhida na lista da Meta (sem ela, o publicar resolve pelo nome + UF); `radius_km` null = só a cidade. */
+export type GeoTargetInput = { type: "city"; name: string; uf: string | null; meta_key: string | null; radius_km: number | null };
+
+const geoSearchSchema = z.union([
+  z.object({ items: z.array(z.object({ meta_key: z.string(), name: z.string(), uf: z.string().nullable(), region: z.string().nullable() })) }),
+  z.object({ error: z.object({ code: z.string(), message: z.string() }) }),
+]);
+export type GeoSearchResult = z.infer<typeof geoSearchSchema>;
+
+/** Cidades da Meta para a região (`GET /v1/workspaces/:ws/geo/search`). Sem Meta conectada vem `{ error: META_NOT_CONNECTED }`. */
+export async function searchGeo(ws: string, q: string): Promise<GeoSearchResult> {
+  const { data } = await api.get(`/v1/workspaces/${ws}/geo/search`, { params: { q } });
+  return geoSearchSchema.parse(data);
+}
+
+/** Troca a região da campanha (antes de ir para a Meta). */
+export async function setCampaignGeoTargets(ws: string, campaignId: string, targets: GeoTargetInput[]): Promise<void> {
+  await api.patch(`${base(ws)}/${campaignId}/geo-targets`, { geo_targets: targets });
+}
 
 export type OfferTermsInput = { what: string; valid_until: string; new_only: boolean };
 
