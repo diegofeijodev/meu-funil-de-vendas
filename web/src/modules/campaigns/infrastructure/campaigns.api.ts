@@ -145,7 +145,42 @@ export type NewCampaignInput = {
   margin_percent: number | null;
   max_cac: number | null;
   formats: string[];
+  /** Palavras do dono no "Conte o que você quer" (vão ao estrategista como pedido original). */
+  intake_text?: string | null;
+  /** Condições da oferta: viram regra obrigatória nos prompts ("prometa só isto"). */
+  offer_terms?: OfferTermsInput | null;
 };
+
+export type OfferTermsInput = { what: string; valid_until: string; new_only: boolean };
+
+const intakeSchema = z.object({
+  summary: z.string(),
+  days: z.number(),
+  draft: z.object({
+    name: z.string(),
+    objective: z.string(),
+    offer_product: z.string(),
+    offer_promise: z.string(),
+    landing_url: z.string().nullable(),
+    start_date: z.string(),
+    end_date: z.string(),
+    audience: z.object({ persona: z.string(), idade: z.string(), localizacao: z.string(), interesses: z.string(), tipo: z.string() }),
+    budget_daily: z.number().nullable(),
+    budget_total: z.number().nullable(),
+    goal_leads: z.number().nullable(),
+    formats: z.array(z.string()),
+    intake_text: z.string(),
+  }),
+  missing: z.array(z.object({ field: z.enum(["budget_daily", "landing_url", "offer_terms"]), question: z.string(), suggestion: z.string().nullable() })),
+  assumptions: z.array(z.object({ field: z.string(), text: z.string() })),
+});
+export type CampaignIntake = z.infer<typeof intakeSchema>;
+
+/** "Conte o que você quer" (Fatia 1): rascunho + até 3 perguntas. Nada é gravado. */
+export async function intakeCampaign(ws: string, brandId: string, text: string): Promise<CampaignIntake> {
+  const { data } = await api.post(`${base(ws)}/intake`, { brand_id: brandId, text });
+  return intakeSchema.parse(data);
+}
 
 /** INSERT em `campaigns` (sempre rascunho; atividade `campaign.created` gravada pela API). */
 export async function createCampaign(ws: string, input: NewCampaignInput): Promise<Campaign> {

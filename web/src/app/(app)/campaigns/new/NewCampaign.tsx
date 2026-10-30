@@ -5,7 +5,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
-import { createCampaign, createCopy } from "@/modules/campaigns/infrastructure/campaigns.api";
+import {
+  createCampaign,
+  createCopy,
+  type NewCampaignInput,
+  type OfferTermsInput,
+} from "@/modules/campaigns/infrastructure/campaigns.api";
+import { useFeatures } from "@/modules/features/infrastructure/features.api";
+import { IntakePanel } from "./IntakePanel";
 import { listBrands } from "@/modules/brands/infrastructure/brands.api";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace } from "@/lib/workspace";
@@ -39,6 +46,11 @@ export function NewCampaign() {
   const [audience, setAudience] = useState({ persona: "", idade: "25-45", localizacao: "", interesses: "", tipo: "B2C" });
   const [budget, setBudget] = useState({ total: "", daily: "", leads: "", sales: "", ticket: "", margin: "", cac: "" });
   const [formats, setFormats] = useState<string[]>(["static_image", "video"]);
+  // Vindos do "Conte o que você quer": continuam valendo se a pessoa abrir o formulário para ajustar.
+  const [extras, setExtras] = useState<{ intake_text?: string | null; offer_terms?: OfferTermsInput | null }>({});
+  const { data: features } = useFeatures(workspaceId);
+  const [mode, setMode] = useState<"intake" | "form" | null>(null);
+  const currentMode = mode ?? (features?.campaign_intake ? "intake" : "form");
 
   const { data: brands = [] } = useQuery({
     queryKey: ["brands-min", workspaceId],
@@ -57,50 +69,56 @@ export function NewCampaign() {
     return formats.length > 0;
   };
 
-  const finish = async () => {
+  /** O formulário (passos) como entrada da criação. */
+  const formInput = (brandRowId: string): NewCampaignInput => ({
+    brand_id: brandRowId,
+    name,
+    objective,
+    offer_product: offer.product,
+    offer_price: offer.price ? Number(offer.price) : null,
+    offer_promise: offer.promise,
+    landing_url: offer.landing,
+    start_date: dates.start || null,
+    end_date: dates.end || null,
+    audience,
+    budget_total: budget.total ? Number(budget.total) : null,
+    budget_daily: budget.daily ? Number(budget.daily) : null,
+    goal_leads: budget.leads ? Number(budget.leads) : null,
+    goal_sales: budget.sales ? Number(budget.sales) : null,
+    avg_ticket: budget.ticket ? Number(budget.ticket) : null,
+    margin_percent: budget.margin ? Number(budget.margin) : null,
+    max_cac: budget.cac ? Number(budget.cac) : null,
+    formats,
+    ...extras,
+  });
+
+  /** "Ver/ajustar todos os detalhes": o formulário abre já preenchido com o que o estrategista entendeu. */
+  const applyDraft = (d: NewCampaignInput) => {
+    const n = (v: number | null) => (v == null ? "" : String(v));
+    setBrandId(d.brand_id);
+    setName(d.name);
+    setObjective(d.objective);
+    setOffer({ product: d.offer_product, price: n(d.offer_price), promise: d.offer_promise, landing: d.landing_url });
+    setDates({ start: d.start_date ?? "", end: d.end_date ?? "" });
+    setAudience({ persona: "", idade: "25-45", localizacao: "", interesses: "", tipo: "B2C", ...d.audience });
+    setBudget({ total: n(d.budget_total), daily: n(d.budget_daily), leads: n(d.goal_leads), sales: "", ticket: "", margin: "", cac: "" });
+    setFormats(d.formats);
+    setExtras({ intake_text: d.intake_text ?? null, offer_terms: d.offer_terms ?? null });
+    setStep(0);
+    setMode("form");
+  };
+
+  const finish = async (given?: NewCampaignInput) => {
     if (!workspaceId || !brand) return;
     setBusy(true);
     try {
-      const brief: CampaignBrief = {
-        name,
-        objective,
-        offer_product: offer.product,
-        offer_price: offer.price ? Number(offer.price) : null,
-        offer_promise: offer.promise,
-        landing_url: offer.landing,
-        start_date: dates.start || null,
-        end_date: dates.end || null,
-        audience,
-        budget_total: budget.total ? Number(budget.total) : null,
-        budget_daily: budget.daily ? Number(budget.daily) : null,
-        goal_leads: budget.leads ? Number(budget.leads) : null,
-        goal_sales: budget.sales ? Number(budget.sales) : null,
-        avg_ticket: budget.ticket ? Number(budget.ticket) : null,
-        margin_percent: budget.margin ? Number(budget.margin) : null,
-        max_cac: budget.cac ? Number(budget.cac) : null,
-        formats,
-      };
+      const input = given ?? formInput(brand.id);
+      // A copy recebe a campanha (com as condições da oferta), sem a marca e sem o texto bruto do pedido.
+      const brief = Object.fromEntries(
+        Object.entries(input).filter(([k]) => k !== "brand_id" && k !== "intake_text"),
+      ) as unknown as CampaignBrief;
 
-      const campaign = await createCampaign(workspaceId, {
-        brand_id: brand.id,
-        name,
-        objective,
-        offer_product: offer.product,
-        offer_price: offer.price ? Number(offer.price) : null,
-        offer_promise: offer.promise,
-        landing_url: offer.landing,
-        start_date: dates.start || null,
-        end_date: dates.end || null,
-        audience,
-        budget_total: budget.total ? Number(budget.total) : null,
-        budget_daily: budget.daily ? Number(budget.daily) : null,
-        goal_leads: budget.leads ? Number(budget.leads) : null,
-        goal_sales: budget.sales ? Number(budget.sales) : null,
-        avg_ticket: budget.ticket ? Number(budget.ticket) : null,
-        margin_percent: budget.margin ? Number(budget.margin) : null,
-        max_cac: budget.cac ? Number(budget.cac) : null,
-        formats,
-      });
+      const campaign = await createCampaign(workspaceId, input);
 
       // Estrategista (IA real) → estratégia v1; depois a copy segue a estratégia.
       let strategyOk = true;
@@ -133,11 +151,29 @@ export function NewCampaign() {
     <>
       <PageHeader
         title="Nova campanha"
-        subtitle="Responda o briefing e os agentes montam estratégia e copies automaticamente."
+        subtitle={
+          currentMode === "intake"
+            ? "Conte o que você quer: o estrategista monta o plano e pergunta só o que faltar."
+            : "Responda o briefing e os agentes montam estratégia e copies automaticamente."
+        }
       />
       <div className="mb-6">
         <HowTo title={GUIDES.campaignNew.title} steps={GUIDES.campaignNew.steps} references={GUIDES.campaignNew.references ?? []} />
       </div>
+
+      {currentMode === "intake" && workspaceId && brand ? (
+        <IntakePanel
+          workspaceId={workspaceId}
+          brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+          brandId={brand.id}
+          onBrandChange={setBrandId}
+          busy={busy}
+          onCreate={(input) => void finish(input)}
+          onEditDetails={applyDraft}
+          onUseForm={() => setMode("form")}
+        />
+      ) : (
+      <>
 
       <div className="mb-6 flex flex-wrap gap-2">
         {STEPS.map((s, i) => (
@@ -318,13 +354,15 @@ export function NewCampaign() {
               Continuar
             </Button>
           ) : (
-            <Button onClick={finish} disabled={!canNext() || busy}>
+            <Button onClick={() => void finish()} disabled={!canNext() || busy}>
               <Sparkles className="mr-2 size-4" />
               {busy ? "Gerando estratégia..." : "Gerar campanha com IA"}
             </Button>
           )}
         </div>
       </div>
+      </>
+      )}
     </>
   );
 }

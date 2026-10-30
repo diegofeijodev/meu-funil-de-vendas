@@ -32,11 +32,10 @@ export const GUIDES: Record<
   campaignNew: {
     title: "Como criar uma campanha",
     steps: [
-      "Escolha a marca, dê um nome e o objetivo (Leads, WhatsApp, Vendas, Tráfego…).",
-      "Descreva a oferta (produto, preço, promessa) e a página de destino.",
-      "Defina público, verba total e diária e as metas (leads, vendas, CAC máximo).",
-      "Ao concluir, o estrategista (IA) gera a estratégia e a copy segue essa estratégia.",
-      "Na campanha, revise e aprove a estratégia antes de gerar criativos.",
+      "Conte o que você quer em poucas frases. O estrategista entende e pergunta só o que faltar (verba, destino e as condições da oferta).",
+      "Prefere ir campo a campo? Toque em Preencher formulário: marca, nome, objetivo, oferta, público, verba e formatos.",
+      "Ao criar, o estrategista (IA) gera a estratégia e a copy segue essa estratégia.",
+      "Nos dois jeitos, você confere tudo antes de qualquer coisa ir para o Instagram ou para a Meta.",
     ],
   },
   campaign: {
