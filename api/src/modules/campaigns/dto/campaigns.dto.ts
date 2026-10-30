@@ -30,6 +30,8 @@ export class CreateCampaignDto {
   @IsOptional() @IsString() @MaxLength(4000) intake_text?: string | null;
   /** Condições da oferta `{ what, valid_until, new_only }`; a forma é conferida no serviço (frase pronta). */
   @IsOptional() @IsObject() offer_terms?: Record<string, unknown> | null;
+  /** Região `[{ type: 'city', name, uf, meta_key, radius_km }]` (Fatia 2); a forma é conferida no serviço (frase pronta). */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) geo_targets?: unknown[];
 }
 
 /** INSERT em `copies` (`content` jsonb = `CopyContent`; status/versão são do servidor). */
@@ -52,6 +54,10 @@ export class SetBudgetDto {
 export class IntakeDto {
   @IsUUID() brand_id!: string;
   @IsString() @MaxLength(4000) text!: string;
+}
+
+export class SetGeoTargetsDto {
+  @IsArray() @ArrayMaxSize(10) geo_targets!: unknown[];
 }
 
 export class SetLocationDto {

@@ -10,6 +10,7 @@ import { AssetsService } from '../media/assets.service';
 import { MetaError, MetaGraphClient } from '../instagram/meta-graph';
 import { actId, gid, isDigits } from './ads-ids';
 import { AdsConfig, DEFAULT_ADS_CONFIG, PLACEMENTS } from './ads-config';
+import { GeoTarget, geoLabel } from '../campaigns/geo-targets';
 
 type G = Record<string, any>;
 
@@ -76,6 +77,8 @@ export type PublishInput = {
   primaryText: string;
   headline: string;
   audience: Record<string, unknown>;
+  /** Região estruturada da campanha (Fatia 2). Vazia = texto de `audience.localizacao` (Fatia 0). */
+  geoTargets?: GeoTarget[];
   creatives: PublishCreative[];
   config?: AdsConfig;
   strategyAudiences?: PublishAudience[];
@@ -256,7 +259,36 @@ export class MetaOpsService {
     return null;
   }
 
-  private async geoFor(ws: string, aud: Record<string, unknown>) {
+  /** Cidade da Meta com o estado pedido (o `region` vem como "São Paulo (state)"); sem `region` nas respostas, a 1ª. */
+  private pickCity<T extends { region?: string }>(hits: T[], state: string | null): T | undefined {
+    const withRegion = hits.filter((d) => d.region);
+    return state && withRegion.length ? withRegion.find((d) => fold(d.region!).includes(fold(state))) : hits[0];
+  }
+
+  private async searchCity(ws: string, q: string) {
+    const r = await this.graph<{ data?: { key: string; name: string; type: string; region?: string }[] }>(ws, '/search', {
+      params: { type: 'adgeolocation', q, location_types: JSON.stringify(['city']), country_code: 'BR' },
+    });
+    return (r?.data ?? []).filter((d) => d.type === 'city');
+  }
+
+  /** Região estruturada: chave da Meta vai direto; sem chave, resolve por nome + UF. Qualquer cidade não achada para o publicar. */
+  private async geoForTargets(ws: string, targets: GeoTarget[]) {
+    const cities: Record<string, unknown>[] = [];
+    for (const t of targets) {
+      let key = t.meta_key;
+      if (!key) {
+        const hit = this.pickCity(await this.searchCity(ws, t.name), t.uf ? (UFS[t.uf] ?? null) : null);
+        if (!hit) throw geoError(`A Meta não achou a cidade "${t.name}". Escolha de novo na região da campanha.`);
+        key = hit.key;
+      }
+      cities.push(t.radius_km ? { key, radius: t.radius_km, distance_unit: 'kilometer' } : { key });
+    }
+    return { geo: { cities }, label: geoLabel(targets) };
+  }
+
+  private async geoFor(ws: string, aud: Record<string, unknown>, targets: GeoTarget[] = []) {
+    if (targets.length) return this.geoForTargets(ws, targets);
     const a = aud as any;
     const text = String(a.localizacao ?? a.location ?? a.cities ?? '').trim();
     if (NATIONAL.test(text)) return { geo: { countries: ['BR'] }, label: 'Brasil inteiro (escolhido)' };
@@ -265,13 +297,8 @@ export class MetaOpsService {
     const missed: string[] = [];
     for (const part of parseCityParts(text)) {
       // Erro da Meta (sessão expirada, limite) sobe como 502 — não vira "cidade não achada".
-      const r = await this.graph<{ data?: { key: string; name: string; type: string; region?: string }[] }>(ws, '/search', {
-        params: { type: 'adgeolocation', q: part.city, location_types: JSON.stringify(['city']), country_code: 'BR' },
-      });
-      const hits = (r?.data ?? []).filter((d) => d.type === 'city');
       // A Meta devolve o estado em `region` ("São Paulo (state)"); com UF escrita, só vale a cidade daquele estado.
-      const withRegion = hits.filter((d) => d.region);
-      const hit = part.state && withRegion.length ? withRegion.find((d) => fold(d.region!).includes(fold(part.state!))) : hits[0];
+      const hit = this.pickCity(await this.searchCity(ws, part.city), part.state);
       if (!hit) missed.push(part.city);
       else if (!cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: 'kilometer', name: hit.name });
     }
@@ -389,7 +416,7 @@ export class MetaOpsService {
     const excludeAudiences = conf.excludeAudienceIds.filter(isDigits);
     // A cidade vem ANTES de criar qualquer coisa: se ela não existe, nada fica órfão na conta de anúncios.
     const aud = input.audience ?? {};
-    const geo = await this.geoFor(ws, aud);
+    const geo = await this.geoFor(ws, aud, input.geoTargets ?? []);
 
     if (plan.kind === 'sales' || plan.kind === 'remarketing') {
       const px = await this.firstPixel(ws, adAccountId);

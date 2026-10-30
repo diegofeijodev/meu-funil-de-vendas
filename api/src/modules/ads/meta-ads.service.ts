@@ -12,6 +12,7 @@ import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
 import { assertCanPublishUntil, assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
+import { readGeoTargets } from '../campaigns/geo-targets';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaOpsService } from './meta-ops.service';
 import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
@@ -147,6 +148,7 @@ export class MetaAdsService {
           primaryText: String(copy.meta_ad ?? copy.primary_text ?? c.offer_promise ?? c.name),
           headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
           audience: (c.audience ?? {}) as Record<string, unknown>,
+          geoTargets: readGeoTargets(c.geo_targets),
           creatives: creatives.map((x) => ({ id: x.id, title: x.title, url: x.preview_url, thumb: x.thumbnail_url, angle: x.angle ?? null })),
           config: adsConfig,
           privacyUrl,

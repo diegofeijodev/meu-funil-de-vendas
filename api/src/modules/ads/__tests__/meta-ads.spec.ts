@@ -361,6 +361,24 @@ describe('MetaAdsService.publish — Fatia 0 (data de fim, verba e cidade)', () 
     expect(await geoOf('Valença - Rio de Janeiro')).toEqual(['1002']);
   });
 
+  it('com geo_targets: chave da Meta vai direto (sem busca), raio null = só a cidade; sem chave resolve por nome+UF; não achou → GEO_UNRESOLVED', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign({ geo_targets: [{ type: 'city', name: 'Jundiaí', uf: 'SP', meta_key: '269969', radius_km: 40 }, { type: 'city', name: 'Itupeva', uf: 'SP', meta_key: '555', radius_km: null }] });
+    w.seedCreative(c.id);
+    await w.meta.publish(OWNER, WS_A, c.id);
+    expect(w.calls.filter((x) => x.path === '/search' && x.opts.params.type === 'adgeolocation')).toHaveLength(0);
+    expect(postsTo(w, '/adsets')[0]!.opts.params.targeting.geo_locations).toEqual({ cities: [{ key: '269969', radius: 40, distance_unit: 'kilometer' }, { key: '555' }] });
+    w.calls.length = 0;
+    const byName = w.seedCampaign({ audience: {}, geo_targets: [{ type: 'city', name: 'Jundiaí', uf: 'SP', meta_key: null, radius_km: 20 }] });
+    w.seedCreative(byName.id);
+    await w.meta.publish(OWNER, WS_A, byName.id);
+    expect(postsTo(w, '/adsets')[0]!.opts.params.targeting.geo_locations).toEqual({ cities: [{ key: '269969', radius: 20, distance_unit: 'kilometer' }] });
+    const lost = w.seedCampaign({ geo_targets: [{ type: 'city', name: 'Jundiaí', uf: 'SP', meta_key: '269969', radius_km: 20 }, { type: 'city', name: 'Cidade Inventada', uf: 'SP', meta_key: null, radius_km: 20 }] });
+    w.seedCreative(lost.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, lost.id))).toBe('400:A Meta não achou a cidade "Cidade Inventada". Escolha de novo na região da campanha.');
+  });
+
   it('destino que já tem UTM não ganha UTM repetida', async () => {
     const w = adsWorld();
     respondPublish(w);

@@ -256,6 +256,7 @@ model campaigns {
   formats                  String[]                   @default([])
   intake_text              String?
   offer_terms              Json?                      @db.JsonB
+  geo_targets              Json                       @default("[]") @db.JsonB
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
   updated_at               DateTime                   @default(now()) @updatedAt @db.Timestamptz(6)
   meta_campaign_id         String?

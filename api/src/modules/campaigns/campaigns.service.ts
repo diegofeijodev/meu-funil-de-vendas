@@ -8,6 +8,7 @@ import { CampaignGuardsService } from './campaign-guards.service';
 import { igCampaignScope, IG_NOT_PENDING } from '../instagram/ig-campaign-scope';
 import { CreateCampaignDto, CreateCopyDto, SetBudgetDto } from './dto/campaigns.dto';
 import { parseOfferTerms } from './offer-terms';
+import { geoText, parseGeoTargets } from './geo-targets';
 
 const notFound = (message = 'Campanha não encontrada.') => new NotFoundException({ code: 'NOT_FOUND', message });
 const MAX_JSON_CHARS = 50_000;
@@ -93,6 +94,7 @@ export class CampaignsService {
     if (!name) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe o nome da campanha.' });
     if (jsonLen(dto.audience) > MAX_JSON_CHARS) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Público grande demais.' });
     const offerTerms = parseOfferTerms(dto.offer_terms);
+    const geoTargets = parseGeoTargets(dto.geo_targets);
     const brand = await this.prisma.brands.findFirst({ where: { id: dto.brand_id, workspace_id: workspaceId }, select: { id: true } });
     if (!brand) throw notFound('Marca não encontrada.');
     const campaign = await this.prisma.campaigns.create({
@@ -118,6 +120,7 @@ export class CampaignsService {
         formats: dto.formats,
         intake_text: dto.intake_text?.trim() || null,
         offer_terms: offerTerms ? (offerTerms as unknown as Prisma.InputJsonObject) : Prisma.DbNull,
+        geo_targets: geoTargets as unknown as Prisma.InputJsonArray,
         status: 'draft',
       },
     });
@@ -184,6 +187,20 @@ export class CampaignsService {
     return updated;
   }
 
+  /** Região estruturada (cidades da Meta + raio). Grava também o texto legível em `audience.localizacao` — uma verdade só. */
+  async setGeoTargets(userId: string, workspaceId: string, campaignId: string, raw: unknown[]) {
+    const targets = parseGeoTargets(raw);
+    if (!targets.length) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Escolha pelo menos uma cidade.' });
+    const c = await this.beforePublish(userId, workspaceId, campaignId);
+    const audience = { ...((c.audience ?? {}) as Record<string, unknown>), localizacao: geoText(targets) };
+    const updated = await this.prisma.campaigns.update({
+      where: { id: campaignId },
+      data: { geo_targets: targets as unknown as Prisma.InputJsonArray, audience: audience as Prisma.InputJsonObject },
+    });
+    await this.activity.log(workspaceId, userId, 'campaign.geo_updated', 'campaign', { campaign_id: campaignId, to: targets });
+    return updated;
+  }
+
   /** Cidade do anúncio (`audience.localizacao`, lida pela publicação na Meta); o resto do público fica igual. */
   async setLocation(userId: string, workspaceId: string, campaignId: string, location: string) {
     const text = (location ?? '').trim();
@@ -191,7 +208,11 @@ export class CampaignsService {
     const c = await this.beforePublish(userId, workspaceId, campaignId);
     const before = String(((c.audience ?? {}) as Record<string, unknown>)['localizacao'] ?? '');
     const audience = { ...((c.audience ?? {}) as Record<string, unknown>), localizacao: text };
-    const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { audience: audience as Prisma.InputJsonObject } });
+    // Texto livre volta ao caminho da Fatia 0: a lista estruturada antiga deixaria de ser a verdade.
+    const updated = await this.prisma.campaigns.update({
+      where: { id: campaignId },
+      data: { audience: audience as Prisma.InputJsonObject, geo_targets: [] as unknown as Prisma.InputJsonArray },
+    });
     await this.activity.log(workspaceId, userId, 'campaign.location_updated', 'campaign', { campaign_id: campaignId, from: before, to: text });
     return updated;
   }

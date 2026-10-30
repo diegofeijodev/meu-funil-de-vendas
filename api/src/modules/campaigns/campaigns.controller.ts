@@ -6,7 +6,7 @@ import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CampaignsService } from './campaigns.service';
 import { CampaignIntakeService } from './campaign-intake.service';
-import { CreateCampaignDto, CreateCopyDto, IntakeDto, SetBudgetDto, SetLandingUrlDto, SetLocationDto } from './dto/campaigns.dto';
+import { CreateCampaignDto, CreateCopyDto, IntakeDto, SetBudgetDto, SetGeoTargetsDto, SetLandingUrlDto, SetLocationDto } from './dto/campaigns.dto';
 
 /** GET = read, o resto = write (viewer só lê). Rotas estáticas antes das `:id`. */
 @ApiTags('Campaigns')
@@ -64,6 +64,14 @@ export class CampaignsController {
     @Param('id', ParseUuidPipe) id: string, @Body() dto: SetBudgetDto,
   ) {
     return this.campaigns.setBudget(user.id, ws, id, dto);
+  }
+
+  @Patch(':id/geo-targets')
+  setGeoTargets(
+    @CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string,
+    @Param('id', ParseUuidPipe) id: string, @Body() dto: SetGeoTargetsDto,
+  ) {
+    return this.campaigns.setGeoTargets(user.id, ws, id, dto.geo_targets);
   }
 
   @Patch(':id/location')

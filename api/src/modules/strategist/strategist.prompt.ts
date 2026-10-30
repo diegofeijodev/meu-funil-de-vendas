@@ -1,5 +1,6 @@
 import { OBJECTIVES } from '../campaigns/campaign-labels';
 import { offerConstraint } from '../campaigns/offer-terms';
+import { geoLabel, readGeoTargets } from '../campaigns/geo-targets';
 import { FullStrategy, StrategyAudience } from './strategy-types';
 import { aiText, normalizeAngle, normalizeObjection } from './strategy-normalize';
 
@@ -94,6 +95,7 @@ export function buildStrategyPrompt(c: Any, brand: Any, personas: unknown[], pro
       inicio: c.start_date,
       fim: c.end_date,
       publico: c.audience,
+      regiao: readGeoTargets(c.geo_targets).length ? geoLabel(readGeoTargets(c.geo_targets)) : undefined,
       verba_total: c.budget_total,
       verba_diaria: c.budget_daily,
       meta_leads: c.goal_leads,
