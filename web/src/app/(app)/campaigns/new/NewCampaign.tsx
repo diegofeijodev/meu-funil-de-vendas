@@ -129,7 +129,8 @@ export function NewCampaign() {
       const campaign = await createCampaign(workspaceId, input);
 
       // Piloto liberado (vindo do "Conte o que você quer"): o servidor monta o plano e, depois da aprovação, faz o resto.
-      if (given && features?.campaign_pilot) {
+      // Também quando veio do intake e passou pelo "Ver/ajustar todos os detalhes" (o formulário guarda o texto do pedido).
+      if ((given || extras.intake_text) && features?.campaign_pilot) {
         try {
           await createPilot(workspaceId, campaign.id, pilotKey.current);
           toast.success("Campanha criada. O estrategista está montando o plano.");
@@ -387,7 +388,9 @@ export function NewCampaign() {
           ) : (
             <Button onClick={() => void finish()} disabled={!canNext() || busy}>
               <Sparkles className="mr-2 size-4" />
-              {busy ? "Gerando estratégia..." : "Gerar campanha com IA"}
+              {extras.intake_text && features?.campaign_pilot
+                ? busy ? "Criando e montando o plano…" : "Criar e montar o plano"
+                : busy ? "Gerando estratégia..." : "Gerar campanha com IA"}
             </Button>
           )}
         </div>

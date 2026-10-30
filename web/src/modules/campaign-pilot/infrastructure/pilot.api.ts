@@ -58,6 +58,7 @@ const summarySchema = z.object({
   current_step: z.string().nullable(),
   first_block_code: z.string().nullable(),
   counts: z.object({ done: z.number(), total: z.number() }),
+  plan_ready: z.boolean().optional(),
 });
 export const pilotSummarySchema = summarySchema;
 
@@ -74,6 +75,8 @@ export const pilotRunSchema = z
     estimated_credits: z.number().nullable(),
     max_credits: z.number().nullable(),
     spent_credits: z.number(),
+    remaining_credits: z.number().default(0),
+    next_run_at: z.string().nullish(),
     summary: summarySchema.nullable(),
     suggested_options: pilotOptionsSchema.nullable(),
   })

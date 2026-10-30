@@ -13,10 +13,17 @@ import { pilotListLine } from "@/lib/pilot-text";
 import { pilotSummarySchema } from "@/modules/campaign-pilot/infrastructure/pilot.api";
 
 /** Linha do estrategista no cartão (`pilot_summary` da API); sem ela (API antiga ou sem piloto) o cartão fica igual. */
-const pilotLine = (c: unknown) => {
+function PilotLine({ c }: { c: unknown }) {
   const r = pilotSummarySchema.nullish().safeParse((c as { pilot_summary?: unknown }).pilot_summary);
-  return r.success ? pilotListLine(r.data) : null;
-};
+  const line = r.success ? pilotListLine(r.data) : null;
+  if (!line) return null;
+  // "Precisa de você" em âmbar escuro e negrito (contraste ≥ 4,5:1); o resto em texto normal.
+  return (
+    <p className={line.tone === "needs" ? "text-sm font-semibold text-amber-800 dark:text-amber-300" : "text-sm text-foreground"}>
+      <span aria-hidden="true">{line.icon}</span> {line.text}
+    </p>
+  );
+}
 
 export function CampaignsList() {
   const { workspaceId, canEdit } = useWorkspace();
@@ -72,7 +79,7 @@ export function CampaignsList() {
                           {c.name}
                         </Link>
                         <p className="text-xs text-muted-foreground">{c.brands?.name}</p>
-                        {pilotLine(c) && <p className="text-xs font-medium text-primary">{pilotLine(c)}</p>}
+                        <PilotLine c={c} />
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{OBJECTIVES[c.objective] ?? c.objective}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">

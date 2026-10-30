@@ -54,11 +54,11 @@ export const GUIDES: Record<
   campaignPilot: {
     title: "Campanha com o estrategista",
     steps: [
-      "Em Nova campanha, conte o que você quer: o estrategista monta o plano sozinho.",
-      "Confira o pacote no topo da campanha e clique em Aprovar e começar. É uma vez só.",
+      "Em Nova campanha, conte o que você quer, responda o que o estrategista perguntar e confira a região: ele monta o plano sozinho.",
+      "Confira o plano no topo da campanha e toque em Aprovar e começar. É uma vez só.",
       "Ele faz os textos, programa o Instagram (você aprova cada post, se escolheu assim) e cria as artes e o vídeo, uma peça a cada 5 minutos.",
       "Se algo precisar de você, aparece em Precisa de você, com o botão para resolver.",
-      "Para anunciar: aprove as artes e use Publicar na Meta, como sempre.",
+      "Para anunciar: aprove as artes na aba Criativos, toque em Solicitar aprovação (o dono ou um admin aprova em Approvals) e depois em Publicar na Meta. O anúncio é montado desligado; para gastar, toque em Ativar na Meta.",
     ],
     references: [{ label: "Central de ajuda da Meta para anunciantes", url: "https://www.facebook.com/business/help" }],
   },

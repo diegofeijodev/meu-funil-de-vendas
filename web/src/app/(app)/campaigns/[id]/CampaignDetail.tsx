@@ -40,6 +40,7 @@ import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
 import { PilotPanel } from "@/components/pilot/pilot-panel";
 import { useFeatures } from "@/modules/features/infrastructure/features.api";
+import { usePilot } from "@/modules/campaign-pilot/infrastructure/pilot.api";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
@@ -65,6 +66,9 @@ export function CampaignDetail() {
   const { data: features } = useFeatures(workspaceId);
   // O piloto avisa quando peças ficam prontas: o detalhe recarrega (miniaturas, aba de criativos).
   const refreshDetail = useCallback(() => void qc.invalidateQueries({ queryKey: ["campaign", id] }), [qc, id]);
+  // Com o estrategista conduzindo, a estratégia não é regerada nem aprovada pela aba (o "Aprovar" do plano usa a versão da tela).
+  const { data: pilotRun } = usePilot(workspaceId, id, !!features?.campaign_pilot);
+  const pilotActive = !!pilotRun && ["planning", "running", "blocked"].includes(pilotRun.status);
   const runSync = useServerFn(syncAdsInsightsNow);
   const runRecos = useServerFn(generateAdsRecommendations);
   const metaStatus = useServerFn(metaAdsStatus);
@@ -577,7 +581,12 @@ export function CampaignDetail() {
           workspaceId={workspaceId}
           campaign={c}
           strategy={data.strategy?.content}
+          strategyVersion={data.strategy?.version ?? null}
           creatives={data.creatives}
+          onOpenTab={(t) => {
+            setTab(t);
+            setTimeout(() => document.getElementById("campaign-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+          }}
           canEdit={canEdit}
           canManage={canManage}
           onChanged={refreshDetail}
@@ -745,7 +754,10 @@ export function CampaignDetail() {
             actions={
               canEdit && (
                 <div className="flex flex-wrap gap-2">
-                  {data.strategy && !strategyApproved && (
+                  {pilotActive && (
+                    <p className="text-sm text-muted-foreground">O estrategista está conduzindo esta campanha. Para mudar o plano, use Ajustar no topo.</p>
+                  )}
+                  {!pilotActive && data.strategy && !strategyApproved && (
                     <Button size="sm" onClick={approveStrategy} disabled={busy === "approve-strategy"}>
                       Aprovar estratégia
                     </Button>
@@ -755,10 +767,12 @@ export function CampaignDetail() {
                       Criar plano no Instagram
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" onClick={regenStrategy} disabled={busy === "strategy"}>
-                    <Sparkles className="mr-1 size-3.5" />
-                    {busy === "strategy" ? "Gerando (até 1 min)..." : data.strategy ? "Regerar com IA" : "Gerar com IA"}
-                  </Button>
+                  {!pilotActive && (
+                    <Button size="sm" variant="outline" onClick={regenStrategy} disabled={busy === "strategy"}>
+                      <Sparkles className="mr-1 size-3.5" />
+                      {busy === "strategy" ? "Gerando (até 1 min)..." : data.strategy ? "Regerar com IA" : "Gerar com IA"}
+                    </Button>
+                  )}
                 </div>
               )
             }
