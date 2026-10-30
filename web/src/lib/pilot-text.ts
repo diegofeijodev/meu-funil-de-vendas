@@ -7,7 +7,7 @@ export type PilotStepLike = { status: string; attempts?: number; note?: string |
 export type PilotSummary = {
   status: string; current_step: string | null; first_block_code: string | null; counts: { done: number; total: number }; plan_ready?: boolean;
 };
-export type BlockerActionKind = "retry" | "proceed_partial" | "raise_cap" | "integrations";
+export type BlockerActionKind = "retry" | "proceed_partial" | "raise_cap" | "integrations" | "approvals" | "briefing" | "creatives";
 export type BlockerAction = { kind: BlockerActionKind; label: string };
 export type IconText = { icon: string; text: string };
 
@@ -68,10 +68,28 @@ export function raiseCapTo(spent: number, remaining: number): number {
 export function blockerView(
   code: string | null | undefined,
   message: string,
-  ctx: { canEdit: boolean; step: PilotStepName; spent: number; remaining: number; done: number; roundCost?: number },
+  ctx: { canEdit: boolean; canManage?: boolean; step: PilotStepName; spent: number; remaining: number; done: number; roundCost?: number },
 ): { message: string; actions: BlockerAction[] } {
   const actions = (a: BlockerAction[]) => (ctx.canEdit ? a : []);
   switch (code) {
+    case "WAITING_APPROVAL":
+      return ctx.canManage
+        ? { message: "O anúncio está esperando a sua aprovação.", actions: actions([{ kind: "approvals", label: "Abrir aprovação" }]) }
+        : { message: "O anúncio está esperando o dono ou um admin aprovar. Avise quem aprova.", actions: [] };
+    case "META_NOT_CONNECTED":
+      return { message, actions: actions([{ kind: "integrations", label: "Conectar a Meta" }, { kind: "retry", label: "Já conectei: conferir agora" }]) };
+    case "LANDING_MISSING":
+    case "BUDGET_MISSING":
+    case "GEO_UNRESOLVED":
+    case "NOT_APPROVED":
+    case "META_REFUSED":
+    case "PERIOD_ENDED":
+    case "PERIOD_TOO_SHORT":
+      return { message, actions: actions([{ kind: "briefing", label: "Corrigir na campanha" }, { kind: "retry", label: "Já corrigi: continuar" }]) };
+    case "NO_CREATIVE_PASSED":
+      return { message, actions: actions([{ kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" }]) };
+    case "WAITING_CREATIVE_REVIEW":
+      return { message, actions: actions([{ kind: "creatives", label: "Escolher artes" }, { kind: "retry", label: "Já escolhi: conferir agora" }]) };
     case "COST_CAP":
       return {
         message,
@@ -111,6 +129,13 @@ const RUNNING_LINE: Record<string, string> = {
 };
 const NEEDS_LINE: Record<string, string> = {
   COST_CAP: "aumentar o teto de créditos",
+  WAITING_APPROVAL: "aprovar o anúncio",
+  META_NOT_CONNECTED: "conectar a Meta",
+  LANDING_MISSING: "dizer o destino do anúncio",
+  BUDGET_MISSING: "dizer a verba por dia",
+  GEO_UNRESOLVED: "escolher a cidade de novo",
+  NO_CREATIVE_PASSED: "escolher as artes do anúncio",
+  WAITING_CREATIVE_REVIEW: "escolher as artes do anúncio",
   AI_NOT_CONFIGURED: "configurar a IA",
   AI_NO_CREDITS: "configurar a IA",
   NO_CREATIVE_MADE: "nenhuma arte ficou pronta",
@@ -126,6 +151,10 @@ export function pilotListLine(s: PilotSummary | null | undefined): (IconText & {
   }
   if (s.status === "blocked" || s.status === "failed") {
     return { icon: "!", text: `Precisa de você: ${NEEDS_LINE[s.first_block_code ?? ""] ?? "tentar de novo"}`, tone: "needs" };
+  }
+  // Etapa esperando a pessoa numa execução que segue (aprovar o anúncio, conectar a Meta): também é "Precisa de você".
+  if (s.status === "running" && s.first_block_code && NEEDS_LINE[s.first_block_code]) {
+    return { icon: "!", text: `Precisa de você: ${NEEDS_LINE[s.first_block_code]}`, tone: "needs" };
   }
   if (s.status === "done") return { icon: "✓", text: "Tudo pronto", tone: "done" };
   if (s.status === "cancelled") return { icon: "–", text: "Estrategista parado", tone: "idle" };

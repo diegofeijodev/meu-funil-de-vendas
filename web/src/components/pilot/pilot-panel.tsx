@@ -18,8 +18,8 @@ import {
 import { apiErrorCode, apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { PilotAdjust } from "./pilot-adjust";
 
-/** A montagem do anúncio na Meta pelo piloto chega na Fatia 4; até lá o anúncio continua pelo caminho de sempre. */
-const PILOT_META_READY = false;
+/** Fatia 4: o piloto monta o anúncio PAUSADO na Meta; ligar é na conferência ("Pronto para ligar"). */
+const PILOT_META_READY = true;
 const MAX_PIECES = 10;
 const RUN_STEPS: PilotStepName[] = PILOT_META_READY ? ["copies", "instagram", "creatives", "meta"] : ["copies", "instagram", "creatives"];
 const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
@@ -28,7 +28,10 @@ const VID = 12;
 
 type Props = {
   workspaceId: string;
-  campaign: { id: string; status: string; start_date?: string | null; end_date?: string | null };
+  campaign: {
+    id: string; status: string; start_date?: string | null; end_date?: string | null; budget_daily?: number | string | null; landing_url?: string | null;
+    audience?: Record<string, unknown> | null; meta_campaign_id?: string | null; meta_delivery_status?: string | null;
+  };
   strategy: unknown;
   strategyVersion: number | null;
   creatives: { id: string; title: string; preview_url?: string | null }[];
@@ -36,6 +39,8 @@ type Props = {
   canManage: boolean;
   onChanged: () => void;
   onOpenTab: (tab: string) => void;
+  /** Abre a conferência "Pronto para ligar" (a mesma do "Ativar na Meta" do cabeçalho). */
+  onGoLive: () => void;
 };
 type Act = (name: string, fn: () => Promise<PilotRun>, opts?: { ok?: string; focus?: string }) => Promise<void>;
 
@@ -199,7 +204,9 @@ function PlanningView({
   const approve = () => {
     if (!e?.can_approve) { document.getElementById("pilot-blockers")?.focus(); return; }
     const version = strategyVersion ?? run.strategy_version!;
-    void act("approve", () => approvePilot(workspaceId, campaign.id, run.id, { strategy_version: version, options }), { ok: "O estrategista começou.", focus: "pilot-progress" });
+    // Dono/admin aprova o anúncio junto (um toque); marketing começa e o pedido fica em Approvals.
+    const approveNow = canManage && options.meta.enabled;
+    void act("approve", () => approvePilot(workspaceId, campaign.id, run.id, { strategy_version: version, options, approve_now: approveNow }), { ok: "O estrategista começou.", focus: "pilot-progress" });
   };
   const adjust = (
     <Button variant="link" className="h-11 px-0 lg:h-auto" onClick={() => setAdjusting(true)} disabled={!canEdit}>Ajustar</Button>
@@ -243,6 +250,7 @@ function PlanningView({
             <p className="text-muted-foreground">O anúncio na Meta continua com você: depois das artes, toque em Solicitar aprovação e, aprovado, em Publicar na Meta. Nada é gasto lá sem o seu clique.</p>
           )}
         </div>
+        {PILOT_META_READY && options.meta.enabled && <AdBlock campaign={campaign} />}
         <div className="border-t pt-3">
           <h3 className="font-semibold">Custo de criação no Meu Funil</h3>
           {!canEdit ? (
@@ -286,9 +294,13 @@ function PlanningView({
                 ? "Calculando o custo…"
                 : !e.can_approve
                   ? `Falta ${e.blockers.length === 1 ? "1 coisa" : `${e.blockers.length} coisas`} para começar`
-                  : "Aprovar e começar"}
+                  : canManage || !options.meta.enabled ? "Aprovar e começar" : "Começar e pedir aprovação do anúncio"}
           </Button>
-          <p className="mt-1 text-sm text-muted-foreground">Nada é gasto na Meta sem o seu clique.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {!canManage && options.meta.enabled
+              ? "Textos, artes e Instagram começam agora. O anúncio espera o dono ou um admin aprovar em Approvals."
+              : "Nada é gasto na Meta até você ligar o anúncio."}
+          </p>
         </div>
       ) : (
         <p className="mt-4 text-sm text-muted-foreground">Só quem edita a campanha pode começar.</p>
@@ -311,7 +323,7 @@ function slotLabel(x: PilotSlot) {
 }
 
 function ProgressView({
-  run, workspaceId, campaign, creatives, canEdit, busy, act, updatedAt, restart, onOpenTab,
+  run, workspaceId, campaign, creatives, canEdit, canManage, busy, act, updatedAt, restart, onOpenTab, onGoLive,
 }: Props & { run: PilotRun; busy: string | null; act: Act; updatedAt: number; restart: () => React.ReactNode }) {
   const [cancelIg, setCancelIg] = useState(false);
   const stopped = run.status === "blocked" || run.status === "failed";
@@ -343,16 +355,21 @@ function ProgressView({
           <div className="mb-4 rounded-md border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
             <h3 className="font-semibold">Precisa de você ({needs.length})</h3>
             {needs.map(({ n, s }) => {
-              const isCurrent = stopped && (run.current_step ?? "strategy") === n;
-              const v = blockerView(s!.error_code, s!.error ?? "", { canEdit: canEdit && isCurrent, step: n, spent: run.spent_credits, remaining: run.remaining_credits, done, roundCost });
+              // Etapa corrente parada, ou esperando sozinha (aprovação, Meta): as ações valem; bloqueio antigo de outra etapa é só aviso.
+              const isCurrent = (run.current_step ?? "strategy") === n && (stopped || s!.status === "blocked");
+              const v = blockerView(s!.error_code, s!.error ?? "", { canEdit: canEdit && isCurrent, canManage, step: n, spent: run.spent_credits, remaining: run.remaining_credits, done, roundCost });
               return (
                 <div key={n} className="mt-2">
                   <p><span className="font-medium">{STEP_LABEL[n]}:</span> {v.message}</p>
                   {!canEdit && <p className="text-muted-foreground">Quem edita a campanha resolve isso.</p>}
                   <div className="mt-2 flex flex-wrap gap-2">
                     {v.actions.map((a) =>
-                      a.kind === "integrations" ? (
-                        <Button key={a.kind} asChild variant="outline" className="h-11 lg:h-9"><Link to="/integrations">{a.label}</Link></Button>
+                      a.kind === "integrations" || a.kind === "approvals" ? (
+                        <Button key={a.kind} asChild variant="outline" className="h-11 lg:h-9">
+                          <Link to={a.kind === "integrations" ? "/integrations" : "/approvals"}>{a.label}</Link>
+                        </Button>
+                      ) : a.kind === "briefing" || a.kind === "creatives" ? (
+                        <Button key={a.kind} variant="outline" className="h-11 lg:h-9" onClick={() => onOpenTab(a.kind === "briefing" ? "briefing" : "criativos")}>{a.label}</Button>
                       ) : (
                         <Button key={a.kind} className="h-11 lg:h-9" disabled={!!busy} onClick={() => void doAction(a.kind)}>{a.label}</Button>
                       ),
@@ -413,7 +430,23 @@ function ProgressView({
         })}
       </ol>
       {max > 0 && <p className="mt-3 text-sm text-muted-foreground">{creditsLine(run.spent_credits, max)}</p>}
-      {run.status === "done" && (
+      {run.status === "done" && PILOT_META_READY && campaign.meta_campaign_id && (
+        <div role="status" className="mt-3 text-sm">
+          {campaign.meta_delivery_status === "ACTIVE" ? (
+            <p className="font-medium"><span aria-hidden="true">●</span> No ar. Os resultados aparecem aqui a cada 3 horas.</p>
+          ) : (
+            <>
+              <p className="font-medium"><span aria-hidden="true">✓</span> Tudo pronto. O anúncio está montado na Meta e desligado.</p>
+              {canManage ? (
+                <Button className="mt-2 h-11 w-full lg:h-9 lg:w-auto" onClick={onGoLive}>Conferir e ligar o anúncio</Button>
+              ) : (
+                <p className="mt-1">Só o dono ou um admin liga o anúncio. Avise quem aprova.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {run.status === "done" && !(PILOT_META_READY && campaign.meta_campaign_id) && (
         <div role="status" className="mt-3 text-sm">
           <p className="font-medium">Tudo pronto: textos, Instagram e artes.</p>
           {!PILOT_META_READY && (
@@ -458,3 +491,26 @@ function ProgressView({
     </section>
   );
 }
+
+/** Bloco "Anúncio pago na Meta" do plano (doc de UI, B1): o que vai rodar, com a conta da verba. Falta de destino/verba já aparece aqui. */
+function AdBlock({ campaign }: { campaign: Props["campaign"] }) {
+  const aud = (campaign.audience ?? {}) as { persona?: string; localizacao?: string };
+  const daily = Number(campaign.budget_daily ?? 0);
+  const days = campaign.start_date && campaign.end_date ? Math.round((Date.parse(campaign.end_date) - Date.parse(campaign.start_date)) / 86_400_000) + 1 : null;
+  const money = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (
+    <div className="border-t pt-3">
+      <h3 className="font-semibold">Anúncio pago na Meta</h3>
+      <p className="mt-1">Fica montado e <strong>desligado</strong>: não gasta nada até você ligar.</p>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        {aud.persona && (<><dt className="text-muted-foreground">Para quem</dt><dd>{aud.persona}</dd></>)}
+        <dt className="text-muted-foreground">Onde</dt><dd>{aud.localizacao || "Falta a região da campanha."}</dd>
+        {days != null && (<><dt className="text-muted-foreground">Quando</dt><dd>{ddmm(campaign.start_date)} a {ddmm(campaign.end_date)} ({days} dias)</dd></>)}
+        <dt className="text-muted-foreground">Quanto</dt>
+        <dd>{daily > 0 ? (days != null ? `${money(daily)}/dia × ${days} dias = até cerca de ${money(daily * days)}, cobrados pela Meta` : `${money(daily)} por dia`) : "Falta dizer quanto gastar por dia."}</dd>
+        <dt className="text-muted-foreground">Quem clicar</dt><dd className="break-all">{campaign.landing_url || "Falta dizer para onde vai quem clicar."}</dd>
+      </dl>
+    </div>
+  );
+}
+

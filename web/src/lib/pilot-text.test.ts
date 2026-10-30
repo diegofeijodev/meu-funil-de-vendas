@@ -78,3 +78,29 @@ describe("pilotListLine (cartão da lista)", () => {
     expect(pilotListLine({ ...base, status: "cancelled", current_step: "copies" })).toEqual({ icon: "–", text: "Estrategista parado", tone: "idle" });
   });
 });
+
+describe("bloqueios da Meta (Fatia 4)", () => {
+  const ctx = { canEdit: true, canManage: true, step: "meta" as const, spent: 0, remaining: 0, done: 0 };
+  it("esperando aprovação: dono abre a aprovação; marketing é avisado", () => {
+    expect(blockerView("WAITING_APPROVAL", "x", ctx)).toEqual({ message: "O anúncio está esperando a sua aprovação.", actions: [{ kind: "approvals", label: "Abrir aprovação" }] });
+    expect(blockerView("WAITING_APPROVAL", "x", { ...ctx, canManage: false })).toEqual({ message: "O anúncio está esperando o dono ou um admin aprovar. Avise quem aprova.", actions: [] });
+  });
+  it("Meta desconectada: conectar + já conectei", () => {
+    expect(blockerView("META_NOT_CONNECTED", "Conecte a Meta…", ctx).actions).toEqual([
+      { kind: "integrations", label: "Conectar a Meta" }, { kind: "retry", label: "Já conectei: conferir agora" },
+    ]);
+  });
+  it("destino, verba, cidade: corrigir no briefing e continuar", () => {
+    for (const code of ["LANDING_MISSING", "BUDGET_MISSING", "GEO_UNRESOLVED"]) {
+      expect(blockerView(code, "frase", ctx)).toEqual({ message: "frase", actions: [{ kind: "briefing", label: "Corrigir na campanha" }, { kind: "retry", label: "Já corrigi: continuar" }] });
+    }
+  });
+  it("nenhuma arte passou / G2: escolher à mão e continuar", () => {
+    expect(blockerView("NO_CREATIVE_PASSED", "Nenhuma arte passou…", ctx).actions).toEqual([
+      { kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" },
+    ]);
+    expect(blockerView("WAITING_CREATIVE_REVIEW", "As artes estão prontas…", ctx).actions).toEqual([
+      { kind: "creatives", label: "Escolher artes" }, { kind: "retry", label: "Já escolhi: conferir agora" },
+    ]);
+  });
+});

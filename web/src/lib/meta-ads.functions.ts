@@ -36,8 +36,12 @@ export const metaAdsInsights = serverFnPost<{ workspaceId: string; since: string
 export const metaAdsPublish = serverFnPost<{ workspaceId: string; campaignId: string }, { steps: PublishStep[] } & Record<string, unknown>>(
   "/v1/meta/meta-ads-publish",
 );
-export const metaAdsSetStatus = serverFnPost<{ workspaceId: string; campaignId: string; status: "ACTIVE" | "PAUSED" }, { ok: true }>(
+export const metaAdsSetStatus = serverFnPost<{ workspaceId: string; campaignId: string; status: "ACTIVE" | "PAUSED"; confirmOffer?: boolean }, { ok: true }>(
   "/v1/meta/meta-ads-set-status",
+);
+/** Conferência: "Não usar esta arte" — pausa na Meta os anúncios dessa arte; o "Ligar" não os reativa. */
+export const metaAdsExcludeCreative = serverFnPost<{ workspaceId: string; campaignId: string; creativeId: string }, { ok: true; paused: number }>(
+  "/v1/meta/meta-ads-exclude-creative",
 );
 
 export const metaSaveApp = serverFnPost<{ workspaceId: string; appId: string; appSecret: string }, { ok: true }>("/v1/meta/meta-save-app");

@@ -107,7 +107,9 @@ export async function estimatePilot(ws: string, campaignId: string, options: Pil
   return estimateSchema.parse(data);
 }
 
-export async function approvePilot(ws: string, campaignId: string, runId: string, body: { strategy_version: number; options: PilotOptions }): Promise<PilotRun> {
+export async function approvePilot(
+  ws: string, campaignId: string, runId: string, body: { strategy_version: number; options: PilotOptions; approve_now?: boolean },
+): Promise<PilotRun> {
   const { data } = await api.post(`${base(ws, campaignId)}/${runId}/approve`, body);
   return pilotRunSchema.parse(data);
 }

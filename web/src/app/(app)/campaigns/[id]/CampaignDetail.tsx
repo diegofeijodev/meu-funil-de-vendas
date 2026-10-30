@@ -39,6 +39,7 @@ import { campaignPeriod } from "@/lib/campaign-period";
 import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
 import { PilotPanel } from "@/components/pilot/pilot-panel";
+import { GoLiveDialog } from "@/components/pilot/go-live-dialog";
 import { useFeatures } from "@/modules/features/infrastructure/features.api";
 import { usePilot } from "@/modules/campaign-pilot/infrastructure/pilot.api";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
@@ -47,7 +48,7 @@ import type { FullStrategy } from "@/lib/ai/strategy-types";
 import { approveCampaignStrategy, createIgPlanFromStrategy, generateCampaignStrategy } from "@/lib/ai/strategist.functions";
 import type { PublishStep } from "@/lib/providers/meta-provider";
 import { useServerFn } from "@/lib/server-fn";
-import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus } from "@/lib/meta-ads.functions";
+import { metaAdsStatus, metaAdsPublish, metaAdsSetStatus, metaAdsExcludeCreative } from "@/lib/meta-ads.functions";
 import { generateAdsRecommendations, syncAdsInsightsNow } from "@/lib/meta/ads-ops.functions";
 import { CampaignAdsSettings } from "@/components/campaign-ads-settings";
 import { CampaignChannels } from "@/components/campaign-channels";
@@ -74,6 +75,8 @@ export function CampaignDetail() {
   const metaStatus = useServerFn(metaAdsStatus);
   const metaPublish = useServerFn(metaAdsPublish);
   const metaSetStatus = useServerFn(metaAdsSetStatus);
+  const metaExclude = useServerFn(metaAdsExcludeCreative);
+  const [goLiveOpen, setGoLiveOpen] = useState(false);
   const runStrategy = useServerFn(generateCampaignStrategy);
   const runApproveStrategy = useServerFn(approveCampaignStrategy);
   const runIgPlan = useServerFn(createIgPlanFromStrategy);
@@ -382,15 +385,20 @@ export function CampaignDetail() {
     }
   };
 
-  const setDelivery = async (status: "ACTIVE" | "PAUSED") => {
+  const setDelivery = async (status: "ACTIVE" | "PAUSED", confirmOffer?: boolean) => {
     if (!workspaceId) return;
     setBusy("delivery");
     try {
-      await metaSetStatus({ data: { workspaceId, campaignId: id, status } });
+      await metaSetStatus({ data: { workspaceId, campaignId: id, status, ...(confirmOffer ? { confirmOffer: true } : {}) } });
       qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success(status === "ACTIVE" ? "Campanha ativada na Meta." : "Campanha pausada na Meta.");
+      setGoLiveOpen(false);
+      toast.success(
+        status === "ACTIVE"
+          ? "Anúncio ligado. A Meta pode levar algumas horas para começar a mostrar. Os resultados aparecem aqui a cada 3 horas."
+          : "Campanha pausada na Meta.",
+      );
     } catch (e) {
-      toast.error(apiErrorMessage(e, "Não foi possível alterar na Meta."));
+      toast.error(status === "ACTIVE" ? `A Meta não aceitou ligar o anúncio: ${apiErrorMessage(e, "motivo não informado")}. Nada foi gasto.` : apiErrorMessage(e, "Não foi possível alterar na Meta."));
     } finally {
       setBusy(null);
     }
@@ -483,7 +491,7 @@ export function CampaignDetail() {
               </Button>
             )}
             {canEdit && canManage && metaId && metaDelivery !== "ACTIVE" && period !== "ended" && (c.status === "approved" || c.status === "active") && (
-              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery("ACTIVE")}>
+              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setGoLiveOpen(true)}>
                 Ativar na Meta
               </Button>
             )}
@@ -583,6 +591,7 @@ export function CampaignDetail() {
           strategy={data.strategy?.content}
           strategyVersion={data.strategy?.version ?? null}
           creatives={data.creatives}
+          onGoLive={() => setGoLiveOpen(true)}
           onOpenTab={(t) => {
             setTab(t);
             setTimeout(() => document.getElementById("campaign-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -592,6 +601,24 @@ export function CampaignDetail() {
           onChanged={refreshDetail}
         />
       )}
+      <GoLiveDialog
+        open={goLiveOpen}
+        onOpenChange={setGoLiveOpen}
+        campaign={c}
+        creatives={data.creatives.filter((x) => x.status === "approved")}
+        canManage={canManage}
+        busy={busy === "delivery"}
+        onConfirm={(confirmOffer) => void setDelivery("ACTIVE", confirmOffer)}
+        onExclude={async (creativeId) => {
+          try {
+            await metaExclude({ data: { workspaceId: workspaceId!, campaignId: id, creativeId } });
+            toast.success("Arte tirada: o anúncio dela fica pausado.");
+            refreshDetail();
+          } catch (e) {
+            toast.error(apiErrorMessage(e, "Não conseguimos tirar a arte agora."));
+          }
+        }}
+      />
       <div className="mb-6">
         {(() => {
           const g = features?.campaign_pilot ? GUIDES.campaignPilot : GUIDES.campaign;
