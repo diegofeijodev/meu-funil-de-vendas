@@ -1,5 +1,5 @@
 /** As 7 server fns de `ads/channels.functions.ts` (Google Ads / TikTok Ads): `POST /v1/ads/<nome-em-kebab>`. */
-import { ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
@@ -16,7 +16,7 @@ import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
-import { assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
+import { assertPeriodOpen, campaignEndDay, MSG_OFFER_UNCONFIRMED, offerNeedsConfirmation, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
 import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 
@@ -238,6 +238,8 @@ export class AdsChannelsService {
     const c = await this.prisma.campaigns.findFirst({ where: { id: base.id, workspace_id: base.workspace_id } });
     if (!c) throw notFound('Campanha não encontrada.');
     if (active && c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
+    // Mesma regra do "Ligar" da Meta: oferta do intake só liga depois do "Confirmo que cumpre" (feito na conferência da campanha).
+    if (active && offerNeedsConfirmation(c)) throw new BadRequestException({ code: 'OFFER_UNCONFIRMED', message: MSG_OFFER_UNCONFIRMED });
     const ws = c.workspace_id;
     const google = channel === 'google';
     const ext = google ? c.google_campaign_id : c.tiktok_campaign_id;

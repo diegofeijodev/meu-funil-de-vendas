@@ -10,7 +10,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
-import { assertCanPublishUntil, assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
+import { assertCanPublishUntil, assertPeriodOpen, campaignEndDay, MSG_OFFER_UNCONFIRMED, offerNeedsConfirmation, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
 import { readGeoTargets } from '../campaigns/geo-targets';
 import { MetaOAuthService } from './meta-oauth.service';
@@ -171,6 +171,7 @@ export class MetaAdsService {
           objective: c.objective,
           dailyBudget,
           endDate: endDay,
+          startDate: campaignEndDay(c.start_date),
           landingUrl: landing,
           primaryText: String(copy.meta_ad ?? copy.primary_text ?? c.offer_promise ?? c.name),
           headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
@@ -228,18 +229,22 @@ export class MetaAdsService {
     await this.guards.assertCanSetCampaignStatus(userId, ws, c.status, newStatus);
 
     // Oferta definida no intake (`offer_terms`): ligar exige o "Confirmo que o Freela cumpre" de quem liga (dono/admin), gravado aqui (§0.7 #1).
-    const terms = c.offer_terms && typeof c.offer_terms === 'object' ? (c.offer_terms as Record<string, unknown>) : null;
-    if (status === 'ACTIVE' && terms && !terms['confirmed_at']) {
-      if (!opts.confirmOffer) throw new BadRequestException({ code: 'OFFER_UNCONFIRMED', message: 'Confirme que o Freela cumpre a oferta antes de ligar.' });
+    if (status === 'ACTIVE' && offerNeedsConfirmation(c)) {
+      if (!opts.confirmOffer) throw new BadRequestException({ code: 'OFFER_UNCONFIRMED', message: MSG_OFFER_UNCONFIRMED });
       await this.prisma.campaigns.updateMany({
         where: { id: c.id, workspace_id: ws },
-        data: { offer_terms: { ...terms, confirmed_by: userId, confirmed_at: new Date().toISOString() } as Prisma.InputJsonObject },
+        data: { offer_terms: { ...(c.offer_terms as Record<string, unknown>), confirmed_by: userId, confirmed_at: new Date().toISOString() } as Prisma.InputJsonObject },
       });
+      // Ato com peso (oferta anunciada obriga): fica na trilha de auditoria, não só no JSON.
+      await this.activity.log(ws, userId, 'campaign.offer_confirmed', 'campaign', { campaign_id: c.id, offer: c.offer_promise });
     }
     // "Não usar esta arte" (conferência): o anúncio dessa arte continua pausado ao ligar.
     const excludedAds = await this.excludedAdIds(ws, c.id, c.meta_ad_map);
     const paused = await this.prisma.ai_recommendations.findMany({ where: { workspace_id: ws, campaign_id: c.id, action: 'pause_ad', status: 'applied' }, select: { payload: true } });
     const pausedByOptimizer = new Set(paused.map((r) => (r.payload as { adId?: string } | null)?.adId).filter(Boolean) as string[]);
+    if (status === 'ACTIVE' && (c.meta_ad_ids ?? []).length && !(c.meta_ad_ids ?? []).some((id) => !pausedByOptimizer.has(id) && !excludedAds.has(id))) {
+      throw new BadRequestException({ code: 'NO_AD_LEFT', message: 'Nenhum anúncio sobraria ligado. Deixe pelo menos uma arte no anúncio.' });
+    }
     const adsetIds = (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[];
     await guarded(() =>
       this.ops.setDeliveryStatus(
@@ -284,8 +289,14 @@ export class MetaAdsService {
     if (!c) throw notFound('Campanha não encontrada.');
     const cr = await this.prisma.creatives.findFirst({ where: { id: creativeId, campaign_id: c.id, workspace_id: ws }, select: { id: true, extras: true } });
     if (!cr) throw notFound('Criativo não encontrado.');
-    const map = (c.meta_ad_map && typeof c.meta_ad_map === 'object' ? c.meta_ad_map : {}) as Record<string, { creativeId?: string }>;
-    const adIds = Object.entries(map).filter(([, v]) => v?.creativeId === cr.id).map(([adId]) => adId);
+    const map = (c.meta_ad_map && typeof c.meta_ad_map === 'object' ? c.meta_ad_map : {}) as Record<string, { creativeId?: string; creativeIds?: string[]; carousel?: boolean }>;
+    const mine = Object.entries(map).filter(([, v]) => v?.creativeId === cr.id || v?.creativeIds?.includes(cr.id));
+    // Não finge: carrossel junta várias artes num anúncio só, e campanha antiga não tem o mapa arte → anúncio.
+    if (mine.some(([, v]) => v?.carousel && (v.creativeIds?.length ?? 0) > 1)) {
+      throw new ConflictException({ code: 'CREATIVE_IN_CAROUSEL', message: 'Esta arte está num carrossel com outras: pause o carrossel pelo Gerenciador de Anúncios da Meta.' });
+    }
+    const adIds = mine.map(([adId]) => adId);
+    if (!adIds.length) throw new ConflictException({ code: 'CREATIVE_NOT_IN_AD', message: 'Esta arte não tem anúncio próprio na Meta.' });
     for (const adId of adIds) await guarded(() => this.ops.setAdStatus(ws, adId, 'PAUSED'));
     const extras = { ...((cr.extras as Record<string, unknown> | null) ?? {}), excluded_from_ads_at: new Date().toISOString() };
     await this.prisma.creatives.updateMany({ where: { id: cr.id, workspace_id: ws }, data: { extras: extras as Prisma.InputJsonObject } });

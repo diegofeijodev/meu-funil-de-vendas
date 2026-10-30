@@ -273,7 +273,9 @@ export class CampaignsService {
           requested_by: userId,
         },
       });
-      await tx.campaigns.update({ where: { id: campaignId }, data: { status: 'pending_approval' } });
+      // Condicional: dois pedidos ao mesmo tempo → só um passa de rascunho (o outro desfaz a transação e recebe a frase de sempre).
+      const moved = await tx.campaigns.updateMany({ where: { id: campaignId, workspace_id: workspaceId, status: 'draft' }, data: { status: 'pending_approval' } });
+      if (moved.count !== 1) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Só campanhas em rascunho podem solicitar aprovação.' });
       return req;
     });
     await this.activity.log(workspaceId, userId, 'campaign.approval_requested', 'campaign', { campaign_id: campaignId });

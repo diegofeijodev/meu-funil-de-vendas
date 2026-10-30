@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException } from '@nestjs/common';
 import { MetaStep } from '../steps/meta.step';
 import type { PilotOptions } from '../pilot.types';
 import { min, OWNER, pilotDb, seedRun, WS_A } from './world';
@@ -22,7 +22,7 @@ async function world(opts: { meta?: Partial<PilotOptions['meta']>; campaign?: Re
     publishPaused: jest.fn(async () => ({ campaignId: 'm-1' })),
     missingCredentials: jest.fn(async () => opts.missing ?? []),
   };
-  const step = new MetaStep(db.prisma, publisher as any);
+  const step = new MetaStep(db.prisma, publisher as any, db.activity);
   const mine = (slot: number, extra: Record<string, unknown> = {}) =>
     db.t.creatives.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, status: 'ready', type: 'static_image', extras: { pilot: { run_id: run.id, slot, score: 40 } }, ...extra } });
   return { db, run: db.t.campaign_pilot_runs.rows[0] as any, campaign, publisher, step, mine };
@@ -91,3 +91,44 @@ describe('etapa meta (G1: o piloto escolhe as artes que passaram; tudo PAUSADO)'
     expect(w.db.t.creatives.rows[0]!.status).toBe('ready');
   });
 });
+
+describe('etapa meta × revisão do arquiteto (F4)', () => {
+  it('recusa da Meta (502) para a etapa com a frase dela e NÃO tenta de novo sozinha (sem campanhas órfãs)', async () => {
+    const w = await world();
+    await w.mine(1);
+    w.publisher.publishPaused.mockRejectedValueOnce(new HttpException({ code: 'META_ERROR', message: 'O número do WhatsApp vinculado à sua Página é uma conta pessoal.' }, 502));
+    expect(await w.step.run(w.run)).toEqual({ kind: 'blocked', code: 'META_REFUSED', stopRun: true, message: 'A Meta recusou o anúncio: O número do WhatsApp vinculado à sua Página é uma conta pessoal.' });
+    expect(w.publisher.publishPaused).toHaveBeenCalledTimes(1);
+  });
+
+  it('publicação manual ao mesmo tempo (409 da trava): espera 5 min, sem contar falha', async () => {
+    const w = await world();
+    await w.mine(1);
+    w.publisher.publishPaused.mockRejectedValueOnce(new ConflictException({ code: 'CONFLICT', message: 'Esta campanha já está sendo enviada para a Meta. Aguarde.' }));
+    expect(await w.step.run(w.run)).toEqual({ kind: 'wait', minutes: 5 });
+  });
+
+  it('publicação parcial aparece na nota da etapa', async () => {
+    const w = await world();
+    await w.mine(1);
+    w.publisher.publishPaused.mockResolvedValueOnce({ campaignId: 'm-1', steps: [{ status: 'done' }, { status: 'failed', label: 'Anúncio "Vídeo"', detail: 'sem miniatura' }] } as any);
+    expect(await w.step.run(w.run)).toEqual({ kind: 'done', ref: 'm-1', note: 'Montado na Meta e desligado. 1 parte não foi criada: Anúncio "Vídeo": sem miniatura.' });
+  });
+
+  it('G1 grava quem aprovou (a IA) e a nota em cada arte, com atividade', async () => {
+    const w = await world();
+    const ok = await w.mine(1);
+    await w.step.run(w.run);
+    expect(w.db.t.creatives.rows.find((c: any) => c.id === ok.id)!.extras.pilot).toMatchObject({ run_id: w.run.id, slot: 1, score: 40, auto_approved_at: expect.any(String) });
+    expect(w.db.logs).toContainEqual([WS_A, null, 'creative.auto_approved', 'campaign', { campaign_id: w.campaign.id, via: 'pilot', run_id: w.run.id, creative_ids: [ok.id], min_score: 28 }]);
+  });
+
+  it('G2: aprovado de antes do piloto não basta; precisa ser uma arte deste piloto', async () => {
+    const w = await world({ meta: { review_creatives: true } });
+    await w.db.t.creatives.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, status: 'approved', type: 'static_image', extras: {} } });
+    expect(await w.step.run(w.run)).toMatchObject({ kind: 'wait', code: 'WAITING_CREATIVE_REVIEW' });
+    await w.mine(1, { status: 'approved' });
+    expect((await w.step.run(w.run)).kind).toBe('done');
+  });
+});
+

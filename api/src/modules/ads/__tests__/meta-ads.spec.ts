@@ -557,3 +557,64 @@ describe('Piloto e conferência (Fatia 4)', () => {
     expect(activated).not.toContain('/9301');
   });
 });
+
+describe('Fatia 4 × revisão do arquiteto', () => {
+  const published = (w: ReturnType<typeof adsWorld>, over: Record<string, any> = {}) =>
+    w.seedCampaign({ status: 'approved', meta_campaign_id: '9001', meta_adset_id: '9101', meta_adset_ids: ['9101'], meta_ad_ids: ['9301', '9302'], meta_delivery_status: 'PAUSED', ...over });
+
+  it('nenhum conjunto criado: apaga a campanha que acabou de nascer na Meta (sem órfã)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    w.respond((path, opts) => (path.endsWith('/adsets') && opts.method === 'POST' ? new MetaError('O número do WhatsApp vinculado à sua Página é uma conta pessoal.', 100) : undefined));
+    const c = w.seedCampaign();
+    w.seedCreative(c.id);
+    expect((await status(w.meta.publish(OWNER, WS_A, c.id))).startsWith('502:')).toBe(true);
+    expect(w.calls.filter((x) => x.path === '/9001' && x.opts.method === 'DELETE')).toHaveLength(1);
+  });
+
+  it('campanha que começa depois de hoje: o conjunto nasce com start_time (a Meta não gasta antes do início)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const start = addDays(todaySp(), 5);
+    const c = w.seedCampaign({ objective: 'traffic', start_date: new Date(`${start}T00:00:00Z`), end_date: new Date(`${addDays(start, 10)}T00:00:00Z`) });
+    w.seedCreative(c.id);
+    await w.meta.publish(OWNER, WS_A, c.id);
+    const adset = w.calls.find((x) => x.path.endsWith('/adsets') && x.opts.method === 'POST')!;
+    expect(adset.opts.params.start_time).toBe(`${start}T00:00:00-0300`);
+  });
+
+  it('condições de oferta sem promessa não travam o Ligar; confirmar grava atividade', async () => {
+    const w = adsWorld();
+    const c = published(w, { offer_promise: '   ', offer_terms: { what: 'ambas', valid_until: '2026-11-28', new_only: true } });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe('ok');
+    const d = published(w, { offer_promise: 'Grátis', offer_terms: { what: 'ambas', valid_until: '2026-11-28', new_only: true } });
+    await w.meta.setStatus(OWNER, WS_A, d.id, 'ACTIVE', { confirmOffer: true });
+    expect(w.activity.log).toHaveBeenCalledWith(WS_A, OWNER, 'campaign.offer_confirmed', 'campaign', { campaign_id: d.id, offer: 'Grátis' });
+  });
+
+  it('Ligar sem nenhum anúncio sobrando (todas as artes tiradas) = NO_AD_LEFT', async () => {
+    const w = adsWorld();
+    const cr = uid();
+    const c = published(w, { meta_ad_ids: ['9301'], meta_ad_map: { '9301': { creativeId: cr, adsetId: '9101' } } });
+    w.t['creatives']!.rows.push({ id: cr, workspace_id: WS_A, campaign_id: c.id, status: 'approved', extras: { excluded_from_ads_at: '2026-10-30T12:00:00Z' } });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe('400:Nenhum anúncio sobraria ligado. Deixe pelo menos uma arte no anúncio.');
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('"Não usar esta arte" recusa arte sem anúncio próprio (carrossel ou campanha antiga) em vez de fingir', async () => {
+    const w = adsWorld();
+    const a = uid();
+    const b = uid();
+    const c = published(w, { meta_ad_map: { '9301': { creativeId: a, adsetId: '9101', creativeIds: [a, b], carousel: true } } });
+    w.t['creatives']!.rows.push({ id: a, workspace_id: WS_A, campaign_id: c.id, status: 'approved', extras: {} });
+    w.t['creatives']!.rows.push({ id: b, workspace_id: WS_A, campaign_id: c.id, status: 'approved', extras: {} });
+    expect(await status(w.meta.excludeCreative(OWNER, WS_A, c.id, b))).toBe('409:Esta arte está num carrossel com outras: pause o carrossel pelo Gerenciador de Anúncios da Meta.');
+    expect(await status(w.meta.excludeCreative(OWNER, WS_A, c.id, a))).toBe('409:Esta arte está num carrossel com outras: pause o carrossel pelo Gerenciador de Anúncios da Meta.');
+    const old = published(w, { meta_ad_map: {} });
+    w.t['creatives']!.rows.push({ id: uid(), workspace_id: WS_A, campaign_id: old.id, status: 'approved', extras: {} });
+    const oldCr = w.t['creatives']!.rows[w.t['creatives']!.rows.length - 1]!.id;
+    expect(await status(w.meta.excludeCreative(OWNER, WS_A, old.id, oldCr))).toBe('409:Esta arte não tem anúncio próprio na Meta.');
+    expect(w.calls).toHaveLength(0);
+  });
+});
+

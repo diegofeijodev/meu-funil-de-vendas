@@ -16,6 +16,8 @@ type G = Record<string, any>;
 
 /** Fim do último dia no fuso de Brasília (sem horário de verão desde 2019), no formato que a Marketing API aceita. */
 export const metaEndTime = (endDate: string) => `${endDate}T23:59:59-0300`;
+/** Início no futuro: o conjunto só começa a veicular (e a gastar) no 1º dia da campanha, 00:00 de Brasília. */
+export const metaStartTime = (startDate: string | null | undefined) => (startDate && startDate > todaySp() ? `${startDate}T00:00:00-0300` : null);
 
 const br = (ymd: string) => ymd.split('-').reverse().join('/');
 const geoError = (message: string) => new BadRequestException({ code: 'GEO_UNRESOLVED', message });
@@ -84,6 +86,7 @@ export type PublishInput = {
   dailyBudget: number;
   /** Último dia da campanha ("YYYY-MM-DD"): cada conjunto para sozinho às 23:59 de Brasília. Sem ele, roda até alguém pausar. */
   endDate?: string | null;
+  startDate?: string | null;
   landingUrl: string;
   privacyUrl?: string | null;
   primaryText: string;
@@ -102,7 +105,7 @@ export type PublishResult = {
   adsetId: string;
   adsetIds: string[];
   adIds: string[];
-  adMap: Record<string, { creativeId: string | null; adsetId: string; angle: string | null }>;
+  adMap: Record<string, { creativeId: string | null; creativeIds?: string[]; carousel?: boolean; adsetId: string; angle: string | null }>;
   leadFormId: string | null;
   steps: Step[];
 };
@@ -502,6 +505,7 @@ export class MetaOpsService {
     }
     const perSet = Math.max(100, Math.round((input.dailyBudget * 100) / sets.length));
     const endTime = input.endDate ? metaEndTime(input.endDate) : null;
+    const startTime = metaStartTime(input.startDate);
     if (input.endDate) steps.push({ key: 'end', label: `A Meta para sozinha em ${br(input.endDate)} às 23:59 (fim da campanha)`, status: 'done', detail: endTime! });
     if (sets.length > 1) steps.push({ key: 'split', label: `${sets.length} conjuntos com verba igual (R$ ${(perSet / 100).toFixed(2)}/dia cada)`, status: 'done', detail: conf.structure });
 
@@ -538,6 +542,7 @@ export class MetaOpsService {
             campaign_id: campaign.id,
             daily_budget: perSet,
             ...(endTime ? { end_time: endTime } : {}),
+            ...(startTime ? { start_time: startTime } : {}),
             billing_event: 'IMPRESSIONS',
             optimization_goal: optimization,
             bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
@@ -582,7 +587,8 @@ export class MetaOpsService {
             params: { name: `${set.name} · Carrossel`, adset_id: adset.id, creative: { creative_id: creative.id }, status: 'PAUSED' },
           });
           adIds.push(ad.id);
-          adMap[ad.id] = { creativeId: images[0]!.id, adsetId: adset.id, angle: set.angle?.nome ?? images[0]!.angle ?? null };
+          // Carrossel: um anúncio com várias artes — "Não usar esta arte" não consegue tirar uma só (a conferência avisa).
+          adMap[ad.id] = { creativeId: images[0]!.id, creativeIds: images.map((i) => i.id), carousel: true, adsetId: adset.id, angle: set.angle?.nome ?? images[0]!.angle ?? null };
           steps.push({ key: `ad-${ad.id}`, label: `Anúncio carrossel (${cards.length} cards) criado (pausado)`, status: 'done', detail: ad.id });
         } catch (e) {
           steps.push({ key: `carousel-${adset.id}`, label: 'Anúncio carrossel', status: 'failed', detail: msg(e) });
@@ -615,6 +621,10 @@ export class MetaOpsService {
           steps.push({ key: `ad-${cr.id}-${adset.id}`, label: `Anúncio "${cr.title}"`, status: 'failed', detail: msg(e) });
         }
       }
+    }
+    if (!adsetIds.length) {
+      // Nada foi montado: apaga a campanha que acabou de nascer, para uma nova tentativa não deixar campanhas órfãs na conta.
+      await this.graph(ws, `/${campaign.id}`, { method: 'DELETE' }).catch(() => undefined);
     }
     if (!adsetIds.length) throw new MetaError(steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.detail}`).join(' · ') || 'Nenhum conjunto foi criado.');
     return { campaignId: campaign.id, adsetId: adsetIds[0]!, adsetIds, adIds, adMap, leadFormId, steps };

@@ -956,8 +956,8 @@ meta: { enabled, review_creatives }, max_credits 1–500 }`. `max_angles × imag
 
 Execução de outra empresa ou de outra campanha → `404 "Não encontrado."`; viewer em rota `write` → `403`.
 
-**Conferência e "Ligar" (Fatia 4).** `POST /v1/meta-ads-set-status` aceita `confirmOffer?: boolean`: campanha com `offer_terms` (oferta definida no intake)
+**Conferência e "Ligar" (Fatia 4).** `POST /v1/meta/meta-ads-set-status` aceita `confirmOffer?: boolean`: campanha com promessa (`offer_promise`) e `offer_terms` (oferta definida no intake)
 sem `confirmed_at` → `400 OFFER_UNCONFIRMED "Confirme que o Freela cumpre a oferta antes de ligar."`; com `confirmOffer: true` (owner|admin) grava
-`offer_terms.confirmed_by/confirmed_at` e liga. `POST /v1/meta-ads-exclude-creative { workspaceId, campaignId, creativeId }` (write): pausa na Meta os
+`offer_terms.confirmed_by/confirmed_at` e liga. `POST /v1/meta/meta-ads-exclude-creative { workspaceId, campaignId, creativeId }` (write; arte em carrossel com outras → `409 CREATIVE_IN_CAROUSEL`; sem anúncio próprio → `409 CREATIVE_NOT_IN_AD`): pausa na Meta os
 anúncios dessa arte (`meta_ad_map`) e grava `creatives.extras.excluded_from_ads_at`; o "Ligar" não reativa esses anúncios. Atividade `campaign.creative_excluded`.
-
+A mesma guarda vale para ligar Google/TikTok (`channels set-status`). Ligar sem nenhum anúncio sobrando (todos tirados/pausados pelo otimizador) → `400 NO_AD_LEFT`. Confirmar grava a atividade `campaign.offer_confirmed`. Conjunto de campanha que começa no futuro nasce com `start_time` (00:00 de Brasília do 1º dia). Sem nenhum conjunto criado, a campanha recém-criada na Meta é apagada (sem órfã); na etapa meta do piloto, recusa da Meta (502) para com `META_REFUSED` e não tenta de novo sozinha; 409 da trava espera 5 min.

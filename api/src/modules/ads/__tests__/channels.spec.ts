@@ -224,6 +224,16 @@ describe('canais — campanha externa (create/link/setStatus)', () => {
     expect((w.tiktok.createCampaign as jest.Mock).mock.calls[0]![1].videos).toEqual([{ title: 'Vídeo', url: 'https://cdn.test/v.mp4?x=1', cover: 'https://cdn.test/cover.jpg' }]);
   });
 
+  it('setStatus: oferta do intake sem confirmação não liga Google/TikTok (mesma regra do Ligar da Meta)', async () => {
+    const w = adsWorld();
+    const c = w.seedCampaign({ google_campaign_id: '4242', offer_promise: 'Grátis', offer_terms: { what: 'ambas', valid_until: '2026-11-28', new_only: true } });
+    w.google.setStatus = jest.fn(async () => undefined);
+    expect(await status(w.channels.setStatus(OWNER, c.id, 'google', true))).toBe('400:Confirme que o Freela cumpre a oferta antes de ligar.');
+    expect(w.google.setStatus).not.toHaveBeenCalled();
+    c.offer_terms = { ...c.offer_terms, confirmed_at: '2026-10-30T12:00:00Z' };
+    expect(await status(w.channels.setStatus(OWNER, c.id, 'google', true))).toBe('ok');
+  });
+
   it('setStatus: ativar só owner|admin; pausar editores; espelha a coluna de status', async () => {
     const w = adsWorld();
     const c = w.seedCampaign({ google_campaign_id: '4242', tiktok_campaign_id: '700' });

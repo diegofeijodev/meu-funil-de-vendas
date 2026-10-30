@@ -43,3 +43,15 @@ export function assertPeriodOpen(endDay: string | null): void {
     message: `O período desta campanha terminou em ${shown}. Crie uma campanha nova para anunciar de novo.`,
   });
 }
+
+/**
+ * A campanha tem oferta definida no intake (promessa + condições) e ninguém confirmou que a empresa a cumpre: ligar fica bloqueado até o
+ * "Confirmo que cumpre" da conferência (§0.7 #1). Campanhas antigas (promessa livre, sem condições) e condições sem promessa não travam.
+ */
+export function offerNeedsConfirmation(c: { offer_promise?: string | null; offer_terms?: unknown }): boolean {
+  const terms = c.offer_terms && typeof c.offer_terms === 'object' ? (c.offer_terms as Record<string, unknown>) : null;
+  return !!c.offer_promise?.trim() && !!terms && !terms['confirmed_at'];
+}
+
+export const MSG_OFFER_UNCONFIRMED = 'Confirme que o Freela cumpre a oferta antes de ligar.';
+

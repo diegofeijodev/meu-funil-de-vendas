@@ -147,13 +147,7 @@ export class PilotService {
     if (o.meta.enabled && body.approve_now) await this.access.require(userId, ws, 'manage');
     const { estimate, blockers } = await this.estimateFor(c, o);
     if (blockers.length) throw new BadRequestException({ code: blockers[0]!.code, message: blockers[0]!.message });
-    // Com o anúncio no plano, a campanha precisa estar aprovada para a etapa meta montar o anúncio (pausado). O pedido leva o resumo do plano.
-    let approvalRequestId: string | null = run.approval_request_id;
-    if (o.meta.enabled && c.status === 'draft') {
-      const req = await this.campaigns.requestApproval(userId, ws, c.id, this.packageSummary(c, o));
-      approvalRequestId = req.id;
-      if (body.approve_now) await this.approvals.decide(userId, req.id, 'approved');
-    }
+
     const steps: Steps = { ...stepsOf(run) };
     for (const s of RUN_STEPS) steps[s] = { status: 'pending', attempts: 0 };
     const upd = await this.prisma.campaign_pilot_runs.updateMany({
@@ -161,12 +155,22 @@ export class PilotService {
       data: {
         status: 'running', current_step: RUN_STEPS[0], options: o as unknown as Prisma.InputJsonObject, steps: steps as unknown as Prisma.InputJsonObject,
         strategy_version: body.strategy_version, max_credits: o.max_credits, estimated_credits: estimate.total, approved_by: userId, approved_at: now, next_run_at: now,
-        approval_request_id: approvalRequestId,
+
       },
     });
-    // Clique duplo ou "Parar" no meio: a execução saiu de `planning` — nada mais é aprovado.
+    // Clique duplo ou "Parar" no meio: a execução saiu de `planning` — nada mais é aprovado nem pedido.
     if (!upd.count) throw conflict('O pacote já foi aprovado ou o estrategista foi parado.');
     await this.strategist.approveVersion(ws, c.id, body.strategy_version, userId);
+    // Com o anúncio no plano, a campanha precisa estar aprovada para a etapa meta montar o anúncio (pausado). Só depois de a execução ser
+    // reservada (acima): dois cliques não criam dois pedidos. Pedido já pendente da campanha é reaproveitado.
+    if (o.meta.enabled && (c.status === 'draft' || c.status === 'pending_approval')) {
+      const pending = c.status === 'pending_approval'
+        ? await this.prisma.approval_requests.findFirst({ where: { workspace_id: ws, campaign_id: c.id, entity_type: 'campaign', status: 'pending' }, select: { id: true } })
+        : null;
+      const reqId = pending?.id ?? (await this.campaigns.requestApproval(userId, ws, c.id, this.packageSummary(c, o))).id;
+      await this.prisma.campaign_pilot_runs.updateMany({ where: { id: run.id, workspace_id: ws }, data: { approval_request_id: reqId } });
+      if (body.approve_now) await this.approvals.decide(userId, reqId, 'approved');
+    }
     await this.activity.log(ws, userId, 'campaign.pilot_started', 'campaign', { campaign_id: c.id, via: 'pilot', run_id: run.id });
     this.runner.kick(run.id);
     return this.view((await this.runOf(ws, c.id, run.id)));

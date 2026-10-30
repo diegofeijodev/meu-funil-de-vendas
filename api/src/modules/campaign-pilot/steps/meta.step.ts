@@ -1,6 +1,7 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { ActivityService } from '../../activity/activity.service';
 import { DEFAULT_ADS_CONFIG } from '../../ads/ads-config';
 import { MetaPilotPublisher } from '../../ads/meta-pilot-publisher.service';
 import type { PilotStep, StepResult } from '../pilot-runner.service';
@@ -11,7 +12,8 @@ const MIN_ART_SCORE = 28;
 const VIDEO_TYPES = new Set(['video', 'ugc', 'reels', 'story']);
 
 type Cr = { id: string; status: string; type: string | null; extras: unknown };
-const pilotOf = (c: Cr) => (c.extras as { pilot?: { run_id?: string; score?: number | null }; excluded_from_ads_at?: string } | null) ?? {};
+type Extras = { pilot?: { run_id?: string; slot?: number; score?: number | null; auto_approved_at?: string }; excluded_from_ads_at?: string };
+const pilotOf = (c: Cr) => (c.extras as Extras | null) ?? {};
 
 /**
  * Anúncio na Meta, sempre PAUSADO (Fatia 4). Espera a campanha aprovada (o "Aprovar e começar" do dono decide na hora; o de marketing fica
@@ -23,6 +25,7 @@ export class MetaStep implements PilotStep {
   constructor(
     private readonly prisma: PrismaService,
     private readonly publisher: MetaPilotPublisher,
+    private readonly activity: ActivityService,
   ) {}
 
   async run(run: PilotRunRow): Promise<StepResult> {
@@ -67,19 +70,42 @@ export class MetaStep implements PilotStep {
         return VIDEO_TYPES.has(x.type ?? '') || (p.score ?? 0) >= MIN_ART_SCORE;
       });
       if (pass.length) {
-        await this.prisma.creatives.updateMany({ where: { id: { in: pass.map((x) => x.id) }, workspace_id: ws }, data: { status: 'approved' } });
+        // Aprovado pela revisão automática (não por uma pessoa): fica marcado em cada arte e na trilha de auditoria.
+        const at = new Date().toISOString();
+        for (const x of pass) {
+          const ex = pilotOf(x);
+          await this.prisma.creatives.updateMany({
+            where: { id: x.id, workspace_id: ws, status: 'ready' },
+            data: { status: 'approved', extras: { ...ex, pilot: { ...ex.pilot, auto_approved_at: at } } as Prisma.InputJsonObject },
+          });
+        }
+        await this.activity.log(ws, null, 'creative.auto_approved', 'campaign', {
+          campaign_id: c.id, via: 'pilot', run_id: run.id, creative_ids: pass.map((x) => x.id), min_score: MIN_ART_SCORE,
+        });
       } else if (!approved.length) {
         return { kind: 'blocked', code: 'NO_CREATIVE_PASSED', message: `Nenhuma arte passou na revisão automática (nota mínima ${MIN_ART_SCORE} de 50).`, stopRun: true };
       }
-    } else if (!approved.length) {
+    } else if (!approved.some((x) => pilotOf(x).pilot?.run_id === run.id)) {
+      // G2: a pessoa escolhe entre as artes DESTE piloto (aprovado antigo não conta, senão as artes novas nunca entrariam).
       return { kind: 'wait', minutes: 5, code: 'WAITING_CREATIVE_REVIEW', message: 'As artes estão prontas. Escolha quais vão para o anúncio (aprove na aba Criativos).' };
     }
 
     try {
       const r = await this.publisher.publishPaused(ws, c.id, { runId: run.id });
-      return { kind: 'done', ref: r.campaignId, note: 'Montado na Meta e desligado.' };
+      const failed = (r.steps ?? []).filter((x) => x.status === 'failed');
+      const note = failed.length
+        ? `Montado na Meta e desligado. ${failed.length === 1 ? '1 parte não foi criada' : `${failed.length} partes não foram criadas`}: ${failed.map((x) => `${x.label}: ${x.detail}`).join(' · ')}.`
+        : 'Montado na Meta e desligado.';
+      return { kind: 'done', ref: r.campaignId, note };
     } catch (e) {
-      // Recusa com motivo (cidade, verba, período, destino): precisa da pessoa. Falha da Meta (5xx/429) ou trava: o runner tenta de novo.
+      // Publicação manual ao mesmo tempo (trava): confere de novo em 5 min, sem contar falha.
+      if (e instanceof HttpException && e.getStatus() === 409) return { kind: 'wait', minutes: 5 };
+      // Recusa da Meta (502): escrita em terceiro que pode ter ido pela metade não se repete sozinha — para e mostra a frase dela.
+      if (e instanceof HttpException && e.getStatus() >= 500) {
+        const m = (e.getResponse() as { message?: string }).message ?? e.message;
+        return { kind: 'blocked', code: 'META_REFUSED', message: `A Meta recusou o anúncio: ${m}`, stopRun: true };
+      }
+      // Recusa com motivo (cidade, verba, período, destino): precisa da pessoa.
       if (e instanceof HttpException && e.getStatus() === 400) {
         const body = e.getResponse() as { code?: string; message?: string };
         return { kind: 'blocked', code: body.code && body.code !== 'BAD_REQUEST' ? body.code : 'META_REFUSED', message: body.message ?? 'A Meta recusou o anúncio.', stopRun: true };
