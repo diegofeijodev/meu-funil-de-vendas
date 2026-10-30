@@ -17,7 +17,7 @@ import { PilotRunRow, RUN_STEPS, StepName, StepState, Steps, stepsOf } from './p
 export type StepResult = (
   | { kind: 'done'; ref?: string | null; note?: string | null }
   | { kind: 'again' }
-  | { kind: 'wait'; minutes: number }
+  | { kind: 'wait'; minutes: number; code?: string; message?: string }
   | { kind: 'skipped'; note: string }
   | { kind: 'blocked'; code: string; message: string; stopRun: boolean }
 ) & { state?: Partial<StepState> };
@@ -127,8 +127,9 @@ export class PilotRunnerService {
       return this.onError(e, st, now, save);
     }
     if (res.state) Object.assign(st, res.state);
-    st.error = res.kind === 'blocked' ? res.message : null;
-    st.error_code = res.kind === 'blocked' ? res.code : null;
+    // `wait` com motivo (esperando aprovação, Meta desconectada): a etapa mostra o motivo, mas a execução segue sendo conferida sozinha.
+    st.error = res.kind === 'blocked' ? res.message : res.kind === 'wait' ? (res.message ?? null) : null;
+    st.error_code = res.kind === 'blocked' ? res.code : res.kind === 'wait' ? (res.code ?? null) : null;
 
     // Ação que deu certo zera as falhas: tentativas contam falhas SEGUIDAS, não as da etapa inteira.
     if (res.kind === 'again' || res.kind === 'wait') st.attempts = 0;
@@ -137,7 +138,7 @@ export class PilotRunnerService {
       return save({ next_run_at: now });
     }
     if (res.kind === 'wait') {
-      st.status = 'waiting';
+      st.status = res.code ? 'blocked' : 'waiting';
       return save({ next_run_at: new Date(now.getTime() + res.minutes * 60_000) });
     }
     if (res.kind === 'blocked' && res.stopRun) {

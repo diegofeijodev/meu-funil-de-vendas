@@ -175,6 +175,13 @@ export class PilotService {
   async resume(userId: string, ws: string, campaignId: string, runId: string, body: { action: 'retry' | 'proceed_partial' | 'raise_cap'; max_credits?: number }, now = new Date()) {
     const c = await this.enter(userId, ws, campaignId, 'write');
     const run = await this.runOf(ws, c.id, runId);
+    // "Já conectei: conferir agora": etapa esperando sozinha (Meta, aprovação) numa execução que segue — antecipa a próxima conferência.
+    if (run.status === 'running' && body.action === 'retry' && stepsOf(run)[(run.current_step ?? 'copies') as StepName]?.status === 'blocked') {
+      const upd = await this.prisma.campaign_pilot_runs.updateMany({ where: { id: run.id, workspace_id: ws, status: 'running' }, data: { next_run_at: now } });
+      if (!upd.count) throw conflict();
+      this.runner.kick(run.id);
+      return this.view(await this.runOf(ws, c.id, run.id));
+    }
     if (run.status !== 'blocked' && run.status !== 'failed') throw conflict();
     const name = (run.current_step ?? 'strategy') as StepName;
     const steps: Steps = structuredClone(stepsOf(run));

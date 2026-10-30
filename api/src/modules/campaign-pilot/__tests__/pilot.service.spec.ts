@@ -95,6 +95,15 @@ describe('PilotService', () => {
     expect(e.can_approve).toBe(false);
   });
 
+  it('"Já conectei: conferir agora": etapa esperando sozinha numa execução que segue antecipa a conferência', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS, approve_now: true }, T0);
+    Object.assign(rowOf(w.db, r.id), { status: 'running', current_step: 'meta', next_run_at: min(30), steps: { ...rowOf(w.db, r.id).steps, meta: { status: 'blocked', attempts: 0, error_code: 'META_NOT_CONNECTED' } } });
+    const v = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'retry' }, min(2));
+    expect([v.status, rowOf(w.db, r.id).next_run_at]).toEqual(['running', min(2)]);
+  });
+
   it('retry com COST_CAP = 409 (só seguir com as prontas ou aumentar o teto)', async () => {
     const w = await setup();
     const r = await planned(w);

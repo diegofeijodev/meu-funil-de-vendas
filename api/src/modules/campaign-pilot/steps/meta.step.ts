@@ -1,13 +1,90 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../../common/database/prisma.service';
+import { DEFAULT_ADS_CONFIG } from '../../ads/ads-config';
+import { MetaPilotPublisher } from '../../ads/meta-pilot-publisher.service';
 import type { PilotStep, StepResult } from '../pilot-runner.service';
 import { optionsOf, type PilotRunRow } from '../pilot.types';
 
-/** F3: o anúncio ainda não é montado pelo piloto (vem na F4, sempre pausado). A etapa só registra o motivo. */
+/** Nota mínima do crítico para uma arte do piloto ir ao anúncio sem a pessoa escolher (G1, dono 30/10). */
+const MIN_ART_SCORE = 28;
+const VIDEO_TYPES = new Set(['video', 'ugc', 'reels', 'story']);
+
+type Cr = { id: string; status: string; type: string | null; extras: unknown };
+const pilotOf = (c: Cr) => (c.extras as { pilot?: { run_id?: string; score?: number | null }; excluded_from_ads_at?: string } | null) ?? {};
+
+/**
+ * Anúncio na Meta, sempre PAUSADO (Fatia 4). Espera a campanha aprovada (o "Aprovar e começar" do dono decide na hora; o de marketing fica
+ * em Approvals), a Meta conectada, destino e verba; com G1 aprova as artes do piloto com nota ≥ 28/50 (o vídeo pronto entra: o caminho de
+ * criativos de campanha não dá nota a vídeo) e monta. Ligar continua só no "Ligar" da conferência (manage) — esta etapa nem tem como.
+ */
 @Injectable()
 export class MetaStep implements PilotStep {
-  async run(run: Pick<PilotRunRow, 'options'>): Promise<StepResult> {
-    return optionsOf(run).meta?.enabled
-      ? { kind: 'skipped', note: 'A montagem do anúncio na Meta entra na próxima etapa do piloto.' }
-      : { kind: 'skipped', note: 'Anúncio na Meta desligado no pacote.' };
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly publisher: MetaPilotPublisher,
+  ) {}
+
+  async run(run: PilotRunRow): Promise<StepResult> {
+    const o = optionsOf(run);
+    if (!o.meta?.enabled) return { kind: 'skipped', note: 'Anúncio na Meta desligado no plano.' };
+    const ws = run.workspace_id;
+    const c = await this.prisma.campaigns.findFirst({ where: { id: run.campaign_id, workspace_id: ws } });
+    if (!c) return { kind: 'skipped', note: 'Campanha não encontrada.' };
+    if (c.meta_campaign_id) return { kind: 'skipped', note: 'Já enviada à Meta.' };
+
+    if (c.status === 'pending_approval') {
+      return { kind: 'wait', minutes: 5, code: 'WAITING_APPROVAL', message: 'O anúncio está esperando o dono ou um admin aprovar em Approvals.' };
+    }
+    if (c.status !== 'approved' && c.status !== 'active') {
+      const req = run.approval_request_id
+        ? await this.prisma.approval_requests.findFirst({ where: { id: run.approval_request_id, workspace_id: ws }, select: { status: true } })
+        : null;
+      if (req?.status === 'rejected') return { kind: 'skipped', note: 'Recusado em Approvals.' };
+      return { kind: 'blocked', code: 'NOT_APPROVED', message: 'A campanha não está aprovada. Peça a aprovação no topo da campanha.', stopRun: true };
+    }
+    if ((await this.publisher.missingCredentials(ws)).length) {
+      return { kind: 'wait', minutes: 30, code: 'META_NOT_CONNECTED', message: 'Conecte a Meta para montar o anúncio. Conferimos de novo sozinhos a cada 30 minutos.' };
+    }
+    if (!c.landing_url) return { kind: 'blocked', code: 'LANDING_MISSING', message: 'Falta dizer para onde vai quem clicar no anúncio.', stopRun: true };
+    if (!(Number(c.budget_daily) > 0)) return { kind: 'blocked', code: 'BUDGET_MISSING', message: 'Falta dizer quanto gastar por dia no anúncio.', stopRun: true };
+
+    // Padrão do piloto só quando a pessoa não configurou "Anúncios e regras": um conjunto por jeito de falar, públicos da estratégia.
+    const cfg = c.ads_config && typeof c.ads_config === 'object' ? (c.ads_config as Record<string, unknown>) : {};
+    if (!Object.keys(cfg).length) {
+      await this.prisma.campaigns.updateMany({
+        where: { id: c.id, workspace_id: ws },
+        data: { ads_config: { ...DEFAULT_ADS_CONFIG, structure: 'per_angle', useStrategyAudiences: true } as unknown as Prisma.InputJsonObject },
+      });
+    }
+
+    const crs: Cr[] = await this.prisma.creatives.findMany({ where: { campaign_id: c.id, workspace_id: ws }, select: { id: true, status: true, type: true, extras: true } });
+    const approved = crs.filter((x) => x.status === 'approved' && !pilotOf(x).excluded_from_ads_at);
+    if (!o.meta.review_creatives) {
+      const pass = crs.filter((x) => {
+        const p = pilotOf(x).pilot;
+        if (p?.run_id !== run.id || x.status !== 'ready') return false;
+        return VIDEO_TYPES.has(x.type ?? '') || (p.score ?? 0) >= MIN_ART_SCORE;
+      });
+      if (pass.length) {
+        await this.prisma.creatives.updateMany({ where: { id: { in: pass.map((x) => x.id) }, workspace_id: ws }, data: { status: 'approved' } });
+      } else if (!approved.length) {
+        return { kind: 'blocked', code: 'NO_CREATIVE_PASSED', message: `Nenhuma arte passou na revisão automática (nota mínima ${MIN_ART_SCORE} de 50).`, stopRun: true };
+      }
+    } else if (!approved.length) {
+      return { kind: 'wait', minutes: 5, code: 'WAITING_CREATIVE_REVIEW', message: 'As artes estão prontas. Escolha quais vão para o anúncio (aprove na aba Criativos).' };
+    }
+
+    try {
+      const r = await this.publisher.publishPaused(ws, c.id, { runId: run.id });
+      return { kind: 'done', ref: r.campaignId, note: 'Montado na Meta e desligado.' };
+    } catch (e) {
+      // Recusa com motivo (cidade, verba, período, destino): precisa da pessoa. Falha da Meta (5xx/429) ou trava: o runner tenta de novo.
+      if (e instanceof HttpException && e.getStatus() === 400) {
+        const body = e.getResponse() as { code?: string; message?: string };
+        return { kind: 'blocked', code: body.code && body.code !== 'BAD_REQUEST' ? body.code : 'META_REFUSED', message: body.message ?? 'A Meta recusou o anúncio.', stopRun: true };
+      }
+      throw e;
+    }
   }
 }

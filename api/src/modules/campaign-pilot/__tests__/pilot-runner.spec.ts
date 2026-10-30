@@ -166,6 +166,14 @@ describe('PilotRunnerService', () => {
     expect(rowOf(db, run.id).next_run_at).toEqual(min(5));
   });
 
+  it('espera com motivo (Meta desconectada): etapa mostra o motivo, a execução segue sendo conferida', async () => {
+    const { db, runner } = setup({ copies: step(async () => ({ kind: 'wait', minutes: 30, code: 'META_NOT_CONNECTED', message: 'Conecte a Meta.' })) });
+    const { run } = await seedRun(db, running());
+    await runner.runOnce(run.id, T0);
+    const r = rowOf(db, run.id);
+    expect([r.status, r.next_run_at, r.steps.copies.status, r.steps.copies.error_code, r.steps.copies.error]).toEqual(['running', min(30), 'blocked', 'META_NOT_CONNECTED', 'Conecte a Meta.']);
+  });
+
   it('tick: no máximo PER_TICK execuções e uma por empresa', async () => {
     const { db, runner } = setup({}, 2);
     await seedRun(db, running());

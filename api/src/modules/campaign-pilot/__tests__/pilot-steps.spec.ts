@@ -1,7 +1,6 @@
 import { UserError } from '../../media/user-error';
 import { CopiesStep } from '../steps/copies.step';
 import { InstagramStep } from '../steps/instagram.step';
-import { MetaStep } from '../steps/meta.step';
 import type { PilotOptions } from '../pilot.types';
 import { min, OWNER, pilotDb, seedRun, T0, WS_A } from './world';
 
@@ -105,13 +104,5 @@ describe('etapa instagram', () => {
     const existing = await w.db.t.ig_auto_runs.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, created_at: T0 } });
     expect(await w.instagram.run(w.run, T0)).toMatchObject({ kind: 'done', ref: existing.id });
     expect(w.autoCalendar.createAutoRun).not.toHaveBeenCalled();
-  });
-});
-
-describe('etapa meta (F3: ainda não monta o anúncio)', () => {
-  it('sempre skipped, com a frase certa', async () => {
-    const step = new MetaStep();
-    expect(await step.run({ options: OPTIONS } as any)).toEqual({ kind: 'skipped', note: 'A montagem do anúncio na Meta entra na próxima etapa do piloto.' });
-    expect(await step.run({ options: { ...OPTIONS, meta: { enabled: false, review_creatives: false } } } as any)).toEqual({ kind: 'skipped', note: 'Anúncio na Meta desligado no pacote.' });
   });
 });
