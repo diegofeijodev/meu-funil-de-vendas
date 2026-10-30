@@ -36,6 +36,7 @@ import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/lab
 import { brl, fullDate, num } from "@/lib/format";
 import { parseMoneyInput } from "@/lib/money-input";
 import { RegionPicker, splitCityUf } from "@/components/region-picker";
+import { StyleRefsPanel } from "@/components/style-refs-panel";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
@@ -988,6 +989,11 @@ export function CampaignDetail() {
         </TabsContent>
 
         <TabsContent value="briefing">
+          {workspaceId && c.brand_id && (
+            <Section title="Estilo das artes (opcional)">
+              <StyleRefsPanel workspaceId={workspaceId} brandId={c.brand_id} campaignId={id} canEdit={canEdit} started={c.status !== "draft"} />
+            </Section>
+          )}
           <Section title="Briefing original">
             <dl className="grid gap-4 text-sm md:grid-cols-2">
               <Item label="Produto / oferta" value={`${c.offer_product ?? "-"}${c.offer_price ? ` · ${brl(c.offer_price)}` : ""}`} />
