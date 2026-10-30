@@ -1,4 +1,5 @@
 import { OBJECTIVES } from '../campaigns/campaign-labels';
+import { offerConstraint } from '../campaigns/offer-terms';
 import { FullStrategy, StrategyAudience } from './strategy-types';
 import { aiText, normalizeAngle, normalizeObjection } from './strategy-normalize';
 
@@ -102,9 +103,13 @@ export function buildStrategyPrompt(c: Any, brand: Any, personas: unknown[], pro
       cac_maximo: c.max_cac,
       formatos: c.formats,
     })}`,
+    c.intake_text ? `PEDIDO ORIGINAL DO DONO: ${JSON.stringify(String(c.intake_text))}` : '',
+    offerConstraint(c.offer_promise, c.offer_terms) ?? '',
     `APRENDIZADOS DA MARCA: ${JSON.stringify(learnings)}`,
     `RESULTADOS ANTERIORES: ${JSON.stringify(history)}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);

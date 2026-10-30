@@ -1,3 +1,5 @@
+import { offerConstraint } from '../campaigns/offer-terms';
+
 const FIELDS = [
   'headline', 'texto_curto', 'texto_longo', 'cta', 'meta_ad', 'instagram_feed',
   'reels', 'stories', 'script_ugc', 'script_institucional',
@@ -38,8 +40,10 @@ export function buildCopyPrompt(brand: unknown, brief: unknown, seed: number, st
     `Versão ${seed + 1}: traga ângulos diferentes das versões anteriores.`,
     `MARCA: ${JSON.stringify(brand)}`,
     `CAMPANHA: ${JSON.stringify(brief)}`,
+    offerConstraint((brief as Record<string, any> | null)?.offer_promise, (brief as Record<string, any> | null)?.offer_terms) ?? '',
     strategy ? `ESTRATÉGIA: ${JSON.stringify(strategy)}` : '',
   ]
     .filter(Boolean)
     .join('\n');
 }
+

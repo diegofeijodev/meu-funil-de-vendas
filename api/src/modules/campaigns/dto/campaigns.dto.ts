@@ -26,6 +26,10 @@ export class CreateCampaignDto {
   @IsOptional() @Type(() => Number) @IsNumber(num) margin_percent?: number | null;
   @IsOptional() @Type(() => Number) @IsNumber(num) max_cac?: number | null;
   @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(50, { each: true }) formats!: string[];
+  /** Palavras do dono no "Conte o que você quer" (Fatia 1). */
+  @IsOptional() @IsString() @MaxLength(4000) intake_text?: string | null;
+  /** Condições da oferta `{ what, valid_until, new_only }`; a forma é conferida no serviço (frase pronta). */
+  @IsOptional() @IsObject() offer_terms?: Record<string, unknown> | null;
 }
 
 /** INSERT em `copies` (`content` jsonb = `CopyContent`; status/versão são do servidor). */
