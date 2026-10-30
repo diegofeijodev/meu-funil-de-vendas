@@ -5,6 +5,8 @@ import type { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
 import { ActivityService } from '../activity/activity.service';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { CampaignsService } from '../campaigns/campaigns.service';
 import { CAMPAIGN_FINISHED } from '../campaigns/campaign-labels';
 import { pilotSummary } from '../campaigns/pilot-summary';
 import { AutoCalendarService } from '../instagram/auto-calendar.service';
@@ -36,6 +38,8 @@ export class PilotService {
     private readonly runner: PilotRunnerService,
     private readonly autoCalendar: AutoCalendarService,
     private readonly activity: ActivityService,
+    private readonly campaigns: CampaignsService,
+    private readonly approvals: ApprovalsService,
     @Inject(ENV) env: Pick<Env, 'CAMPAIGN_PILOT_MAX_CREATIVES'>,
   ) {
     this.maxCreatives = env.CAMPAIGN_PILOT_MAX_CREATIVES;
@@ -125,7 +129,9 @@ export class PilotService {
     return { estimate: estimatePilot(options, igSlots ? { slots: igSlots } : null), blockers, can_approve: blockers.length === 0 };
   }
 
-  async approve(userId: string, ws: string, campaignId: string, runId: string, body: { strategy_version: number; options: PilotOptions }, now = new Date()) {
+  async approve(
+    userId: string, ws: string, campaignId: string, runId: string, body: { strategy_version: number; options: PilotOptions; approve_now?: boolean }, now = new Date(),
+  ) {
     const c = await this.enter(userId, ws, campaignId, 'write');
     const run = await this.runOf(ws, c.id, runId);
     if (run.status !== 'planning' || stepsOf(run).strategy?.status !== 'done') throw conflict('O plano ainda está sendo montado.');
@@ -137,8 +143,17 @@ export class PilotService {
     if (o.max_angles * o.images_per_angle + o.videos > this.maxCreatives) {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: `No máximo ${this.maxCreatives} peças por campanha.` });
     }
+    // Aprovar o anúncio na hora é decidir o pedido em Approvals: só dono/admin (marketing começa e o pedido fica para quem aprova).
+    if (o.meta.enabled && body.approve_now) await this.access.require(userId, ws, 'manage');
     const { estimate, blockers } = await this.estimateFor(c, o);
     if (blockers.length) throw new BadRequestException({ code: blockers[0]!.code, message: blockers[0]!.message });
+    // Com o anúncio no plano, a campanha precisa estar aprovada para a etapa meta montar o anúncio (pausado). O pedido leva o resumo do plano.
+    let approvalRequestId: string | null = run.approval_request_id;
+    if (o.meta.enabled && c.status === 'draft') {
+      const req = await this.campaigns.requestApproval(userId, ws, c.id, this.packageSummary(c, o));
+      approvalRequestId = req.id;
+      if (body.approve_now) await this.approvals.decide(userId, req.id, 'approved');
+    }
     const steps: Steps = { ...stepsOf(run) };
     for (const s of RUN_STEPS) steps[s] = { status: 'pending', attempts: 0 };
     const upd = await this.prisma.campaign_pilot_runs.updateMany({
@@ -146,6 +161,7 @@ export class PilotService {
       data: {
         status: 'running', current_step: RUN_STEPS[0], options: o as unknown as Prisma.InputJsonObject, steps: steps as unknown as Prisma.InputJsonObject,
         strategy_version: body.strategy_version, max_credits: o.max_credits, estimated_credits: estimate.total, approved_by: userId, approved_at: now, next_run_at: now,
+        approval_request_id: approvalRequestId,
       },
     });
     // Clique duplo ou "Parar" no meio: a execução saiu de `planning` — nada mais é aprovado.
@@ -210,6 +226,16 @@ export class PilotService {
     }
     await this.activity.log(ws, userId, 'campaign.pilot_cancelled', 'campaign', { campaign_id: c.id, via: 'pilot', run_id: run.id, cancel_instagram: body.cancel_instagram });
     return this.view(await this.runOf(ws, c.id, run.id));
+  }
+
+  /** Resumo do pedido em Approvals: o que o estrategista vai montar na Meta, com a verba e o período (a conta fica na conferência). */
+  private packageSummary(c: Prisma.campaignsGetPayload<object>, o: PilotOptions): string {
+    const images = o.max_angles * o.images_per_angle;
+    const money = `R$ ${Number(c.budget_daily ?? 0).toFixed(2).replace('.', ',')}`;
+    const ddmm = (d: Date | null) => (d ? `${d.toISOString().slice(8, 10)}/${d.toISOString().slice(5, 7)}` : '');
+    const period = c.start_date && c.end_date ? ` de ${ddmm(c.start_date)} a ${ddmm(c.end_date)}` : '';
+    const videos = o.videos ? ` + ${o.videos} ${o.videos === 1 ? 'vídeo' : 'vídeos'}` : '';
+    return `Anúncio montado pelo estrategista: ${images} artes${videos}, ${money} por dia${period}.`;
   }
 
   /** `PilotRunView` (§29): a linha + gasto derivado, resumo e, com o plano pronto, o pacote sugerido. */

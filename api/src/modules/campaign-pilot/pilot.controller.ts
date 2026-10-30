@@ -37,7 +37,7 @@ export class PilotController {
     @CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Param('campaignId', ParseUuidPipe) campaignId: string,
     @Param('runId', ParseUuidPipe) runId: string, @Body() dto: ApprovePilotDto,
   ) {
-    return this.pilot.approve(u.id, ws, campaignId, runId, { strategy_version: dto.strategy_version, options: dto.options as PilotOptions });
+    return this.pilot.approve(u.id, ws, campaignId, runId, { strategy_version: dto.strategy_version, options: dto.options as PilotOptions, approve_now: dto.approve_now });
   }
 
   @Post(':runId/resume') @HttpCode(200)

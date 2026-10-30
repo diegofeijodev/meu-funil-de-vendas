@@ -251,7 +251,7 @@ export class CampaignsService {
    * (duas escritas do navegador no protótipo, aqui numa transação) + atividade `campaign.approval_requested`.
    * Título e resumo saem do servidor com o mesmo texto da tela.
    */
-  async requestApproval(userId: string, workspaceId: string, campaignId: string) {
+  async requestApproval(userId: string, workspaceId: string, campaignId: string, summary?: string) {
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: workspaceId } });
     if (!c) throw notFound();
     if (c.status !== 'draft') {
@@ -267,7 +267,8 @@ export class CampaignsService {
           entity_id: campaignId,
           campaign_id: campaignId,
           title: `Publicar campanha "${c.name}" na Meta`,
-          summary: `Verba diária de ${brl(Number(c.budget_daily ?? 0))}, ${creatives} criativo(s), objetivo ${OBJECTIVES[c.objective] ?? c.objective}.`,
+          // O piloto manda o resumo do pacote (as artes ainda não existem no momento do pedido).
+          summary: summary ?? `Verba diária de ${brl(Number(c.budget_daily ?? 0))}, ${creatives} criativo(s), objetivo ${OBJECTIVES[c.objective] ?? c.objective}.`,
           status: 'pending',
           requested_by: userId,
         },

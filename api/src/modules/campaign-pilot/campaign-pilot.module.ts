@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { CampaignsModule } from '../campaigns/campaigns.module';
 import { CopyAiModule } from '../copy-ai/copy-ai.module';
 import { CreativeModule } from '../creative/creative.module';
@@ -17,7 +18,7 @@ import { StrategyStep } from './steps/strategy.step';
 
 /** Piloto do estrategista (Fatia 3). Depende dos módulos de sempre; **nenhum módulo importa este** (só o `AppModule`). */
 @Module({
-  imports: [CampaignsModule, CopyAiModule, CreativeModule, InstagramModule, StrategistModule],
+  imports: [ApprovalsModule, CampaignsModule, CopyAiModule, CreativeModule, InstagramModule, StrategistModule],
   controllers: [PilotController],
   providers: [
     PilotGate, PilotService, PilotRunnerService, PilotCronService, StrategyStep, CopiesStep, InstagramStep, CreativesStep, MetaStep,

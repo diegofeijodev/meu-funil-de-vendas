@@ -41,6 +41,8 @@ export class EstimatePilotDto {
 
 export class ApprovePilotDto {
   @IsInt() @Min(1) strategy_version!: number;
+  /** Dono/admin: aprova o pedido do anúncio na hora (um toque). Sem ele, o pedido fica em Approvals. */
+  @IsOptional() @IsBoolean() approve_now?: boolean;
   @IsDefined() @ValidateNested() @Type(() => PilotOptionsDto) options!: PilotOptionsDto;
 }
 

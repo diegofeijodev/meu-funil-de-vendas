@@ -34,11 +34,20 @@ async function setup(opts: { gate?: boolean } = {}) {
   };
   const runner = { kick: jest.fn() };
   const autoCalendar = { cancelAutoRun: jest.fn(async () => ({ ok: true })) };
-  const svc = new PilotService(db.prisma, access as any, gate as any, strategist as any, runner as any, autoCalendar as any, db.activity, { CAMPAIGN_PILOT_MAX_CREATIVES: 10 } as any);
+  const campaigns = {
+    requestApproval: jest.fn(async (_u: string, _ws: string, cid: string, summary?: string) => {
+      db.t.campaigns.rows.find((c: any) => c.id === cid)!.status = 'pending_approval';
+      return { id: 'req-1', summary };
+    }),
+  };
+  const approvals = {
+    decide: jest.fn(async () => { db.t.campaigns.rows[0]!.status = 'approved'; return { ok: true }; }),
+  };
+  const svc = new PilotService(db.prisma, access as any, gate as any, strategist as any, runner as any, autoCalendar as any, db.activity, campaigns as any, approvals as any, { CAMPAIGN_PILOT_MAX_CREATIVES: 10 } as any);
   const brand = await db.t.brands.create({ data: { workspace_id: WS_A, name: 'Freela' } });
-  const campaign = await db.t.campaigns.create({ data: { workspace_id: WS_A, brand_id: brand.id, name: 'Jundiaí', start_date: new Date('2026-10-30T00:00:00Z'), end_date: new Date('2026-11-28T00:00:00Z') } });
+  const campaign = await db.t.campaigns.create({ data: { workspace_id: WS_A, brand_id: brand.id, name: 'Jundiaí', status: 'draft', budget_daily: 30, start_date: new Date('2026-10-30T00:00:00Z'), end_date: new Date('2026-11-28T00:00:00Z') } });
   const now = () => T0;
-  return { db, svc, access, strategist, runner, autoCalendar, campaign, brand, now };
+  return { db, svc, access, strategist, runner, autoCalendar, campaigns, approvals, campaign, brand, now };
 }
 const KEY = 'chave-12345';
 async function planned(w: Awaited<ReturnType<typeof setup>>) {
@@ -184,6 +193,35 @@ describe('PilotService', () => {
     expect(c.status).toBe('cancelled');
     expect(w.autoCalendar.cancelAutoRun).not.toHaveBeenCalled(); // nunca aprovado: o piloto não criou programação
     expect(await status(w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: false }))).toBe('409:CONFLICT:Não dá para fazer isso agora.');
+  });
+
+  it('anúncio no plano: dono aprova tudo de uma vez (pedido decidido na hora); marketing deixa o pedido em Approvals', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS, approve_now: true }, T0);
+    expect(w.campaigns.requestApproval).toHaveBeenCalledWith(OWNER, WS_A, w.campaign.id, 'Anúncio montado pelo estrategista: 6 artes + 1 vídeo, R$ 30,00 por dia de 30/10 a 28/11.');
+    expect(w.approvals.decide).toHaveBeenCalledWith(OWNER, 'req-1', 'approved');
+    expect([w.db.t.campaigns.rows[0]!.status, rowOf(w.db, r.id).approval_request_id]).toEqual(['approved', 'req-1']);
+
+    const m = await setup();
+    const r2 = await planned(m);
+    expect(await status(m.svc.approve(MARKETING, WS_A, m.campaign.id, r2.id, { strategy_version: 2, options: OPTIONS, approve_now: true }))).toBe('403:FORBIDDEN:Seu perfil não tem permissão para esta ação.');
+    expect(rowOf(m.db, r2.id).status).toBe('planning');
+    await m.svc.approve(MARKETING, WS_A, m.campaign.id, r2.id, { strategy_version: 2, options: OPTIONS }, T0);
+    expect(m.approvals.decide).not.toHaveBeenCalled();
+    expect(m.db.t.campaigns.rows[0]!.status).toBe('pending_approval');
+  });
+
+  it('sem anúncio no plano (ou campanha já aprovada) não pede aprovação', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: { ...OPTIONS, meta: { enabled: false, review_creatives: false } }, approve_now: true }, T0);
+    expect(w.campaigns.requestApproval).not.toHaveBeenCalled();
+    const a = await setup();
+    a.db.t.campaigns.rows[0]!.status = 'approved';
+    const r2 = await planned(a);
+    await a.svc.approve(OWNER, WS_A, a.campaign.id, r2.id, { strategy_version: 2, options: OPTIONS, approve_now: true }, T0);
+    expect(a.campaigns.requestApproval).not.toHaveBeenCalled();
   });
 
   it('DTO: campos do pacote são obrigatórios e com faixa', async () => {
