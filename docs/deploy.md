@@ -71,6 +71,19 @@ Sem chave nenhuma o app sobe e funciona sem IA nem integrações (as telas mostr
 3. **Login com Google**: `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`.
 4. Resend (e-mail do CRM), Cal.com, Google Ads, TikTok, WhatsApp: conforme o uso.
 
+## 4b. Depois de subir a Fatia 0 do estrategista (29/10/2026)
+
+Até a Fatia 0, o anúncio ia para a Meta **sem data de fim**: depois de ligado, gasta até alguém pausar. A Fatia 0 põe `end_time` nos conjuntos
+**novos**; o deploy não pausa nada. Depois de subir, liste (só leitura) as campanhas que já estavam ligadas e confira caso a caso com o dono:
+
+```bash
+# no EC2, em /opt/meu-funil
+docker exec -i meufunil-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X' < api/scripts/ops/campanhas-meta-sem-fim.sql
+```
+
+`ja_passou_do_fim = t` e `na_meta = ACTIVE` = está gastando depois do período combinado: avisar o dono (pausar é pelo botão "Pausar na Meta"
+ou "Encerrar campanha" da própria tela).
+
 ## 5. Verificação
 
 `curl https://api-meufunil.freelaservicosapp.com.br/health` → 200; `docker logs meufunil-api | grep "successfully started"`;
