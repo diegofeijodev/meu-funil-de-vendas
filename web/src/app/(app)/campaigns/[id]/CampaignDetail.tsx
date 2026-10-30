@@ -11,7 +11,9 @@ import {
   endCampaign,
   getCampaignDetail,
   requestCampaignApproval,
+  setCampaignBudget,
   setCampaignLandingUrl,
+  setCampaignLocation,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import {
   AlertDialog,
@@ -67,6 +69,11 @@ export function CampaignDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<PublishStep[]>([]);
   const [landing, setLanding] = useState("");
+  const [budgetIn, setBudgetIn] = useState("");
+  const [budgetTotalIn, setBudgetTotalIn] = useState("");
+  const [cityIn, setCityIn] = useState<string | null>(null);
+  // A Meta não achou a cidade no último "Publicar": o aviso da cidade aparece mesmo com o campo preenchido.
+  const [geoProblem, setGeoProblem] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
   // Aba controlada: mensagens de erro podem levar direto à aba certa (ex.: "Ver criativos").
   const [tab, setTab] = useState("estrategia");
@@ -159,6 +166,49 @@ export function CampaignDetail() {
       setBusy(null);
     }
   };
+
+  /** "35,50" ou "35.5" → 35.5; vazio ou texto → NaN (a tela pede de novo). */
+  const parseReais = (v: string) => (v.trim() ? Number(v.trim().replace(",", ".")) : NaN);
+
+  const saveBudget = async () => {
+    if (!workspaceId) return;
+    const daily = parseReais(budgetIn);
+    const total = budgetTotalIn.trim() ? parseReais(budgetTotalIn) : null;
+    if (!(daily > 0)) {
+      toast.error("Informe um valor por dia maior que zero.");
+      return;
+    }
+    setBusy("budget");
+    try {
+      await setCampaignBudget(workspaceId, id, daily, total);
+      setBudgetIn("");
+      setBudgetTotalIn("");
+      await qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success(`Verba salva: ${brl(daily)} por dia.`);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar a verba"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveCity = async (current: string) => {
+    if (!workspaceId) return;
+    setBusy("city");
+    try {
+      await setCampaignLocation(workspaceId, id, cityIn ?? current);
+      setCityIn(null);
+      setGeoProblem(false);
+      await qc.invalidateQueries({ queryKey: ["campaign", id] });
+      toast.success("Cidade salva. Já dá para publicar na Meta.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Não foi possível salvar a cidade"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const scrollToFix = (elementId: string) => document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
   const regenStrategy = async () => {
     if (!workspaceId) return;
@@ -269,9 +319,15 @@ export function CampaignDetail() {
       setSteps([]); // some o "Enviando para a Meta" que ficaria preso depois da falha
       const msg = apiErrorMessage(e, "Falha ao publicar");
       // Sem criativo aprovado (código estável da API): o aviso leva direto à aba Criativos.
-      if (apiErrorCode(e) === "NO_APPROVED_CREATIVE")
+      const code = apiErrorCode(e);
+      if (code === "NO_APPROVED_CREATIVE")
         toast.error(msg, { duration: 10000, action: { label: "Ver criativos", onClick: () => showTab("criativos") } });
-      else toast.error(msg);
+      else if (code === "BUDGET_MISSING")
+        toast.error(msg, { duration: 10000, action: { label: "Ajustar", onClick: () => scrollToFix("fix-budget") } });
+      else if (code === "GEO_UNRESOLVED") {
+        setGeoProblem(true);
+        toast.error(msg, { duration: 10000, action: { label: "Ajustar", onClick: () => scrollToFix("fix-city") } });
+      } else toast.error(msg);
     } finally {
       setBusy(null);
     }
@@ -361,6 +417,9 @@ export function CampaignDetail() {
   };
   const ended = c.status === "finished";
   const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
+  // Verba e cidade ainda podem mudar aqui (depois de publicada, o anúncio vive na Meta).
+  const fixableBeforeMeta = canEdit && !metaId && ["draft", "pending_approval", "approved"].includes(c.status);
+  const city = String(((c.audience ?? {}) as Record<string, unknown>).localizacao ?? "").trim();
   const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
   const ext = c as { google_campaign_id?: string | null; google_status?: string | null; tiktok_campaign_id?: string | null; tiktok_status?: string | null };
   // Canais em que a campanha existe (o diálogo de encerrar cita só esses) e os que ainda estão no ar.
@@ -521,6 +580,61 @@ export function CampaignDetail() {
             />
             <Button type="submit" disabled={busy === "landing" || !landing.trim()}>
               {busy === "landing" ? "Salvando..." : "Salvar destino"}
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {fixableBeforeMeta && !(Number(c.budget_daily) > 0) && (
+        <div id="fix-budget" className="panel mb-6 border-amber-500/40 p-5">
+          <p className="text-sm font-semibold">Falta a verba por dia</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Quanto o anúncio pode gastar por dia. Sem ela a campanha não vai para a Meta (antes ia com R$ 20 sem avisar).
+          </p>
+          <form
+            className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveBudget();
+            }}
+          >
+            <label className="flex flex-col gap-1 text-sm">
+              R$ por dia
+              <Input inputMode="decimal" placeholder="Ex.: 30" value={budgetIn} onChange={(e) => setBudgetIn(e.target.value)} className="sm:w-40" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Teto do mês (opcional)
+              <Input inputMode="decimal" placeholder="Ex.: 900" value={budgetTotalIn} onChange={(e) => setBudgetTotalIn(e.target.value)} className="sm:w-40" />
+            </label>
+            <Button type="submit" disabled={busy === "budget" || !budgetIn.trim()}>
+              {busy === "budget" ? "Salvando..." : "Salvar verba"}
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {fixableBeforeMeta && (!city || geoProblem) && (
+        <div id="fix-city" className="panel mb-6 border-amber-500/40 p-5">
+          <p className="text-sm font-semibold">{city ? "A Meta não achou esta cidade" : "Em que cidade o anúncio aparece"}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Escreva a cidade como no mapa, com o estado (ex.: Jundiaí, SP). O anúncio aparece nela e em até 20 km em volta.
+          </p>
+          <form
+            className="mt-3 flex flex-col gap-2 sm:flex-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveCity(city);
+            }}
+          >
+            <Input
+              placeholder="Jundiaí, SP"
+              value={cityIn ?? city}
+              onChange={(e) => setCityIn(e.target.value)}
+              aria-label="Cidade do anúncio"
+              className="sm:max-w-sm"
+            />
+            <Button type="submit" disabled={busy === "city" || !(cityIn ?? city).trim()}>
+              {busy === "city" ? "Salvando..." : "Salvar cidade"}
             </Button>
           </form>
         </div>

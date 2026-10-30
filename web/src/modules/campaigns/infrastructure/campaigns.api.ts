@@ -187,3 +187,13 @@ export async function endCampaign(ws: string, campaignId: string): Promise<EndCa
 export async function setCampaignLandingUrl(ws: string, campaignId: string, landingUrl: string): Promise<void> {
   await api.patch(`${base(ws)}/${campaignId}/landing-url`, { landing_url: landingUrl });
 }
+
+/** Verba por dia (obrigatória para publicar) e teto do mês opcional, em reais. Só antes de ir para a Meta. */
+export async function setCampaignBudget(ws: string, campaignId: string, budgetDaily: number, budgetTotal: number | null): Promise<void> {
+  await api.patch(`${base(ws)}/${campaignId}/budget`, { budget_daily: budgetDaily, budget_total: budgetTotal });
+}
+
+/** Cidade do anúncio (vai para `audience.localizacao`). Só antes de ir para a Meta. */
+export async function setCampaignLocation(ws: string, campaignId: string, location: string): Promise<void> {
+  await api.patch(`${base(ws)}/${campaignId}/location`, { location });
+}
