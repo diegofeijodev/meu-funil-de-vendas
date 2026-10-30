@@ -159,6 +159,7 @@ export class AdsChannelsService {
     if (c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     if (c.status !== 'approved' && c.status !== 'active') throw new UserError('A campanha precisa ser aprovada antes de ir para outros canais.');
     if (!c.landing_url) throw new UserError('Preencha a página de destino da campanha.');
+    const landingUrl = c.landing_url;
     const dailyBudget = requireDailyBudget(c.budget_daily);
     assertPeriodOpen(campaignEndDay(c.end_date));
     const ws = c.workspace_id;
@@ -189,7 +190,7 @@ export class AdsChannelsService {
             name: c.name,
             objective: c.objective,
             dailyBudget,
-            landingUrl: withUtm(c.landing_url, 'google', 'cpc', c.name),
+            landingUrl: withUtm(landingUrl, 'google', 'cpc', c.name),
             headlines: ai.titulos ?? [],
             descriptions: ai.descricoes ?? [],
             keywords: ai.palavras_chave ?? [],
@@ -216,7 +217,7 @@ export class AdsChannelsService {
           name: c.name,
           objective: c.objective,
           dailyBudget,
-          landingUrl: withUtm(c.landing_url, 'tiktok', 'paid', c.name),
+          landingUrl: withUtm(landingUrl, 'tiktok', 'paid', c.name),
           adText: String(copy.headline ?? c.offer_promise ?? c.name),
           brandName: c.brand?.name ?? c.name,
           logoUrl: c.brand?.logo_url ?? null,
