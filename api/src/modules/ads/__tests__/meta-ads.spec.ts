@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { MetaError } from '../../instagram/meta-graph';
 import { status } from '../../media/__tests__/mem';
 import { MetaSaveCredentialsDto } from '../ads.dto';
+import { addDays, todaySp } from '../../../common/time/dates';
 import { adsWorld, ADMIN, MARKETING, OWNER, respondPublish, STRANGER, uid, VIEWER, WS_A, WS_B } from './harness';
 
 describe('MetaAdsService — autorização', () => {
@@ -171,6 +172,7 @@ describe('MetaAdsService.publish', () => {
 
   it('falha total: registra publishing_job failed e devolve 502 com a mensagem; nada gravado na campanha', async () => {
     const w = adsWorld();
+    respondPublish(w);
     w.respond((path, opts) => (path.endsWith('/campaigns') && opts.method === 'POST' ? new MetaError('A conta de anúncios está sem forma de pagamento válida.', 1487390) : undefined));
     const c = w.seedCampaign();
     w.seedCreative(c.id);
@@ -233,6 +235,98 @@ describe('MetaAdsService.publish', () => {
   });
 });
 
+const dayCol = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
+const codeOf = async (p: Promise<unknown>) => ((await p.catch((e) => e)) as any)?.getResponse?.()?.code;
+
+describe('MetaAdsService.publish — Fatia 0 (data de fim, verba e cidade)', () => {
+  const postsTo = (w: ReturnType<typeof adsWorld>, p: string) => w.calls.filter((x) => x.path.endsWith(p) && x.opts.method === 'POST');
+
+  it('com fim da campanha: cada conjunto para sozinho às 23:59 de Brasília do último dia, e o passo avisa', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const end = addDays(todaySp(), 30);
+    const c = w.seedCampaign({ end_date: dayCol(end) });
+    w.seedCreative(c.id);
+    const r = await w.meta.publish(OWNER, WS_A, c.id);
+    expect(postsTo(w, '/adsets')[0]!.opts.params.end_time).toBe(`${end}T23:59:59-0300`);
+    const [y, m, d] = end.split('-');
+    expect(r.steps.find((s) => s.key === 'end')?.label).toBe(`A Meta para sozinha em ${d}/${m}/${y} às 23:59 (fim da campanha)`);
+  });
+
+  it('sem fim da campanha: conjunto sem end_time (comportamento de antes)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign();
+    w.seedCreative(c.id);
+    await w.meta.publish(OWNER, WS_A, c.id);
+    expect(postsTo(w, '/adsets')[0]!.opts.params).not.toHaveProperty('end_time');
+  });
+
+  it('sem verba por dia: recusa com BUDGET_MISSING e nada vai à Meta (antes publicava R$ 20 sem avisar)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    for (const budget_daily of [0, null]) {
+      const c = w.seedCampaign({ budget_daily });
+      w.seedCreative(c.id);
+      expect(await status(w.meta.publish(OWNER, WS_A, c.id))).toBe('400:Defina quanto quer gastar por dia antes de publicar.');
+      expect(await codeOf(w.meta.publish(OWNER, WS_A, c.id))).toBe('BUDGET_MISSING');
+    }
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('sem cidade ou cidade que a Meta não acha: GEO_UNRESOLVED antes de criar a campanha (nunca "Brasil inteiro" por engano)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const empty = w.seedCampaign({ audience: {} });
+    w.seedCreative(empty.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, empty.id))).toBe('400:Diga em que cidade o anúncio deve aparecer antes de publicar.');
+    expect(await codeOf(w.meta.publish(OWNER, WS_A, empty.id))).toBe('GEO_UNRESOLVED');
+    const typo = w.seedCampaign({ audience: { localizacao: 'Cidade Inventada' } });
+    w.seedCreative(typo.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, typo.id))).toBe('400:A Meta não achou a cidade "Cidade Inventada". Escreva como no mapa (ex.: Jundiaí, SP).');
+    expect(await codeOf(w.meta.publish(OWNER, WS_A, typo.id))).toBe('GEO_UNRESOLVED');
+    expect(postsTo(w, '/campaigns')).toHaveLength(0);
+    expect(w.t['campaigns']!.rows.every((x) => !x.meta_campaign_id)).toBe(true);
+  });
+
+  it('cidade com UF ("Jundiaí - SP") vira a cidade com raio de 20 km; "Brasil inteiro" escrito de propósito continua valendo', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const city = w.seedCampaign({ audience: { localizacao: 'Jundiaí - SP' } });
+    w.seedCreative(city.id);
+    await w.meta.publish(OWNER, WS_A, city.id);
+    expect(postsTo(w, '/adsets')[0]!.opts.params.targeting.geo_locations).toEqual({ cities: [{ key: '269969', radius: 20, distance_unit: 'kilometer' }] });
+    w.calls.length = 0;
+    const br = w.seedCampaign({ audience: { localizacao: 'Brasil inteiro' } });
+    w.seedCreative(br.id);
+    const r = await w.meta.publish(OWNER, WS_A, br.id);
+    expect(postsTo(w, '/adsets')[0]!.opts.params.targeting.geo_locations).toEqual({ countries: ['BR'] });
+    expect(r.steps.find((s) => s.key === 'geo')?.label).toContain('Brasil inteiro (escolhido)');
+  });
+
+  it('período já terminou: publicar recusa com PERIOD_ENDED', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const yesterday = addDays(todaySp(), -1);
+    const c = w.seedCampaign({ end_date: dayCol(yesterday) });
+    w.seedCreative(c.id);
+    const [y, m, d] = yesterday.split('-');
+    expect(await status(w.meta.publish(OWNER, WS_A, c.id))).toBe(`400:O período desta campanha terminou em ${d}/${m}/${y}. Crie uma campanha nova para anunciar de novo.`);
+    expect(await codeOf(w.meta.publish(OWNER, WS_A, c.id))).toBe('PERIOD_ENDED');
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('destino que já tem UTM não ganha UTM repetida', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign({ landing_url: 'https://www.freelaservicos.com.br/cadastro?perfil=empresa&utm_source=meta&utm_campaign=jundiai' });
+    w.seedCreative(c.id);
+    await w.meta.publish(OWNER, WS_A, c.id);
+    const link = postsTo(w, '/adcreatives')[0]!.opts.params.object_story_spec.link_data.link as string;
+    expect(link).toBe('https://www.freelaservicos.com.br/cadastro?perfil=empresa&utm_source=meta&utm_campaign=jundiai');
+  });
+});
+
 describe('MetaAdsService.setStatus', () => {
   const published = (w: ReturnType<typeof adsWorld>, over: Record<string, any> = {}) =>
     w.seedCampaign({ status: 'approved', meta_campaign_id: '9001', meta_adset_id: '9101', meta_adset_ids: ['9101'], meta_ad_ids: ['9301', '9302'], meta_delivery_status: 'PAUSED', ...over });
@@ -255,6 +349,15 @@ describe('MetaAdsService.setStatus', () => {
     const n = w.seedCampaign();
     expect(await status(w.meta.setStatus(OWNER, WS_A, n.id, 'ACTIVE'))).toBe('400:Campanha ainda não publicada na Meta.');
     expect(w.calls).toHaveLength(0);
+  });
+
+  it('período terminado: ativar recusa com PERIOD_ENDED; pausar continua possível', async () => {
+    const w = adsWorld();
+    const yesterday = addDays(todaySp(), -1);
+    const c = published(w, { end_date: dayCol(yesterday), meta_delivery_status: 'ACTIVE', status: 'active' });
+    expect(await codeOf(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe('PERIOD_ENDED');
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'PAUSED'))).toBe('ok');
+    expect(w.calls.every((x) => x.opts.params.status === 'PAUSED')).toBe(true);
   });
 
   it('ao ativar, anúncios pausados pelo otimizador continuam pausados; campanha, conjuntos e anúncios recebem o status', async () => {

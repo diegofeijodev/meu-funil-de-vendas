@@ -3,7 +3,7 @@
  * depois da aprovação. A empresa é explícita em toda chamada (no protótipo era AsyncLocalStorage) e todo id que entra em
  * caminho de URL passa por `gid()`/`actId()`.
  */
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { todaySp } from '../../common/time/dates';
 import { AssetsService } from '../media/assets.service';
@@ -13,12 +13,22 @@ import { AdsConfig, DEFAULT_ADS_CONFIG, PLACEMENTS } from './ads-config';
 
 type G = Record<string, any>;
 
+/** Fim do último dia no fuso de Brasília (sem horário de verão desde 2019), no formato que a Marketing API aceita. */
+export const metaEndTime = (endDate: string) => `${endDate}T23:59:59-0300`;
+
+const br = (ymd: string) => ymd.split('-').reverse().join('/');
+const geoError = (message: string) => new BadRequestException({ code: 'GEO_UNRESOLVED', message });
+/** "Brasil", "Brasil inteiro", "nacional", "todo o país": anunciar no país todo foi escolha de quem escreveu. */
+const NATIONAL = /^\s*(o\s+)?(brasil(\s+inteiro|\s+todo)?|todo\s+o\s+(brasil|pa[ií]s)|nacional)\s*$/i;
+
 export type PublishCreative = { id: string; title: string; url: string | null; thumb: string | null; angle?: string | null };
 export type PublishAudience = { nome: string; tipo: string; interesses: string[] };
 export type PublishInput = {
   name: string;
   objective: string;
   dailyBudget: number;
+  /** Último dia da campanha ("YYYY-MM-DD"): cada conjunto para sozinho às 23:59 de Brasília. Sem ele, roda até alguém pausar. */
+  endDate?: string | null;
   landingUrl: string;
   privacyUrl?: string | null;
   primaryText: string;
@@ -207,6 +217,8 @@ export class MetaOpsService {
   private async geoFor(ws: string, aud: Record<string, unknown>) {
     const a = aud as any;
     const text = String(a.localizacao ?? a.location ?? a.cities ?? '').trim();
+    if (NATIONAL.test(text)) return { geo: { countries: ['BR'] }, label: 'Brasil inteiro (escolhido)' };
+    if (!text) throw geoError('Diga em que cidade o anúncio deve aparecer antes de publicar.');
     const names = text
       .replace(/\be\s+regi[aã]o\b|\bregi[aã]o\b|\bSP\b|\bBrasil\b/gi, '')
       .split(/[,;/]|\se\s|\s-\s/)
@@ -221,9 +233,9 @@ export class MetaOpsService {
       const hit = r?.data?.find((d) => d.type === 'city');
       if (hit && !cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: 'kilometer', name: hit.name });
     }
-    return cities.length
-      ? { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label: `${cities.map((c) => c.name).join(', ')} (raio de 20 km)` }
-      : { geo: { countries: ['BR'] }, label: 'Brasil inteiro (localização não reconhecida)' };
+    // Nunca "Brasil inteiro" por engano: sem nenhuma cidade achada, a publicação para aqui (antes de criar algo na Meta).
+    if (!cities.length) throw geoError(`A Meta não achou a cidade "${text}". Escreva como no mapa (ex.: Jundiaí, SP).`);
+    return { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label: `${cities.map((c) => c.name).join(', ')} (raio de 20 km)` };
   }
 
   private async firstPixel(ws: string, adAccountId: string) {
@@ -332,6 +344,9 @@ export class MetaOpsService {
     let leadFormId: string | null = null;
     const customAudiences = conf.customAudienceIds.filter(isDigits);
     const excludeAudiences = conf.excludeAudienceIds.filter(isDigits);
+    // A cidade vem ANTES de criar qualquer coisa: se ela não existe, nada fica órfão na conta de anúncios.
+    const aud = input.audience ?? {};
+    const geo = await this.geoFor(ws, aud);
 
     if (plan.kind === 'sales' || plan.kind === 'remarketing') {
       const px = await this.firstPixel(ws, adAccountId);
@@ -376,9 +391,7 @@ export class MetaOpsService {
     });
     steps.push({ key: 'campaign', label: 'Campanha criada (pausada)', status: 'done', detail: campaign.id });
 
-    const aud = input.audience ?? {};
     const ages = parseAges(aud);
-    const geo = await this.geoFor(ws, aud);
     steps.push({ key: 'geo', label: `Público: ${geo.label}, ${ages.age_min}–${ages.age_max} anos`, status: 'done', detail: '' });
 
     // Estrutura dos conjuntos.
@@ -400,6 +413,8 @@ export class MetaOpsService {
       sets.push({ name: 'Conjunto 1', interests, customAudiences, creatives: input.creatives });
     }
     const perSet = Math.max(100, Math.round((input.dailyBudget * 100) / sets.length));
+    const endTime = input.endDate ? metaEndTime(input.endDate) : null;
+    if (input.endDate) steps.push({ key: 'end', label: `A Meta para sozinha em ${br(input.endDate)} às 23:59 (fim da campanha)`, status: 'done', detail: endTime! });
     if (sets.length > 1) steps.push({ key: 'split', label: `${sets.length} conjuntos com verba igual (R$ ${(perSet / 100).toFixed(2)}/dia cada)`, status: 'done', detail: conf.structure });
 
     const cta = conf.cta || (plan.kind === 'whatsapp' ? 'WHATSAPP_MESSAGE' : plan.kind === 'leads' ? 'SIGN_UP' : 'LEARN_MORE');
@@ -434,6 +449,7 @@ export class MetaOpsService {
             name: `${input.name} · ${set.name}`.slice(0, 200),
             campaign_id: campaign.id,
             daily_budget: perSet,
+            ...(endTime ? { end_time: endTime } : {}),
             billing_event: 'IMPRESSIONS',
             optimization_goal: optimization,
             bid_strategy: 'LOWEST_COST_WITHOUT_CAP',

@@ -723,7 +723,7 @@ if [ -n "${META_GRAPH_BASE_URL:-}" ]; then
   if ! curl -s "$GBASE/__log" >/dev/null 2>&1; then node "$(dirname "$0")/fake-graph.mjs" >/dev/null 2>&1 & FGPID=$!; sleep 1; fi
   curl -s -X POST "$GBASE/__reset" >/dev/null
 fi
-mk_camp(){ PSQL "INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily) VALUES ('$WID','$IBR','$1','$2','$3',$4,40) RETURNING id" | head -1; }
+mk_camp(){ PSQL "INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily,audience) VALUES ('$WID','$IBR','$1','$2','$3',$4,40,'{\"localizacao\":\"Valinhos, SP\"}') RETURNING id" | head -1; }
 C6=$(mk_camp "Camp Ads Smoke" traffic approved "'https://site.test/lp'")
 C6D=$(mk_camp "Camp Ads Rascunho" traffic draft "'https://site.test/lp'")
 C6N=$(mk_camp "Camp Ads Sem Destino" traffic approved "NULL")

@@ -116,7 +116,7 @@ export function adsWorld() {
 
   /** Campanha pronta para publicar (aprovada, com destino) + um criativo aprovado. */
   const seedCampaign = (over: Record<string, any> = {}) => {
-    const c: any = { id: uid(), workspace_id: WS_A, brand_id: null, name: 'Campanha X', objective: 'traffic', status: 'approved', landing_url: 'https://site.test/lp', budget_daily: 30, created_at: new Date(), updated_at: new Date(), meta_ad_ids: [], meta_adset_ids: [], meta_ad_map: {}, ads_config: {}, automation_rules: {}, meta_campaign_id: null, meta_adset_id: null, meta_delivery_status: null, audience: {}, google_campaign_id: null, tiktok_campaign_id: null, offer_promise: 'Promessa', offer_product: 'Produto', ...over };
+    const c: any = { id: uid(), workspace_id: WS_A, brand_id: null, name: 'Campanha X', objective: 'traffic', status: 'approved', landing_url: 'https://site.test/lp', budget_daily: 30, created_at: new Date(), updated_at: new Date(), meta_ad_ids: [], meta_adset_ids: [], meta_ad_map: {}, ads_config: {}, automation_rules: {}, meta_campaign_id: null, meta_adset_id: null, meta_delivery_status: null, audience: { localizacao: 'Jundiaí, SP' }, google_campaign_id: null, tiktok_campaign_id: null, offer_promise: 'Promessa', offer_product: 'Produto', ...over };
     t['campaigns']!.rows.push(c);
     return c;
   };
@@ -133,6 +133,7 @@ export type AdsWorld = ReturnType<typeof adsWorld>;
 export function respondPublish(w: AdsWorld) {
   let n = 0;
   w.respond((path, opts) => {
+    if (path === '/search' && opts.params?.type === 'adgeolocation' && /jundia/i.test(String(opts.params?.q))) return { data: [{ key: '269969', name: 'Jundiaí', type: 'city' }] };
     if (path === '/search') return { data: [] };
     if (path.endsWith('/adspixels')) return { data: [] };
     if (path.endsWith('/adimages')) return { images: { a: { hash: 'h1' } } };

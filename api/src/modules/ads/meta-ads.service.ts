@@ -10,6 +10,8 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
+import { assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
+import { withUtm } from './ads-utm';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaOpsService } from './meta-ops.service';
 import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
@@ -114,6 +116,9 @@ export class MetaAdsService {
     if (c.status !== 'approved' && c.status !== 'active') throw new UserError('A campanha precisa ser aprovada em Aprovações antes de ir para a Meta.');
     if (c.meta_campaign_id) throw new UserError('Esta campanha já foi enviada para a Meta. Use Ativar/Pausar.');
     if (!c.landing_url) throw new UserError('Preencha a página de destino (URL) da campanha antes de publicar.');
+    const dailyBudget = requireDailyBudget(c.budget_daily);
+    const endDay = campaignEndDay(c.end_date);
+    assertPeriodOpen(endDay);
 
     const [creatives, copies] = await Promise.all([
       this.prisma.creatives.findMany({ where: { campaign_id: c.id, workspace_id: ws, status: 'approved' }, select: { id: true, title: true, preview_url: true, thumbnail_url: true, status: true, angle: true } }),
@@ -126,8 +131,7 @@ export class MetaAdsService {
     const strategy = await this.strategist.currentStrategy(ws, c.id);
     const adsConfig = readAdsConfig(c.ads_config);
     const privacyUrl = ((c.ads_config ?? {}) as { privacyUrl?: string | null }).privacyUrl ?? null;
-    const sep = c.landing_url.includes('?') ? '&' : '?';
-    const landing = `${c.landing_url}${sep}utm_source=meta&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`;
+    const landing = withUtm(c.landing_url, 'meta', 'paid', c.name);
     // Publicar cria tudo PAUSADO (meta_delivery_status = PAUSED): o guarda de entrega não bloqueia, mas fica registrado aqui.
     await this.guards.assertCanSetDelivery(userId, ws, c.meta_delivery_status, 'PAUSED');
 
@@ -137,7 +141,8 @@ export class MetaAdsService {
         this.ops.publishPaused(ws, {
           name: c.name,
           objective: c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0) || 20,
+          dailyBudget,
+          endDate: endDay,
           landingUrl: landing,
           primaryText: String(copy.meta_ad ?? copy.primary_text ?? c.offer_promise ?? c.name),
           headline: String(copy.headline ?? copy.headlines?.[0] ?? c.offer_product ?? c.name).slice(0, 40),
@@ -185,6 +190,8 @@ export class MetaAdsService {
     if (!c?.meta_campaign_id) throw new UserError('Campanha ainda não publicada na Meta.');
     // Encerrada: pausar continua possível; reativar, não.
     if (status === 'ACTIVE' && c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
+    // Período vencido: ligar de novo gastaria fora do combinado (e campanhas antigas não têm data de fim na Meta).
+    if (status === 'ACTIVE') assertPeriodOpen(campaignEndDay(c.end_date));
     // 7.3 Ativar gasta verba: só dono/admin (guarda de entrega, mensagem do gatilho `guard_campaign_delivery`).
     await this.guards.assertCanSetDelivery(userId, ws, c.meta_delivery_status, status);
     if (status === 'ACTIVE' && c.status !== 'approved' && c.status !== 'active') throw new UserError('Só é possível ativar depois da aprovação em Aprovações.');

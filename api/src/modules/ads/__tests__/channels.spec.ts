@@ -165,6 +165,10 @@ describe('canais — campanha externa (create/link/setStatus)', () => {
     expect(await status(w.channels.create(OWNER, draft.id, 'google'))).toBe('400:A campanha precisa ser aprovada antes de ir para outros canais.');
     const nolp = w.seedCampaign({ landing_url: null });
     expect(await status(w.channels.create(OWNER, nolp.id, 'google'))).toBe('400:Preencha a página de destino da campanha.');
+    const nobudget = w.seedCampaign({ budget_daily: 0 });
+    for (const ch of ['google', 'tiktok'] as const) {
+      expect(await status(w.channels.create(OWNER, nobudget.id, ch))).toBe('400:Defina quanto quer gastar por dia antes de publicar.');
+    }
     const c = w.seedCampaign();
     w.ai.json.mockResolvedValue({ titulos: ['T1', 'T2', 'T3'], descricoes: ['D1', 'D2'], palavras_chave: ['chope'] });
     w.google.createSearchCampaign = jest.fn(async () => ({ campaignId: '4242', steps: [{ label: 'ok', status: 'done' as const, detail: '' }] }));

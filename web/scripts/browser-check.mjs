@@ -1610,7 +1610,7 @@ try {
   check('API com a Graph falsa (META_GRAPH_BASE_URL=http://127.0.0.1:3098/v24.0)', salvou?.configured === true && teste?.ok === true && teste?.account?.name === 'Conta Smoke', JSON.stringify(teste));
 
   const marcaMeta = (await apiCall('POST', `/v1/workspaces/${wsId}/brands`, { name: `Marca Meta ${Date.now()}`, segment: 'Bar' })).body;
-  const campMetaId = igPsql(`INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily) VALUES ('${wsId}','${marcaMeta.id}','Campanha Meta Check','traffic','approved','https://site.test/lp',40) RETURNING id`).split('\n')[0];
+  const campMetaId = igPsql(`INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,landing_url,budget_daily,audience) VALUES ('${wsId}','${marcaMeta.id}','Campanha Meta Check','traffic','approved','https://site.test/lp',40,'{"localizacao":"Valinhos, SP"}') RETURNING id`).split('\n')[0];
   igPsql(`INSERT INTO creatives(workspace_id,campaign_id,title,status,preview_url) VALUES ('${wsId}','${campMetaId}','Criativo Meta Check','approved','${BASE}/meu-funil-symbol.png')`);
 
   // ── Publicar / ativar / pausar pela tela da campanha ──

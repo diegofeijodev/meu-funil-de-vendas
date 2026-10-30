@@ -16,6 +16,8 @@ import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
+import { assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
+import { withUtm } from './ads-utm';
 import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 
 /** Reserva de criação vencida (processo morreu no meio): outra tentativa pode assumir. */
@@ -157,11 +159,12 @@ export class AdsChannelsService {
     if (c.status === CAMPAIGN_FINISHED) throw new UserError(MSG_CAMPAIGN_ENDED);
     if (c.status !== 'approved' && c.status !== 'active') throw new UserError('A campanha precisa ser aprovada antes de ir para outros canais.');
     if (!c.landing_url) throw new UserError('Preencha a página de destino da campanha.');
+    const dailyBudget = requireDailyBudget(c.budget_daily);
+    assertPeriodOpen(campaignEndDay(c.end_date));
     const ws = c.workspace_id;
     const copies = await this.prisma.copies.findMany({ where: { campaign_id: c.id, workspace_id: ws }, select: { content: true, status: true }, orderBy: { version: 'desc' }, take: 10 });
     const copy = ((copies.find((r) => r.status === 'approved') ?? copies[0])?.content ?? {}) as any;
     const strategy = await this.strategist.currentStrategy(ws, c.id);
-    const sep = c.landing_url.includes('?') ? '&' : '?';
 
     if (channel === 'google') {
       if (c.google_campaign_id) throw new UserError('Esta campanha já tem campanha ligada no Google Ads.');
@@ -185,8 +188,8 @@ export class AdsChannelsService {
           this.google.createSearchCampaign(ws, {
             name: c.name,
             objective: c.objective,
-            dailyBudget: Number(c.budget_daily ?? 0) || 20,
-            landingUrl: `${c.landing_url}${sep}utm_source=google&utm_medium=cpc&utm_campaign=${encodeURIComponent(c.name)}`,
+            dailyBudget,
+            landingUrl: withUtm(c.landing_url, 'google', 'cpc', c.name),
             headlines: ai.titulos ?? [],
             descriptions: ai.descricoes ?? [],
             keywords: ai.palavras_chave ?? [],
@@ -212,8 +215,8 @@ export class AdsChannelsService {
         this.tiktok.createCampaign(ws, {
           name: c.name,
           objective: c.objective,
-          dailyBudget: Number(c.budget_daily ?? 0) || 50,
-          landingUrl: `${c.landing_url}${sep}utm_source=tiktok&utm_medium=paid&utm_campaign=${encodeURIComponent(c.name)}`,
+          dailyBudget,
+          landingUrl: withUtm(c.landing_url, 'tiktok', 'paid', c.name),
           adText: String(copy.headline ?? c.offer_promise ?? c.name),
           brandName: c.brand?.name ?? c.name,
           logoUrl: c.brand?.logo_url ?? null,
