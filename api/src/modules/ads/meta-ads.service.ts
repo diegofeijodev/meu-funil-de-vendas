@@ -10,7 +10,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
-import { assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
+import { assertCanPublishUntil, assertPeriodOpen, campaignEndDay, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
 import { MetaOAuthService } from './meta-oauth.service';
 import { MetaOpsService } from './meta-ops.service';
@@ -118,7 +118,7 @@ export class MetaAdsService {
     if (!c.landing_url) throw new UserError('Preencha a página de destino (URL) da campanha antes de publicar.');
     const dailyBudget = requireDailyBudget(c.budget_daily);
     const endDay = campaignEndDay(c.end_date);
-    assertPeriodOpen(endDay);
+    assertCanPublishUntil(endDay);
 
     const [creatives, copies] = await Promise.all([
       this.prisma.creatives.findMany({ where: { campaign_id: c.id, workspace_id: ws, status: 'approved' }, select: { id: true, title: true, preview_url: true, thumbnail_url: true, status: true, angle: true } }),

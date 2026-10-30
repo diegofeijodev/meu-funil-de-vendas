@@ -316,6 +316,51 @@ describe('MetaAdsService.publish — Fatia 0 (data de fim, verba e cidade)', () 
     expect(w.calls).toHaveLength(0);
   });
 
+  it('termina hoje: recusa antes de criar qualquer coisa (a Meta pede 24 h com verba diária) — sem campanha órfã', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign({ end_date: dayCol(todaySp()) });
+    w.seedCreative(c.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, c.id))).toBe('400:Esta campanha termina hoje: a Meta pede pelo menos 24 horas de anúncio. Crie uma campanha nova com mais dias.');
+    expect(await codeOf(w.meta.publish(OWNER, WS_A, c.id))).toBe('PERIOD_TOO_SHORT');
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('Meta fora do ar na busca da cidade vira 502 da Meta (não "cidade não achada")', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    w.respond((path, opts) => (path === '/search' && opts.params.type === 'adgeolocation' ? new MetaError('Sessão da Meta expirada. Reconecte em Integrações.', 190) : undefined));
+    const c = w.seedCampaign();
+    w.seedCreative(c.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, c.id))).toBe('502:Sessão da Meta expirada. Reconecte em Integrações.');
+    expect(postsTo(w, '/campaigns')).toHaveLength(0);
+  });
+
+  it('estado escrito por extenso não vira cidade; a UF escolhe entre cidades de mesmo nome; capital sozinha continua cidade', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    w.respond((path, opts) => {
+      if (path !== '/search' || opts.params.type !== 'adgeolocation') return undefined;
+      const q = String(opts.params.q);
+      if (/jundia/i.test(q)) return { data: [{ key: '269969', name: 'Jundiaí', type: 'city', region: 'São Paulo' }] };
+      if (/s[aã]o paulo/i.test(q)) return { data: [{ key: '269807', name: 'São Paulo', type: 'city', region: 'São Paulo' }] };
+      if (/valen/i.test(q)) return { data: [{ key: '1001', name: 'Valença', type: 'city', region: 'Bahia' }, { key: '1002', name: 'Valença', type: 'city', region: 'Rio de Janeiro' }] };
+      return { data: [] };
+    });
+    const geoOf = async (localizacao: string) => {
+      w.calls.length = 0;
+      const c = w.seedCampaign({ audience: { localizacao } });
+      w.seedCreative(c.id);
+      await w.meta.publish(OWNER, WS_A, c.id);
+      return postsTo(w, '/adsets')[0]!.opts.params.targeting.geo_locations.cities.map((x: { key: string }) => x.key);
+    };
+    expect(await geoOf('Jundiaí, São Paulo')).toEqual(['269969']);
+    expect(await geoOf('Jundiaí SP')).toEqual(['269969']);
+    expect(await geoOf('São Paulo, SP')).toEqual(['269807']);
+    expect(await geoOf('Valença, RJ')).toEqual(['1002']);
+    expect(await geoOf('Valença - Rio de Janeiro')).toEqual(['1002']);
+  });
+
   it('destino que já tem UTM não ganha UTM repetida', async () => {
     const w = adsWorld();
     respondPublish(w);
@@ -349,6 +394,12 @@ describe('MetaAdsService.setStatus', () => {
     const n = w.seedCampaign();
     expect(await status(w.meta.setStatus(OWNER, WS_A, n.id, 'ACTIVE'))).toBe('400:Campanha ainda não publicada na Meta.');
     expect(w.calls).toHaveLength(0);
+  });
+
+  it('último dia: ligar continua possível (a Meta para sozinha às 23:59)', async () => {
+    const w = adsWorld();
+    const c = published(w, { end_date: dayCol(todaySp()) });
+    expect(await status(w.meta.setStatus(OWNER, WS_A, c.id, 'ACTIVE'))).toBe('ok');
   });
 
   it('período terminado: ativar recusa com PERIOD_ENDED; pausar continua possível', async () => {

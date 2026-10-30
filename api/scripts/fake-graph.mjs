@@ -63,7 +63,7 @@ const server = createServer((req, res) => {
       if (path === '/me') return send(res, 200, { id: '1', name: 'Fulano da Silva' });
       if (path === '/me/adaccounts') return send(res, 200, { data: [{ id: 'act_1001', name: 'Conta Smoke', account_status: 1, currency: 'BRL' }, { id: 'act_1002', name: 'Conta Inativa', account_status: 2, currency: 'BRL' }] });
       if (path === '/me/accounts') return send(res, 200, { data: [{ id: '2002', name: 'Página Smoke', instagram_business_account: { id: '3003', username: 'smoke_ig' } }, { id: '2003', name: 'Sem Instagram' }] });
-      if (path === '/search') return send(res, 200, { data: params.type === 'adinterest' ? [{ id: '6003', name: 'Cerveja' }] : [{ key: '2490299', name: 'Valinhos', type: 'city' }] });
+      if (path === '/search') return send(res, 200, { data: params.type === 'adinterest' ? [{ id: '6003', name: 'Cerveja' }] : [{ key: '2490299', name: 'Valinhos', type: 'city', region: 'São Paulo (state)' }] });
       if (b === 'adspixels') return send(res, 200, { data: [] });
       if (b === 'customaudiences') return send(res, 200, { data: [{ id: '5001', name: 'Compradores', subtype: 'CUSTOM', approximate_count_lower_bound: 1200 }] });
       if (a?.startsWith('act_') && ['campaigns', 'adsets', 'ads'].includes(b)) return send(res, 200, { data: [{ id: `${b}-1`, name: `${b} 1`, status: 'PAUSED', effective_status: 'PAUSED' }] });

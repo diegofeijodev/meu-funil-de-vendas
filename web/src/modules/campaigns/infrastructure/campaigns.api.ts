@@ -188,9 +188,12 @@ export async function setCampaignLandingUrl(ws: string, campaignId: string, land
   await api.patch(`${base(ws)}/${campaignId}/landing-url`, { landing_url: landingUrl });
 }
 
-/** Verba por dia (obrigatória para publicar) e teto do mês opcional, em reais. Só antes de ir para a Meta. */
-export async function setCampaignBudget(ws: string, campaignId: string, budgetDaily: number, budgetTotal: number | null): Promise<void> {
-  await api.patch(`${base(ws)}/${campaignId}/budget`, { budget_daily: budgetDaily, budget_total: budgetTotal });
+/**
+ * Verba por dia (obrigatória para publicar) e, se informada, a verba total, em reais. Sem `budgetTotal` o total de antes fica.
+ * Só antes de ir para a Meta (ou para preencher verba vazia de campanha antiga).
+ */
+export async function setCampaignBudget(ws: string, campaignId: string, budgetDaily: number, budgetTotal?: number): Promise<void> {
+  await api.patch(`${base(ws)}/${campaignId}/budget`, budgetTotal === undefined ? { budget_daily: budgetDaily } : { budget_daily: budgetDaily, budget_total: budgetTotal });
 }
 
 /** Cidade do anúncio (vai para `audience.localizacao`). Só antes de ir para a Meta. */

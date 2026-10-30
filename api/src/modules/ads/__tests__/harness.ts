@@ -133,7 +133,7 @@ export type AdsWorld = ReturnType<typeof adsWorld>;
 export function respondPublish(w: AdsWorld) {
   let n = 0;
   w.respond((path, opts) => {
-    if (path === '/search' && opts.params?.type === 'adgeolocation' && /jundia/i.test(String(opts.params?.q))) return { data: [{ key: '269969', name: 'Jundiaí', type: 'city' }] };
+    if (path === '/search' && opts.params?.type === 'adgeolocation' && /jundia/i.test(String(opts.params?.q))) return { data: [{ key: '269969', name: 'Jundiaí', type: 'city', region: 'São Paulo (state)' }] };
     if (path === '/search') return { data: [] };
     if (path.endsWith('/adspixels')) return { data: [] };
     if (path.endsWith('/adimages')) return { images: { a: { hash: 'h1' } } };

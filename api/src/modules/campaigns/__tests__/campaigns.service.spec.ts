@@ -170,7 +170,7 @@ describe('CampaignsService.setBudget / setLocation (Fatia 0: ajustar antes de pu
     const c = await svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 35.5, budget_total: 900 });
     expect(Number(c.budget_daily)).toBe(35.5);
     expect(Number(w.t.campaigns.rows[0]!.budget_total)).toBe(900);
-    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.budget_updated', 'campaign', { campaign_id: campaign.id }]);
+    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.budget_updated', 'campaign', { campaign_id: campaign.id, from: { daily: 0, total: null }, to: { daily: 35.5, total: 900 } }]);
     await svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 20, budget_total: null });
     expect(w.t.campaigns.rows[0]!.budget_total ?? null).toBeNull();
   });
@@ -189,7 +189,7 @@ describe('CampaignsService.setBudget / setLocation (Fatia 0: ajustar antes de pu
     const { campaign } = await seedCampaign(w, { status: 'approved', audience: { idade: '25-45', persona: 'Dono de bar' } });
     await svc.setLocation(OWNER, WS_A, campaign.id, '  Jundiaí, SP ');
     expect(w.t.campaigns.rows[0]!.audience).toEqual({ idade: '25-45', persona: 'Dono de bar', localizacao: 'Jundiaí, SP' });
-    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.location_updated', 'campaign', { campaign_id: campaign.id }]);
+    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.location_updated', 'campaign', { campaign_id: campaign.id, from: '', to: 'Jundiaí, SP' }]);
     expect(await status(svc.setLocation(OWNER, WS_A, campaign.id, '  '))).toBe('400:Informe a cidade (ex.: Jundiaí, SP).');
   });
 
@@ -202,5 +202,32 @@ describe('CampaignsService.setBudget / setLocation (Fatia 0: ajustar antes de pu
     const { campaign: live } = await seedCampaign(w, { status: 'active' });
     expect(await status(svc.setBudget(OWNER, WS_A, live.id, { budget_daily: 10 }))).toBe(msg);
     expect(await status(svc.setLocation(OWNER, WS_B, live.id, 'Jundiaí'))).toBe('404:Campanha não encontrada.');
+  });
+});
+
+describe('verba e cidade — depois da revisão da Fatia 0', () => {
+  it('depois do pedido de aprovação só dono/admin muda (a aprovação viu o valor antigo); em rascunho o marketing muda', async () => {
+    const { w, svc } = setup();
+    const { campaign: appr } = await seedCampaign(w, { status: 'approved', budget_daily: 30 });
+    const msg = '403:Depois do pedido de aprovação, só o dono ou um administrador muda verba e cidade.';
+    expect(await status(svc.setBudget(MARKETING, WS_A, appr.id, { budget_daily: 50 }))).toBe(msg);
+    expect(await status(svc.setLocation(MARKETING, WS_A, appr.id, 'Campinas, SP'))).toBe(msg);
+    const { campaign: draft } = await seedCampaign(w, { status: 'draft', budget_daily: 0 });
+    expect(await status(svc.setBudget(MARKETING, WS_A, draft.id, { budget_daily: 50 }))).toBe('ok');
+  });
+
+  it('sem mandar o total, o total de antes fica (o campo opcional não apaga a "Verba total")', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'approved', budget_daily: 0, budget_total: 3000 });
+    await svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 40 });
+    expect(Number(w.t.campaigns.rows.find((r: any) => r.id === campaign.id)!.budget_total)).toBe(3000);
+  });
+
+  it('já na Meta sem verba gravada (o R$ 20 antigo): dá para preencher a verba (Google/TikTok precisam dela); com verba, não muda', async () => {
+    const { w, svc } = setup();
+    const { campaign: empty } = await seedCampaign(w, { status: 'active', meta_campaign_id: '9001', budget_daily: 0 });
+    expect(await status(svc.setBudget(OWNER, WS_A, empty.id, { budget_daily: 20 }))).toBe('ok');
+    const { campaign: full } = await seedCampaign(w, { status: 'active', meta_campaign_id: '9002', budget_daily: 30 });
+    expect(await status(svc.setBudget(OWNER, WS_A, full.id, { budget_daily: 20 }))).toBe('400:A campanha já foi publicada: mude direto na Meta.');
   });
 });

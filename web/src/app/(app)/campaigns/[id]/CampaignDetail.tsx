@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
+import { parseMoneyInput } from "@/lib/money-input";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
@@ -167,15 +168,16 @@ export function CampaignDetail() {
     }
   };
 
-  /** "35,50" ou "35.5" → 35.5; vazio ou texto → NaN (a tela pede de novo). */
-  const parseReais = (v: string) => (v.trim() ? Number(v.trim().replace(",", ".")) : NaN);
-
   const saveBudget = async () => {
     if (!workspaceId) return;
-    const daily = parseReais(budgetIn);
-    const total = budgetTotalIn.trim() ? parseReais(budgetTotalIn) : null;
+    const daily = parseMoneyInput(budgetIn);
+    const total = budgetTotalIn.trim() ? parseMoneyInput(budgetTotalIn) : undefined;
     if (!(daily > 0)) {
       toast.error("Informe um valor por dia maior que zero.");
+      return;
+    }
+    if (total !== undefined && !(total > 0)) {
+      toast.error("Informe a verba total em reais (ex.: 900) ou deixe em branco.");
       return;
     }
     setBusy("budget");
@@ -417,8 +419,11 @@ export function CampaignDetail() {
   };
   const ended = c.status === "finished";
   const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
-  // Verba e cidade ainda podem mudar aqui (depois de publicada, o anúncio vive na Meta).
-  const fixableBeforeMeta = canEdit && !metaId && ["draft", "pending_approval", "approved"].includes(c.status);
+  // Verba e cidade ainda podem mudar aqui (depois de publicada, o anúncio vive na Meta). Depois do pedido de aprovação, só dono/admin.
+  const canChangeTerms = canEdit && (c.status === "draft" || canManage);
+  const fixableBeforeMeta = canChangeTerms && !metaId && ["draft", "pending_approval", "approved"].includes(c.status);
+  // Verba vazia pode ser preenchida mesmo já na Meta (campanha antiga com o R$ 20 silencioso): Google e TikTok precisam dela.
+  const budgetFixable = canChangeTerms && !ended && (fixableBeforeMeta || !!metaId);
   const city = String(((c.audience ?? {}) as Record<string, unknown>).localizacao ?? "").trim();
   const metaDelivery = (c as { meta_delivery_status?: string | null }).meta_delivery_status;
   const ext = c as { google_campaign_id?: string | null; google_status?: string | null; tiktok_campaign_id?: string | null; tiktok_status?: string | null };
@@ -585,7 +590,7 @@ export function CampaignDetail() {
         </div>
       )}
 
-      {fixableBeforeMeta && !(Number(c.budget_daily) > 0) && (
+      {budgetFixable && !(Number(c.budget_daily) > 0) && (
         <div id="fix-budget" className="panel mb-6 border-amber-500/40 p-5">
           <p className="text-sm font-semibold">Falta a verba por dia</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -603,8 +608,14 @@ export function CampaignDetail() {
               <Input inputMode="decimal" placeholder="Ex.: 30" value={budgetIn} onChange={(e) => setBudgetIn(e.target.value)} className="sm:w-40" />
             </label>
             <label className="flex flex-col gap-1 text-sm">
-              Teto do mês (opcional)
-              <Input inputMode="decimal" placeholder="Ex.: 900" value={budgetTotalIn} onChange={(e) => setBudgetTotalIn(e.target.value)} className="sm:w-40" />
+              Verba total da campanha (opcional)
+              <Input
+                inputMode="decimal"
+                placeholder={Number(c.budget_total) > 0 ? `Hoje: ${brl(c.budget_total)}` : "Ex.: 900"}
+                value={budgetTotalIn}
+                onChange={(e) => setBudgetTotalIn(e.target.value)}
+                className="sm:w-48"
+              />
             </label>
             <Button type="submit" disabled={busy === "budget" || !budgetIn.trim()}>
               {busy === "budget" ? "Salvando..." : "Salvar verba"}

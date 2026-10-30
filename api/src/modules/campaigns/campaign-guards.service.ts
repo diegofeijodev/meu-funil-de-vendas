@@ -7,6 +7,7 @@ import { AccessLevel, WorkspaceAccessService } from '../access/access.service';
 export const MSG_APPROVE_CAMPAIGN = 'Só o dono ou um administrador da empresa pode aprovar a campanha.';
 export const MSG_ACTIVATE_DELIVERY = 'Só o dono ou um administrador pode ativar a veiculação (gastar verba).';
 export const MSG_DECIDE_APPROVAL = 'Só o dono ou um administrador da empresa pode decidir aprovações.';
+export const MSG_CHANGE_AFTER_APPROVAL = 'Depois do pedido de aprovação, só o dono ou um administrador muda verba e cidade.';
 
 const APPROVED_OR_ACTIVE = ['approved', 'active'];
 
@@ -44,6 +45,12 @@ export class CampaignGuardsService {
   }
 
   /** `guard_approval_decision`. */
+  /** Verba e cidade depois do pedido de aprovação: quem aprovou viu os valores de antes, então só owner|admin muda. */
+  async assertCanChangeApprovedTerms(userId: string, workspaceId: string, status: string): Promise<void> {
+    if (status === 'draft') return;
+    if (!(await this.isManager(userId, workspaceId))) throw new ForbiddenException({ code: 'FORBIDDEN', message: MSG_CHANGE_AFTER_APPROVAL });
+  }
+
   async assertCanDecideApproval(userId: string, workspaceId: string): Promise<void> {
     if (!(await this.isManager(userId, workspaceId))) throw new ForbiddenException({ code: 'FORBIDDEN', message: MSG_DECIDE_APPROVAL });
   }

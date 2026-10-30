@@ -20,6 +20,20 @@ export function requireDailyBudget(budgetDaily: unknown): number {
   return value;
 }
 
+/**
+ * Publicar na Meta: além do período encerrado, recusa a campanha que termina HOJE — com verba diária a Meta exige
+ * `end_time` pelo menos 24 h depois do início, e o conjunto seria recusado depois de a campanha já existir lá (órfã).
+ */
+export function assertCanPublishUntil(endDay: string | null): void {
+  assertPeriodOpen(endDay);
+  if (endDay && endDay === todaySp()) {
+    throw new BadRequestException({
+      code: 'PERIOD_TOO_SHORT',
+      message: 'Esta campanha termina hoje: a Meta pede pelo menos 24 horas de anúncio. Crie uma campanha nova com mais dias.',
+    });
+  }
+}
+
 /** Período encerrado (fim antes de hoje, em Brasília) recusa publicar e ligar com `PERIOD_ENDED`. */
 export function assertPeriodOpen(endDay: string | null): void {
   if (!endDay || endDay >= todaySp()) return;

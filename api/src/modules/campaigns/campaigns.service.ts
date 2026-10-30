@@ -142,16 +142,21 @@ export class CampaignsService {
     return updated;
   }
 
-  /** Campanha que ainda não foi para a Meta (verba e cidade de depois vivem lá). */
-  private async beforePublish(workspaceId: string, campaignId: string) {
+  /**
+   * Campanha que ainda não foi para a Meta (verba e cidade de depois vivem lá). Exceção: verba VAZIA de campanha antiga já na Meta
+   * (publicada com o R$ 20 silencioso) pode ser preenchida — não mexe na Meta e o Google/TikTok precisam dela.
+   */
+  private async beforePublish(userId: string, workspaceId: string, campaignId: string, opts: { fillEmptyBudget?: boolean } = {}) {
     const c = await this.prisma.campaigns.findFirst({
       where: { id: campaignId, workspace_id: workspaceId },
-      select: { id: true, status: true, meta_campaign_id: true, audience: true },
+      select: { id: true, status: true, meta_campaign_id: true, audience: true, budget_daily: true, budget_total: true },
     });
     if (!c) throw notFound();
-    if (!LANDING_EDITABLE.includes(c.status) || c.meta_campaign_id) {
+    const fillingGap = opts.fillEmptyBudget && !(Number(c.budget_daily ?? 0) > 0) && c.status !== 'finished';
+    if (!fillingGap && (!LANDING_EDITABLE.includes(c.status) || c.meta_campaign_id)) {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: 'A campanha já foi publicada: mude direto na Meta.' });
     }
+    await this.guards.assertCanChangeApprovedTerms(userId, workspaceId, c.status);
     return c;
   }
 
@@ -159,13 +164,23 @@ export class CampaignsService {
   async setBudget(userId: string, workspaceId: string, campaignId: string, dto: SetBudgetDto) {
     const daily = Number(dto.budget_daily);
     if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe um valor por dia maior que zero.' });
+    // Total ausente = fica o de antes (o wizard já gravou "Verba total"); `null` limpa.
+    const keepTotal = dto.budget_total === undefined;
     const total = dto.budget_total == null ? null : Number(dto.budget_total);
     if (total != null && total < daily) {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: 'O teto do mês não pode ser menor que a verba de um dia.' });
     }
-    await this.beforePublish(workspaceId, campaignId);
-    const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { budget_daily: daily, budget_total: total } });
-    await this.activity.log(workspaceId, userId, 'campaign.budget_updated', 'campaign', { campaign_id: campaignId });
+    const c = await this.beforePublish(userId, workspaceId, campaignId, { fillEmptyBudget: true });
+    const updated = await this.prisma.campaigns.update({
+      where: { id: campaignId },
+      data: keepTotal ? { budget_daily: daily } : { budget_daily: daily, budget_total: total },
+    });
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    await this.activity.log(workspaceId, userId, 'campaign.budget_updated', 'campaign', {
+      campaign_id: campaignId,
+      from: { daily: num(c.budget_daily) ?? 0, total: num(c.budget_total) },
+      to: { daily, total: keepTotal ? num(c.budget_total) : total },
+    });
     return updated;
   }
 
@@ -173,10 +188,11 @@ export class CampaignsService {
   async setLocation(userId: string, workspaceId: string, campaignId: string, location: string) {
     const text = (location ?? '').trim();
     if (text.length < 2) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe a cidade (ex.: Jundiaí, SP).' });
-    const c = await this.beforePublish(workspaceId, campaignId);
+    const c = await this.beforePublish(userId, workspaceId, campaignId);
+    const before = String(((c.audience ?? {}) as Record<string, unknown>)['localizacao'] ?? '');
     const audience = { ...((c.audience ?? {}) as Record<string, unknown>), localizacao: text };
     const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { audience: audience as Prisma.InputJsonObject } });
-    await this.activity.log(workspaceId, userId, 'campaign.location_updated', 'campaign', { campaign_id: campaignId });
+    await this.activity.log(workspaceId, userId, 'campaign.location_updated', 'campaign', { campaign_id: campaignId, from: before, to: text });
     return updated;
   }
 

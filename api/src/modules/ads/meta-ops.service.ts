@@ -19,6 +19,48 @@ export const metaEndTime = (endDate: string) => `${endDate}T23:59:59-0300`;
 const br = (ymd: string) => ymd.split('-').reverse().join('/');
 const geoError = (message: string) => new BadRequestException({ code: 'GEO_UNRESOLVED', message });
 /** "Brasil", "Brasil inteiro", "nacional", "todo o país": anunciar no país todo foi escolha de quem escreveu. */
+/** UFs e nomes dos estados: separam a cidade do estado ("Jundiaí, São Paulo" não pode virar a capital) e escolhem entre homônimas. */
+const UFS: Record<string, string> = {
+  AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo',
+  GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná',
+  PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima',
+  SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins',
+};
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const STATE_BY_NAME = new Map(Object.values(UFS).map((n) => [fold(n), n]));
+/** Nome do estado de uma parte ("SP", "sp", "São Paulo", "sao paulo"), ou null. */
+const stateOf = (part: string): string | null => UFS[part.trim().toUpperCase()] ?? STATE_BY_NAME.get(fold(part)) ?? null;
+
+/**
+ * "Jundiaí, SP e Campinas - São Paulo" → [{ city: 'Jundiaí', state: 'São Paulo' }, { city: 'Campinas', state: 'São Paulo' }].
+ * Parte que é só estado vale como dica para as cidades sem UF; sozinha ("São Paulo", "Rio de Janeiro") é a capital.
+ */
+export function parseCityParts(text: string): { city: string; state: string | null }[] {
+  const parts = text
+    .replace(/\be\s+regi[aã]o\b|\bregi[aã]o\b|\bBrasil\b/gi, '')
+    .split(/[,;/]|\se\s|\s-\s/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const cities: { city: string; state: string | null }[] = [];
+  const states: string[] = [];
+  for (const p of parts) {
+    const whole = stateOf(p);
+    if (whole) {
+      states.push(whole);
+      continue;
+    }
+    const tail = /^(.*\S)\s+([A-Za-z]{2})$/.exec(p);
+    const tailState = tail ? (UFS[tail[2]!.toUpperCase()] ?? null) : null;
+    cities.push(tailState ? { city: tail![1]!, state: tailState } : { city: p, state: null });
+  }
+  if (!cities.length) {
+    // Só o nome de um estado por extenso = a capital de mesmo nome (São Paulo, Rio de Janeiro). Sigla sozinha não é cidade.
+    for (const p of parts) if (p.length > 2 && STATE_BY_NAME.has(fold(p))) cities.push({ city: p, state: stateOf(p) });
+  }
+  const hint = new Set(states).size === 1 ? states[0]! : null;
+  return cities.filter((c) => c.city.length > 2).slice(0, 10).map((c) => ({ city: c.city, state: c.state ?? hint }));
+}
+
 const NATIONAL = /^\s*(o\s+)?(brasil(\s+inteiro|\s+todo)?|todo\s+o\s+(brasil|pa[ií]s)|nacional)\s*$/i;
 
 export type PublishCreative = { id: string; title: string; url: string | null; thumb: string | null; angle?: string | null };
@@ -219,23 +261,24 @@ export class MetaOpsService {
     const text = String(a.localizacao ?? a.location ?? a.cities ?? '').trim();
     if (NATIONAL.test(text)) return { geo: { countries: ['BR'] }, label: 'Brasil inteiro (escolhido)' };
     if (!text) throw geoError('Diga em que cidade o anúncio deve aparecer antes de publicar.');
-    const names = text
-      .replace(/\be\s+regi[aã]o\b|\bregi[aã]o\b|\bSP\b|\bBrasil\b/gi, '')
-      .split(/[,;/]|\se\s|\s-\s/)
-      .map((x) => x.trim())
-      .filter((x) => x.length > 2)
-      .slice(0, 10);
     const cities: { key: string; radius: number; distance_unit: string; name: string }[] = [];
-    for (const q of names) {
-      const r = await this.graph<{ data?: { key: string; name: string; type: string }[] }>(ws, '/search', {
-        params: { type: 'adgeolocation', q, location_types: JSON.stringify(['city']), country_code: 'BR' },
-      }).catch(() => null);
-      const hit = r?.data?.find((d) => d.type === 'city');
-      if (hit && !cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: 'kilometer', name: hit.name });
+    const missed: string[] = [];
+    for (const part of parseCityParts(text)) {
+      // Erro da Meta (sessão expirada, limite) sobe como 502 — não vira "cidade não achada".
+      const r = await this.graph<{ data?: { key: string; name: string; type: string; region?: string }[] }>(ws, '/search', {
+        params: { type: 'adgeolocation', q: part.city, location_types: JSON.stringify(['city']), country_code: 'BR' },
+      });
+      const hits = (r?.data ?? []).filter((d) => d.type === 'city');
+      // A Meta devolve o estado em `region` ("São Paulo (state)"); com UF escrita, só vale a cidade daquele estado.
+      const withRegion = hits.filter((d) => d.region);
+      const hit = part.state && withRegion.length ? withRegion.find((d) => fold(d.region!).includes(fold(part.state!))) : hits[0];
+      if (!hit) missed.push(part.city);
+      else if (!cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: 'kilometer', name: hit.name });
     }
     // Nunca "Brasil inteiro" por engano: sem nenhuma cidade achada, a publicação para aqui (antes de criar algo na Meta).
     if (!cities.length) throw geoError(`A Meta não achou a cidade "${text}". Escreva como no mapa (ex.: Jundiaí, SP).`);
-    return { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label: `${cities.map((c) => c.name).join(', ')} (raio de 20 km)` };
+    const label = `${cities.map((c) => c.name).join(', ')} (raio de 20 km)${missed.length ? `; a Meta não achou: ${missed.join(', ')}` : ''}`;
+    return { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label };
   }
 
   private async firstPixel(ws: string, adAccountId: string) {
