@@ -7,7 +7,7 @@ import type { HowToStep } from "@/components/how-to";
 type Guide = { title: string; steps: HowToStep[]; references?: { label: string; url: string }[] };
 
 export const GUIDES: Record<
-  "agency" | "brands" | "campaignNew" | "campaign" | "studio" | "library" | "instagram" | "crm" | "cadences" | "sdr" | "insights",
+  "agency" | "brands" | "campaignNew" | "campaign" | "campaignPilot" | "studio" | "library" | "instagram" | "crm" | "cadences" | "sdr" | "insights",
   Guide
 > = {
   agency: {
@@ -48,6 +48,17 @@ export const GUIDES: Record<
       "Solicite aprovação; o dono ou um admin aprova em Aprovações e a campanha é publicada pausada.",
       "Ative na Meta. Os resultados chegam a cada 3 horas e a IA sugere otimizações em AI Insights.",
       "Opcional: com Google Ads ou TikTok Ads conectados em Integrações, crie a mesma campanha pausada nesses canais na aba Anúncios e regras.",
+    ],
+    references: [{ label: "Central de ajuda da Meta para anunciantes", url: "https://www.facebook.com/business/help" }],
+  },
+  campaignPilot: {
+    title: "Campanha com o estrategista",
+    steps: [
+      "Em Nova campanha, conte o que você quer: o estrategista monta o plano sozinho.",
+      "Confira o pacote no topo da campanha e clique em Aprovar e começar. É uma vez só.",
+      "Ele faz os textos, programa o Instagram (você aprova cada post, se escolheu assim) e cria as artes e o vídeo, uma peça a cada 5 minutos.",
+      "Se algo precisar de você, aparece em Precisa de você, com o botão para resolver.",
+      "Para anunciar: aprove as artes e use Publicar na Meta, como sempre.",
     ],
     references: [{ label: "Central de ajuda da Meta para anunciantes", url: "https://www.facebook.com/business/help" }],
   },

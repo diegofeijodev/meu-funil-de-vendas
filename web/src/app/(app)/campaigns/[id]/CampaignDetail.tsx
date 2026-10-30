@@ -584,7 +584,10 @@ export function CampaignDetail() {
         />
       )}
       <div className="mb-6">
-        <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
+        {(() => {
+          const g = features?.campaign_pilot ? GUIDES.campaignPilot : GUIDES.campaign;
+          return <HowTo title={g.title} steps={g.steps} references={g.references ?? []} />;
+        })()}
       </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

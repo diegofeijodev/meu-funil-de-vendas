@@ -9,6 +9,14 @@ import { Button } from "@/components/ui/button";
 import { CAMPAIGN_STATUS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
 import { computeKpis } from "@/lib/metrics";
+import { pilotListLine } from "@/lib/pilot-text";
+import { pilotSummarySchema } from "@/modules/campaign-pilot/infrastructure/pilot.api";
+
+/** Linha do estrategista no cartão (`pilot_summary` da API); sem ela (API antiga ou sem piloto) o cartão fica igual. */
+const pilotLine = (c: unknown) => {
+  const r = pilotSummarySchema.nullish().safeParse((c as { pilot_summary?: unknown }).pilot_summary);
+  return r.success ? pilotListLine(r.data) : null;
+};
 
 export function CampaignsList() {
   const { workspaceId, canEdit } = useWorkspace();
@@ -64,6 +72,7 @@ export function CampaignsList() {
                           {c.name}
                         </Link>
                         <p className="text-xs text-muted-foreground">{c.brands?.name}</p>
+                        {pilotLine(c) && <p className="text-xs font-medium text-primary">{pilotLine(c)}</p>}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{OBJECTIVES[c.objective] ?? c.objective}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">

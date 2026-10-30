@@ -2,7 +2,7 @@
 
 import { useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import {
@@ -13,6 +13,8 @@ import {
   type OfferTermsInput,
 } from "@/modules/campaigns/infrastructure/campaigns.api";
 import { useFeatures } from "@/modules/features/infrastructure/features.api";
+import { createPilot } from "@/modules/campaign-pilot/infrastructure/pilot.api";
+import { nextIdempotencyKey } from "@/lib/pilot-text";
 import { IntakePanel } from "./IntakePanel";
 import { listBrands } from "@/modules/brands/infrastructure/brands.api";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
@@ -51,6 +53,8 @@ export function NewCampaign() {
   // Vindos do "Conte o que você quer": continuam valendo se a pessoa abrir o formulário para ajustar.
   const [extras, setExtras] = useState<{ intake_text?: string | null; offer_terms?: OfferTermsInput | null; geo_targets?: GeoTargetInput[] }>({});
   const { data: features } = useFeatures(workspaceId);
+  // Mesma chave em nova tentativa (clique duplo, rede caiu) = o mesmo piloto.
+  const pilotKey = useRef(nextIdempotencyKey());
   const [mode, setMode] = useState<"intake" | "form" | null>(null);
   const currentMode = mode ?? (features?.campaign_intake ? "intake" : "form");
 
@@ -124,6 +128,18 @@ export function NewCampaign() {
 
       const campaign = await createCampaign(workspaceId, input);
 
+      // Piloto liberado (vindo do "Conte o que você quer"): o servidor monta o plano e, depois da aprovação, faz o resto.
+      if (given && features?.campaign_pilot) {
+        try {
+          await createPilot(workspaceId, campaign.id, pilotKey.current);
+          toast.success("Campanha criada. O estrategista está montando o plano.");
+        } catch (e) {
+          toast.warning(`Campanha criada, mas o estrategista não começou. ${apiErrorMessage(e, "Tente de novo em instantes.")} Comece pelo painel da campanha.`);
+        }
+        navigate({ to: "/campaigns/$id", params: { id: campaign.id } });
+        return;
+      }
+
       // Estrategista (IA real) → estratégia v1; depois a copy segue a estratégia.
       let strategyOk = true;
       try {
@@ -175,6 +191,7 @@ export function NewCampaign() {
             onBrandChange={setBrandId}
             busy={busy}
             onCreate={(input) => void finish(input)}
+            pilot={!!features?.campaign_pilot}
             onEditDetails={applyDraft}
             onUseForm={() => setMode("form")}
           />

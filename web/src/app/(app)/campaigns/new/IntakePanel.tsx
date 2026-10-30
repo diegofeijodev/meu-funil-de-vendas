@@ -48,12 +48,14 @@ type Props = {
   onBrandChange: (id: string) => void;
   busy: boolean;
   onCreate: (input: NewCampaignInput) => void;
+  /** Piloto liberado: o "Criar" também põe o estrategista para montar o plano no servidor. */
+  pilot?: boolean;
   onEditDetails: (input: NewCampaignInput) => void;
   onUseForm: () => void;
 };
 
 /** "Conte o que você quer" → "Entendi" com até 3 perguntas (verba → destino → oferta) e a cidade (ux §A, Fatia 1). */
-export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy, onCreate, onEditDetails, onUseForm }: Props) {
+export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy, onCreate, onEditDetails, onUseForm, pilot }: Props) {
   const [text, setText] = useState("");
   const [textError, setTextError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -434,7 +436,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
               Ver/ajustar todos os detalhes ›
             </Button>
             <Button className="h-11 sm:h-9" onClick={create} disabled={busy}>
-              {busy ? "Criando a campanha…" : "Criar campanha"}
+              {busy ? (pilot ? "Criando e montando o plano…" : "Criando a campanha…") : pilot ? "Criar e montar o plano" : "Criar campanha"}
             </Button>
           </div>
         </section>
