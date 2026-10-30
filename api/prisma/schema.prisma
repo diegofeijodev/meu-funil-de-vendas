@@ -116,6 +116,7 @@ model workspaces {
   vacancy_stories            vacancy_stories[]          @relation("vacancy_stories_workspace_id")
   style_ref_sources          style_ref_sources[]        @relation("style_ref_sources_workspace_id")
   style_references           style_references[]         @relation("style_references_workspace_id")
+  campaign_pilot_runs        campaign_pilot_runs[]      @relation("campaign_pilot_runs_workspace_id")
 }
 
 model workspace_members {
@@ -298,6 +299,7 @@ model campaigns {
   media_assets             media_assets[]             @relation("media_assets_campaign_id")
 
   style_references         style_references[]         @relation("style_references_campaign_id")
+  campaign_pilot_runs      campaign_pilot_runs[]      @relation("campaign_pilot_runs_campaign_id")
   @@index([workspace_id])
   @@index([brand_id])
 }
@@ -1497,4 +1499,33 @@ model style_references {
   styleSource  style_ref_sources? @relation("style_references_source_id", fields: [source_id], references: [id], onDelete: Cascade)
 
   @@index([workspace_id, brand_id, created_at(sort: Desc)])
+}
+
+/// Piloto do estrategista (Fatia 3): cursor + erros por etapa. Índice parcial "1 ativo por campanha" e CHECKs ficam no SQL da migração.
+model campaign_pilot_runs {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String     @db.Uuid
+  campaign_id         String     @db.Uuid
+  created_by          String     @db.Uuid
+  approval_request_id String?    @db.Uuid
+  approved_by         String?    @db.Uuid
+  approved_at         DateTime?  @db.Timestamptz(6)
+  strategy_version    Int?
+  status              String
+  current_step        String?
+  options             Json       @default("{}") @db.JsonB
+  steps               Json       @default("{}") @db.JsonB
+  estimated_credits   Decimal?   @db.Decimal(12, 2)
+  max_credits         Decimal?   @db.Decimal(12, 2)
+  idempotency_key     String
+  lease_until         DateTime?  @db.Timestamptz(6)
+  next_run_at         DateTime?  @db.Timestamptz(6)
+  created_at          DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime   @default(now()) @db.Timestamptz(6)
+  workspace           workspaces @relation("campaign_pilot_runs_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  campaign            campaigns  @relation("campaign_pilot_runs_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, idempotency_key])
+  @@index([status, next_run_at])
+  @@index([campaign_id, created_at(sort: Desc)])
 }

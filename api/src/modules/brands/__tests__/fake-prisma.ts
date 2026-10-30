@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 type Row = Record<string, any>;
 
-/** Tabela em memória com o subconjunto do Prisma que os serviços usam (igualdade, `in`, `not`, ordenação simples). */
+/** Tabela em memória com o subconjunto do Prisma que os serviços usam (igualdade, `in`, `not`, `lt`/`lte`/`gt`/`gte`, ordenação simples). */
 export class FakeTable {
   rows: Row[] = [];
   constructor(private readonly defaults: () => Row = () => ({})) {}
@@ -13,7 +13,12 @@ export class FakeTable {
       if (v && typeof v === 'object' && !(v instanceof Date)) {
         if ('in' in v) return (v as any).in.includes(r[k]);
         if ('not' in v) return r[k] !== (v as any).not && (v as any).not !== undefined ? (v as any).not === null ? r[k] != null : r[k] !== (v as any).not : true;
-        if ('gte' in v) return r[k] >= (v as any).gte;
+        const cmp = v as { lt?: any; lte?: any; gt?: any; gte?: any };
+        if ('lt' in cmp || 'lte' in cmp || 'gt' in cmp || 'gte' in cmp) {
+          const x = r[k];
+          if (x == null) return false;
+          return (!('lt' in cmp) || x < cmp.lt) && (!('lte' in cmp) || x <= cmp.lte) && (!('gt' in cmp) || x > cmp.gt) && (!('gte' in cmp) || x >= cmp.gte);
+        }
         return true;
       }
       return r[k] === v;

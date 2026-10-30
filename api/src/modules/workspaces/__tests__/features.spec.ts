@@ -6,7 +6,7 @@ const A = '7309ae62-15c2-48d3-8990-4dbe75a29c4e';
 const B = '11111111-2222-4333-8444-555555555555';
 const access = { require: jest.fn(async (user: string) => { if (user === 'estranho') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'x' }); return 'viewer'; }) };
 const make = (env: Record<string, string>) =>
-  new FeaturesService(access as any, { NODE_ENV: 'production', CAMPAIGN_INTAKE_WORKSPACE_IDS: '', VACANCY_STORIES_WORKSPACE_IDS: '', ...env } as any);
+  new FeaturesService(access as any, { NODE_ENV: 'production', CAMPAIGN_INTAKE_WORKSPACE_IDS: '', VACANCY_STORIES_WORKSPACE_IDS: '', CAMPAIGN_PILOT_ENABLED: false, CAMPAIGN_PILOT_WORKSPACE_IDS: '', ...env } as any);
 
 describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
   it('style_refs_pinterest segue STYLE_REFS_PINTEREST_ENABLED (chave geral, OK jurídico)', async () => {
@@ -19,6 +19,12 @@ describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
     expect(await f.forWorkspace('u1', B)).toEqual({ campaign_intake: false, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: true });
     expect(f.intakeEnabled(A)).toBe(true);
     expect(f.intakeEnabled(B)).toBe(false);
+  });
+
+  it('campaign_pilot segue o portão do piloto (chave geral + lista)', async () => {
+    const f = make({ CAMPAIGN_PILOT_ENABLED: true, CAMPAIGN_PILOT_WORKSPACE_IDS: A } as any);
+    expect((await f.forWorkspace('u1', A)).campaign_pilot).toBe(true);
+    expect((await f.forWorkspace('u1', B)).campaign_pilot).toBe(false);
   });
 
   it('qualquer membro lê; quem não é da empresa recebe o erro do acesso', async () => {

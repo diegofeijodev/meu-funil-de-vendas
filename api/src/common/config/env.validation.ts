@@ -161,6 +161,14 @@ const envSchema = z
     CAMPAIGN_INTAKE_WORKSPACE_IDS: z.string().default(''),
     /** Referências do Pinterest (link de Pin e pastas acompanhadas por RSS), Fatia 6. OK jurídico dado em 29/10/2026. */
     STYLE_REFS_PINTEREST_ENABLED: bool('false'),
+    /** Piloto do estrategista (Fatia 3): chave geral. Com ela desligada, as rotas do piloto respondem 404 e o job não roda. */
+    CAMPAIGN_PILOT_ENABLED: bool('false'),
+    /** Ids (uuid) das empresas com o piloto, separados por vírgula. `*` só em development/test. */
+    CAMPAIGN_PILOT_WORKSPACE_IDS: z.string().default(''),
+    /** Execuções do piloto por rodada do job de 5 min (uma ação cada, uma empresa por vez). */
+    CAMPAIGN_PILOT_PER_TICK: z.coerce.number().int().min(1).max(10).default(2),
+    /** Teto de peças (artes + vídeos) que um pacote do piloto pode pedir. */
+    CAMPAIGN_PILOT_MAX_CREATIVES: z.coerce.number().int().min(1).max(20).default(10),
     /** Só testes: vitrine falsa. Só vale em development/test; em produção é sempre `https://api.freelaservicosapp.com.br`. */
     FREELA_PUBLIC_API_URL: opt(),
   })
@@ -174,6 +182,11 @@ const envSchema = z
       parseWorkspaceList('CAMPAIGN_INTAKE_WORKSPACE_IDS', env.CAMPAIGN_INTAKE_WORKSPACE_IDS, env.NODE_ENV);
     } catch (e) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CAMPAIGN_INTAKE_WORKSPACE_IDS'], message: (e as Error).message });
+    }
+    try {
+      parseWorkspaceList('CAMPAIGN_PILOT_WORKSPACE_IDS', env.CAMPAIGN_PILOT_WORKSPACE_IDS, env.NODE_ENV);
+    } catch (e) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CAMPAIGN_PILOT_WORKSPACE_IDS'], message: (e as Error).message });
     }
     if (env.IG_PRODUCTION_TARGET_HOURS > env.IG_PRODUCTION_WINDOW_HOURS) {
       ctx.addIssue({
