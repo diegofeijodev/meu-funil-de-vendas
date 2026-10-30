@@ -7,7 +7,7 @@ import { ENV } from '../../common/config/env.module';
 import type { Env } from '../../common/config/env.validation';
 import { inWorkspaceList, parseVacancyWorkspaces, parseWorkspaceList } from '../../common/config/vacancy-workspaces';
 import { WorkspaceAccessService } from '../access/access.service';
-import { PilotGate } from '../campaign-pilot/pilot-gate';
+import { PilotGate } from '../../common/config/pilot-gate';
 
 export type WorkspaceFeatures = { campaign_intake: boolean; campaign_pilot: boolean; style_refs_pinterest: boolean; vacancy_stories: boolean };
 

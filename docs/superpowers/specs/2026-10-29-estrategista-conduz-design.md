@@ -321,7 +321,7 @@ Busca automática no Pinterest (API v5) = fase posterior atrás de `PINTEREST_SE
 Implementado como a opção `meta.review_creatives` do pacote (G2 = true).
 
 **Quem aprova o quê** (sem papel novo): o clique "Começar" de quem tem `write` já autoriza a produção (copies, criativos, programação do IG — hoje
-um `write` já pode gastar IA e criar programação em modo `publish`). Só a parte da Meta exige `manage`: com `meta.enabled`, o piloto reusa o miolo do
+um `write` já pode gastar IA; **correção da revisão de 30/10:** programação em modo `publish` exige owner|admin, como na aba Instagram, e o piloto aplica a mesma regra no "Aprovar"). Só a parte da Meta exige `manage`: com `meta.enabled`, o piloto reusa o miolo do
 `CampaignsService.requestApproval` (mesma transação `approval_request` + `campaigns.status = pending_approval`, com o resumo do **pacote** no lugar de
 "0 criativo(s)"); se quem inicia é owner/admin e marca `approve_now`, o pedido é decidido na hora pelo `ApprovalsService.decide`. Para o Diego (owner):
 **1 clique** "Aprovar pacote e começar". Recusa em Aprovações → `decide` já volta a campanha a `draft` → etapa meta `skipped` ("recusado em Aprovações").

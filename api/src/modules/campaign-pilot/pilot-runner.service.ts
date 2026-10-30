@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
+import { PilotGate } from '../../common/config/pilot-gate';
 import type { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { ActivityService } from '../activity/activity.service';
@@ -30,6 +31,8 @@ export const PILOT_STEPS = Symbol('PILOT_STEPS');
 const LEASE_MS = 10 * 60_000;
 /** Espera depois de cada falha comum (5xx, 429, tempo): 5, 15 e 60 min; na 3ª a etapa para com o motivo. */
 const BACKOFF_MIN = [5, 15, 60];
+/** Falhas comuns seguidas até a etapa parar: depois das 3 esperas, a 4ª falha. */
+const MAX_FAILURES = BACKOFF_MIN.length + 1;
 const CLAIMABLE = ['planning', 'running'];
 
 /**
@@ -45,6 +48,7 @@ export class PilotRunnerService {
     private readonly prisma: PrismaService,
     private readonly activity: ActivityService,
     @Inject(PILOT_STEPS) private readonly steps: Record<StepName, PilotStep>,
+    private readonly gate: PilotGate,
     @Inject(ENV) env: Pick<Env, 'CAMPAIGN_PILOT_PER_TICK'>,
   ) {
     this.perTick = env.CAMPAIGN_PILOT_PER_TICK;
@@ -54,17 +58,20 @@ export class PilotRunnerService {
     return { status: { in: CLAIMABLE }, next_run_at: { lte: now }, OR: [{ lease_until: null }, { lease_until: { lt: now } }] };
   }
 
-  /** Rodada do job: até `CAMPAIGN_PILOT_PER_TICK` execuções, uma por empresa, a mais atrasada primeiro. */
-  async tick(now = new Date()): Promise<number> {
+  /**
+   * Rodada do job: até `CAMPAIGN_PILOT_PER_TICK` execuções, uma por empresa, a mais atrasada primeiro, só das empresas liberadas.
+   * Cada execução usa o relógio de quando começa (um `now` só para a rodada encurtaria o lease da 2ª); `now` fixo é só dos testes.
+   */
+  async tick(now?: Date): Promise<number> {
     const candidates = await this.prisma.campaign_pilot_runs.findMany({
-      where: this.due(now), orderBy: { next_run_at: 'asc' }, take: 50, select: { id: true, workspace_id: true },
+      where: this.due(now ?? new Date()), orderBy: { next_run_at: 'asc' }, take: 50, select: { id: true, workspace_id: true },
     });
     const busy = new Set<string>();
     let ran = 0;
     for (const c of candidates) {
       if (ran >= this.perTick) break;
-      if (busy.has(c.workspace_id)) continue;
-      if (await this.runOnce(c.id, now).catch((e) => (this.logger.error(`[piloto] ${c.id}: ${(e as Error).message}`), false))) {
+      if (busy.has(c.workspace_id) || !this.gate.enabled(c.workspace_id)) continue;
+      if (await this.runOnce(c.id, now ?? new Date()).catch((e) => (this.logger.error(`[piloto] ${c.id}: ${(e as Error).message}`), false))) {
         ran++;
         busy.add(c.workspace_id);
       }
@@ -81,11 +88,15 @@ export class PilotRunnerService {
 
   /** Uma ação. `false` = não era a vez (sem lease, nada devido). */
   async runOnce(runId: string, now = new Date()): Promise<boolean> {
+    // Empresa tirada da lista = o piloto dela para (as rotas já respondem 404; o job e o chute também param).
+    const head = await this.prisma.campaign_pilot_runs.findFirst({ where: { id: runId }, select: { workspace_id: true } });
+    if (!head || !this.gate.enabled(head.workspace_id)) return false;
     const lease = new Date(now.getTime() + LEASE_MS);
     const claimed = await this.prisma.campaign_pilot_runs.updateMany({ where: { id: runId, ...this.due(now) }, data: { lease_until: lease } });
     if (claimed.count !== 1) return false;
     const run = await this.prisma.campaign_pilot_runs.findUnique({ where: { id: runId } });
-    if (!run) return false;
+    // Parado (ou pego por outra rodada) entre o claim e a leitura: não gasta nada.
+    if (!run || !CLAIMABLE.includes(run.status) || run.lease_until?.getTime() !== lease.getTime()) return false;
     const steps: Steps = structuredClone(stepsOf(run));
     const save = async (data: Prisma.campaign_pilot_runsUpdateManyMutationInput) => {
       const r = await this.prisma.campaign_pilot_runs.updateMany({
@@ -119,6 +130,8 @@ export class PilotRunnerService {
     st.error = res.kind === 'blocked' ? res.message : null;
     st.error_code = res.kind === 'blocked' ? res.code : null;
 
+    // Ação que deu certo zera as falhas: tentativas contam falhas SEGUIDAS, não as da etapa inteira.
+    if (res.kind === 'again' || res.kind === 'wait') st.attempts = 0;
     if (res.kind === 'again') {
       st.status = 'running';
       return save({ next_run_at: now });
@@ -159,7 +172,7 @@ export class PilotRunnerService {
     st.attempts = (st.attempts ?? 0) + 1;
     st.error = message;
     st.error_code = 'STEP_FAILED';
-    if (st.attempts >= BACKOFF_MIN.length) {
+    if (st.attempts >= MAX_FAILURES) {
       st.status = 'failed';
       st.finished_at = now.toISOString();
       return save({ status: 'failed', next_run_at: null });

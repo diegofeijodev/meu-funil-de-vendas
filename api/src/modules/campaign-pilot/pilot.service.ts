@@ -10,7 +10,7 @@ import { pilotSummary } from '../campaigns/pilot-summary';
 import { AutoCalendarService } from '../instagram/auto-calendar.service';
 import { computeSlots, todaySP } from '../instagram/slots';
 import { StrategistService } from '../strategist/strategist.service';
-import { PilotGate } from './pilot-gate';
+import { PilotGate } from '../../common/config/pilot-gate';
 import { estimatePilot, suggestedOptions } from './pilot-estimate';
 import { PilotRunnerService } from './pilot-runner.service';
 import { optionsOf, PilotOptions, PilotRunRow, RUN_STEPS, StepName, Steps, stepsOf } from './pilot.types';
@@ -95,13 +95,25 @@ export class PilotService {
 
   async estimate(userId: string, ws: string, campaignId: string, options: PilotOptions) {
     const c = await this.enter(userId, ws, campaignId, 'write');
-    return this.estimateFor(c, options);
+    const run = await this.prisma.campaign_pilot_runs.findFirst({ where: { campaign_id: c.id, workspace_id: ws }, orderBy: { created_at: 'desc' } });
+    const r = await this.estimateFor(c, options);
+    // O "Aprovar" só vale com o plano pronto (a tela não habilita o botão para o clique dar 409).
+    if (!run || run.status !== 'planning' || stepsOf(run).strategy?.status !== 'done') {
+      r.blockers.unshift({ code: 'STRATEGY_NOT_READY', message: 'O plano ainda está sendo montado.', action: 'wait' });
+    }
+    return { ...r, can_approve: r.blockers.length === 0 };
   }
 
   private async estimateFor(c: Prisma.campaignsGetPayload<object>, options: PilotOptions) {
     const blockers: Blocker[] = [];
     if (!c.brand_id) blockers.push({ code: 'NO_BRAND', message: 'Escolha a marca da campanha antes de começar.', action: 'edit_campaign' });
     if (c.status === CAMPAIGN_FINISHED) blockers.push({ code: 'CAMPAIGN_ENDED', message: 'Campanha encerrada.', action: 'none' });
+    if (options.max_angles * options.images_per_angle + options.videos > this.maxCreatives) {
+      blockers.push({ code: 'TOO_MANY_PIECES', message: `No máximo ${this.maxCreatives} peças por campanha.`, action: 'adjust' });
+    }
+    if (options.instagram.enabled && !options.instagram.times.length && !options.instagram.story_times.length) {
+      blockers.push({ code: 'IG_NO_TIMES', message: 'Informe ao menos um horário para os posts do Instagram.', action: 'adjust' });
+    }
     const end = day(c.end_date);
     let igSlots: { format: PilotOptions['instagram']['formats'][number] }[] | null = null;
     if (options.instagram.enabled && end) {
@@ -120,12 +132,13 @@ export class PilotService {
     const latest = await this.strategist.latestVersion(ws, c.id);
     if (body.strategy_version !== latest) throw new ConflictException({ code: 'STRATEGY_CHANGED', message: 'A estratégia mudou. Confira o plano de novo.' });
     const o = body.options;
+    // Publicar no Instagram sem aprovação de cada post é só para dono/admin, como na aba Instagram (instagram-actions.service).
+    if (o.instagram.enabled && o.instagram.mode === 'publish') await this.access.require(userId, ws, 'manage');
     if (o.max_angles * o.images_per_angle + o.videos > this.maxCreatives) {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: `No máximo ${this.maxCreatives} peças por campanha.` });
     }
     const { estimate, blockers } = await this.estimateFor(c, o);
     if (blockers.length) throw new BadRequestException({ code: blockers[0]!.code, message: blockers[0]!.message });
-    await this.strategist.approveVersion(ws, c.id, body.strategy_version, userId);
     const steps: Steps = { ...stepsOf(run) };
     for (const s of RUN_STEPS) steps[s] = { status: 'pending', attempts: 0 };
     const upd = await this.prisma.campaign_pilot_runs.updateMany({
@@ -135,7 +148,9 @@ export class PilotService {
         strategy_version: body.strategy_version, max_credits: o.max_credits, estimated_credits: estimate.total, approved_by: userId, approved_at: now, next_run_at: now,
       },
     });
-    if (!upd.count) throw conflict('O plano ainda está sendo montado.');
+    // Clique duplo ou "Parar" no meio: a execução saiu de `planning` — nada mais é aprovado.
+    if (!upd.count) throw conflict('O pacote já foi aprovado ou o estrategista foi parado.');
+    await this.strategist.approveVersion(ws, c.id, body.strategy_version, userId);
     await this.activity.log(ws, userId, 'campaign.pilot_started', 'campaign', { campaign_id: c.id, via: 'pilot', run_id: run.id });
     this.runner.kick(run.id);
     return this.view((await this.runOf(ws, c.id, run.id)));
@@ -152,6 +167,8 @@ export class PilotService {
     const data: Prisma.campaign_pilot_runsUpdateManyMutationInput = { status: name === 'strategy' ? 'planning' : 'running', next_run_at: now, lease_until: null };
 
     if (body.action === 'retry') {
+      // Teto de créditos não se resolve tentando de novo: só seguindo com as prontas ou aumentando o teto.
+      if (st.error_code === 'COST_CAP') throw conflict();
       Object.assign(st, { status: 'pending', attempts: 0, error: null, error_code: null });
       st.slots?.forEach((s) => { if (s.status === 'failed') Object.assign(s, { status: 'pending', error: null }); });
     } else if (body.action === 'proceed_partial') {
@@ -181,8 +198,16 @@ export class PilotService {
       where: { id: run.id, workspace_id: ws, status: { in: ACTIVE } }, data: { status: 'cancelled', lease_until: null, next_run_at: null },
     });
     if (!upd.count) throw conflict();
-    const igRun = stepsOf(run).instagram?.ref;
-    if (body.cancel_instagram && igRun) await this.autoCalendar.cancelAutoRun(ws, igRun);
+    if (body.cancel_instagram && run.approved_at) {
+      // Pelo domínio (a mesma regra da etapa): a programação criada numa rodada descartada também não tem `ref` gravado.
+      const igRuns = await this.prisma.ig_auto_runs.findMany({
+        where: { workspace_id: ws, campaign_id: c.id, created_at: { gte: run.approved_at }, status: { not: 'cancelled' } }, select: { id: true },
+      });
+      for (const ig of igRuns) {
+        // A execução já está parada: uma programação que sumiu no meio não transforma o "Parar" em erro.
+        await this.autoCalendar.cancelAutoRun(ws, ig.id).catch(() => undefined);
+      }
+    }
     await this.activity.log(ws, userId, 'campaign.pilot_cancelled', 'campaign', { campaign_id: c.id, via: 'pilot', run_id: run.id, cancel_instagram: body.cancel_instagram });
     return this.view(await this.runOf(ws, c.id, run.id));
   }
@@ -200,7 +225,7 @@ export class PilotService {
       id: run.id, status: run.status, current_step: run.current_step, steps, options: run.options, strategy_version: run.strategy_version,
       approved_at: run.approved_at, approved_by: run.approved_by, created_at: run.created_at,
       estimated_credits: run.estimated_credits == null ? null : Number(run.estimated_credits), max_credits: run.max_credits == null ? null : Number(run.max_credits),
-      spent_credits: spentCredits(slots, jobs), summary: pilotSummary(run),
+      spent_credits: spentCredits(slots, jobs, optionsOf(run)?.variations ?? 3), summary: pilotSummary(run),
       suggested_options: planReady ? suggestedOptions(await this.strategist.currentStrategy(run.workspace_id, run.campaign_id), this.maxCreatives) : null,
     };
   }

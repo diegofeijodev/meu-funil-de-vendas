@@ -6,7 +6,7 @@ import { InstagramModule } from '../instagram/instagram.module';
 import { StrategistModule } from '../strategist/strategist.module';
 import { PilotCronService } from './pilot-cron.service';
 import { PilotController } from './pilot.controller';
-import { PilotGate } from './pilot-gate';
+import { PilotGate } from '../../common/config/pilot-gate';
 import { PILOT_STEPS, PilotRunnerService } from './pilot-runner.service';
 import { PilotService } from './pilot.service';
 import { CopiesStep } from './steps/copies.step';

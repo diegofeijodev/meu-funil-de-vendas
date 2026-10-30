@@ -74,6 +74,14 @@ describe('etapa instagram', () => {
     expect(input.focus).toContain('1ª contratação grátis');
   });
 
+  it('plano do Instagram criado numa tentativa anterior é reaproveitado (sem plano órfão)', async () => {
+    const w = await world();
+    const plan = await w.db.t.ig_content_plans.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, created_at: T0 } });
+    await w.instagram.run(w.run, T0);
+    expect(w.strategist.createIgPlanAsSystem).not.toHaveBeenCalled();
+    expect((w.autoCalendar.createAutoRun.mock.calls[0] as any[])[2].planId).toBe(plan.id);
+  });
+
   it('sem temas = NO_IG_PLAN e a execução segue (stopRun=false)', async () => {
     const w = await world();
     w.strategist.createIgPlanAsSystem.mockResolvedValueOnce({ error: 'NO_IG_PLAN' });

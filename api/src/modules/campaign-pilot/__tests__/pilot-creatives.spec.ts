@@ -21,14 +21,18 @@ async function world(opt: Partial<PilotOptions> = {}) {
     generateAsSystem: jest.fn(async (dto: any, _actor: string, _via: any) => {
       n++;
       const o = outcome.next(dto);
-      const job = await db.t.creative_generation_jobs.create({ data: { workspace_id: WS_A, status: o.status === 'generating' ? 'generating' : o.status, estimated_cost: dto.type === 'reels' ? 6 : 4.5, actual_cost: o.status === 'ready' ? 4.5 : null, creative_id: null } });
+      const job = await db.t.creative_generation_jobs.create({ data: {
+        workspace_id: WS_A, campaign_id: campaign.id, created_at: new Date(), status: o.status === 'generating' ? 'generating' : o.status,
+        estimated_cost: o.noCost ? null : dto.type === 'reels' ? 6 : 4.5, actual_cost: o.status === 'ready' ? 4.5 : null, creative_id: null,
+        options: { pilot: { run_id: _via.runId, slot: _via.slot } }, error_message: o.error ?? null,
+      } });
       let creativeId: string | null = null;
       if (o.status === 'ready') {
         const cr = await db.t.creatives.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, extras: {} } });
         creativeId = cr.id;
-        job.creative_id = cr.id;
+        db.t.creative_generation_jobs.rows.find((j: any) => j.id === job.id)!.creative_id = cr.id;
       }
-      return { jobId: job.id, creativeId, status: o.status, error: o.status === 'failed' ? 'provedor caiu' : null, variations: o.score ? [{ winner: false, score: { total: 20 } }, { winner: true, score: { total: o.score } }] : [] };
+      return { jobId: job.id, creativeId, status: o.status, error: o.status === 'failed' ? (o.error ?? 'provedor caiu') : null, variations: o.score ? [{ winner: false, score: { total: 20 } }, { winner: true, score: { total: o.score } }] : [] };
     }),
   };
   const step = new CreativesStep(db.prisma, strategist as any, creative as any);
@@ -56,7 +60,7 @@ describe('etapa creatives', () => {
     expect(w.calls()).toBe(1);
     const [dto, actor, via] = w.creative.generateAsSystem.mock.calls[0] as any[];
     expect(dto).toMatchObject({ workspaceId: WS_A, campaignId: w.campaign.id, brandId: 'brand-1', type: 'static_image', aspectRatio: '4:5', angle: 'Falta de gente', variations: 3, provider: 'auto', title: 'Jundiaí · Falta de gente' });
-    expect([actor, via]).toEqual([OWNER, { runId: w.run.id }]);
+    expect([actor, via]).toEqual([OWNER, { runId: w.run.id, slot: 1 }]);
     expect(slotsOf(w)[0]).toMatchObject({ status: 'done', score: 41 });
   });
 
@@ -106,6 +110,39 @@ describe('etapa creatives', () => {
     const pilotCr = w.db.t.creatives.rows.find((c: any) => c.id !== manual.id)!;
     expect(pilotCr.extras).toEqual({ pilot: { run_id: w.run.id, slot: 1, score: 41 } });
     expect(w.db.t.creatives.rows.find((c: any) => c.id === manual.id)!.extras).toEqual({ nota: 'feito à mão' });
+  });
+});
+
+describe('etapa creatives × rodada descartada (lease perdido)', () => {
+  it('a peça já gerada é adotada pela vaga (marcada no job): o gerador não é chamado de novo', async () => {
+    const w = await world({ max_angles: 1, images_per_angle: 1, videos: 1 });
+    await w.tick();
+    const before = structuredClone(w.current().steps);
+    await w.tick(); // gera a imagem da vaga 1...
+    w.current().steps = before; // ...mas a gravação da rodada foi descartada
+    expect((await w.tick()).kind).toBe('again'); // adota a vaga 1 (sem gerar)
+    expect(w.calls()).toBe(1);
+    expect(slotsOf(w)[0]).toMatchObject({ status: 'done' });
+    const [, , via] = w.creative.generateAsSystem.mock.calls[0] as any[];
+    expect(via).toEqual({ runId: w.run.id, slot: 1 });
+  });
+
+  it('vídeo gerando sem custo no job conta o custo máximo da peça no teto', async () => {
+    const w = await world({ max_angles: 1, images_per_angle: 1, videos: 2, max_credits: 20 } as any);
+    w.current().max_credits = 20;
+    w.outcome.next = (dto) => (dto.type === 'reels' ? { status: 'generating', noCost: true } : { status: 'ready', score: 40 });
+    await w.tick();
+    await w.tick(); // imagem 4,5
+    await w.tick(); // 1º vídeo: 4,5 + 12 ≤ 20; o job nasce sem custo
+    expect(await w.tick()).toMatchObject({ kind: 'blocked', code: 'COST_CAP' }); // 4,5 + 12 (vídeo gerando) + 12 > 20
+    expect(w.calls()).toBe(2);
+  });
+
+  it('créditos esgotados na arte param a execução com AI_NO_CREDITS', async () => {
+    const w = await world({ max_angles: 1, images_per_angle: 2, videos: 0 });
+    w.outcome.next = () => ({ status: 'failed', error: 'Créditos de IA esgotados. Conecte sua própria chave em Integrações.' });
+    await w.tick();
+    expect(await w.tick()).toMatchObject({ kind: 'blocked', code: 'AI_NO_CREDITS', stopRun: true });
   });
 });
 

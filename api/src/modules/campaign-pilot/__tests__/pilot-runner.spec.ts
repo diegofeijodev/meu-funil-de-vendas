@@ -10,7 +10,7 @@ const step = (fn: Fn): PilotStep & { calls: number } => {
 };
 const done: Fn = async () => ({ kind: 'done' });
 
-function setup(over: Partial<Record<string, PilotStep>> = {}, perTick = 2) {
+function setup(over: Partial<Record<string, PilotStep>> = {}, perTick = 2, allowed: string[] = [WS_A, WS_B]) {
   const db = pilotDb();
   const strategist = { generateAsSystem: jest.fn(async () => ({ version: 3, content: {} })) };
   const steps: any = {
@@ -18,7 +18,8 @@ function setup(over: Partial<Record<string, PilotStep>> = {}, perTick = 2) {
     copies: step(done), instagram: step(done), creatives: step(done), meta: step(async () => ({ kind: 'skipped', note: 'x' })),
     ...over,
   };
-  const runner = new PilotRunnerService(db.prisma, db.activity, steps, { CAMPAIGN_PILOT_PER_TICK: perTick } as any);
+  const gate = { enabled: (ws: string) => allowed.includes(ws) };
+  const runner = new PilotRunnerService(db.prisma, db.activity, steps, gate as any, { CAMPAIGN_PILOT_PER_TICK: perTick } as any);
   return { db, runner, steps, strategist };
 }
 const running = (extra: Record<string, unknown> = {}) => ({
@@ -88,7 +89,7 @@ describe('PilotRunnerService', () => {
     expect(steps.copies.calls).toBe(0);
   });
 
-  it('erro comum: 3 tentativas com 5, 15 e 60 min e depois failed', async () => {
+  it('erro comum: espera 5, 15 e 60 min e só na 4ª falha seguida vira failed', async () => {
     const boom = step(async () => { throw new Error('Meta fora do ar'); });
     const { db, runner } = setup({ copies: boom });
     const { run } = await seedRun(db, running());
@@ -98,8 +99,37 @@ describe('PilotRunnerService', () => {
     await runner.runOnce(run.id, min(5));
     expect(rowOf(db, run.id).next_run_at).toEqual(min(20));
     await runner.runOnce(run.id, min(20));
+    expect(rowOf(db, run.id).next_run_at).toEqual(min(80));
+    await runner.runOnce(run.id, min(80));
     const r = rowOf(db, run.id);
-    expect([r.status, r.next_run_at, r.steps.copies.status, r.steps.copies.attempts]).toEqual(['failed', null, 'failed', 3]);
+    expect([r.status, r.next_run_at, r.steps.copies.status, r.steps.copies.attempts]).toEqual(['failed', null, 'failed', 4]);
+  });
+
+  it('falhas alternadas com sucessos não se acumulam (cada ação que deu certo zera as tentativas)', async () => {
+    const seq: (StepResult | Error)[] = [new Error('429'), { kind: 'again' }, new Error('429'), { kind: 'again' }, new Error('429'), { kind: 'again' }, new Error('429'), { kind: 'done' }];
+    const flaky = step(async () => { const x = seq.shift()!; if (x instanceof Error) throw x; return x; });
+    const { db, runner } = setup({ copies: flaky });
+    const { run } = await seedRun(db, running());
+    for (let t = 0; t < 2000 && seq.length; t += 100) await runner.runOnce(run.id, min(t));
+    expect([rowOf(db, run.id).status, rowOf(db, run.id).current_step]).toEqual(['running', 'instagram']);
+  });
+
+  it('empresa fora da lista do piloto não roda (nem pelo job, nem pelo chute)', async () => {
+    const { db, runner, steps } = setup({}, 2, [WS_B]);
+    const { run } = await seedRun(db, running());
+    expect(await runner.runOnce(run.id, T0)).toBe(false);
+    expect(await runner.tick(T0)).toBe(0);
+    expect(steps.copies.calls).toBe(0);
+    expect(rowOf(db, run.id).lease_until).toBeNull();
+  });
+
+  it('parado entre o claim e a leitura: não roda a etapa', async () => {
+    const { db, runner, steps } = setup();
+    const { run } = await seedRun(db, running());
+    const orig = db.t.campaign_pilot_runs.findUnique.bind(db.t.campaign_pilot_runs);
+    db.t.campaign_pilot_runs.findUnique = async (a: any) => { Object.assign(rowOf(db, run.id), { status: 'cancelled' }); return orig(a); };
+    expect(await runner.runOnce(run.id, T0)).toBe(false);
+    expect(steps.copies.calls).toBe(0);
   });
 
   it('AI_NOT_CONFIGURED bloqueia a execução sem nova tentativa; créditos esgotados idem', async () => {
@@ -161,3 +191,16 @@ describe('PilotRunnerService × parar no meio', () => {
     expect([rowOf(db, run.id).status, rowOf(db, run.id).current_step]).toEqual(['cancelled', 'copies']);
   });
 });
+
+describe('fronteira (§2.0 #1)', () => {
+  it('nenhum arquivo do piloto importa o caminho que liga verba na Meta', () => {
+    const { readdirSync, readFileSync, statSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const files: string[] = [];
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) { if (f !== '__tests__') walk(p); } else if (p.endsWith('.ts')) files.push(p); } };
+    walk(join(__dirname, '..'));
+    expect(files.length).toBeGreaterThan(5);
+    for (const f of files) expect([f, /setStatus|setDeliveryStatus|meta-ads\.service|meta-ops\.service/.test(readFileSync(f, 'utf8'))]).toEqual([f, false]);
+  });
+});
+

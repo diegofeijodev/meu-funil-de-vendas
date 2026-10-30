@@ -182,22 +182,23 @@ export class CreativeService {
    * Mesmo caminho do `generate`, sem papel de tela: o piloto já conferiu a empresa e a aprovação do pacote. As linhas levam
    * `created_by` = quem aprovou; a atividade sai sem ator e com a origem (`via: 'pilot'`).
    */
-  async generateAsSystem(dto: GenerateCreativeDto, actorId: string, via: { runId: string }): Promise<ArtOutcome> {
-    const r = await this.runFromDto(dto, actorId);
+  async generateAsSystem(dto: GenerateCreativeDto, actorId: string, via: { runId: string; slot: number }): Promise<ArtOutcome> {
+    // A marca no job deixa o piloto adotar a peça se a rodada que a pediu for descartada (sem gerar de novo).
+    const r = await this.runFromDto(dto, actorId, { pilot: { run_id: via.runId, slot: via.slot } });
     if (r.status === 'ready') {
       await this.activity.log(dto.workspaceId, null, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: r.provider, via: 'pilot', run_id: via.runId });
     }
     return r;
   }
 
-  private async runFromDto(dto: GenerateCreativeDto, userId: string): Promise<ArtOutcome> {
+  private async runFromDto(dto: GenerateCreativeDto, userId: string, jobOptions?: Record<string, unknown>): Promise<ArtOutcome> {
     const n = this.normalize(dto);
     const { brand, campaign } = await this.buildBrandBrain(dto.workspaceId, dto);
     const r = await this.runArtDirected({
       workspaceId: dto.workspaceId, brand, campaign, title: n.title || campaign?.name || 'Criativo sem título', type: n.type, prompt: n.prompt,
       copyText: n.copyText, aspectRatio: n.aspectRatio, targetFormat: dto.targetFormat ?? null, providerChoice: n.providerChoice, kind: n.kind,
       visualPrompt: dto.visualPrompt, artDirection: dto.artDirection, adjust: dto.adjust, layout: n.layout, variations: n.variations,
-      headline: dto.headline, price: dto.price, cta: dto.cta, angle: dto.angle, useBrandImage: dto.useBrandImage, coverWithLogo: dto.coverWithLogo, userId,
+      headline: dto.headline, price: dto.price, cta: dto.cta, angle: dto.angle, useBrandImage: dto.useBrandImage, coverWithLogo: dto.coverWithLogo, userId, jobOptions,
     });
     return r;
   }
@@ -478,7 +479,7 @@ export class CreativeService {
     workspaceId: string; brand: Brand | null; campaign: Campaign | null; title: string; type: string; prompt: string; copyText: string; aspectRatio: string;
     targetFormat: string | null; providerChoice: ProviderChoice; kind: CreativeKind; visualPrompt?: string | null; artDirection?: Record<string, unknown> | null;
     adjust?: string | null; layout: TextLayout; variations: number; headline?: string | null; price?: string | null; cta?: string | null; angle?: string | null;
-    useBrandImage?: boolean; coverWithLogo?: boolean; userId: string;
+    useBrandImage?: boolean; coverWithLogo?: boolean; userId: string; jobOptions?: Record<string, unknown>;
   }): Promise<ArtOutcome> {
     const ws = input.workspaceId;
     // Provedor indisponível ("Higgsfield não está conectado…") é lançado, como no protótipo.
@@ -491,7 +492,10 @@ export class CreativeService {
       data: {
         workspace_id: ws, brand_id: input.brand?.id ?? null, campaign_id: input.campaign?.id ?? null, provider: provider.id, type: input.type, prompt: input.prompt,
         final_prompt: finalPrompt, aspect_ratio: input.aspectRatio, status: 'generating', created_by: input.userId,
-        options: (videoOptions ? { ...videoOptions, title: input.title || input.campaign?.name || 'Criativo sem título', angle: input.angle ?? null, copyText: input.copyText, targetFormat: input.targetFormat } : {}) as Prisma.InputJsonObject,
+        options: {
+          ...(videoOptions ? { ...videoOptions, title: input.title || input.campaign?.name || 'Criativo sem título', angle: input.angle ?? null, copyText: input.copyText, targetFormat: input.targetFormat } : {}),
+          ...(input.jobOptions ?? {}),
+        } as Prisma.InputJsonObject,
       },
     });
 

@@ -7,6 +7,7 @@ import type { PilotOptions } from '../pilot.types';
 import { min, OWNER, pilotDb, rowOf, T0, WS_A, WS_B } from './world';
 
 const VIEWER = '33333333-3333-4333-8333-333333333333';
+const MARKETING = '44444444-4444-4444-8444-444444444444';
 const OPTIONS: PilotOptions = {
   max_angles: 3, images_per_angle: 2, variations: 3, videos: 1,
   instagram: { enabled: true, mode: 'approval', weekdays: [1, 3, 5], times: ['11:00', '18:00'], story_times: ['12:00'], formats: ['feed_image', 'reel', 'story_image'] },
@@ -22,10 +23,11 @@ async function setup(opts: { gate?: boolean } = {}) {
     require: jest.fn(async (user: string, ws: string, level: string) => {
       if (ws !== WS_A) throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Você não tem acesso a esta empresa.' });
       if (user === VIEWER && level !== 'read') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Seu perfil não tem permissão para esta ação.' });
-      return user === VIEWER ? 'viewer' : 'owner';
+      if (user === MARKETING && level === 'manage') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Seu perfil não tem permissão para esta ação.' });
+      return user === VIEWER ? 'viewer' : user === MARKETING ? 'marketing' : 'owner';
     }),
   };
-  const gate = { enabled: (ws: string) => opts.gate !== false && ws === WS_A };
+  const gate = { enabled: (_ws: string) => opts.gate !== false };
   const strategist = {
     latestVersion: jest.fn(async () => 2), approveVersion: jest.fn(async () => undefined),
     currentStrategy: jest.fn(async () => ({ angulos_detalhados: [{ nome: 'A' }, { nome: 'B' }, { nome: 'C' }] })),
@@ -61,7 +63,47 @@ describe('PilotService', () => {
     expect(off.access.require).not.toHaveBeenCalled();
     const w = await setup();
     expect(await status(w.svc.create(VIEWER, WS_A, w.campaign.id, KEY))).toBe('403:FORBIDDEN:Seu perfil não tem permissão para esta ação.');
+    // campanha da empresa A pedida pela URL da empresa B (com acesso a B): o filtro por workspace_id dá 404
+    w.access.require.mockImplementationOnce(async () => 'owner');
     expect(await status(w.svc.get(OWNER, WS_B, w.campaign.id))).toBe('404:NOT_FOUND:Não encontrado.');
+  });
+
+  it('publicar no Instagram sem aprovação só para dono/admin (marketing = 403; com "eu aprovo" = ok)', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    const publish = { ...OPTIONS, instagram: { ...OPTIONS.instagram, mode: 'publish' as const } };
+    expect(await status(w.svc.approve(MARKETING, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: publish }))).toBe('403:FORBIDDEN:Seu perfil não tem permissão para esta ação.');
+    expect(rowOf(w.db, r.id).status).toBe('planning');
+    expect((await w.svc.approve(MARKETING, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS })).status).toBe('running');
+  });
+
+  it('estimar: plano ainda montando = STRATEGY_NOT_READY; peças demais e Instagram sem horário também bloqueiam', async () => {
+    const w = await setup();
+    await w.svc.create(OWNER, WS_A, w.campaign.id, KEY);
+    const e = await w.svc.estimate(OWNER, WS_A, w.campaign.id, { ...OPTIONS, max_angles: 5, images_per_angle: 3, instagram: { ...OPTIONS.instagram, times: [], story_times: [] } });
+    expect(e.blockers.map((b) => b.code)).toEqual(['STRATEGY_NOT_READY', 'TOO_MANY_PIECES', 'IG_NO_TIMES']);
+    expect(e.blockers.map((b) => b.message)).toEqual(['O plano ainda está sendo montado.', 'No máximo 10 peças por campanha.', 'Informe ao menos um horário para os posts do Instagram.']);
+    expect(e.can_approve).toBe(false);
+  });
+
+  it('retry com COST_CAP = 409 (só seguir com as prontas ou aumentar o teto)', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }, T0);
+    Object.assign(rowOf(w.db, r.id), { status: 'blocked', current_step: 'creatives', steps: { ...rowOf(w.db, r.id).steps, creatives: { status: 'blocked', attempts: 0, error_code: 'COST_CAP', slots: [{ slot: 1, kind: 'image', angle: 'A', status: 'done' }] } } });
+    expect(await status(w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'retry' }))).toBe('409:CONFLICT:Não dá para fazer isso agora.');
+  });
+
+  it('parar e cancelar o Instagram acha a programação pelo domínio (mesmo sem ref) e não falha se ela já sumiu', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }, T0);
+    const ig = await w.db.t.ig_auto_runs.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, status: 'planning', created_at: min(1) } });
+    await w.db.t.ig_auto_runs.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, status: 'active', created_at: min(-60) } }); // de antes da aprovação: fica
+    w.autoCalendar.cancelAutoRun.mockRejectedValueOnce(new Error('sumiu'));
+    const c = await w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: true });
+    expect(c.status).toBe('cancelled');
+    expect(w.autoCalendar.cancelAutoRun.mock.calls).toEqual([[WS_A, ig.id]]);
   });
 
   it('ver: execução mais recente com resumo, gasto derivado e pacote sugerido quando o plano fica pronto', async () => {
@@ -76,6 +118,7 @@ describe('PilotService', () => {
 
   it('estimar: conta com fórmula; sem marca = NO_BRAND e can_approve false', async () => {
     const w = await setup();
+    await planned(w);
     const e = await w.svc.estimate(OWNER, WS_A, w.campaign.id, OPTIONS);
     expect(e.estimate.total).toBe(48);
     expect(e.estimate.instagram?.label).toBe('Posts do Instagram (fora do teto)');
@@ -123,12 +166,13 @@ describe('PilotService', () => {
     const up = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'raise_cap', max_credits: 60 }, min(1));
     expect([up.status, up.max_credits, up.steps.creatives!.status]).toEqual(['running', 60, 'pending']);
     block();
+    rowOf(w.db, r.id).steps.creatives.error_code = 'NO_CREATIVE_MADE';
     const rt = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'retry' }, min(1));
     expect(rt.steps.creatives!.slots!.map((s) => s.status)).toEqual(['done', 'pending', 'pending']);
     expect(rowOf(w.db, r.id).next_run_at).toEqual(min(1));
   });
 
-  it('parar: cancelled; cancel_instagram cancela a programação criada pelo piloto; de outra campanha = 404', async () => {
+  it('parar: cancelled; de outra campanha = 404; parar de novo = 409', async () => {
     const w = await setup();
     const r = await planned(w);
     rowOf(w.db, r.id).steps.instagram = { status: 'done', attempts: 0, ref: 'ig-run-1' };
@@ -136,7 +180,7 @@ describe('PilotService', () => {
     expect(await status(w.svc.cancel(OWNER, WS_A, other.id, r.id, { cancel_instagram: true }))).toBe('404:NOT_FOUND:Não encontrado.');
     const c = await w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: true });
     expect(c.status).toBe('cancelled');
-    expect(w.autoCalendar.cancelAutoRun).toHaveBeenCalledWith(WS_A, 'ig-run-1');
+    expect(w.autoCalendar.cancelAutoRun).not.toHaveBeenCalled(); // nunca aprovado: o piloto não criou programação
     expect(await status(w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: false }))).toBe('409:CONFLICT:Não dá para fazer isso agora.');
   });
 

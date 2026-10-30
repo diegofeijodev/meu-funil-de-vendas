@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ENV } from '../../common/config/env.module';
-import type { Env } from '../../common/config/env.validation';
-import { inWorkspaceList, parseWorkspaceList } from '../../common/config/vacancy-workspaces';
+import { ENV } from './env.module';
+import type { Env } from './env.validation';
+import { inWorkspaceList, parseWorkspaceList } from './vacancy-workspaces';
 
 /** Piloto liberado para a empresa = chave geral `CAMPAIGN_PILOT_ENABLED` **e** empresa em `CAMPAIGN_PILOT_WORKSPACE_IDS`. */
 @Injectable()

@@ -9,12 +9,25 @@ import { optionsOf, stepsOf, type PilotRunRow, type Slot } from '../pilot.types'
 
 type JobCost = { id: string; actual_cost: Prisma.Decimal | number | null; estimated_cost: Prisma.Decimal | number | null };
 
-/** Créditos já gastos pelas peças do piloto: custo real do job (ou o estimado, enquanto o vídeo gera). Derivado, nunca guardado. */
-export function spentCredits(slots: Slot[], jobs: JobCost[]): number {
-  const ids = new Set(slots.map((s) => s.job_id).filter(Boolean));
-  const total = jobs.filter((j) => ids.has(j.id)).reduce((s, j) => s + Number(j.actual_cost ?? j.estimated_cost ?? 0), 0);
+/**
+ * Créditos já gastos pelas peças do piloto: custo real do job, ou o estimado; peça ainda gerando sem custo no job (o vídeo nasce assim)
+ * conta o custo máximo dela, para o teto não deixar passar outra peça contando 0. Derivado, nunca guardado.
+ */
+export function spentCredits(slots: Slot[], jobs: JobCost[], variations = 3): number {
+  const byId = new Map(jobs.map((j) => [j.id, j]));
+  let total = 0;
+  for (const s of slots) {
+    if (!s.job_id) continue;
+    const j = byId.get(s.job_id);
+    const cost = j ? (j.actual_cost ?? j.estimated_cost) : null;
+    if (cost != null) total += Number(cost);
+    else if (s.status === 'waiting') total += slotCost(s.kind, variations);
+  }
   return Math.round(total * 100) / 100;
 }
+
+type PilotJob = { id: string; status: string; creative_id: string | null; error_message: string | null; options: unknown };
+const pilotMark = (j: PilotJob) => (j.options as { pilot?: { run_id?: string; slot?: number } } | null)?.pilot;
 
 const br = (n: number) => String(Math.round(n * 100) / 100).replace('.', ',');
 
@@ -49,15 +62,16 @@ export class CreativesStep implements PilotStep {
       }
     }
 
-    // (b) no máximo uma peça nova
+    // (b) no máximo uma peça nova — antes, adota a que uma rodada descartada já gerou para esta vaga (marcada no job)
     const next = slots.find((x) => x.status === 'pending');
-    if (next) {
+    const adopted = next ? await this.adopt(run, next, slots) : false;
+    if (next && !adopted) {
       const jobIds = slots.map((x) => x.job_id).filter(Boolean) as string[];
       const jobs = jobIds.length
         ? await this.prisma.creative_generation_jobs.findMany({ where: { id: { in: jobIds }, workspace_id: ws }, select: { id: true, actual_cost: true, estimated_cost: true } })
         : [];
       const max = Number(run.max_credits ?? o.max_credits);
-      if (spentCredits(slots, jobs) + slotCost(next.kind, o.variations) > max) {
+      if (spentCredits(slots, jobs, o.variations) + slotCost(next.kind, o.variations) > max) {
         const done = slots.filter((x) => x.status === 'done').length;
         return { kind: 'blocked', code: 'COST_CAP', message: `Chegamos ao teto de ${br(max)} créditos com ${done} de ${slots.length} artes prontas.`, stopRun: true, state: { slots } };
       }
@@ -69,7 +83,7 @@ export class CreativesStep implements PilotStep {
           type: video ? 'reels' : 'static_image', aspectRatio: video ? '9:16' : '4:5', angle: next.angle, variations: o.variations, provider: 'auto', useBrandImage: true,
         },
         run.approved_by ?? run.created_by,
-        { runId: run.id },
+        { runId: run.id, slot: next.slot },
       );
       next.job_id = out.jobId;
       if (out.status === 'ready' && out.creativeId) {
@@ -77,6 +91,10 @@ export class CreativesStep implements PilotStep {
         await this.mark(run, next);
       } else if (out.status === 'generating') {
         Object.assign(next, { status: 'waiting', creative_id: out.creativeId ?? null });
+      } else if (out.error?.startsWith('Créditos de IA esgotados')) {
+        // A geração devolve a falha (não lança): sem crédito, as próximas peças falhariam todas — para e diz o motivo.
+        Object.assign(next, { status: 'failed', error: out.error });
+        return { kind: 'blocked', code: 'AI_NO_CREDITS', message: out.error, stopRun: true, state: { slots } };
       } else {
         Object.assign(next, { status: 'failed', error: out.error ?? 'A arte não ficou pronta.' });
       }
@@ -87,6 +105,27 @@ export class CreativesStep implements PilotStep {
     const done = slots.filter((x) => x.status === 'done').length;
     if (!done) return { kind: 'blocked', code: 'NO_CREATIVE_MADE', message: 'Nenhuma arte ficou pronta.', stopRun: true, state: { slots } };
     return { kind: 'done', note: `${done} de ${slots.length} prontas`, state: { slots } };
+  }
+
+  /** Peça desta vaga já pedida por uma rodada que não gravou: liga o job à vaga e segue o estado dele. `true` = adotou (é a ação da rodada). */
+  private async adopt(run: PilotRunRow, slot: Slot, slots: Slot[]): Promise<boolean> {
+    const known = new Set(slots.map((s) => s.job_id).filter(Boolean));
+    const jobs: PilotJob[] = await this.prisma.creative_generation_jobs.findMany({
+      where: { workspace_id: run.workspace_id, campaign_id: run.campaign_id, ...(run.approved_at ? { created_at: { gte: run.approved_at } } : {}) },
+      select: { id: true, status: true, creative_id: true, error_message: true, options: true },
+    });
+    const job = jobs.find((j) => !known.has(j.id) && pilotMark(j)?.run_id === run.id && pilotMark(j)?.slot === slot.slot);
+    if (!job) return false;
+    slot.job_id = job.id;
+    if (job.status === 'ready' && job.creative_id) {
+      Object.assign(slot, { status: 'done', creative_id: job.creative_id });
+      await this.mark(run, slot);
+    } else if (job.status === 'failed') {
+      Object.assign(slot, { status: 'failed', error: job.error_message ?? 'A arte não ficou pronta.' });
+    } else {
+      slot.status = 'waiting';
+    }
+    return true;
   }
 
   /** Vagas: os primeiros `max_angles` ângulos da estratégia aprovada × `images_per_angle` imagens; depois os vídeos (1º ângulo). */

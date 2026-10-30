@@ -38,7 +38,13 @@ export class InstagramStep implements PilotStep {
     const endDate = day(c.end_date);
     if (!endDate) return { kind: 'blocked', code: 'IG_NOT_SCHEDULED', message: 'A campanha não tem data de fim, então os posts não foram programados.', stopRun: false };
 
-    const plan = await this.strategist.createIgPlanAsSystem(ws, c.id);
+    // Plano criado numa tentativa anterior desta execução (falha transitória no meio): reaproveita em vez de deixar um órfão.
+    const prior = await this.prisma.ig_content_plans.findFirst({
+      where: { workspace_id: ws, campaign_id: c.id, ...(run.approved_at ? { created_at: { gte: run.approved_at } } : {}) },
+      orderBy: { created_at: 'desc' },
+      select: { id: true },
+    });
+    const plan = prior ? { planId: prior.id } : await this.strategist.createIgPlanAsSystem(ws, c.id);
     if ('error' in plan) {
       if (plan.error === 'NO_IG_PLAN') return { kind: 'blocked', code: 'NO_IG_PLAN', message: NO_IG_PLAN, stopRun: false };
       return { kind: 'blocked', code: 'IG_NOT_SCHEDULED', message: 'Não deu para criar o plano do Instagram desta campanha.', stopRun: false };

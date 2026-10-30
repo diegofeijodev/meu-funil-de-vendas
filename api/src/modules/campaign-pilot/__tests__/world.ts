@@ -18,6 +18,7 @@ export function pilotDb() {
     copies: new FakeTable(),
     brands: new FakeTable(),
     ig_auto_runs: new FakeTable(),
+    ig_content_plans: new FakeTable(),
     creatives: new FakeTable(() => ({ extras: {} })),
     creative_generation_jobs: new FakeTable(),
   };

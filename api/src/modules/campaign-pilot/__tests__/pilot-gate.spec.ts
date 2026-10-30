@@ -1,5 +1,5 @@
 import { FakeTable } from '../../brands/__tests__/fake-prisma';
-import { PilotGate } from '../pilot-gate';
+import { PilotGate } from '../../../common/config/pilot-gate';
 
 const A = '7309ae62-15c2-48d3-8990-4dbe75a29c4e';
 const B = '11111111-2222-4333-8444-555555555555';
