@@ -653,7 +653,13 @@ export function CampaignDetail() {
             {workspaceId && (
               <RegionPicker workspaceId={workspaceId} value={geoIn ?? regionFromCampaign} onChange={setGeoIn} inputId="fix-city-input" />
             )}
-            <Button type="submit" disabled={busy === "city" || !(geoIn ?? regionFromCampaign)?.name}>
+            {geoProblem && !geoIn && !regionFromCampaign?.meta_key && (
+              <p className="text-xs text-muted-foreground">Escolha a cidade na lista da Meta (ou mude o texto) para salvar.</p>
+            )}
+            <Button
+              type="submit"
+              disabled={busy === "city" || !(geoIn ?? regionFromCampaign)?.name || (geoProblem && !geoIn && !regionFromCampaign?.meta_key)}
+            >
               {busy === "city" ? "Salvando..." : "Salvar região"}
             </Button>
           </form>

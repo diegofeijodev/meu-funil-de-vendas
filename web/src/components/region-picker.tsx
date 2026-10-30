@@ -15,6 +15,18 @@ export function splitCityUf(text: string): { name: string; uf: string | null } {
   return m ? { name: m[1]!.trim(), uf: m[2]!.toUpperCase() } : { name: text.trim(), uf: null };
 }
 
+const UF_CODES = new Set("AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" "));
+const NATIONAL = /^\s*(o\s+)?(brasil(\s+inteiro|\s+todo)?|todo\s+o\s+(brasil|pa[ií]s)|nacional)\s*$/i;
+
+/** País inteiro ou mais de uma cidade: fica como texto (o publicar confere cada cidade na Meta), não cabe no seletor de uma cidade. */
+export function isFreeRegion(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (NATIONAL.test(t)) return true;
+  const parts = t.split(/;|,|\se\s|\s-\s/).map((p) => p.trim()).filter((p) => p.length > 0 && !UF_CODES.has(p.toUpperCase()));
+  return parts.length > 1;
+}
+
 export function regionSentence(t: GeoTargetInput | null): string {
   if (!t?.name) return "";
   return t.radius_km ? `${t.name} e cidades em volta, até ${t.radius_km} km do centro.` : `Só ${t.name}.`;
@@ -42,6 +54,12 @@ export function RegionPicker({ workspaceId, value, onChange, inputId, error }: P
 
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  // Cidade que veio do texto (sem chave da Meta): já busca para a pessoa conferir na lista.
+  useEffect(() => {
+    if (value?.name && !value.meta_key && value.name.length >= 3) type(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const type = (text: string) => {
@@ -147,9 +165,11 @@ export function RegionPicker({ workspaceId, value, onChange, inputId, error }: P
                 value={other}
                 onChange={(e) => {
                   setOther(e.target.value);
+                  // Valor fora da faixa segue adiante: quem salva recusa com a frase da Meta (não grava o raio de antes).
                   const n = Number(e.target.value);
-                  if (Number.isInteger(n) && n >= 17 && n <= 80) setRadius(n);
+                  setRadius(e.target.value.trim() && Number.isFinite(n) ? Math.round(n) : 0);
                 }}
+                aria-invalid={otherInvalid}
                 className="sm:w-32"
               />
               <p className={cn("text-xs", otherInvalid ? "text-destructive" : "text-muted-foreground")}>

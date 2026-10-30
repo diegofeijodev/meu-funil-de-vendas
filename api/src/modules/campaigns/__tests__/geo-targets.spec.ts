@@ -40,3 +40,13 @@ describe('CampaignsService — geo_targets', () => {
     expect(await status(svc.setGeoTargets(OWNER, WS_A, campaign.id, []))).toBe('400:Escolha pelo menos uma cidade.');
   });
 });
+
+describe('geo_targets — depois da revisão da Fatia 2', () => {
+  it('create com região: o texto legível sai da lista (o cliente não manda as duas coisas desencontradas)', async () => {
+    const w = world();
+    const svc = new CampaignsService(w.prisma, w.activity, w.guards);
+    const { brand } = await seedCampaign(w);
+    const c = await svc.create(OWNER, WS_A, { brand_id: brand.id, name: 'X', objective: 'traffic', audience: { persona: 'Dono' }, formats: [], geo_targets: [J] } as any);
+    expect(c.audience).toEqual({ persona: 'Dono', localizacao: 'Jundiaí, SP' });
+  });
+});

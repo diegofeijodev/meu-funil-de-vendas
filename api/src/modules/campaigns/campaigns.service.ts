@@ -113,7 +113,8 @@ export class CampaignsService {
         landing_url: dto.landing_url ?? null,
         start_date: toDate(dto.start_date),
         end_date: toDate(dto.end_date),
-        audience: dto.audience as Prisma.InputJsonObject,
+        // Com região estruturada, o texto legível sai dela (uma verdade só).
+        audience: (geoTargets.length ? { ...dto.audience, localizacao: geoText(geoTargets) } : dto.audience) as Prisma.InputJsonObject,
         budget_total: dto.budget_total ?? null,
         budget_daily: dto.budget_daily ?? null,
         goal_leads: dto.goal_leads ?? null,
