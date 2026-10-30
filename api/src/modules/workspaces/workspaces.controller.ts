@@ -5,12 +5,16 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { CreateWorkspaceDto, UpdateProfileDto, UpdateWorkspaceDto } from './dto/workspaces.dto';
 import { WorkspacesService } from './workspaces.service';
+import { FeaturesService } from './features.service';
 
 @ApiTags('Workspaces')
 @ApiBearerAuth()
 @Controller('v1')
 export class WorkspacesController {
-  constructor(private readonly workspaces: WorkspacesService) {}
+  constructor(
+    private readonly workspaces: WorkspacesService,
+    private readonly features: FeaturesService,
+  ) {}
 
   @Get('workspaces')
   listMine(@CurrentUser() user: AuthUser) {
@@ -30,6 +34,12 @@ export class WorkspacesController {
   @Patch('workspaces/:workspaceId')
   rename(@CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) id: string, @Body() dto: UpdateWorkspaceDto) {
     return this.workspaces.rename(user.id, id, dto.name);
+  }
+
+  /** O que está liberado para esta empresa (qualquer membro). */
+  @Get('workspaces/:workspaceId/features')
+  featuresOf(@CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) id: string) {
+    return this.features.forWorkspace(user.id, id);
   }
 
   @Get('workspaces/:workspaceId/members')

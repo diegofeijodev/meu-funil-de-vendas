@@ -107,6 +107,7 @@ Mensagens (iguais às do GoTrue que `routes/auth.tsx` mapeia):
 | `POST /v1/workspaces` `{ name }` | — | `201` `{ id }` — equivalente a `create_workspace(_name)`: nome vazio → `400 "nome obrigatório"`; `slug` = `ws-` + 12 hex; criador vira `owner` |
 | `GET /v1/workspaces/:workspaceId` | read | linha de `workspaces` |
 | `PATCH /v1/workspaces/:workspaceId` `{ name }` | manage | linha de `workspaces` |
+| `GET /v1/workspaces/:workspaceId/features` | read | `{ campaign_intake, campaign_pilot, style_refs_pinterest, vacancy_stories }` (booleanos): fonte única do "liberado para a empresa". `campaign_intake` = empresa em `CAMPAIGN_INTAKE_WORKSPACE_IDS`; `vacancy_stories` = `VACANCY_STORIES_WORKSPACE_IDS`; piloto e Pinterest ligam nas fatias deles (29/10) |
 | `GET /v1/workspaces/:workspaceId/members` | read | `{ members: workspace_members[], profiles: profiles[] }` — perfis dos membros (no Supabase o RLS só devolvia o próprio; aqui qualquer membro vê os colegas do MESMO workspace) |
 | `GET /v1/profiles/me` | — | linha de `profiles` |
 | `PATCH /v1/profiles/me` `{ full_name?, avatar_url? }` | — | linha de `profiles` |

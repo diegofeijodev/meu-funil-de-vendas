@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { parseVacancyWorkspaces } from './vacancy-workspaces';
+import { parseVacancyWorkspaces, parseWorkspaceList } from './vacancy-workspaces';
 
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
 const opt = () => z.string().optional();
@@ -157,6 +157,8 @@ const envSchema = z
     CALCOM_API_URL: opt(),
     /** Ids (uuid) das empresas com stories das vagas do Freela, separados por vírgula. `*` (todas) só em development/test. */
     VACANCY_STORIES_WORKSPACE_IDS: z.string().default(''),
+    /** Ids (uuid) das empresas com a nova campanha por conversa ("Conte o que você quer", Fatia 1). `*` só em development/test. */
+    CAMPAIGN_INTAKE_WORKSPACE_IDS: z.string().default(''),
     /** Só testes: vitrine falsa. Só vale em development/test; em produção é sempre `https://api.freelaservicosapp.com.br`. */
     FREELA_PUBLIC_API_URL: opt(),
   })
@@ -165,6 +167,11 @@ const envSchema = z
       parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
     } catch (e) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['VACANCY_STORIES_WORKSPACE_IDS'], message: (e as Error).message });
+    }
+    try {
+      parseWorkspaceList('CAMPAIGN_INTAKE_WORKSPACE_IDS', env.CAMPAIGN_INTAKE_WORKSPACE_IDS, env.NODE_ENV);
+    } catch (e) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CAMPAIGN_INTAKE_WORKSPACE_IDS'], message: (e as Error).message });
     }
     if (env.IG_PRODUCTION_TARGET_HOURS > env.IG_PRODUCTION_WINDOW_HOURS) {
       ctx.addIssue({
