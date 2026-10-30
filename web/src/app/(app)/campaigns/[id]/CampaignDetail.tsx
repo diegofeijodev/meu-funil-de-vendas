@@ -398,7 +398,13 @@ export function CampaignDetail() {
           : "Campanha pausada na Meta.",
       );
     } catch (e) {
-      toast.error(status === "ACTIVE" ? `A Meta não aceitou ligar o anúncio: ${apiErrorMessage(e, "motivo não informado")}. Nada foi gasto.` : apiErrorMessage(e, "Não foi possível alterar na Meta."));
+      // Recusa nossa (oferta sem confirmação, nenhum anúncio, papel): a frase do servidor. Recusa da Meta: diz que veio de lá.
+      const ours = ["OFFER_UNCONFIRMED", "NO_AD_LEFT", "FORBIDDEN", "PERIOD_ENDED"].includes(apiErrorCode(e) ?? "");
+      toast.error(
+        status === "ACTIVE" && !ours
+          ? `A Meta não aceitou ligar o anúncio: ${apiErrorMessage(e, "motivo não informado").replace(/\.$/, "")}. Confira o status na Meta antes de tentar de novo.`
+          : apiErrorMessage(e, "Não foi possível alterar na Meta."),
+      );
     } finally {
       setBusy(null);
     }
@@ -505,7 +511,8 @@ export function CampaignDetail() {
                 {busy === "end" ? "Cancelando..." : "Cancelar os posts agendados"}
               </Button>
             )}
-            {canEdit && !metaId && period === "open" && (c.status === "approved" || c.status === "active") && (
+            {/* Com o estrategista conduzindo, quem monta o anúncio é ele (publicar à mão agora deixaria as artes novas de fora). */}
+            {canEdit && !metaId && !pilotActive && period === "open" && (c.status === "approved" || c.status === "active") && (
               <Button onClick={publish} disabled={busy === "publish"}>
                 <Rocket className="mr-2 size-4" />
                 {busy === "publish" ? "Publicando..." : "Publicar na Meta"}
@@ -605,7 +612,7 @@ export function CampaignDetail() {
         open={goLiveOpen}
         onOpenChange={setGoLiveOpen}
         campaign={c}
-        creatives={data.creatives.filter((x) => x.status === "approved")}
+        creatives={data.creatives}
         canManage={canManage}
         busy={busy === "delivery"}
         onConfirm={(confirmOffer) => void setDelivery("ACTIVE", confirmOffer)}
