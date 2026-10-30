@@ -86,6 +86,8 @@ export type ArtBrief = {
   context?: PostCreativeContext | null;
   /** Carrossel: fio visual repetido em todos os slides. */
   visualThread?: VisualThread | null;
+  /** Notas de estilo das referências (Fatias 5/6): só TEXTO — o pixel da referência nunca vem para cá. */
+  styleNotes?: string | null;
 };
 
 export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<ArtDirection> {
@@ -131,6 +133,7 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
       slide: b.slide ? `${b.slide.index + 1} de ${b.slide.total} de um carrossel (varie o enquadramento)` : null,
     }),
     b.strategy ? `CONCEITO DA ESTRATÉGIA (traduza em cena visual concreta; nunca escreva estes textos na imagem): ${JSON.stringify(b.strategy)}` : '',
+    b.styleNotes ?? '',
     b.context
       ? `CONTEXTO DO POST (traduza em cena visual concreta — produto, público, momento do funil, data e estação; nunca escreva estes textos na imagem): ${JSON.stringify(contextForPrompt(b.context))}`
       : '',

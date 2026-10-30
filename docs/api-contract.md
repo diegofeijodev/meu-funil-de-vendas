@@ -900,3 +900,23 @@ Módulo `api/src/modules/integrations`. Cartões Meta/Google/TikTok/agência/MCP
 **Histórico de publicações** — `GET /v1/workspaces/:workspaceId/publishing-jobs?limit=` (read): linhas de `publishing_jobs` (snake_case, todas as colunas) por `created_at` desc; `limit` 1–50 (padrão 15, o da tela de Integrações); `limit` inválido → `400`.
 
 **Limpeza dos exports** — job `exports-cleanup-hourly` (`47 * * * *` — fora do minuto 17 do `ads-insights-3h`; heartbeat `exports_cleanup`, só com `SCHEDULER_ENABLED=true`): apaga arquivos de `<UPLOADS_DIR>/creative-assets/exports/<workspaceId>/` mais velhos que `EXPORTS_TTL_HOURS` (padrão **24 h**; o link de download vale 10 min). Só mexe dentro de `exports/` (raiz validada por `FilesService.resolvePath`, links simbólicos ignorados, a própria raiz precisa resolver para dentro de `realpath(bucket)` e não ser link — senão a limpeza é ignorada —, `realpath` conferido antes de cada `rm`); pasta de workspace vazia é removida.
+
+## 28. Estilo das artes — referências (Fatias 5 e 6, 29/10/2026) — `/v1/workspaces/:workspaceId/brands/:brandId/style-refs`
+
+A referência (imagem enviada, Pin colado ou Pins de uma pasta/perfil público do Pinterest) vira **notas de estilo em texto** pela IA de visão
+(`paleta, composicao, luz, enquadramento, clima, evitar`). Só esse texto vai ao diretor de arte e ao de vídeo (`ArtBrief.styleNotes`/`VideoBrief.styleNotes`,
+via `RefsService.loadStyleNotes`, linha "INSPIRAÇÃO DE ESTILO (não copie composição, pessoas, marcas nem textos; use só como clima): …", até 8, as da
+campanha primeiro). **O pixel de terceiro nunca vai ao gerador, à Biblioteca, à Meta ou ao Instagram**; a imagem (≤ 1024 px JPEG, bucket `style-refs`)
+existe só para a tela. Tetos: 8 por campanha (`400 "Chegou a 8 referências nesta campanha. Remova uma para pôr outra."`), 30 por marca (saem as mais
+antigas vindas de pastas; enviadas/Pins colados não saem sozinhos → `400 "Chegou a 30 referências nesta marca. Remova uma para pôr outra."`), 5 pastas.
+Pinterest só com `STYLE_REFS_PINTEREST_ENABLED=true` (fora: `404`); `GET /features` devolve `style_refs_pinterest`.
+
+| Rota | Corpo | Resposta / regras |
+|---|---|---|
+| `GET /style-refs?campaign_id=` | — | read. `{ refs: [{ id, source: 'upload'\|'pinterest', source_url, title, status: 'processing'\|'ready'\|'failed', summary ("cores …; luz …; …"), error, image_url (assinada), campaign_id, from_source, created_at }], sources: [{ id, url, title, last_synced_at, last_error }], limits: { campaign: 8, brand: 30, in_campaign, pinterest } }`. Com `campaign_id`: as da campanha + as da marca |
+| `POST /style-refs/upload?campaign_id=` | multipart `file` | write. JPG/PNG/WEBP pelo conteúdo (`400 "Envie uma imagem JPG, PNG ou WEBP."`), ≤ 15 MB (`400 "A imagem passa de 15 MB."`). Nasce `processing`; o estilo é lido logo depois (e pelo job) |
+| `POST /style-refs/pinterest` | `{ url, campaign_id? }` | write. Pin (`pinterest.com/pin/<id>`, qualquer subdomínio, ou `pin.it/…` seguido só dentro do Pinterest) → imagem pelo oEmbed (`thumbnail_url`) ou `og:image`, baixada só de `i.pinimg.com` (736x) com cada salto conferido; `{ kind: 'pin', added: 1, refs }`; mesmo Pin → `400 "Esse Pin já está nas referências."`; sem imagem → `400 "Não conseguimos pegar a imagem desse Pin. Salve a imagem no celular e envie aqui."`. Pasta (`/<user>/<pasta>/`) ou perfil (`/<user>/`) → fonte acompanhada pelo RSS público (`<pasta>.rss`, `<user>/feed.rss`) + até 8 Pins novos agora; a mesma pasta de novo = a mesma fonte; `{ kind: 'board'\|'profile', added }`. Outro link → `400 "Esse link não é de um Pin nem de uma pasta do Pinterest. No Pinterest, toque em Compartilhar → Copiar link."` |
+| `DELETE /style-refs/:id` | — | write. Apaga a referência e a imagem |
+| `DELETE /style-refs/sources/:sourceId` | — | write. Para de acompanhar a pasta; as referências que vieram dela saem também. `{ ok, removed }` |
+
+Job `style-refs-15min` (`*/15 * * * *`): renova até 3 pastas com mais de 24 h (Pinterest fora do ar → `last_error` "O Pinterest não respondeu agora. Tentamos de novo amanhã.", as referências antigas continuam) e lê o estilo de até 10 pendentes (trava otimista `claimed_at`, vencida em 10 min; falha → `failed` "Não conseguimos ler o estilo desta referência. Remova e tente outra.").

@@ -397,6 +397,7 @@ export class MediaGenerationService {
         workspaceId: ws, brand, context: ctx, format: post.format === 'story_video' ? 'story_video' : 'reel',
         theme: post.theme ?? null, hook: post.hook ?? null, cta: post.cta ?? null, userPrompt: (brief.prompt as string | undefined) ?? null,
         audio, hasFirstFrame: !!frame, provider: provider.id, adjust: instructions, previousPrompt: instructions || criticNote ? (prev?.prompt ?? null) : null, criticNote,
+        styleNotes: await this.refs.loadStyleNotes(ws, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null),
       });
       direction = r.direction;
       prompt = r.prompt;
@@ -538,10 +539,13 @@ export class MediaGenerationService {
         ? []
         : orderRefsForProduct(await this.refs.loadBrandRefs(workspaceId, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined }), ctx.product?.name ?? null);
       const base = brief.prompt || post.theme || 'Post de Instagram';
+      // Estilo das referências (Pinterest/envio) em texto — nunca o pixel. Campanha do post quando o briefing a traz.
+      const styleNotes = await this.refs.loadStyleNotes(workspaceId, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null);
       const briefs: string[] = format === 'feed_carousel' ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
       const artBrief = (userPrompt: string, i: number) => ({
         workspaceId,
         brand,
+        styleNotes,
         theme: post.theme,
         hook: post.hook,
         offer: post.cta,

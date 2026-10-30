@@ -55,6 +55,8 @@ export type VideoBrief = {
   previousPrompt?: string | null;
   /** Motivo do crítico que reprovou o vídeo anterior. */
   criticNote?: string | null;
+  /** Notas de estilo das referências (Fatias 5/6): só texto. */
+  styleNotes?: string | null;
 };
 
 const str = { type: 'string' };
@@ -173,6 +175,7 @@ export function videoDirectorPrompt(b: VideoBrief): string {
     'BRIEFING DO POST:',
     JSON.stringify({ tema: b.theme, gancho_da_legenda: b.hook, cta: b.cta, pedido_visual: b.userPrompt }),
     b.context ? `CONTEXTO (traduza em cena; nunca escreva estes textos no vídeo): ${JSON.stringify(contextForPrompt(b.context))}` : '',
+    b.styleNotes ?? '',
     b.previousPrompt ? `ROTEIRO ANTERIOR (refaça melhorando): ${cleanFree(b.previousPrompt, VIDEO_PROMPT_MAX_CHARS)}` : '',
     b.criticNote ? `O CRÍTICO REPROVOU O VÍDEO ANTERIOR (corrija isto com prioridade): «${cleanFree(b.criticNote, 300)}»` : '',
     b.adjust ? `AJUSTE PEDIDO PELO CLIENTE (aplique com prioridade): «${cleanFree(b.adjust, 300)}»` : '',

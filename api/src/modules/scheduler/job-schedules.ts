@@ -1,5 +1,5 @@
 /**
- * Agenda dos 10 jobs do protótipo (db.md §6; pg_cron, horários em UTC) + 2 extras do port. `heartbeat` = chave que o job grava em `cron_heartbeats` (a checagem de frescor do `setup` lê `crm-cadences`, `instagram-queue`, `ads-sync`, `crm-daily`).
+ * Agenda dos 10 jobs do protótipo (db.md §6; pg_cron, horários em UTC) + 4 extras do port. `heartbeat` = chave que o job grava em `cron_heartbeats` (a checagem de frescor do `setup` lê `crm-cadences`, `instagram-queue`, `ads-sync`, `crm-daily`).
  * Tarefas posteriores registram o handler com `SchedulerService.register({ ...JOB_SCHEDULES['crm-cadences-5min'], handler })`.
  */
 export const JOB_SCHEDULES = {
@@ -16,5 +16,6 @@ export const JOB_SCHEDULES = {
   // Extras do port (não existem no pg_cron do protótipo): retomada dos vídeos de criativo e limpeza dos exports.
   'creative-poll-5min': { name: 'creative-poll-5min', cron: '*/5 * * * *', heartbeat: 'creative' },
   'vacancy-stories-10min': { name: 'vacancy-stories-10min', cron: '*/10 * * * *', heartbeat: 'vacancy-stories' },
+  'style-refs-15min': { name: 'style-refs-15min', cron: '*/15 * * * *', heartbeat: 'style-refs' },
   'exports-cleanup-hourly': { name: 'exports-cleanup-hourly', cron: '47 * * * *', heartbeat: 'exports_cleanup' },
 } as const;

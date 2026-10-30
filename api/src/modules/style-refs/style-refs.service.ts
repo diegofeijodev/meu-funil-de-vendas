@@ -152,7 +152,7 @@ export class StyleRefsService {
     if (campaignId) await this.campaign(ws, brandId, campaignId);
     let link = parsePinterestLink(url);
     if (link?.kind === 'shortlink') link = await this.resolveShortlink(link.url);
-    if (!link || link.kind === 'shortlink') throw bad(MSG_NOT_PINTEREST);
+    if (!link) throw bad(MSG_NOT_PINTEREST);
 
     if (link.kind === 'pin') {
       const dup = await this.prisma.style_references.findFirst({ where: { workspace_id: ws, brand_id: brandId, pin_id: link.pinId } });
