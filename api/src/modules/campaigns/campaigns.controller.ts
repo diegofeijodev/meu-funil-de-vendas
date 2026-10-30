@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CampaignsService } from './campaigns.service';
-import { CreateCampaignDto, CreateCopyDto, SetBudgetDto, SetLandingUrlDto, SetLocationDto } from './dto/campaigns.dto';
+import { CampaignIntakeService } from './campaign-intake.service';
+import { CreateCampaignDto, CreateCopyDto, IntakeDto, SetBudgetDto, SetLandingUrlDto, SetLocationDto } from './dto/campaigns.dto';
 
 /** GET = read, o resto = write (viewer só lê). Rotas estáticas antes das `:id`. */
 @ApiTags('Campaigns')
@@ -13,7 +14,10 @@ import { CreateCampaignDto, CreateCopyDto, SetBudgetDto, SetLandingUrlDto, SetLo
 @UseGuards(WorkspaceAccessGuard)
 @Controller('v1/workspaces/:workspaceId/campaigns')
 export class CampaignsController {
-  constructor(private readonly campaigns: CampaignsService) {}
+  constructor(
+    private readonly campaigns: CampaignsService,
+    private readonly intakeSvc: CampaignIntakeService,
+  ) {}
 
   @Get()
   list(@Param('workspaceId', ParseUuidPipe) ws: string) {
@@ -28,6 +32,12 @@ export class CampaignsController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: CreateCampaignDto) {
     return this.campaigns.create(user.id, ws, dto);
+  }
+
+  /** "Conte o que você quer": rascunho + até 3 perguntas, nada gravado (Fatia 1; só empresas da lista). */
+  @Post('intake') @HttpCode(200)
+  intake(@CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: IntakeDto) {
+    return this.intakeSvc.intake(user.id, ws, dto);
   }
 
   @Get(':id')

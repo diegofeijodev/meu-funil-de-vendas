@@ -48,6 +48,12 @@ export class SetBudgetDto {
   @IsOptional() @Type(() => Number) @IsNumber(num) @Max(10000000) budget_total?: number | null;
 }
 
+/** "Conte o que você quer" (Fatia 1). */
+export class IntakeDto {
+  @IsUUID() brand_id!: string;
+  @IsString() @MaxLength(4000) text!: string;
+}
+
 export class SetLocationDto {
   @IsString() @MaxLength(200) location!: string;
 }
