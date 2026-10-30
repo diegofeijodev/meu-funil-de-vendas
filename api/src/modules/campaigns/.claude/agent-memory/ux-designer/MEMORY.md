@@ -1,0 +1,1 @@
+- [Revisão UX F4 do estrategista (30/10)](project_estrategista_f4_ux_review.md) — conferência "Pronto para ligar", bloqueios da Meta e papéis: o que conferir na correção

@@ -94,7 +94,7 @@ export class MetaStep implements PilotStep {
       const r = await this.publisher.publishPaused(ws, c.id, { runId: run.id });
       const failed = (r.steps ?? []).filter((x) => x.status === 'failed');
       const note = failed.length
-        ? `Montado na Meta e desligado. ${failed.length === 1 ? '1 parte não foi criada' : `${failed.length} partes não foram criadas`}: ${failed.map((x) => `${x.label}: ${x.detail}`).join(' · ')}.`
+        ? `Montado com ${failed.length === 1 ? '1 parte faltando' : `${failed.length} partes faltando`}; o que foi montado está desligado. Faltou: ${failed.map((x) => x.label).join(', ')}.`
         : 'Montado na Meta e desligado.';
       return { kind: 'done', ref: r.campaignId, note };
     } catch (e) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockerView, creditsLine, pilotListLine, raiseCapTo, stepStatus } from "./pilot-text";
+import { blockerView, creditsLine, pilotListLine, raiseCapTo, stepStatus, viewerNote } from "./pilot-text";
 
 describe("stepStatus (ícone separado do texto: o leitor de tela não lê o ícone)", () => {
   it("cada status vira o texto do doc", () => {
@@ -79,28 +79,50 @@ describe("pilotListLine (cartão da lista)", () => {
   });
 });
 
-describe("bloqueios da Meta (Fatia 4)", () => {
+describe("bloqueios da Meta (Fatia 4, revisão do designer)", () => {
   const ctx = { canEdit: true, canManage: true, step: "meta" as const, spent: 0, remaining: 0, done: 0 };
-  it("esperando aprovação: dono abre a aprovação; marketing é avisado", () => {
-    expect(blockerView("WAITING_APPROVAL", "x", ctx)).toEqual({ message: "O anúncio está esperando a sua aprovação.", actions: [{ kind: "approvals", label: "Abrir aprovação" }] });
+  it("esperando aprovação: dono abre a aprovação ou confere de novo; marketing é avisado", () => {
+    expect(blockerView("WAITING_APPROVAL", "x", ctx)).toEqual({
+      message: "O anúncio está esperando a sua aprovação.",
+      actions: [{ kind: "approvals", label: "Abrir aprovação" }, { kind: "retry", label: "Já aprovei: conferir agora" }],
+    });
     expect(blockerView("WAITING_APPROVAL", "x", { ...ctx, canManage: false })).toEqual({ message: "O anúncio está esperando o dono ou um admin aprovar. Avise quem aprova.", actions: [] });
   });
-  it("Meta desconectada: conectar + já conectei", () => {
+  it("Meta desconectada: só dono/admin conecta", () => {
     expect(blockerView("META_NOT_CONNECTED", "Conecte a Meta…", ctx).actions).toEqual([
       { kind: "integrations", label: "Conectar a Meta" }, { kind: "retry", label: "Já conectei: conferir agora" },
     ]);
+    expect(blockerView("META_NOT_CONNECTED", "x", { ...ctx, canManage: false })).toEqual({ message: "Conecte a Meta para montar o anúncio. Só o dono ou um admin conecta. Avise quem aprova.", actions: [] });
   });
-  it("destino, verba, cidade: corrigir no briefing e continuar", () => {
+  it("destino, verba, cidade: corrigir agora (no campo) e continuar; verba e cidade só dono/admin depois da aprovação", () => {
     for (const code of ["LANDING_MISSING", "BUDGET_MISSING", "GEO_UNRESOLVED"]) {
-      expect(blockerView(code, "frase", ctx)).toEqual({ message: "frase", actions: [{ kind: "briefing", label: "Corrigir na campanha" }, { kind: "retry", label: "Já corrigi: continuar" }] });
+      expect(blockerView(code, "frase", ctx)).toEqual({ message: "frase", actions: [{ kind: "fix", label: "Corrigir agora" }, { kind: "retry", label: "Já corrigi: continuar" }] });
     }
+    expect(blockerView("BUDGET_MISSING", "Falta a verba.", { ...ctx, canManage: false })).toEqual({ message: "Falta a verba. Só o dono ou um admin muda a verba e a cidade depois da aprovação. Avise quem aprova.", actions: [] });
+  });
+  it("recusa da Meta: frase simples, motivo à parte, integrações e tentar de novo", () => {
+    expect(blockerView("META_REFUSED", "A Meta recusou o anúncio: (#100) Invalid parameter", ctx)).toEqual({
+      message: "A Meta não aceitou montar o anúncio. Nada foi gasto: o que ficou lá está desligado.",
+      detail: "A Meta recusou o anúncio: (#100) Invalid parameter",
+      actions: [{ kind: "integrations", label: "Abrir integrações" }, { kind: "retry", label: "Tentar de novo" }],
+    });
   });
   it("nenhuma arte passou / G2: escolher à mão e continuar", () => {
-    expect(blockerView("NO_CREATIVE_PASSED", "Nenhuma arte passou…", ctx).actions).toEqual([
-      { kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" },
-    ]);
+    const v = blockerView("NO_CREATIVE_PASSED", "x", ctx);
+    expect(v.message).toBe("Nenhuma arte passou na revisão automática (nota mínima 28 de 50). Aprove à mão as que servem na aba Criativos.");
+    expect(v.actions).toEqual([{ kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" }]);
     expect(blockerView("WAITING_CREATIVE_REVIEW", "As artes estão prontas…", ctx).actions).toEqual([
       { kind: "creatives", label: "Escolher artes" }, { kind: "retry", label: "Já escolhi: conferir agora" },
     ]);
+  });
+  it("quem só vê: diz quem resolve", () => {
+    expect(viewerNote("WAITING_APPROVAL")).toBe("Só o dono ou um admin resolve isso.");
+    expect(viewerNote("COST_CAP")).toBe("Quem edita a campanha resolve isso.");
+  });
+  it("lista: pronto para ligar × no ar", () => {
+    const done = { status: "done", current_step: "meta", first_block_code: null, counts: { done: 7, total: 7 } };
+    expect(pilotListLine(done, { metaCampaignId: "9001", delivery: "PAUSED" })).toEqual({ icon: "!", text: "Pronto para ligar", tone: "needs" });
+    expect(pilotListLine(done, { metaCampaignId: "9001", delivery: "ACTIVE" })).toEqual({ icon: "●", text: "No ar", tone: "done" });
+    expect(pilotListLine(done, { metaCampaignId: null, delivery: null })).toEqual({ icon: "✓", text: "Tudo pronto", tone: "done" });
   });
 });

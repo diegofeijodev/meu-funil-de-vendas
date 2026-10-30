@@ -7,7 +7,7 @@ export type PilotStepLike = { status: string; attempts?: number; note?: string |
 export type PilotSummary = {
   status: string; current_step: string | null; first_block_code: string | null; counts: { done: number; total: number }; plan_ready?: boolean;
 };
-export type BlockerActionKind = "retry" | "proceed_partial" | "raise_cap" | "integrations" | "approvals" | "briefing" | "creatives";
+export type BlockerActionKind = "retry" | "proceed_partial" | "raise_cap" | "integrations" | "approvals" | "fix" | "creatives";
 export type BlockerAction = { kind: BlockerActionKind; label: string };
 export type IconText = { icon: string; text: string };
 
@@ -69,25 +69,39 @@ export function blockerView(
   code: string | null | undefined,
   message: string,
   ctx: { canEdit: boolean; canManage?: boolean; step: PilotStepName; spent: number; remaining: number; done: number; roundCost?: number },
-): { message: string; actions: BlockerAction[] } {
+): { message: string; detail?: string; actions: BlockerAction[] } {
   const actions = (a: BlockerAction[]) => (ctx.canEdit ? a : []);
   switch (code) {
     case "WAITING_APPROVAL":
       return ctx.canManage
-        ? { message: "O anúncio está esperando a sua aprovação.", actions: actions([{ kind: "approvals", label: "Abrir aprovação" }]) }
+        ? { message: "O anúncio está esperando a sua aprovação.", actions: actions([{ kind: "approvals", label: "Abrir aprovação" }, { kind: "retry", label: "Já aprovei: conferir agora" }]) }
         : { message: "O anúncio está esperando o dono ou um admin aprovar. Avise quem aprova.", actions: [] };
     case "META_NOT_CONNECTED":
-      return { message, actions: actions([{ kind: "integrations", label: "Conectar a Meta" }, { kind: "retry", label: "Já conectei: conferir agora" }]) };
-    case "LANDING_MISSING":
+      return ctx.canManage
+        ? { message, actions: actions([{ kind: "integrations", label: "Conectar a Meta" }, { kind: "retry", label: "Já conectei: conferir agora" }]) }
+        : { message: "Conecte a Meta para montar o anúncio. Só o dono ou um admin conecta. Avise quem aprova.", actions: [] };
     case "BUDGET_MISSING":
     case "GEO_UNRESOLVED":
+      // Depois da aprovação, verba e cidade só mudam por dono/admin (o formulário não aparece para marketing).
+      if (!ctx.canManage) return { message: `${message} Só o dono ou um admin muda a verba e a cidade depois da aprovação. Avise quem aprova.`, actions: [] };
+      return { message, actions: actions([{ kind: "fix", label: "Corrigir agora" }, { kind: "retry", label: "Já corrigi: continuar" }]) };
+    case "LANDING_MISSING":
     case "NOT_APPROVED":
-    case "META_REFUSED":
+      return { message, actions: actions([{ kind: "fix", label: "Corrigir agora" }, { kind: "retry", label: "Já corrigi: continuar" }]) };
     case "PERIOD_ENDED":
     case "PERIOD_TOO_SHORT":
-      return { message, actions: actions([{ kind: "briefing", label: "Corrigir na campanha" }, { kind: "retry", label: "Já corrigi: continuar" }]) };
+      return { message, actions: [] };
+    case "META_REFUSED":
+      return {
+        message: "A Meta não aceitou montar o anúncio. Nada foi gasto: o que ficou lá está desligado.",
+        detail: message,
+        actions: actions([{ kind: "integrations", label: "Abrir integrações" }, { kind: "retry", label: "Tentar de novo" }]),
+      };
     case "NO_CREATIVE_PASSED":
-      return { message, actions: actions([{ kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" }]) };
+      return {
+        message: "Nenhuma arte passou na revisão automática (nota mínima 28 de 50). Aprove à mão as que servem na aba Criativos.",
+        actions: actions([{ kind: "creatives", label: "Ver as artes e escolher à mão" }, { kind: "retry", label: "Já aprovei: continuar" }]),
+      };
     case "WAITING_CREATIVE_REVIEW":
       return { message, actions: actions([{ kind: "creatives", label: "Escolher artes" }, { kind: "retry", label: "Já escolhi: conferir agora" }]) };
     case "COST_CAP":
@@ -117,6 +131,13 @@ export function blockerView(
   }
 }
 
+/** Para quem só vê: quem resolve aquele bloqueio. */
+export function viewerNote(code: string | null | undefined): string {
+  return ["WAITING_APPROVAL", "META_NOT_CONNECTED", "BUDGET_MISSING", "GEO_UNRESOLVED"].includes(code ?? "")
+    ? "Só o dono ou um admin resolve isso."
+    : "Quem edita a campanha resolve isso.";
+}
+
 export function creditsLine(spent: number, max: number): string {
   return `Créditos usados: ${br(spent)} de até ${br(max)} (teto). Soma do custo registrado de cada geração feita até agora.`;
 }
@@ -142,7 +163,10 @@ const NEEDS_LINE: Record<string, string> = {
 };
 
 /** Linha do estrategista no cartão da lista. Sem piloto = nada (cartão igual ao de hoje). */
-export function pilotListLine(s: PilotSummary | null | undefined): (IconText & { tone: "needs" | "work" | "done" | "idle" }) | null {
+export function pilotListLine(
+  s: PilotSummary | null | undefined,
+  meta: { metaCampaignId?: string | null; delivery?: string | null } = {},
+): (IconText & { tone: "needs" | "work" | "done" | "idle" }) | null {
   if (!s) return null;
   if (s.status === "planning") {
     return s.plan_ready
@@ -156,7 +180,11 @@ export function pilotListLine(s: PilotSummary | null | undefined): (IconText & {
   if (s.status === "running" && s.first_block_code && NEEDS_LINE[s.first_block_code]) {
     return { icon: "!", text: `Precisa de você: ${NEEDS_LINE[s.first_block_code]}`, tone: "needs" };
   }
-  if (s.status === "done") return { icon: "✓", text: "Tudo pronto", tone: "done" };
+  if (s.status === "done") {
+    // Anúncio montado e desligado: o que falta é o dono ligar (de manhã, "Tudo pronto" pareceria "já está no ar").
+    if (meta.metaCampaignId) return meta.delivery === "ACTIVE" ? { icon: "●", text: "No ar", tone: "done" } : { icon: "!", text: "Pronto para ligar", tone: "needs" };
+    return { icon: "✓", text: "Tudo pronto", tone: "done" };
+  }
   if (s.status === "cancelled") return { icon: "–", text: "Estrategista parado", tone: "idle" };
   if (s.current_step === "creatives") return { icon: "◐", text: `Fazendo artes (${s.counts.done} de ${s.counts.total})`, tone: "work" };
   return { icon: "◐", text: RUNNING_LINE[s.current_step ?? ""] ?? "Trabalhando", tone: "work" };

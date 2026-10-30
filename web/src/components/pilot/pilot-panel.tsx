@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "@/lib/router";
 import {
-  blockerView, creditsLine, MAX_TRIES, nextIdempotencyKey, raiseCapTo, SOFT_BLOCKS, STEP_LABEL, stepStatus, type IconText, type PilotStepName,
+  blockerView, creditsLine, MAX_TRIES, nextIdempotencyKey, raiseCapTo, SOFT_BLOCKS, STEP_LABEL, stepStatus, viewerNote, type IconText, type PilotStepName,
 } from "@/lib/pilot-text";
 import {
   approvePilot, cancelPilot, createPilot, estimatePilot, resumePilot, usePilot, type PilotOptions, type PilotRun, type PilotSlot,
 } from "@/modules/campaign-pilot/infrastructure/pilot.api";
 import { apiErrorCode, apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { clickDestination } from "./go-live-dialog";
 import { PilotAdjust } from "./pilot-adjust";
 
 /** Fatia 4: o piloto monta o anúncio PAUSADO na Meta; ligar é na conferência ("Pronto para ligar"). */
@@ -31,7 +32,12 @@ type Props = {
   campaign: {
     id: string; status: string; start_date?: string | null; end_date?: string | null; budget_daily?: number | string | null; landing_url?: string | null;
     audience?: Record<string, unknown> | null; meta_campaign_id?: string | null; meta_delivery_status?: string | null;
+    objective?: string | null; geo_targets?: unknown;
   };
+  /** Período da campanha (`campaignPeriod`): com ele vencido, não se oferece ligar. */
+  period: string;
+  /** "Corrigir agora" de um bloqueio: o detalhe rola até o campo certo (destino, verba, cidade). */
+  onFix: (code: string) => void;
   strategy: unknown;
   strategyVersion: number | null;
   creatives: { id: string; title: string; preview_url?: string | null }[];
@@ -250,7 +256,7 @@ function PlanningView({
             <p className="text-muted-foreground">O anúncio na Meta continua com você: depois das artes, toque em Solicitar aprovação e, aprovado, em Publicar na Meta. Nada é gasto lá sem o seu clique.</p>
           )}
         </div>
-        {PILOT_META_READY && options.meta.enabled && <AdBlock campaign={campaign} />}
+        {PILOT_META_READY && options.meta.enabled && <AdBlock campaign={campaign} canManage={canManage} />}
         <div className="border-t pt-3">
           <h3 className="font-semibold">Custo de criação no Meu Funil</h3>
           {!canEdit ? (
@@ -323,7 +329,7 @@ function slotLabel(x: PilotSlot) {
 }
 
 function ProgressView({
-  run, workspaceId, campaign, creatives, canEdit, canManage, busy, act, updatedAt, restart, onOpenTab, onGoLive,
+  run, workspaceId, campaign, creatives, canEdit, canManage, busy, act, updatedAt, restart, onOpenTab, onGoLive, onFix, period,
 }: Props & { run: PilotRun; busy: string | null; act: Act; updatedAt: number; restart: () => React.ReactNode }) {
   const [cancelIg, setCancelIg] = useState(false);
   const stopped = run.status === "blocked" || run.status === "failed";
@@ -361,15 +367,20 @@ function ProgressView({
               return (
                 <div key={n} className="mt-2">
                   <p><span className="font-medium">{STEP_LABEL[n]}:</span> {v.message}</p>
-                  {!canEdit && <p className="text-muted-foreground">Quem edita a campanha resolve isso.</p>}
+                  {v.detail && (
+                    <details className="mt-1"><summary className="min-h-11 cursor-pointer lg:min-h-0">Ver o motivo da Meta</summary><p className="[overflow-wrap:anywhere]">{v.detail}</p></details>
+                  )}
+                  {!canEdit && <p className="text-muted-foreground">{viewerNote(s!.error_code)}</p>}
                   <div className="mt-2 flex flex-wrap gap-2">
                     {v.actions.map((a) =>
                       a.kind === "integrations" || a.kind === "approvals" ? (
                         <Button key={a.kind} asChild variant="outline" className="h-11 lg:h-9">
                           <Link to={a.kind === "integrations" ? "/integrations" : "/approvals"}>{a.label}</Link>
                         </Button>
-                      ) : a.kind === "briefing" || a.kind === "creatives" ? (
-                        <Button key={a.kind} variant="outline" className="h-11 lg:h-9" onClick={() => onOpenTab(a.kind === "briefing" ? "briefing" : "criativos")}>{a.label}</Button>
+                      ) : a.kind === "fix" ? (
+                        <Button key={a.kind} variant="outline" className="h-11 lg:h-9" onClick={() => onFix(s!.error_code ?? "")}>{a.label}</Button>
+                      ) : a.kind === "creatives" ? (
+                        <Button key={a.kind} variant="outline" className="h-11 lg:h-9" onClick={() => onOpenTab("criativos")}>{a.label}</Button>
                       ) : (
                         <Button key={a.kind} className="h-11 lg:h-9" disabled={!!busy} onClick={() => void doAction(a.kind)}>{a.label}</Button>
                       ),
@@ -433,14 +444,24 @@ function ProgressView({
       {run.status === "done" && PILOT_META_READY && campaign.meta_campaign_id && (
         <div role="status" className="mt-3 text-sm">
           {campaign.meta_delivery_status === "ACTIVE" ? (
-            <p className="font-medium"><span aria-hidden="true">●</span> No ar. Os resultados aparecem aqui a cada 3 horas.</p>
+            <p id="pilot-live" tabIndex={-1} className="font-medium outline-none"><span aria-hidden="true">●</span> No ar. Os resultados aparecem aqui a cada 3 horas.</p>
+          ) : period === "ended" ? (
+            <div>
+              <p>O período desta campanha terminou{campaign.end_date ? ` em ${ddmm(campaign.end_date)}` : ""}. Para anunciar, crie uma campanha nova.</p>
+              <Button asChild variant="outline" className="mt-2 h-11 lg:h-9"><Link to="/campaigns/new">Criar campanha nova</Link></Button>
+            </div>
           ) : (
             <>
-              <p className="font-medium"><span aria-hidden="true">✓</span> Tudo pronto. O anúncio está montado na Meta e desligado.</p>
+              <p id="pilot-live" tabIndex={-1} className="font-medium outline-none"><span aria-hidden="true">!</span> Tudo pronto. O anúncio está montado na Meta e desligado.</p>
               {canManage ? (
-                <Button className="mt-2 h-11 w-full lg:h-9 lg:w-auto" onClick={onGoLive}>Conferir e ligar o anúncio</Button>
+                <div className="sticky bottom-0 -mx-5 mt-2 border-t bg-background px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0">
+                  <Button className="h-11 w-full lg:h-9 lg:w-auto" onClick={onGoLive}>Conferir e ligar o anúncio</Button>
+                </div>
               ) : (
-                <p className="mt-1">Só o dono ou um admin liga o anúncio. Avise quem aprova.</p>
+                <>
+                  <p className="mt-1">Só o dono ou um admin liga o anúncio. Avise quem aprova.</p>
+                  <Button variant="outline" className="mt-2 h-11 lg:h-9" onClick={onGoLive}>Ver o que vai rodar</Button>
+                </>
               )}
             </>
           )}
@@ -493,7 +514,7 @@ function ProgressView({
 }
 
 /** Bloco "Anúncio pago na Meta" do plano (doc de UI, B1): o que vai rodar, com a conta da verba. Falta de destino/verba já aparece aqui. */
-function AdBlock({ campaign }: { campaign: Props["campaign"] }) {
+function AdBlock({ campaign, canManage }: { campaign: Props["campaign"]; canManage: boolean }) {
   const aud = (campaign.audience ?? {}) as { persona?: string; localizacao?: string };
   const daily = Number(campaign.budget_daily ?? 0);
   const days = campaign.start_date && campaign.end_date ? Math.round((Date.parse(campaign.end_date) - Date.parse(campaign.start_date)) / 86_400_000) + 1 : null;
@@ -501,14 +522,15 @@ function AdBlock({ campaign }: { campaign: Props["campaign"] }) {
   return (
     <div className="border-t pt-3">
       <h3 className="font-semibold">Anúncio pago na Meta</h3>
-      <p className="mt-1">Fica montado e <strong>desligado</strong>: não gasta nada até você ligar.</p>
+      <p className="mt-1">Fica montado e <strong>desligado</strong>: não gasta nada até {canManage ? "você ligar" : "o dono ou um admin ligar"}.</p>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {aud.persona && (<><dt className="text-muted-foreground">Para quem</dt><dd>{aud.persona}</dd></>)}
         <dt className="text-muted-foreground">Onde</dt><dd>{aud.localizacao || "Falta a região da campanha."}</dd>
         {days != null && (<><dt className="text-muted-foreground">Quando</dt><dd>{ddmm(campaign.start_date)} a {ddmm(campaign.end_date)} ({days} dias)</dd></>)}
         <dt className="text-muted-foreground">Quanto</dt>
         <dd>{daily > 0 ? (days != null ? `${money(daily)}/dia × ${days} dias = até cerca de ${money(daily * days)}, cobrados pela Meta` : `${money(daily)} por dia`) : "Falta dizer quanto gastar por dia."}</dd>
-        <dt className="text-muted-foreground">Quem clicar</dt><dd className="break-all">{campaign.landing_url || "Falta dizer para onde vai quem clicar."}</dd>
+        <dt className="text-muted-foreground">Quem clicar</dt>
+        <dd className="[overflow-wrap:anywhere]">{campaign.objective === "leads" || campaign.objective === "whatsapp" ? clickDestination(campaign.objective, campaign.landing_url) : campaign.landing_url || "Falta dizer para onde vai quem clicar."}</dd>
       </dl>
     </div>
   );

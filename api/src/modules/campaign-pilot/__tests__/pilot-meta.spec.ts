@@ -112,7 +112,7 @@ describe('etapa meta × revisão do arquiteto (F4)', () => {
     const w = await world();
     await w.mine(1);
     w.publisher.publishPaused.mockResolvedValueOnce({ campaignId: 'm-1', steps: [{ status: 'done' }, { status: 'failed', label: 'Anúncio "Vídeo"', detail: 'sem miniatura' }] } as any);
-    expect(await w.step.run(w.run)).toEqual({ kind: 'done', ref: 'm-1', note: 'Montado na Meta e desligado. 1 parte não foi criada: Anúncio "Vídeo": sem miniatura.' });
+    expect(await w.step.run(w.run)).toEqual({ kind: 'done', ref: 'm-1', note: 'Montado com 1 parte faltando; o que foi montado está desligado. Faltou: Anúncio "Vídeo".' });
   });
 
   it('G1 grava quem aprovou (a IA) e a nota em cada arte, com atividade', async () => {

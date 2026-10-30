@@ -77,6 +77,7 @@ export function CampaignDetail() {
   const metaSetStatus = useServerFn(metaAdsSetStatus);
   const metaExclude = useServerFn(metaAdsExcludeCreative);
   const [goLiveOpen, setGoLiveOpen] = useState(false);
+  const [goLiveError, setGoLiveError] = useState<string | null>(null);
   const runStrategy = useServerFn(generateCampaignStrategy);
   const runApproveStrategy = useServerFn(approveCampaignStrategy);
   const runIgPlan = useServerFn(createIgPlanFromStrategy);
@@ -400,6 +401,7 @@ export function CampaignDetail() {
     } catch (e) {
       // Recusa nossa (oferta sem confirmação, nenhum anúncio, papel): a frase do servidor. Recusa da Meta: diz que veio de lá.
       const ours = ["OFFER_UNCONFIRMED", "NO_AD_LEFT", "FORBIDDEN", "PERIOD_ENDED"].includes(apiErrorCode(e) ?? "");
+      if (status === "ACTIVE") setGoLiveError(ours ? apiErrorMessage(e, "Não deu para ligar.") : `A Meta não aceitou ligar o anúncio: ${apiErrorMessage(e, "motivo não informado").replace(/\.$/, "")}.`);
       toast.error(
         status === "ACTIVE" && !ours
           ? `A Meta não aceitou ligar o anúncio: ${apiErrorMessage(e, "motivo não informado").replace(/\.$/, "")}. Confira o status na Meta antes de tentar de novo.`
@@ -497,8 +499,8 @@ export function CampaignDetail() {
               </Button>
             )}
             {canEdit && canManage && metaId && metaDelivery !== "ACTIVE" && period !== "ended" && (c.status === "approved" || c.status === "active") && (
-              <Button variant="outline" disabled={busy === "delivery"} onClick={() => setGoLiveOpen(true)}>
-                Ativar na Meta
+              <Button variant="outline" disabled={busy === "delivery"} onClick={() => { setGoLiveError(null); setGoLiveOpen(true); }}>
+                Conferir e ligar
               </Button>
             )}
             {canManage && ended && stillActive.length > 0 && (
@@ -598,7 +600,19 @@ export function CampaignDetail() {
           strategy={data.strategy?.content}
           strategyVersion={data.strategy?.version ?? null}
           creatives={data.creatives}
-          onGoLive={() => setGoLiveOpen(true)}
+          onGoLive={() => { setGoLiveError(null); setGoLiveOpen(true); }}
+          period={period}
+          onFix={(code) => {
+            // Bloqueio do piloto → o formulário de correção que já existe acima das abas (destino, verba, cidade).
+            if (code === "GEO_UNRESOLVED") setGeoProblem(true);
+            const target = code === "LANDING_MISSING" ? "fix-landing" : code === "BUDGET_MISSING" ? "fix-budget" : code === "GEO_UNRESOLVED" ? "fix-city" : null;
+            setTimeout(() => {
+              const el = target ? document.getElementById(target) : null;
+              if (!el) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+              el.querySelector<HTMLInputElement>("input")?.focus();
+            }, 50);
+          }}
           onOpenTab={(t) => {
             setTab(t);
             setTimeout(() => document.getElementById("campaign-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -609,6 +623,7 @@ export function CampaignDetail() {
         />
       )}
       <GoLiveDialog
+        error={goLiveError}
         open={goLiveOpen}
         onOpenChange={setGoLiveOpen}
         campaign={c}
@@ -641,7 +656,7 @@ export function CampaignDetail() {
       </div>
 
       {canEdit && !c.landing_url && ["draft", "pending_approval", "approved"].includes(c.status) && (
-        <div className="panel mb-6 border-amber-500/40 p-5">
+        <div id="fix-landing" className="panel mb-6 border-amber-500/40 p-5">
           <p className="text-sm font-semibold">Falta a página de destino</p>
           <p className="mt-1 text-sm text-muted-foreground">
             Para onde o anúncio leva quem clicar (ex.: a página de cadastro). Sem ela a Meta não aceita a publicação.

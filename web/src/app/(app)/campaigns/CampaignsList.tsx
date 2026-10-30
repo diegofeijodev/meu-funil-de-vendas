@@ -15,7 +15,8 @@ import { pilotSummarySchema } from "@/modules/campaign-pilot/infrastructure/pilo
 /** Linha do estrategista no cartão (`pilot_summary` da API); sem ela (API antiga ou sem piloto) o cartão fica igual. */
 function PilotLine({ c }: { c: unknown }) {
   const r = pilotSummarySchema.nullish().safeParse((c as { pilot_summary?: unknown }).pilot_summary);
-  const line = r.success ? pilotListLine(r.data) : null;
+  const row = c as { meta_campaign_id?: string | null; meta_delivery_status?: string | null };
+  const line = r.success ? pilotListLine(r.data, { metaCampaignId: row.meta_campaign_id, delivery: row.meta_delivery_status }) : null;
   if (!line) return null;
   // "Precisa de você" em âmbar escuro e negrito (contraste ≥ 4,5:1); o resto em texto normal.
   return (
