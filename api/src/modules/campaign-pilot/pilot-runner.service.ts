@@ -89,7 +89,8 @@ export class PilotRunnerService {
     const steps: Steps = structuredClone(stepsOf(run));
     const save = async (data: Prisma.campaign_pilot_runsUpdateManyMutationInput) => {
       const r = await this.prisma.campaign_pilot_runs.updateMany({
-        where: { id: runId, lease_until: lease },
+        // Parado (cancel) ou mudado por outra rota enquanto a ação rodava = o resultado não vale.
+        where: { id: runId, lease_until: lease, status: run.status },
         data: { ...data, steps: steps as unknown as Prisma.InputJsonObject, lease_until: null },
       });
       if (!r.count) this.logger.warn(`[piloto] ${runId}: lease perdido; resultado descartado`);

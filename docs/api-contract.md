@@ -274,7 +274,7 @@ Telas `/campaigns`, `/campaigns/new`, `/campaigns/$id`. GET = `read`; POST = `wr
 
 | rota | corpo | resposta |
 |---|---|---|
-| `GET /campaigns` | — | `campaigns[]` por `created_at` desc, cada uma com `brands: { name }` (embed `brands(name)`) |
+| `GET /campaigns` | — | `campaigns[]` por `created_at` desc, cada uma com `brands: { name }` (embed `brands(name)`) e `pilot_summary` (§29: `{ status, current_step, first_block_code, counts:{done,total} }` da execução mais recente do piloto, ou `null`) |
 | `GET /campaigns/performance` | — | `performance_daily[]` do workspace com `source ≠ 'demo'` (KPIs por campanha da lista, calculados no navegador) |
 | `POST /campaigns` | `{ brand_id, name, objective, offer_product?, offer_price?, offer_promise?, landing_url?, start_date?, end_date?, audience{}, budget_total?, budget_daily?, goal_leads?, goal_sales?, avg_ticket?, margin_percent?, max_cac?, formats[], intake_text?, offer_terms?, geo_targets? }` (números/datas aceitam `null`; datas `YYYY-MM-DD`; `intake_text` ≤ 4000 = as palavras do dono no "Conte o que você quer"; `offer_terms` = `{ what (1–200), valid_until: YYYY-MM-DD, new_only }` — sem `what` → `400 "Diga o que é grátis ou oferecido."`, data inválida → `400 "Informe até quando a oferta vale."`; os dois vão ao prompt do estrategista como `PEDIDO ORIGINAL DO DONO` e `CONDIÇÕES DA OFERTA (obrigatório)`, e a copy recebe a mesma restrição quando o brief traz `offer_terms`) | `201` linha de `campaigns`. **`status` NÃO é aceito** (`400 VALIDATION_ERROR`): nasce sempre `draft`. Marca de outro workspace → `404 "Marca não encontrada."`; nome em branco → `400 "Informe o nome da campanha."`. Atividade `campaign.created {campaign_id, name}` |
 | `POST /campaigns/intake` | `{ brand_id, text (≤ 4000) }` | **Fatia 1 (29/10)**, só empresas em `CAMPAIGN_INTAKE_WORKSPACE_IDS` (fora → `404 "Não encontrado."`); `write` (gasta IA). `200 { summary, days, draft: { name, objective, offer_product, offer_promise, landing_url, start_date, end_date, audience{persona,idade,localizacao,interesses,tipo}, budget_daily, budget_total, goal_leads, formats[], intake_text }, missing: [{ field: 'budget_daily'\|'landing_url'\|'offer_terms', question, suggestion }], assumptions: [{ field, text }] }`. **Nada é gravado** (o "Criar" usa `POST /campaigns`). A IA lê o texto (schema estrito `campaign_intake`); o servidor decide: datas por `todaySp()` (30 dias = hoje..hoje+29; sem período → 30 dias com suposição; teto 180 dias), verba só se o valor em reais estiver escrito ("R$ 30", "30 reais"; só o total → dia = total ÷ dias com a conta na suposição), link só se houver URL no texto. `missing` ≤ 3 nesta ordem: "Quanto gastar por dia no anúncio?" → "Para onde vai quem se interessar?" (`suggestion` = último `landing_url` da empresa) → "O que exatamente é grátis ou oferecido, e até quando?" (só com promessa). Texto vazio → `400 "Conte em uma ou duas frases o que você quer."`; marca de outra empresa → `404 "Marca não encontrada."` |
@@ -920,3 +920,36 @@ Pinterest só com `STYLE_REFS_PINTEREST_ENABLED=true` (fora: `404`); `GET /featu
 | `DELETE /style-refs/sources/:sourceId` | — | write. Para de acompanhar a pasta; as referências que vieram dela saem também. `{ ok, removed }` |
 
 Job `style-refs-15min` (`*/15 * * * *`): renova até 3 pastas com mais de 24 h (Pinterest fora do ar → `last_error` "O Pinterest não respondeu agora. Tentamos de novo amanhã.", as referências antigas continuam) e lê o estilo de até 10 pendentes (trava otimista `claimed_at`, vencida em 10 min; falha → `failed` "Não conseguimos ler o estilo desta referência. Remova e tente outra.").
+
+## 29. Piloto do estrategista (Fatia 3, 30/10/2026) — `/v1/workspaces/:workspaceId/campaigns/:campaignId/pilot`
+
+Só com `CAMPAIGN_PILOT_ENABLED=true` **e** a empresa em `CAMPAIGN_PILOT_WORKSPACE_IDS` (fora: `404 "Não encontrado."` antes de olhar o acesso);
+`GET /features` devolve `campaign_pilot`. O piloto monta o plano no servidor (execução em `planning`), espera **um** "Aprovar e começar" e então
+produz, uma ação a cada rodada do job `campaign-pilot-5min` (e um "chute" logo depois de criar/aprovar): textos → programação do Instagram
+(modo do pacote; o piloto só CRIA a programação, publicação e revisão são as de sempre) → artes e vídeo → anúncio na Meta. **Nesta fatia a etapa
+`meta` termina `skipped`** ("A montagem do anúncio na Meta entra na próxima etapa do piloto."); o piloto nunca liga verba. Atividades com
+`actor_id = null` e `{ via: 'pilot', run_id }`: `campaign.pilot_started`, `campaign.pilot_done`, `creative.generated`, `campaign.strategy_approved`.
+
+**`PilotRunView`** = `{ id, status: planning|running|blocked|done|failed|cancelled, current_step: strategy|copies|instagram|creatives|meta|null,
+steps: { <etapa>: { status: pending|running|waiting|done|skipped|blocked|failed, attempts, error_code, error, note, ref, started_at, finished_at, slots? } },
+options, strategy_version, approved_at, approved_by, created_at, estimated_credits, max_credits, spent_credits, summary, suggested_options }`.
+`slots` (artes) = `[{ slot, kind: image|video, angle, status: pending|waiting|done|failed|skipped, job_id, creative_id, score, error }]`.
+`spent_credits` = soma do custo real (ou estimado, enquanto o vídeo gera) dos jobs das peças — derivado. `suggested_options` só em `planning` com o plano pronto.
+Códigos de etapa: `NO_IG_PLAN`, `IG_NOT_SCHEDULED` (não param o resto); `COST_CAP`, `NO_CREATIVE_MADE`, `AI_NOT_CONFIGURED`, `AI_NO_CREDITS` (param a
+execução: `status = blocked`); `STEP_FAILED` (falha comum: novas tentativas em 5, 15 e 60 min; na 3ª a execução fica `failed`).
+
+**`options`** (todos obrigatórios, sem padrão no servidor): `{ max_angles 1–5, images_per_angle 1–3, variations 1–3, videos 0–2, instagram: { enabled,
+mode: approval|publish, weekdays [0–6] (1–7), times ["HH:MM"] (≤ 6), story_times ["HH:MM"] (≤ 6), formats [feed_image|feed_carousel|reel|story_image|story_video] (1–5) },
+meta: { enabled, review_creatives }, max_credits 1–500 }`. `max_angles × images_per_angle + videos > CAMPAIGN_PILOT_MAX_CREATIVES` → `400 "No máximo {N} peças por campanha."`.
+
+| Rota | Nível | Corpo | Resposta / regras |
+|---|---|---|---|
+| `POST /pilot` | write | `{ idempotency_key (8–100) }` | `200 PilotRunView` em `planning` (o plano começa já). Mesma chave = a mesma execução. Outra ativa na campanha → `409 CONFLICT "O estrategista já está trabalhando nesta campanha."`; campanha encerrada → `400 "Campanha encerrada."` |
+| `GET /pilot` | read | — | `200 { run: PilotRunView \| null }` (a mais recente) |
+| `POST /pilot/estimate` | write (sem efeito) | `{ options }` | `200 { estimate: { items: [{ label, formula, value, source }], total, instagram: item \| null }, blockers: [{ code, message, action }], can_approve }`. Itens: Artes `"{A} jeitos × {I} artes × {V} versões × 1,5"`, Refações `"até {A·I} × 1,5"`, Vídeo `"{N} × 2 tentativas × 6"`; Instagram fora do teto. `blockers`: `NO_BRAND "Escolha a marca da campanha antes de começar."`, `CAMPAIGN_ENDED "Campanha encerrada."`, `STRATEGY_NOT_READY "O plano ainda está sendo montado."` |
+| `POST /pilot/:runId/approve` | write | `{ strategy_version, options }` | `200 PilotRunView` em `running` (aprova a versão da estratégia, grava o pacote, `max_credits`, `estimated_credits` = total da estimativa). Plano não pronto → `409 CONFLICT "O plano ainda está sendo montado."`; versão diferente da última → `409 STRATEGY_CHANGED "A estratégia mudou. Confira o plano de novo."`; bloqueio da estimativa → `400` com a frase dele |
+| `POST /pilot/:runId/resume` | write | `{ action: retry\|proceed_partial\|raise_cap, max_credits? }` | `200 PilotRunView`. `retry`: etapa `blocked`/`failed` volta a `pending` (nas artes, as peças que falharam também); `proceed_partial`: só com `COST_CAP` e ≥ 1 peça pronta — as que faltam viram `skipped` e segue; `raise_cap`: `max_credits` maior que o atual e ≤ 500. Fora disso → `409 CONFLICT "Não dá para fazer isso agora."` |
+| `POST /pilot/:runId/cancel` | write | `{ cancel_instagram }` | `200 PilotRunView` `cancelled`. `cancel_instagram = true` cancela também a programação do Instagram criada pelo piloto. O que ficou pronto continua na campanha |
+
+Execução de outra empresa ou de outra campanha → `404 "Não encontrado."`; viewer em rota `write` → `403`.
+

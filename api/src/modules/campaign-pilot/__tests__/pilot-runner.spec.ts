@@ -146,3 +146,18 @@ describe('PilotRunnerService', () => {
     expect(moved).toEqual([WS_A, WS_B].sort());
   });
 });
+
+describe('PilotRunnerService × parar no meio', () => {
+  it('execução cancelada enquanto a ação roda: o resultado não grava', async () => {
+    let release!: () => void;
+    const slow = step(() => new Promise((res) => { release = () => res({ kind: 'done' }); }));
+    const { db, runner } = setup({ copies: slow });
+    const { run } = await seedRun(db, running());
+    const p = runner.runOnce(run.id, T0);
+    await new Promise((r) => setImmediate(r));
+    Object.assign(rowOf(db, run.id), { status: 'cancelled', next_run_at: null });
+    release();
+    await p;
+    expect([rowOf(db, run.id).status, rowOf(db, run.id).current_step]).toEqual(['cancelled', 'copies']);
+  });
+});

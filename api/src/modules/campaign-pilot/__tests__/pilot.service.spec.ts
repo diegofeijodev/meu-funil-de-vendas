@@ -1,0 +1,152 @@
+import { ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { ApprovePilotDto } from '../pilot.dto';
+import { PilotService } from '../pilot.service';
+import type { PilotOptions } from '../pilot.types';
+import { min, OWNER, pilotDb, rowOf, T0, WS_A, WS_B } from './world';
+
+const VIEWER = '33333333-3333-4333-8333-333333333333';
+const OPTIONS: PilotOptions = {
+  max_angles: 3, images_per_angle: 2, variations: 3, videos: 1,
+  instagram: { enabled: true, mode: 'approval', weekdays: [1, 3, 5], times: ['11:00', '18:00'], story_times: ['12:00'], formats: ['feed_image', 'reel', 'story_image'] },
+  meta: { enabled: true, review_creatives: false }, max_credits: 48,
+};
+const status = async (p: Promise<unknown>) => {
+  try { await p; return 'ok'; } catch (e: any) { const r = e.getResponse?.(); return `${e.getStatus?.() ?? 500}:${r?.code ? `${r.code}:` : ''}${r?.message ?? e.message}`; }
+};
+
+async function setup(opts: { gate?: boolean } = {}) {
+  const db = pilotDb();
+  const access = {
+    require: jest.fn(async (user: string, ws: string, level: string) => {
+      if (ws !== WS_A) throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Você não tem acesso a esta empresa.' });
+      if (user === VIEWER && level !== 'read') throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Seu perfil não tem permissão para esta ação.' });
+      return user === VIEWER ? 'viewer' : 'owner';
+    }),
+  };
+  const gate = { enabled: (ws: string) => opts.gate !== false && ws === WS_A };
+  const strategist = {
+    latestVersion: jest.fn(async () => 2), approveVersion: jest.fn(async () => undefined),
+    currentStrategy: jest.fn(async () => ({ angulos_detalhados: [{ nome: 'A' }, { nome: 'B' }, { nome: 'C' }] })),
+  };
+  const runner = { kick: jest.fn() };
+  const autoCalendar = { cancelAutoRun: jest.fn(async () => ({ ok: true })) };
+  const svc = new PilotService(db.prisma, access as any, gate as any, strategist as any, runner as any, autoCalendar as any, db.activity, { CAMPAIGN_PILOT_MAX_CREATIVES: 10 } as any);
+  const brand = await db.t.brands.create({ data: { workspace_id: WS_A, name: 'Freela' } });
+  const campaign = await db.t.campaigns.create({ data: { workspace_id: WS_A, brand_id: brand.id, name: 'Jundiaí', start_date: new Date('2026-10-30T00:00:00Z'), end_date: new Date('2026-11-28T00:00:00Z') } });
+  const now = () => T0;
+  return { db, svc, access, strategist, runner, autoCalendar, campaign, brand, now };
+}
+const KEY = 'chave-12345';
+async function planned(w: Awaited<ReturnType<typeof setup>>) {
+  const r = await w.svc.create(OWNER, WS_A, w.campaign.id, KEY);
+  Object.assign(rowOf(w.db, r.id), { strategy_version: 2, next_run_at: null, steps: { strategy: { status: 'done', attempts: 0, ref: '2' } } });
+  return r;
+}
+
+describe('PilotService', () => {
+  it('criar: nasce em planning, chuta o runner; mesma chave = mesma execução; outra ativa = 409', async () => {
+    const w = await setup();
+    const a = await w.svc.create(OWNER, WS_A, w.campaign.id, KEY);
+    expect([a.status, a.current_step, a.steps.strategy?.status]).toEqual(['planning', 'strategy', 'pending']);
+    expect(w.runner.kick).toHaveBeenCalledWith(a.id);
+    expect((await w.svc.create(OWNER, WS_A, w.campaign.id, KEY)).id).toBe(a.id);
+    expect(await status(w.svc.create(OWNER, WS_A, w.campaign.id, 'outra-chave-1'))).toBe('409:CONFLICT:O estrategista já está trabalhando nesta campanha.');
+  });
+
+  it('portão desligado = 404 antes do acesso; viewer não inicia; empresa B não vê', async () => {
+    const off = await setup({ gate: false });
+    expect(await status(off.svc.create(OWNER, WS_A, off.campaign.id, KEY))).toBe('404:NOT_FOUND:Não encontrado.');
+    expect(off.access.require).not.toHaveBeenCalled();
+    const w = await setup();
+    expect(await status(w.svc.create(VIEWER, WS_A, w.campaign.id, KEY))).toBe('403:FORBIDDEN:Seu perfil não tem permissão para esta ação.');
+    expect(await status(w.svc.get(OWNER, WS_B, w.campaign.id))).toBe('404:NOT_FOUND:Não encontrado.');
+  });
+
+  it('ver: execução mais recente com resumo, gasto derivado e pacote sugerido quando o plano fica pronto', async () => {
+    const w = await setup();
+    expect(await w.svc.get(VIEWER, WS_A, w.campaign.id)).toEqual({ run: null });
+    await planned(w);
+    const { run } = await w.svc.get(VIEWER, WS_A, w.campaign.id);
+    expect(run!.summary).toEqual({ status: 'planning', current_step: 'strategy', first_block_code: null, counts: { done: 0, total: 0 } });
+    expect(run!.spent_credits).toBe(0);
+    expect(run!.suggested_options).toMatchObject({ max_angles: 3, images_per_angle: 2, videos: 1, max_credits: 48 });
+  });
+
+  it('estimar: conta com fórmula; sem marca = NO_BRAND e can_approve false', async () => {
+    const w = await setup();
+    const e = await w.svc.estimate(OWNER, WS_A, w.campaign.id, OPTIONS);
+    expect(e.estimate.total).toBe(48);
+    expect(e.estimate.instagram?.label).toBe('Posts do Instagram (fora do teto)');
+    expect([e.blockers, e.can_approve]).toEqual([[], true]);
+    w.db.t.campaigns.rows[0]!.brand_id = null;
+    const e2 = await w.svc.estimate(OWNER, WS_A, w.campaign.id, OPTIONS);
+    expect(e2.blockers).toEqual([{ code: 'NO_BRAND', message: 'Escolha a marca da campanha antes de começar.', action: 'edit_campaign' }]);
+    expect(e2.can_approve).toBe(false);
+  });
+
+  it('aprovar: plano não pronto = 409; versão velha = 409 STRATEGY_CHANGED; peças demais = 400', async () => {
+    const w = await setup();
+    const r = await w.svc.create(OWNER, WS_A, w.campaign.id, KEY);
+    expect(await status(w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }))).toBe('409:CONFLICT:O plano ainda está sendo montado.');
+    Object.assign(rowOf(w.db, r.id), { strategy_version: 2, steps: { strategy: { status: 'done', attempts: 0, ref: '2' } } });
+    expect(await status(w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 1, options: OPTIONS }))).toBe('409:STRATEGY_CHANGED:A estratégia mudou. Confira o plano de novo.');
+    expect(await status(w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: { ...OPTIONS, max_angles: 5, images_per_angle: 3 } }))).toBe('400:BAD_REQUEST:No máximo 10 peças por campanha.');
+  });
+
+  it('aprovar grava o pacote, o teto e começa em copies; aprova a versão da estratégia e chuta', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    const v = await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }, T0);
+    expect([v.status, v.current_step, v.max_credits, v.estimated_credits, v.approved_by]).toEqual(['running', 'copies', 48, 48, OWNER]);
+    expect(Object.keys(v.steps)).toEqual(['strategy', 'copies', 'instagram', 'creatives', 'meta']);
+    expect(rowOf(w.db, r.id).next_run_at).toEqual(T0);
+    expect(w.strategist.approveVersion).toHaveBeenCalledWith(WS_A, w.campaign.id, 2, OWNER);
+    expect(w.runner.kick).toHaveBeenLastCalledWith(r.id);
+    expect(w.db.logs).toContainEqual([WS_A, OWNER, 'campaign.pilot_started', 'campaign', { campaign_id: w.campaign.id, via: 'pilot', run_id: r.id }]);
+    expect(await status(w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }))).toBe('409:CONFLICT:O plano ainda está sendo montado.');
+  });
+
+  it('retomar: proceed_partial pula as peças restantes; raise_cap abaixo do atual = 409; retry reabre as que falharam', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    await w.svc.approve(OWNER, WS_A, w.campaign.id, r.id, { strategy_version: 2, options: OPTIONS }, T0);
+    const slots = [{ slot: 1, kind: 'image', angle: 'A', status: 'done' }, { slot: 2, kind: 'image', angle: 'A', status: 'failed', error: 'x' }, { slot: 3, kind: 'image', angle: 'B', status: 'pending' }];
+    const block = () => Object.assign(rowOf(w.db, r.id), { status: 'blocked', current_step: 'creatives', steps: { ...rowOf(w.db, r.id).steps, creatives: { status: 'blocked', attempts: 0, error_code: 'COST_CAP', error: 'teto', slots: structuredClone(slots) } } });
+    block();
+    expect(await status(w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'raise_cap', max_credits: 40 }))).toBe('409:CONFLICT:Não dá para fazer isso agora.');
+    const p = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'proceed_partial' }, min(1));
+    expect(p.status).toBe('running');
+    expect(p.steps.creatives!.slots!.map((s) => s.status)).toEqual(['done', 'failed', 'skipped']);
+    block();
+    const up = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'raise_cap', max_credits: 60 }, min(1));
+    expect([up.status, up.max_credits, up.steps.creatives!.status]).toEqual(['running', 60, 'pending']);
+    block();
+    const rt = await w.svc.resume(OWNER, WS_A, w.campaign.id, r.id, { action: 'retry' }, min(1));
+    expect(rt.steps.creatives!.slots!.map((s) => s.status)).toEqual(['done', 'pending', 'pending']);
+    expect(rowOf(w.db, r.id).next_run_at).toEqual(min(1));
+  });
+
+  it('parar: cancelled; cancel_instagram cancela a programação criada pelo piloto; de outra campanha = 404', async () => {
+    const w = await setup();
+    const r = await planned(w);
+    rowOf(w.db, r.id).steps.instagram = { status: 'done', attempts: 0, ref: 'ig-run-1' };
+    const other = await w.db.t.campaigns.create({ data: { workspace_id: WS_A, name: 'Outra' } });
+    expect(await status(w.svc.cancel(OWNER, WS_A, other.id, r.id, { cancel_instagram: true }))).toBe('404:NOT_FOUND:Não encontrado.');
+    const c = await w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: true });
+    expect(c.status).toBe('cancelled');
+    expect(w.autoCalendar.cancelAutoRun).toHaveBeenCalledWith(WS_A, 'ig-run-1');
+    expect(await status(w.svc.cancel(OWNER, WS_A, w.campaign.id, r.id, { cancel_instagram: false }))).toBe('409:CONFLICT:Não dá para fazer isso agora.');
+  });
+
+  it('DTO: campos do pacote são obrigatórios e com faixa', async () => {
+    const errs = await validate(plainToInstance(ApprovePilotDto, { strategy_version: 2, options: { ...OPTIONS, max_angles: 9, instagram: { ...OPTIONS.instagram, times: ['25:00'] } } }));
+    const flat = JSON.stringify(errs);
+    expect(flat).toContain('max_angles');
+    expect(flat).toContain('times');
+    expect(await validate(plainToInstance(ApprovePilotDto, { strategy_version: 2, options: OPTIONS }))).toEqual([]);
+    const missing = await validate(plainToInstance(ApprovePilotDto, { strategy_version: 2, options: { ...OPTIONS, meta: undefined } }));
+    expect(JSON.stringify(missing)).toContain('meta');
+  });
+});
