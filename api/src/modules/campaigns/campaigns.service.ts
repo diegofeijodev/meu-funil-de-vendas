@@ -94,6 +94,10 @@ export class CampaignsService {
     if (!name) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe o nome da campanha.' });
     if (jsonLen(dto.audience) > MAX_JSON_CHARS) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Público grande demais.' });
     const offerTerms = parseOfferTerms(dto.offer_terms);
+    // Pedido pela conversa com promessa: as condições são obrigatórias (o "Ver/ajustar" não pode contorná-las).
+    if (dto.intake_text?.trim() && dto.offer_promise?.trim() && !offerTerms) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Diga o que é grátis ou oferecido.' });
+    }
     const geoTargets = parseGeoTargets(dto.geo_targets);
     const brand = await this.prisma.brands.findFirst({ where: { id: dto.brand_id, workspace_id: workspaceId }, select: { id: true } });
     if (!brand) throw notFound('Marca não encontrada.');

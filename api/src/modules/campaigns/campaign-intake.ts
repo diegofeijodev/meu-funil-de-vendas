@@ -112,11 +112,16 @@ export function urlsIn(text: string): string[] {
 
 const has = (list: number[], v: number) => list.some((n) => Math.abs(n - v) < 0.005);
 
-export function buildIntake(ai: IntakeAi, text: string, today: string, lastLanding: string | null): IntakeResult {
+const obj = <T extends object>(v: unknown): Partial<T> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Partial<T>) : {});
+const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+export function buildIntake(raw: IntakeAi, text: string, today: string, lastLanding: string | null): IntakeResult {
+  // Chave própria da empresa responde em modo JSON sem schema estrito: confere a forma de tudo antes de usar.
+  const ai = obj<IntakeAi>(raw);
   const assumptions: IntakeAssumption[] = [];
 
   // Período: o calendário é do servidor.
-  const p = ai.periodo ?? {};
+  const p = obj<NonNullable<IntakeAi['periodo']>>(ai.periodo);
   let start = today;
   if (p.inicio === 'amanha') start = addDays(today, 1);
   else if (p.inicio === 'data' && isDateString(p.inicio_data)) {
@@ -147,6 +152,10 @@ export function buildIntake(ai: IntakeAi, text: string, today: string, lastLandi
     daily = round2(total / days);
     assumptions.push({ field: 'budget_daily', text: `${money(total)} ÷ ${days} dias = ${money(daily)} por dia.` });
   }
+  // Verba lida do texto sempre aparece no "Entendi" (que é a revisão) com a conta — "ingresso a R$ 30" não pode virar verba calado.
+  if (daily && total && !assumptions.some((a) => a.field === 'budget_daily')) {
+    assumptions.push({ field: 'budget_daily', text: `${money(daily)} por dia × ${days} dias = ${money(total)} no período.` });
+  }
   const leads = typeof ai.meta_leads === 'number' && ai.meta_leads > 0 && has(numbersIn(text), ai.meta_leads) ? ai.meta_leads : null;
 
   const landing = urlsIn(text)[0] ?? null;
@@ -157,16 +166,16 @@ export function buildIntake(ai: IntakeAi, text: string, today: string, lastLandi
   if (!landing) missing.push({ field: 'landing_url', question: 'Para onde vai quem se interessar?', suggestion: lastLanding });
   if (promise) missing.push({ field: 'offer_terms', question: 'O que exatamente é grátis ou oferecido, e até quando?', suggestion: null });
 
-  for (const s of (ai.suposicoes ?? []).slice(0, 4)) {
+  for (const s of arr<{ campo?: string; texto?: string }>(ai.suposicoes).slice(0, 4)) {
     const t = str(s?.texto, 200);
     if (t) assumptions.push({ field: str(s?.campo, 40) || 'geral', text: t });
   }
 
   const objective = ai.objetivo && ai.objetivo in OBJECTIVES ? ai.objetivo : 'leads';
-  const formats = (ai.formatos ?? []).filter((f): f is (typeof FORMAT_KEYS)[number] => (FORMAT_KEYS as readonly string[]).includes(f));
+  const formats = arr<string>(ai.formatos).filter((f): f is (typeof FORMAT_KEYS)[number] => (FORMAT_KEYS as readonly string[]).includes(f));
   const goal = str(ai.resumo_objetivo, 200).replace(/[.\s]+$/, '') || 'trazer resultados';
   const offering = promise ? `, oferecendo ${promise.charAt(0).toLowerCase()}${promise.slice(1).replace(/[.\s]+$/, '')}` : '';
-  const pub = ai.publico ?? {};
+  const pub = obj<NonNullable<IntakeAi['publico']>>(ai.publico);
 
   return {
     summary: `Uma campanha para ${goal}, de ${ddmm(start)} a ${ddmm(end)} (${days} dias)${offering}.`,

@@ -122,3 +122,24 @@ describe('CampaignIntakeService.intake (POST …/campaigns/intake)', () => {
     expect(ai.json).not.toHaveBeenCalled();
   });
 });
+
+describe('intake — depois da revisão da Fatia 1', () => {
+  it('verba lida do texto sempre aparece no Entendi com a conta', async () => {
+    const { w, svc, ai } = setup();
+    const { brand } = await seedCampaign(w);
+    ai.json.mockResolvedValue(aiOut({ verba_dia: 30 }));
+    const r = await svc.intake(OWNER, WS_A, { brand_id: brand.id, text: `${DIEGO}, R$ 30 por dia` });
+    expect(r.assumptions).toContainEqual({ field: 'budget_daily', text: 'R$ 30,00 por dia × 30 dias = R$ 900,00 no período.' });
+  });
+
+  it('resposta malformada da IA (chave própria, sem schema estrito) não derruba: usa os padrões', async () => {
+    const { w, svc, ai } = setup();
+    const { brand } = await seedCampaign(w);
+    ai.json.mockResolvedValue({ nome: 'X', objetivo: 'leads', formatos: 'video', suposicoes: { campo: 'a' }, periodo: null, publico: 'bares', promessa: 3 } as any);
+    const r = await svc.intake(OWNER, WS_A, { brand_id: brand.id, text: 'cadastros de bares' });
+    expect(r.draft.formats).toEqual(['static_image', 'video']);
+    expect(r.days).toBe(30);
+    expect(r.draft.audience.localizacao).toBe('');
+    expect(r.draft.offer_promise).toBe('');
+  });
+});

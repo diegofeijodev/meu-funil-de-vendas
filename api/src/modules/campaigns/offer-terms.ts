@@ -18,10 +18,8 @@ export function parseOfferTerms(raw: unknown): OfferTerms | null {
   if (!what) throw bad('Diga o que é grátis ou oferecido.');
   if (what.length > 200) throw bad('Descreva o que é oferecido em até 200 letras.');
   if (!isDateString(r['valid_until'])) throw bad('Informe até quando a oferta vale.');
-  const out: OfferTerms = { what, valid_until: r['valid_until'] as string, new_only: r['new_only'] === true };
-  if (typeof r['confirmed_by'] === 'string') out.confirmed_by = r['confirmed_by'];
-  if (typeof r['confirmed_at'] === 'string') out.confirmed_at = r['confirmed_at'];
-  return out;
+  // `confirmed_by`/`confirmed_at` nunca vêm da tela: quem grava é o servidor, no "Confirmo que cumpre" do Ativar (§0.7 #1).
+  return { what, valid_until: r['valid_until'] as string, new_only: r['new_only'] === true };
 }
 
 /** A linha que vai aos prompts. Sem promessa ou sem condições escritas, nada. */

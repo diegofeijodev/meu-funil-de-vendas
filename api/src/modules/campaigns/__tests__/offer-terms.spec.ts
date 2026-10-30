@@ -48,3 +48,19 @@ describe('CampaignsService.create com o pedido e a oferta', () => {
     expect(await status(svc.create(MARKETING, WS_A, { brand_id: brand.id, name: 'X', objective: 'leads', audience: {}, formats: [], offer_terms: { ...TERMS, valid_until: '' } } as any))).toBe('400:Informe até quando a oferta vale.');
   });
 });
+
+describe('condições da oferta — depois da revisão da Fatia 1', () => {
+  it('quem confirmou e quando nunca vêm da tela (o servidor grava no Ativar)', () => {
+    expect(parseOfferTerms({ ...TERMS, confirmed_by: 'x', confirmed_at: '2026-10-29T00:00:00Z' })).toEqual(TERMS);
+  });
+
+  it('pedido pela conversa com promessa e sem condições → 400 (o Ver/ajustar não contorna); sem conversa, como antes', async () => {
+    const w = world();
+    const svc = new CampaignsService(w.prisma as any, w.activity as any, w.guards as any);
+    const { brand } = await seedCampaign(w);
+    const base = { brand_id: brand.id, name: 'X', objective: 'traffic', audience: {}, formats: [], offer_promise: 'Primeira contratação grátis' };
+    expect(await status(svc.create(OWNER, WS_A, { ...base, intake_text: 'quero cadastros' } as any))).toBe('400:Diga o que é grátis ou oferecido.');
+    expect(await status(svc.create(OWNER, WS_A, base as any))).toBe('ok');
+    expect(await status(svc.create(OWNER, WS_A, { ...base, intake_text: 'quero cadastros', offer_terms: TERMS } as any))).toBe('ok');
+  });
+});

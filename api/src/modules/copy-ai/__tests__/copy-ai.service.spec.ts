@@ -9,7 +9,7 @@ function setup(ai: any = async () => ({ content: { headline: 'H' }, engine: 'IA 
   const calls: any[] = [];
   const fakeAi: any = { jsonWithEngine: async (ws: string, req: any) => { calls.push([ws, req]); return ai(ws, req); } };
   const strategist = new StrategistService(w.prisma, {} as any, w.guards, w.access, w.activity);
-  return { w, calls, svc: new CopyAiService(fakeAi, w.access, strategist) };
+  return { w, calls, svc: new CopyAiService(fakeAi, w.access, strategist, w.prisma) };
 }
 const input = (extra: Record<string, unknown> = {}) => ({ workspaceId: WS_A, brand: { name: 'Bar' }, brief: { name: 'BF' }, ...extra }) as any;
 
@@ -99,5 +99,14 @@ describe('CopyAiService.generate', () => {
       const { svc } = setup(async () => { throw new AiError(from); });
       expect(await status(svc.generate(OWNER, input()))).toBe(`502:${to}`);
     }
+  });
+});
+
+describe('copy refeita na campanha (revisão da Fatia 1)', () => {
+  it('as condições da oferta vêm da campanha no servidor, mesmo sem estar no brief da tela', async () => {
+    const { w, calls, svc } = setup();
+    const { campaign } = await seedCampaign(w, { offer_promise: 'Primeira contratação grátis', offer_terms: { what: 'A 1ª vaga inteira', valid_until: '2026-11-27', new_only: true } });
+    await svc.generate(OWNER, input({ campaignId: campaign.id }));
+    expect(calls[0][1].prompt).toContain('CONDIÇÕES DA OFERTA (obrigatório): prometa só "Primeira contratação grátis".');
   });
 });

@@ -1,3 +1,4 @@
+import { PrismaService } from '../../common/database/prisma.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { WorkspaceAccessService } from '../access/access.service';
 import { AiError } from '../ai/ai-error';
@@ -30,6 +31,7 @@ export class CopyAiService {
     private readonly ai: AiService,
     private readonly access: WorkspaceAccessService,
     private readonly strategist: StrategistService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async generate(
@@ -43,7 +45,12 @@ export class CopyAiService {
     }
     // A estratégia aprovada da campanha (big idea, ângulos, objeções) orienta a copy.
     const strategy = strategyBrief(await this.strategist.currentStrategy(input.workspaceId, input.campaignId), input.angle);
-    const prompt = buildCopyPrompt(input.brand, input.brief, input.seed ?? 0, strategy);
+    // As condições da oferta vêm da campanha gravada (a tela pode mandar o brief sem elas: "Gerar outra copy").
+    const camp = input.campaignId
+      ? await this.prisma.campaigns.findFirst({ where: { id: input.campaignId, workspace_id: input.workspaceId }, select: { offer_promise: true, offer_terms: true } })
+      : null;
+    const brief = camp?.offer_terms ? { ...input.brief, offer_promise: camp.offer_promise ?? input.brief['offer_promise'], offer_terms: camp.offer_terms } : input.brief;
+    const prompt = buildCopyPrompt(input.brand, brief, input.seed ?? 0, strategy);
     try {
       return await this.ai.jsonWithEngine(input.workspaceId, { prompt, schema: COPY_SCHEMA, name: 'copy', engine: input.engine ?? 'auto' });
     } catch (e) {

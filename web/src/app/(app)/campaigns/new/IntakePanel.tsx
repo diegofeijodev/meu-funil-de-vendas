@@ -153,6 +153,16 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
     };
   };
 
+  /** "Ver/ajustar": o formulário não tem as condições da oferta, então elas são respondidas aqui antes (o servidor exige). */
+  const editDetails = () => {
+    if (need("offer_terms") && !(offerWhat() && offerUntil && newOnly !== null)) {
+      setErrors({ "q-offer": "Responda as condições da oferta antes de ajustar os detalhes." });
+      document.getElementById("q-offer")?.focus();
+      return;
+    }
+    onEditDetails(buildInput());
+  };
+
   const create = () => {
     const errs: Record<string, string> = {};
     if (need("budget_daily") && !dailyValue()) errs["q-budget"] = "Escolha quanto gastar por dia.";
@@ -376,7 +386,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
           </p>
 
           <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t border-border bg-background px-4 py-3 sm:static sm:mx-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
-            <Button variant="link" className="justify-start px-0" onClick={() => onEditDetails(buildInput())}>
+            <Button variant="link" className="justify-start px-0" onClick={editDetails}>
               Ver/ajustar todos os detalhes ›
             </Button>
             <Button onClick={create} disabled={busy}>
