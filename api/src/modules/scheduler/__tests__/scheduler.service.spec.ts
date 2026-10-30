@@ -47,8 +47,9 @@ describe('SchedulerService', () => {
     await expect(svc.run('nao-existe')).rejects.toThrow(/desconhecido/);
   });
 
-  it('JOB_SCHEDULES tem os 10 jobs do pg_cron + 4 extras (creative, exports, vagas, estilo das artes)', () => {
-    expect(Object.keys(JOB_SCHEDULES)).toHaveLength(14);
+  it('JOB_SCHEDULES tem os 10 jobs do pg_cron + 5 extras (creative, exports, vagas, estilo das artes, piloto)', () => {
+    expect(Object.keys(JOB_SCHEDULES)).toHaveLength(15);
+    expect(JOB_SCHEDULES['campaign-pilot-5min']).toEqual({ name: 'campaign-pilot-5min', cron: '*/5 * * * *', heartbeat: 'campaign-pilot' });
     expect(JOB_SCHEDULES['style-refs-15min'].cron).toBe('*/15 * * * *');
     expect(JOB_SCHEDULES['crm-daily'].cron).toBe('10 9 * * *');
   });

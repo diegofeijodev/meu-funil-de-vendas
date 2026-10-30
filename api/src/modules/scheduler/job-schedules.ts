@@ -17,5 +17,6 @@ export const JOB_SCHEDULES = {
   'creative-poll-5min': { name: 'creative-poll-5min', cron: '*/5 * * * *', heartbeat: 'creative' },
   'vacancy-stories-10min': { name: 'vacancy-stories-10min', cron: '*/10 * * * *', heartbeat: 'vacancy-stories' },
   'style-refs-15min': { name: 'style-refs-15min', cron: '*/15 * * * *', heartbeat: 'style-refs' },
+  'campaign-pilot-5min': { name: 'campaign-pilot-5min', cron: '*/5 * * * *', heartbeat: 'campaign-pilot' },
   'exports-cleanup-hourly': { name: 'exports-cleanup-hourly', cron: '47 * * * *', heartbeat: 'exports_cleanup' },
 } as const;

@@ -57,6 +57,7 @@ export function world() {
     approval_requests: new FakeTable(() => ({ status: 'pending', entity_id: null, summary: null })),
     ig_content_plans: new FakeTable(),
     ig_auto_runs: new FakeTable(),
+    campaign_pilot_runs: new FakeTable(),
     ig_posts: new FakeTable(),
     activity_logs: new FakeTable(),
   };

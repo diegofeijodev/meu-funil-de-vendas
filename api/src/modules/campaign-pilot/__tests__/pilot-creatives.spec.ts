@@ -1,6 +1,6 @@
 import { CreativesStep, spentCredits } from '../steps/creatives.step';
 import type { PilotOptions, Slot } from '../pilot.types';
-import { min, OWNER, pilotDb, seedRun, T0, WS_A } from './world';
+import { min, OWNER, pilotDb, seedRun, WS_A } from './world';
 
 const OPTIONS: PilotOptions = {
   max_angles: 3, images_per_angle: 2, variations: 3, videos: 1,
@@ -34,8 +34,8 @@ async function world(opt: Partial<PilotOptions> = {}) {
   const step = new CreativesStep(db.prisma, strategist as any, creative as any);
   const current = () => db.t.campaign_pilot_runs.rows[0]! as any;
   /** Simula o runner: grava o `state` devolvido nas vagas da etapa. */
-  const tick = async (now = T0) => {
-    const r = await step.run(current(), now);
+  const tick = async () => {
+    const r = await step.run(current());
     if (r.state?.slots) current().steps = { ...current().steps, creatives: { ...(current().steps.creatives ?? {}), status: 'running', attempts: 0, slots: r.state.slots } };
     return r;
   };

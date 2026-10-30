@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { createWithNextVersion } from '../../common/database/next-version';
 import { PrismaService } from '../../common/database/prisma.service';
+import { pilotSummary } from './pilot-summary';
 import { ActivityService } from '../activity/activity.service';
 import { brl, OBJECTIVES } from './campaign-labels';
 import { CampaignGuardsService } from './campaign-guards.service';
@@ -47,7 +48,17 @@ export class CampaignsService {
       orderBy: { created_at: 'desc' },
       include: { brand: { select: { name: true } } },
     });
-    return rows.map(({ brand, ...c }) => ({ ...c, brands: brand }));
+    // Linha do estrategista em cada cartão: a execução mais recente do piloto de cada campanha (uma consulta só).
+    const runs = rows.length
+      ? await this.prisma.campaign_pilot_runs.findMany({
+          where: { workspace_id: workspaceId, campaign_id: { in: rows.map((r) => r.id) } },
+          orderBy: { created_at: 'desc' },
+          select: { campaign_id: true, status: true, current_step: true, steps: true },
+        })
+      : [];
+    const latest = new Map<string, (typeof runs)[number]>();
+    for (const r of runs) if (!latest.has(r.campaign_id)) latest.set(r.campaign_id, r);
+    return rows.map(({ brand, ...c }) => ({ ...c, brands: brand, pilot_summary: pilotSummary(latest.get(c.id) ?? null) }));
   }
 
   /** `performance_daily select *` eq workspace_id neq source 'demo' (KPIs por campanha da lista). */

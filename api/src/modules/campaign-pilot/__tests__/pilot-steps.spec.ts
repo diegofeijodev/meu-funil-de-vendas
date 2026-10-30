@@ -38,23 +38,23 @@ async function world(opt: Partial<PilotOptions> = {}) {
 describe('etapa copies', () => {
   it('gera uma vez com marca e briefing do servidor; segunda rodada não duplica', async () => {
     const w = await world();
-    const r = await w.copies.run(w.run, T0);
+    const r = await w.copies.run(w.run);
     expect(r).toMatchObject({ kind: 'done', ref: w.db.t.copies.rows[0]!.id });
     const input = (w.copyAi.generateAsSystem.mock.calls[0] as any[])[0];
     expect(input).toMatchObject({ workspaceId: WS_A, campaignId: w.campaign.id, brand: { name: 'Freela', tone_of_voice: 'direto' }, brief: { name: 'Jundiaí', offer_promise: '1ª contratação grátis' } });
     expect(w.campaigns.createCopy).toHaveBeenCalledWith(null, WS_A, w.campaign.id, { content: { headline: 'H' } });
-    expect(await w.copies.run(w.run, min(5))).toMatchObject({ kind: 'done', note: 'Já havia textos depois da aprovação.' });
+    expect(await w.copies.run(w.run)).toMatchObject({ kind: 'done', note: 'Já havia textos depois da aprovação.' });
     expect(w.copyAi.generateAsSystem).toHaveBeenCalledTimes(1);
   });
 
   it('copy feita à mão depois de aprovar conta como feita; a de antes, não', async () => {
     const w = await world();
     await w.db.t.copies.create({ data: { workspace_id: WS_A, campaign_id: w.campaign.id, created_at: min(-30) } });
-    expect((await w.copies.run(w.run, T0)).kind).toBe('done');
+    expect((await w.copies.run(w.run)).kind).toBe('done');
     expect(w.copyAi.generateAsSystem).toHaveBeenCalledTimes(1);
     const w2 = await world();
     await w2.db.t.copies.create({ data: { workspace_id: WS_A, campaign_id: w2.campaign.id, created_at: T0 } });
-    await w2.copies.run(w2.run, T0);
+    await w2.copies.run(w2.run);
     expect(w2.copyAi.generateAsSystem).not.toHaveBeenCalled();
   });
 });

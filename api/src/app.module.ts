@@ -33,6 +33,7 @@ import { SetupModule } from './modules/setup/setup.module';
 import { StrategistModule } from './modules/strategist/strategist.module';
 import { VacancyStoriesCoreModule, VacancyStoriesModule } from './modules/vacancy-stories/vacancy-stories.module';
 import { StyleRefsModule } from './modules/style-refs/style-refs.module';
+import { CampaignPilotModule } from './modules/campaign-pilot/campaign-pilot.module';
 import { VaultModule } from './modules/vault/vault.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
@@ -75,6 +76,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     VacancyStoriesCoreModule,
     VacancyStoriesModule,
     StyleRefsModule,
+    CampaignPilotModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
