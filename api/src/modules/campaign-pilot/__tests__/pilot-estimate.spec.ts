@@ -29,7 +29,7 @@ describe('estimatePilot (créditos com a conta e a fonte)', () => {
   it('Instagram fica fora do teto: 4 feed_image + 2 reel + 4 story_image = 24', () => {
     const slots = [...Array(4).fill({ format: 'feed_image' }), ...Array(2).fill({ format: 'reel' }), ...Array(4).fill({ format: 'story_image' })];
     const e = estimatePilot(opts(), { slots });
-    expect(e.instagram).toEqual({ label: 'Posts do Instagram (fora do teto)', formula: '4 post × 1,5 + 2 reels × 6 + 4 stories × 1,5', value: 24, source: SOURCE });
+    expect(e.instagram).toEqual({ label: 'Posts do Instagram (fora do teto)', formula: '4 posts × 1,5 + 2 reels × 6 + 4 stories × 1,5', value: 24, source: SOURCE });
     expect(e.total).toBe(48);
   });
 

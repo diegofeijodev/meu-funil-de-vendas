@@ -10,7 +10,7 @@ import { optionsOf, type PilotRunRow } from '../pilot.types';
 
 const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-const NO_IG_PLAN = 'O plano veio sem os temas do Instagram, então os posts não foram programados. O anúncio segue normal.';
+const NO_IG_PLAN = 'O plano veio sem os temas do Instagram, então os posts não foram programados. As artes seguem normalmente.';
 
 /**
  * Programação do Instagram do período da campanha. O piloto só CRIA a programação: produção, revisão e publicação continuam as de

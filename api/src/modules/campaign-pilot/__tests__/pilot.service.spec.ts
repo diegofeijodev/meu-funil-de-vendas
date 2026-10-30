@@ -111,7 +111,9 @@ describe('PilotService', () => {
     expect(await w.svc.get(VIEWER, WS_A, w.campaign.id)).toEqual({ run: null });
     await planned(w);
     const { run } = await w.svc.get(VIEWER, WS_A, w.campaign.id);
-    expect(run!.summary).toEqual({ status: 'planning', current_step: 'strategy', first_block_code: null, counts: { done: 0, total: 0 } });
+    expect(run!.summary).toEqual({ status: 'planning', current_step: 'strategy', first_block_code: null, counts: { done: 0, total: 0 }, plan_ready: true });
+    expect(run!.next_run_at).toBeNull();
+    expect(run!.remaining_credits).toBe(0);
     expect(run!.spent_credits).toBe(0);
     expect(run!.suggested_options).toMatchObject({ max_angles: 3, images_per_angle: 2, videos: 1, max_credits: 48 });
   });

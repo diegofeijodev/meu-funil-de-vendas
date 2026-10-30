@@ -5,7 +5,11 @@
 type StepLike = { status?: string; error_code?: string | null; slots?: { status?: string }[] };
 type RunLike = { status: string; current_step: string | null; steps: unknown };
 
-export type PilotSummary = { status: string; current_step: string | null; first_block_code: string | null; counts: { done: number; total: number } };
+export type PilotSummary = {
+  status: string; current_step: string | null; first_block_code: string | null; counts: { done: number; total: number };
+  /** Plano pronto esperando o "Aprovar e começar": a lista mostra "Precisa de você", não "Montando o plano". */
+  plan_ready: boolean;
+};
 
 const ORDER = ['strategy', 'copies', 'instagram', 'creatives', 'meta'] as const;
 
@@ -19,5 +23,6 @@ export function pilotSummary(run: RunLike | null): PilotSummary | null {
     current_step: run.current_step,
     first_block_code: firstBlock?.error_code ?? null,
     counts: { done: slots.filter((s) => s.status === 'done').length, total: slots.length },
+    plan_ready: run.status === 'planning' && steps['strategy']?.status === 'done',
   };
 }

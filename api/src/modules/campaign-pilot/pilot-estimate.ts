@@ -42,7 +42,7 @@ function instagramItem(slots: { format: IgFormat }[]): EstimateItem | null {
       parts.push(`${q} ${f === 'reel' ? 'reels' : 'stories em vídeo'} × ${br(VID)}`);
       value += q * VID;
     } else {
-      parts.push(`${q} ${f === 'feed_image' ? 'post' : 'stories'} × ${br(IMG)}`);
+      parts.push(`${q} ${f === 'feed_image' ? (q === 1 ? 'post' : 'posts') : 'stories'} × ${br(IMG)}`);
       value += q * IMG;
     }
   }

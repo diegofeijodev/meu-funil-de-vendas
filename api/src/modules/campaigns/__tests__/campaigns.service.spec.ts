@@ -50,7 +50,7 @@ describe('CampaignsService — wizard e leituras', () => {
     await w.t.campaign_pilot_runs.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, status: 'running', current_step: 'creatives', created_at: new Date('2026-10-30T10:00:00Z'),
       steps: { creatives: { status: 'running', attempts: 0, slots: [{ status: 'done' }, { status: 'pending' }] } } } });
     const list = (await svc.list(WS_A)) as any[];
-    expect(list.find((c) => c.id === campaign.id).pilot_summary).toEqual({ status: 'running', current_step: 'creatives', first_block_code: null, counts: { done: 1, total: 2 } });
+    expect(list.find((c) => c.id === campaign.id).pilot_summary).toEqual({ status: 'running', current_step: 'creatives', first_block_code: null, counts: { done: 1, total: 2 }, plan_ready: false });
     expect(list.find((c) => c.id === two.id).pilot_summary).toBeNull();
   });
 

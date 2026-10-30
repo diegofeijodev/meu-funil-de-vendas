@@ -13,10 +13,11 @@ describe('pilotSummary (linha do estrategista na lista de campanhas)', () => {
         creatives: { status: 'blocked', attempts: 0, error_code: 'COST_CAP', slots: [{ status: 'done' }, { status: 'done' }, { status: 'pending' }, { status: 'failed' }] },
       },
     };
-    expect(pilotSummary(run)).toEqual({ status: 'blocked', current_step: 'creatives', first_block_code: 'NO_IG_PLAN', counts: { done: 2, total: 4 } });
+    expect(pilotSummary(run)).toEqual({ status: 'blocked', current_step: 'creatives', first_block_code: 'NO_IG_PLAN', counts: { done: 2, total: 4 }, plan_ready: false });
   });
   it('em planejamento, sem peças', () => {
     expect(pilotSummary({ status: 'planning', current_step: 'strategy', steps: { strategy: { status: 'running', attempts: 0 } } }))
-      .toEqual({ status: 'planning', current_step: 'strategy', first_block_code: null, counts: { done: 0, total: 0 } });
+      .toEqual({ status: 'planning', current_step: 'strategy', first_block_code: null, counts: { done: 0, total: 0 }, plan_ready: false });
+    expect(pilotSummary({ status: 'planning', current_step: 'strategy', steps: { strategy: { status: 'done', attempts: 0 } } })!.plan_ready).toBe(true);
   });
 });

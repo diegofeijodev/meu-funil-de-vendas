@@ -11,7 +11,7 @@ import { AutoCalendarService } from '../instagram/auto-calendar.service';
 import { computeSlots, todaySP } from '../instagram/slots';
 import { StrategistService } from '../strategist/strategist.service';
 import { PilotGate } from '../../common/config/pilot-gate';
-import { estimatePilot, suggestedOptions } from './pilot-estimate';
+import { estimatePilot, slotCost, suggestedOptions } from './pilot-estimate';
 import { PilotRunnerService } from './pilot-runner.service';
 import { optionsOf, PilotOptions, PilotRunRow, RUN_STEPS, StepName, Steps, stepsOf } from './pilot.types';
 import { spentCredits } from './steps/creatives.step';
@@ -225,7 +225,10 @@ export class PilotService {
       id: run.id, status: run.status, current_step: run.current_step, steps, options: run.options, strategy_version: run.strategy_version,
       approved_at: run.approved_at, approved_by: run.approved_by, created_at: run.created_at,
       estimated_credits: run.estimated_credits == null ? null : Number(run.estimated_credits), max_credits: run.max_credits == null ? null : Number(run.max_credits),
-      spent_credits: spentCredits(slots, jobs, optionsOf(run)?.variations ?? 3), summary: pilotSummary(run),
+      spent_credits: spentCredits(slots, jobs, optionsOf(run)?.variations ?? 3),
+      // Custo máximo das peças que ainda faltam (a tela oferece "aumentar o teto" com esta conta, sem refazê-la).
+      remaining_credits: Math.round(slots.filter((x) => x.status === 'pending').reduce((a, x) => a + slotCost(x.kind, optionsOf(run)?.variations ?? 3), 0) * 100) / 100,
+      next_run_at: run.next_run_at, summary: pilotSummary(run),
       suggested_options: planReady ? suggestedOptions(await this.strategist.currentStrategy(run.workspace_id, run.campaign_id), this.maxCreatives) : null,
     };
   }

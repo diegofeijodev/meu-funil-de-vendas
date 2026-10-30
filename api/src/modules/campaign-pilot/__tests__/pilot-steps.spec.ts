@@ -87,7 +87,7 @@ describe('etapa instagram', () => {
     w.strategist.createIgPlanAsSystem.mockResolvedValueOnce({ error: 'NO_IG_PLAN' });
     expect(await w.instagram.run(w.run, T0)).toEqual({
       kind: 'blocked', code: 'NO_IG_PLAN', stopRun: false,
-      message: 'O plano veio sem os temas do Instagram, então os posts não foram programados. O anúncio segue normal.',
+      message: 'O plano veio sem os temas do Instagram, então os posts não foram programados. As artes seguem normalmente.',
     });
     expect(w.autoCalendar.createAutoRun).not.toHaveBeenCalled();
   });
