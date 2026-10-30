@@ -18,9 +18,9 @@ Cada fatia: TDD por arquivo, revisão do `software-architect` (opus) e uma rodad
 1. Push do branch (via `!`, como sempre): `git push origin feat/estrategista-conduz` — e, depois de conferir, levar para `stack-freela`.
 2. EC2 (`/opt/meu-funil`): backup `pg_dump -Fc` + tag da imagem `meufunil-api:pre-2026-10-30`.
 3. tar/scp/build/up da API como no `docs/deploy.md`. Quatro migrações novas sobem no boot: `20261029120000_campaign_intake`, `20261029130000_campaign_geo_targets`, `20261029140000_style_references`, `20261029150000_style_ref_sources_seen` (todas aditivas).
-4. No `/opt/meu-funil/.env` (a produção usa `env_file`; o compose não é atualizado): `CAMPAIGN_INTAKE_WORKSPACE_IDS=7309ae62-15c2-48d3-8990-4dbe75a29c4e` e, **só depois do teste do item 6**, `STYLE_REFS_PINTEREST_ENABLED=true` → `up -d --force-recreate api`.
-5. Web: cópia sem git → Vercel prod (como no `docs/deploy.md`).
-6. Antes de ligar o Pinterest, de dentro do EC2: `curl -sS https://www.pinterest.com/pinterest/feed.rss | head -c 300` — se não vier `<?xml … <rss`, o Pinterest barra o IP da nuvem; aí fica só o envio de imagem.
+4. Antes de ligar o Pinterest, de dentro do EC2: `curl -sS https://www.pinterest.com/pinterest/feed.rss | head -c 300` — se não vier `<?xml … <rss`, o Pinterest barra o IP da nuvem; aí deixe o Pinterest desligado (fica só o envio de imagem).
+5. No `/opt/meu-funil/.env` (a produção usa `env_file`; o compose não é atualizado): `CAMPAIGN_INTAKE_WORKSPACE_IDS=7309ae62-15c2-48d3-8990-4dbe75a29c4e` e, **só se o item 4 deu certo**, `STYLE_REFS_PINTEREST_ENABLED=true` → `up -d --force-recreate api`.
+6. Web: cópia sem git → Vercel prod (como no `docs/deploy.md`).
 7. Depois de subir: a lista só de leitura das campanhas ligadas antes da data de fim (`docs/deploy.md` §4b).
 
 ## Para o Diego (operação)
