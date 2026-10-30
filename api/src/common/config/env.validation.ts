@@ -159,6 +159,8 @@ const envSchema = z
     VACANCY_STORIES_WORKSPACE_IDS: z.string().default(''),
     /** Ids (uuid) das empresas com a nova campanha por conversa ("Conte o que você quer", Fatia 1). `*` só em development/test. */
     CAMPAIGN_INTAKE_WORKSPACE_IDS: z.string().default(''),
+    /** Referências do Pinterest (link de Pin e pastas acompanhadas por RSS), Fatia 6. OK jurídico dado em 29/10/2026. */
+    STYLE_REFS_PINTEREST_ENABLED: bool('false'),
     /** Só testes: vitrine falsa. Só vale em development/test; em produção é sempre `https://api.freelaservicosapp.com.br`. */
     FREELA_PUBLIC_API_URL: opt(),
   })

@@ -9,6 +9,10 @@ const make = (env: Record<string, string>) =>
   new FeaturesService(access as any, { NODE_ENV: 'production', CAMPAIGN_INTAKE_WORKSPACE_IDS: '', VACANCY_STORIES_WORKSPACE_IDS: '', ...env } as any);
 
 describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
+  it('style_refs_pinterest segue STYLE_REFS_PINTEREST_ENABLED (chave geral, OK jurídico)', async () => {
+    expect((await make({ STYLE_REFS_PINTEREST_ENABLED: true } as any).forWorkspace('u1', A)).style_refs_pinterest).toBe(true);
+  });
+
   it('campaign_intake só para as empresas da lista; vacancy_stories pela lista dela; piloto e Pinterest ainda desligados', async () => {
     const f = make({ CAMPAIGN_INTAKE_WORKSPACE_IDS: A, VACANCY_STORIES_WORKSPACE_IDS: B });
     expect(await f.forWorkspace('u1', A)).toEqual({ campaign_intake: true, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: false });

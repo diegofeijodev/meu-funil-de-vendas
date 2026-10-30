@@ -14,13 +14,15 @@ export type WorkspaceFeatures = { campaign_intake: boolean; campaign_pilot: bool
 export class FeaturesService {
   private readonly intake: '*' | Set<string>;
   private readonly vacancy: '*' | Set<string>;
+  private readonly pinterest: boolean;
 
   constructor(
     private readonly access: WorkspaceAccessService,
-    @Inject(ENV) env: Pick<Env, 'NODE_ENV' | 'CAMPAIGN_INTAKE_WORKSPACE_IDS' | 'VACANCY_STORIES_WORKSPACE_IDS'>,
+    @Inject(ENV) env: Pick<Env, 'NODE_ENV' | 'CAMPAIGN_INTAKE_WORKSPACE_IDS' | 'VACANCY_STORIES_WORKSPACE_IDS' | 'STYLE_REFS_PINTEREST_ENABLED'>,
   ) {
     this.intake = parseWorkspaceList('CAMPAIGN_INTAKE_WORKSPACE_IDS', env.CAMPAIGN_INTAKE_WORKSPACE_IDS, env.NODE_ENV);
     this.vacancy = parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
+    this.pinterest = env.STYLE_REFS_PINTEREST_ENABLED === true;
   }
 
   intakeEnabled(workspaceId: string): boolean {
@@ -32,7 +34,7 @@ export class FeaturesService {
     return {
       campaign_intake: this.intakeEnabled(workspaceId),
       campaign_pilot: false,
-      style_refs_pinterest: false,
+      style_refs_pinterest: this.pinterest,
       vacancy_stories: inWorkspaceList(this.vacancy, workspaceId),
     };
   }

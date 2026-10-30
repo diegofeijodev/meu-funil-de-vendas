@@ -92,3 +92,11 @@ export function ogImage(html: string): string | null {
     /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i.exec(html ?? '');
   return m ? pinImage736(decode(m[1]!)) : null;
 }
+
+/** Título da pasta/perfil no RSS (o `<title>` do `<channel>`, antes do 1º item). */
+export function rssTitle(xml: string): string | null {
+  const head = (xml ?? '').split('<item>')[0] ?? '';
+  const m = /<channel>[\s\S]*?<title>([\s\S]*?)<\/title>/.exec(head);
+  const t = m ? decode(m[1]!).trim().slice(0, 200) : '';
+  return t || null;
+}

@@ -114,6 +114,8 @@ model workspaces {
   app_credentials            app_credentials[]          @relation("app_credentials_workspace_id")
   vacancy_story_settings     vacancy_story_settings?    @relation("vacancy_story_settings_workspace_id")
   vacancy_stories            vacancy_stories[]          @relation("vacancy_stories_workspace_id")
+  style_ref_sources          style_ref_sources[]        @relation("style_ref_sources_workspace_id")
+  style_references           style_references[]         @relation("style_references_workspace_id")
 }
 
 model workspace_members {
@@ -163,6 +165,8 @@ model brands {
   media_assets             media_assets[]             @relation("media_assets_brand_id")
   vacancy_story_settings   vacancy_story_settings[]   @relation("vacancy_story_settings_brand_id")
 
+  style_ref_sources style_ref_sources[] @relation("style_ref_sources_brand_id")
+  style_references  style_references[]  @relation("style_references_brand_id")
   @@index([workspace_id])
 }
 
@@ -293,6 +297,7 @@ model campaigns {
   campaign_costs           campaign_costs[]           @relation("campaign_costs_campaign_id")
   media_assets             media_assets[]             @relation("media_assets_campaign_id")
 
+  style_references         style_references[]         @relation("style_references_campaign_id")
   @@index([workspace_id])
   @@index([brand_id])
 }
@@ -1445,4 +1450,50 @@ model vacancy_stories {
 
   @@unique([workspace_id, source, external_id])
   @@index([status, starts_at])
+}
+
+/// Pastas/perfis públicos do Pinterest acompanhados por RSS (Fatia 6): renovados a cada 24 h pelo job `style-refs-15min`.
+model style_ref_sources {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id   String             @db.Uuid
+  brand_id       String             @db.Uuid
+  url            String
+  rss_url        String
+  title          String?
+  last_synced_at DateTime?          @db.Timestamptz(6)
+  last_error     String?
+  created_by     String?            @db.Uuid
+  created_at     DateTime           @default(now()) @db.Timestamptz(6)
+  workspace      workspaces         @relation("style_ref_sources_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand          brands             @relation("style_ref_sources_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  refs           style_references[] @relation("style_references_source_id")
+
+  @@unique([workspace_id, brand_id, rss_url])
+}
+
+/// Referência de estilo (Fatias 5/6): imagem guardada só para a tela + notas de estilo em texto para o gerador (nunca o pixel).
+model style_references {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String             @db.Uuid
+  brand_id     String             @db.Uuid
+  campaign_id  String?            @db.Uuid
+  source_id    String?            @db.Uuid
+  source       String
+  source_url   String?
+  pin_id       String?
+  title        String?
+  kind         String             @default("image")
+  storage_path String?
+  style_notes  Json               @default("{}") @db.JsonB
+  status       String             @default("processing")
+  error        String?
+  claimed_at   DateTime?          @db.Timestamptz(6)
+  created_by   String?            @db.Uuid
+  created_at   DateTime           @default(now()) @db.Timestamptz(6)
+  workspace    workspaces         @relation("style_references_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  brand        brands             @relation("style_references_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
+  campaign     campaigns?         @relation("style_references_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
+  styleSource  style_ref_sources? @relation("style_references_source_id", fields: [source_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, brand_id, created_at(sort: Desc)])
 }
