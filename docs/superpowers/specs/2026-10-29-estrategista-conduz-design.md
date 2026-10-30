@@ -32,7 +32,8 @@ Ligar a verba continua sendo um toque dele.
   - referências de estilo por upload e, atrás de flag, por link do Pinterest (§2.3);
   - painel único com Pacote → Andamento → Pronto para ligar (ui §B–D).
 - **Não-objetivos:** ficam fora Google/TikTok no piloto e o upload de áudio com transcrição (na v1 vale o microfone do teclado ou colar a
-  transcrição do WhatsApp). Também ficam fora a busca automática no Pinterest pela API v5 (busca em beta, sem acesso garantido; verificado em 29/10)
+  transcrição do WhatsApp). Também ficam fora a busca **por palavra** no Pinterest pela API v5 (busca em beta, sem acesso garantido; verificado em 29/10;
+  puxar pastas por RSS entra, §0.8 #5)
   e qualquer mudança no app Freela, como criar a oferta grátis.
 - **Anti-objetivos.** Se acontecer qualquer um destes, a entrega falhou, mesmo funcionando:
   1. O piloto liga verba sozinho. "Ativar na Meta" continua manual, só owner/admin (`manage`), e passa por uma tela de conferência.
@@ -91,15 +92,16 @@ são só a cidade · +20 (padrão, igual a hoje) · +40 · +80 · outra.
 | F3 | Piloto sem Meta: planning → strategy → pacote → copies → Instagram → artes/vídeo (§2.4 + §0.4) | Modo do Instagram (padrão "eu aprovo") |
 | F4 | Piloto com Meta pausada + conferência com "Não usar esta arte" (§2.4, G1) | Destino do lead, verba |
 | F5 | Referências por upload → notas de estilo (§2.3) | Não |
-| F6 | Link do Pinterest (flag `STYLE_REFS_PINTEREST_ENABLED`) | OK jurídico |
-| F7 | Depois: áudio → texto, bairros, busca no Pinterest, aviso fora do app | Sim |
+| F6 | Pinterest automático: cola o link de uma pasta/perfil público → o sistema puxa os pins sozinho (RSS) e renova todo dia (§0.8 #5) | Não (OK jurídico dado 29/10) |
+| F7 | Depois: áudio → texto, bairros, busca por palavra no Pinterest, aviso fora do app | Sim |
 
-F5 pode andar junto com F3. Uma fatia por vez, com revisão do arquiteto e do designer no fim de cada uma (regra do projeto). Os testes e verificações
+Ordem de construção (29/10 noite): F0 → F1 → F2 → F5 → F6 → F3 → F4. F5 pode andar junto com F3. Uma fatia por vez, com revisão do arquiteto e do designer no fim de cada uma (regra do projeto). Os testes e verificações
 seguem as regras de baixo consumo do `CLAUDE.md`, sempre via `scripts/run-capped.sh`.
 
 ### 0.6 Decisões que só o dono toma
 
 Resumo para o Diego no fim da conversa de 29/10. Os detalhes estão na §4 e na ui "Decisões que só o dono toma".
+**Respondidas pelo Denner em 29/10 à noite: ver §0.8** (os itens 1–5 abaixo ficam como registro da pergunta).
 
 1. **"1ª contratação grátis":** existe no app Freela? O que é grátis (a taxa do Freela, a diária ou as duas), até quando, só para empresa nova, e
    como se prova que a empresa veio da campanha. Sem regra escrita, o anúncio não promete (oferta anunciada obriga, CDC). A mudança no app Freela
@@ -154,6 +156,40 @@ Resumo para o Diego no fim da conversa de 29/10. Os detalhes estão na §4 e na 
 6. **Armadilha conferida:** `MetaAdsService.setStatus('ACTIVE')` reativa todos os `meta_ad_ids`, menos os pausados pelo otimizador.
    - Problema: o "Não usar esta arte" seria desfeito no próprio "Ligar".
    - Correção: a exclusão fica gravada (`creatives.extras.excluded_from_ads_at`) e o Ativar a respeita, com teste.
+
+### 0.8 Respostas do dono (Denner, 29/10 à noite) e o que muda
+
+Resposta literal: "1. Hoje é possível dar a contratação grátis via freela admin; 2. Página de cadastro e o indicador deve dizer de onde veio lá
+igual já diz hoje direitinho […]; 3. Deixe configurável; 4. Creio que esteja […]; 5. Tem o OK jurídico, procure também se é possível puxar
+automático referências do pinterest, se sim, implemente". Depois: "vá seguindo automático". Isso vale como aprovação do desenho.
+
+1. **Oferta = cupom do freela-admin.**
+   - Conferido no código do Freela: `/cupons` do freela-admin cria cupom de **uso único, preso a um contratante** (`contractorUserId`), `PERCENT`
+     ou `FIXED`. O `CouponsService` abate o valor que o contratante paga pela vaga **inteira** (a plataforma absorve, inclusive a diária do
+     freelancer). A `/assinaturas` "cortesia" é outra coisa (meses de plano) e não é a oferta. *Decisão da consolidação, o Diego pode trocar.*
+   - Consequência: o desconto **não é automático**. A empresa se cadastra, a equipe vê a origem "Campanha" no admin e cria o cupom de 100%.
+   - No Meu Funil: `offer_terms.what = 'ambas'` e um texto fixo para os prompts: "1ª contratação grátis: depois do cadastro, a equipe Freela libera
+     um cupom que zera a 1ª vaga". A copy **não** pode prometer desconto automático no pagamento. `new_only = true`, `valid_until` = fim da campanha.
+   - Risco anotado para o Diego: o cupom de 100% zera a vaga inteira. Se quiser limitar, o cupom pode ser `FIXED` (ex.: até R$ X).
+2. **Destino = página de cadastro do Freela, com a origem gravada.**
+   - O web do Freela já guarda a UTM do primeiro toque (`signup-utm.storage`, qualquer página) e manda no `/cadastro`; o admin mostra a etiqueta
+     de origem (Campanha/UTM). Nada muda no Freela.
+   - Link: `https://www.freelaservicos.com.br/cadastro?perfil=empresa`. Política de privacidade: `https://www.freelaservicos.com.br/privacidade`.
+   - No Meu Funil (genérico, vale para qualquer empresa): o intake pergunta o link de destino e sugere o último usado pela empresa. Ao publicar, o
+     sistema **acrescenta** `utm_source=meta&utm_medium=paid_social&utm_campaign=<slug da campanha>` quando o link não tem UTM.
+3. **Verba configurável.** Sem padrão: valor por dia obrigatório no intake e teto do mês opcional (`budget_total`), editáveis pela rota de verba.
+4. **Meta conectada:** não deu para conferir em 29/10 à noite (a leitura da produção foi barrada e o Claude in Chrome não estava ligado na sessão).
+   Só a F4 depende disso. Conferir em Integrações com `/chrome` ligado.
+5. **Pinterest automático (F6): dá, sem API.**
+   - Testado em 29/10: toda pasta e todo perfil **públicos** têm RSS (`<link da pasta>.rss`, `<perfil>/feed.rss`) com os últimos 25 pins; a
+     imagem vem em `i.pinimg.com/236x/…` e existe em `736x` (200, `image/jpeg`). `originals` dá 403.
+   - Busca por palavra **não**: a busca da API v5 é beta, restrita a parceiros, e raspar a busca viola os termos. Fica na F7.
+   - Como funciona: a empresa cola o link de uma pasta (dela ou de qualquer um, pública). O sistema puxa os pins, guarda cada um como referência
+     com a origem (link do pin), e a IA de visão escreve as **notas de estilo** (texto). Um job renova todo dia (pins novos entram, no máximo 25
+     por fonte). O estrategista e o diretor de arte recebem as notas; **o pixel do Pinterest nunca vai ao gerador nem é publicado** (anti-objetivo 5).
+   - Pin de vídeo: o RSS traz a capa; ela vira referência de imagem. Vídeo em si fica fora.
+   - Risco: a Pinterest pode barrar IP de nuvem. Antes de ligar em produção, testar um `curl` do RSS de dentro do EC2. Se barrar, sobra o envio
+     manual (F5).
 
 ---
 
