@@ -29,6 +29,18 @@ const UFS: Record<string, string> = {
 };
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 const STATE_BY_NAME = new Map(Object.values(UFS).map((n) => [fold(n), n]));
+/** UF a partir do `region` da Meta ("Mato Grosso do Sul (state)" → MS; o nome mais longo vence "Mato Grosso"). */
+export function ufFromRegion(region: string | undefined): string | null {
+  if (!region) return null;
+  const r = fold(region);
+  let best: [string, number] | null = null;
+  for (const [uf, name] of Object.entries(UFS)) {
+    const n = fold(name);
+    if (r.includes(n) && (!best || n.length > best[1])) best = [uf, n.length];
+  }
+  return best ? best[0] : null;
+}
+
 /** Nome do estado de uma parte ("SP", "sp", "São Paulo", "sao paulo"), ou null. */
 const stateOf = (part: string): string | null => UFS[part.trim().toUpperCase()] ?? STATE_BY_NAME.get(fold(part)) ?? null;
 
@@ -263,6 +275,11 @@ export class MetaOpsService {
   private pickCity<T extends { region?: string }>(hits: T[], state: string | null): T | undefined {
     const withRegion = hits.filter((d) => d.region);
     return state && withRegion.length ? withRegion.find((d) => fold(d.region!).includes(fold(state))) : hits[0];
+  }
+
+  /** Busca de cidade para a tela da região: até 8 cidades do BR com a UF. */
+  async searchCities(ws: string, q: string) {
+    return (await this.searchCity(ws, q)).slice(0, 8).map((d) => ({ meta_key: d.key, name: d.name, uf: ufFromRegion(d.region), region: d.region ?? null }));
   }
 
   private async searchCity(ws: string, q: string) {

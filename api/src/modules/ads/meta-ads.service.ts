@@ -78,6 +78,18 @@ export class MetaAdsService {
     return guarded(() => this.ops.testConnection(ws));
   }
 
+  /** `GET /v1/workspaces/:ws/geo/search?q=` (Fatia 2): cidades da Meta para a região. Sem Meta conectada, a tela salva só o nome. */
+  async geoSearch(userId: string, ws: string, q: string) {
+    await this.member(userId, ws);
+    const text = (q ?? '').trim().slice(0, 80);
+    if (text.length < 2) return { items: [] };
+    const missing = await this.ops.missing(ws);
+    if (missing.includes('META_SYSTEM_USER_TOKEN') || missing.includes('META_APP_SECRET')) {
+      return { error: { code: 'META_NOT_CONNECTED', message: 'Conecte a Meta em Integrações para buscar a cidade. Até lá, escreva cidade e estado.' } };
+    }
+    return { items: await guarded(() => this.ops.searchCities(ws, text)) };
+  }
+
   async list(userId: string, ws: string) {
     await this.member(userId, ws);
     return guarded(() => this.ops.listStructure(ws));

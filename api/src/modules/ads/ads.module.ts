@@ -19,6 +19,7 @@ import { MetaOpsService } from './meta-ops.service';
 import { OAuthStateService } from './oauth-state.service';
 import { PerfStore } from './perf-store';
 import { TikTokAdsClient } from './tiktok-ads.client';
+import { GeoController } from './geo.controller';
 
 /**
  * Meta Ads (Marketing API), gestor de tráfego, Google Ads / TikTok Ads, desempenho e insights.
@@ -27,7 +28,7 @@ import { TikTokAdsClient } from './tiktok-ads.client';
  */
 @Module({
   imports: [InstagramModule, CampaignsModule, StrategistModule, MediaModule],
-  controllers: [MetaAdsController, AdsChannelsController, AdsResourcesController, AdsPublicController, CrmConversionController, CampaignEndController],
+  controllers: [MetaAdsController, AdsChannelsController, AdsResourcesController, AdsPublicController, CrmConversionController, CampaignEndController, GeoController],
   providers: [
     // Única porta de rede do Google Ads / TikTok Business / OAuth do Google (hosts fixos) — nos testes entra um fake.
     { provide: ADS_FETCH, useValue: ((url, init) => fetch(url, init)) as AdsFetch },

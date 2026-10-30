@@ -107,6 +107,7 @@ Mensagens (iguais às do GoTrue que `routes/auth.tsx` mapeia):
 | `POST /v1/workspaces` `{ name }` | — | `201` `{ id }` — equivalente a `create_workspace(_name)`: nome vazio → `400 "nome obrigatório"`; `slug` = `ws-` + 12 hex; criador vira `owner` |
 | `GET /v1/workspaces/:workspaceId` | read | linha de `workspaces` |
 | `PATCH /v1/workspaces/:workspaceId` `{ name }` | manage | linha de `workspaces` |
+| `GET /v1/workspaces/:workspaceId/geo/search?q=` | read | **Fatia 2 (29/10)**. `{ items: [{ meta_key, name, uf, region }] }` — até 8 cidades do BR pela busca `adgeolocation` da Meta (UF tirada do `region`, "São Paulo (state)" → SP); `q` < 2 letras → `{ items: [] }`. Sem Meta conectada: `200 { error: { code: 'META_NOT_CONNECTED', message: "Conecte a Meta em Integrações para buscar a cidade. Até lá, escreva cidade e estado." } }` (a tela salva só o nome; o publicar resolve). Erro da Meta → `502 META_ERROR` |
 | `GET /v1/workspaces/:workspaceId/features` | read | `{ campaign_intake, campaign_pilot, style_refs_pinterest, vacancy_stories }` (booleanos): fonte única do "liberado para a empresa". `campaign_intake` = empresa em `CAMPAIGN_INTAKE_WORKSPACE_IDS`; `vacancy_stories` = `VACANCY_STORIES_WORKSPACE_IDS`; piloto e Pinterest ligam nas fatias deles (29/10) |
 | `GET /v1/workspaces/:workspaceId/members` | read | `{ members: workspace_members[], profiles: profiles[] }` — perfis dos membros (no Supabase o RLS só devolvia o próprio; aqui qualquer membro vê os colegas do MESMO workspace) |
 | `GET /v1/profiles/me` | — | linha de `profiles` |

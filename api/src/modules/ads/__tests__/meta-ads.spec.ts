@@ -390,6 +390,36 @@ describe('MetaAdsService.publish — Fatia 0 (data de fim, verba e cidade)', () 
   });
 });
 
+describe('MetaAdsService.geoSearch (região da campanha, Fatia 2)', () => {
+  it('devolve cidades do BR com a UF tirada do region; texto curto = lista vazia; estranho → 403', async () => {
+    const w = adsWorld();
+    w.respond((path, opts) =>
+      path === '/search' && opts.params.type === 'adgeolocation'
+        ? { data: [{ key: '269969', name: 'Jundiaí', type: 'city', region: 'São Paulo (state)' }, { key: '77', name: 'Jundiaí do Sul', type: 'city', region: 'Paraná (state)' }, { key: '9', name: 'SP', type: 'region' }] }
+        : undefined,
+    );
+    expect(await w.meta.geoSearch(VIEWER, WS_A, 'Jundia')).toEqual({
+      items: [
+        { meta_key: '269969', name: 'Jundiaí', uf: 'SP', region: 'São Paulo (state)' },
+        { meta_key: '77', name: 'Jundiaí do Sul', uf: 'PR', region: 'Paraná (state)' },
+      ],
+    });
+    expect(await w.meta.geoSearch(VIEWER, WS_A, ' J ')).toEqual({ items: [] });
+    expect(await status(w.meta.geoSearch(STRANGER, WS_A, 'Jundia'))).toMatch(/^403:/);
+  });
+
+  it('sem Meta conectada: META_NOT_CONNECTED (200); erro da Meta: 502', async () => {
+    const w = adsWorld();
+    w.graphClient.config.mockResolvedValue({ appId: null, appSecret: null, token: null, adAccountId: null, pageId: null, instagramId: null });
+    expect(await w.meta.geoSearch(OWNER, WS_A, 'Jundia')).toEqual({
+      error: { code: 'META_NOT_CONNECTED', message: 'Conecte a Meta em Integrações para buscar a cidade. Até lá, escreva cidade e estado.' },
+    });
+    const w2 = adsWorld();
+    w2.respond((path) => (path === '/search' ? new MetaError('Limite de chamadas da Meta. Tente em instantes.', 17) : undefined));
+    expect(await status(w2.meta.geoSearch(OWNER, WS_A, 'Jundia'))).toBe('502:Limite de chamadas da Meta. Tente em instantes.');
+  });
+});
+
 describe('MetaAdsService.setStatus', () => {
   const published = (w: ReturnType<typeof adsWorld>, over: Record<string, any> = {}) =>
     w.seedCampaign({ status: 'approved', meta_campaign_id: '9001', meta_adset_id: '9101', meta_adset_ids: ['9101'], meta_ad_ids: ['9301', '9302'], meta_delivery_status: 'PAUSED', ...over });
