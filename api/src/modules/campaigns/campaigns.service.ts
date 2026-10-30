@@ -6,7 +6,7 @@ import { ActivityService } from '../activity/activity.service';
 import { brl, OBJECTIVES } from './campaign-labels';
 import { CampaignGuardsService } from './campaign-guards.service';
 import { igCampaignScope, IG_NOT_PENDING } from '../instagram/ig-campaign-scope';
-import { CreateCampaignDto, CreateCopyDto } from './dto/campaigns.dto';
+import { CreateCampaignDto, CreateCopyDto, SetBudgetDto } from './dto/campaigns.dto';
 
 const notFound = (message = 'Campanha não encontrada.') => new NotFoundException({ code: 'NOT_FOUND', message });
 const MAX_JSON_CHARS = 50_000;
@@ -135,6 +135,44 @@ export class CampaignsService {
     }
     const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { landing_url: url } });
     await this.activity.log(workspaceId, userId, 'campaign.landing_updated', 'campaign', { campaign_id: campaignId });
+    return updated;
+  }
+
+  /** Campanha que ainda não foi para a Meta (verba e cidade de depois vivem lá). */
+  private async beforePublish(workspaceId: string, campaignId: string) {
+    const c = await this.prisma.campaigns.findFirst({
+      where: { id: campaignId, workspace_id: workspaceId },
+      select: { id: true, status: true, meta_campaign_id: true, audience: true },
+    });
+    if (!c) throw notFound();
+    if (!LANDING_EDITABLE.includes(c.status) || c.meta_campaign_id) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'A campanha já foi publicada: mude direto na Meta.' });
+    }
+    return c;
+  }
+
+  /** Verba por dia (obrigatória para publicar) e teto do mês opcional. Antes, verba vazia virava R$ 20/dia na Meta. */
+  async setBudget(userId: string, workspaceId: string, campaignId: string, dto: SetBudgetDto) {
+    const daily = Number(dto.budget_daily);
+    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe um valor por dia maior que zero.' });
+    const total = dto.budget_total == null ? null : Number(dto.budget_total);
+    if (total != null && total < daily) {
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'O teto do mês não pode ser menor que a verba de um dia.' });
+    }
+    await this.beforePublish(workspaceId, campaignId);
+    const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { budget_daily: daily, budget_total: total } });
+    await this.activity.log(workspaceId, userId, 'campaign.budget_updated', 'campaign', { campaign_id: campaignId });
+    return updated;
+  }
+
+  /** Cidade do anúncio (`audience.localizacao`, lida pela publicação na Meta); o resto do público fica igual. */
+  async setLocation(userId: string, workspaceId: string, campaignId: string, location: string) {
+    const text = (location ?? '').trim();
+    if (text.length < 2) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Informe a cidade (ex.: Jundiaí, SP).' });
+    const c = await this.beforePublish(workspaceId, campaignId);
+    const audience = { ...((c.audience ?? {}) as Record<string, unknown>), localizacao: text };
+    const updated = await this.prisma.campaigns.update({ where: { id: campaignId }, data: { audience: audience as Prisma.InputJsonObject } });
+    await this.activity.log(workspaceId, userId, 'campaign.location_updated', 'campaign', { campaign_id: campaignId });
     return updated;
   }
 

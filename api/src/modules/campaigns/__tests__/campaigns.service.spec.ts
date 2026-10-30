@@ -162,3 +162,45 @@ describe('CampaignsService.setLandingUrl', () => {
     expect(await status(svc.setLandingUrl(OWNER, WS_B, campaign.id, 'https://exemplo.com'))).toBe('404:Campanha não encontrada.');
   });
 });
+
+describe('CampaignsService.setBudget / setLocation (Fatia 0: ajustar antes de publicar)', () => {
+  it('grava a verba por dia e o teto do mês, registra a atividade', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'approved', budget_daily: 0 });
+    const c = await svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 35.5, budget_total: 900 });
+    expect(Number(c.budget_daily)).toBe(35.5);
+    expect(Number(w.t.campaigns.rows[0]!.budget_total)).toBe(900);
+    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.budget_updated', 'campaign', { campaign_id: campaign.id }]);
+    await svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 20, budget_total: null });
+    expect(w.t.campaigns.rows[0]!.budget_total ?? null).toBeNull();
+  });
+
+  it('verba ≤ 0 e teto menor que um dia → 400 com a frase da tela', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'approved' });
+    expect(await status(svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 0 }))).toBe('400:Informe um valor por dia maior que zero.');
+    expect(await status(svc.setBudget(OWNER, WS_A, campaign.id, { budget_daily: 50, budget_total: 30 }))).toBe(
+      '400:O teto do mês não pode ser menor que a verba de um dia.',
+    );
+  });
+
+  it('grava a cidade em audience.localizacao (trim) sem perder o resto do público', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w, { status: 'approved', audience: { idade: '25-45', persona: 'Dono de bar' } });
+    await svc.setLocation(OWNER, WS_A, campaign.id, '  Jundiaí, SP ');
+    expect(w.t.campaigns.rows[0]!.audience).toEqual({ idade: '25-45', persona: 'Dono de bar', localizacao: 'Jundiaí, SP' });
+    expect(w.logs.at(-1)).toEqual([WS_A, OWNER, 'campaign.location_updated', 'campaign', { campaign_id: campaign.id }]);
+    expect(await status(svc.setLocation(OWNER, WS_A, campaign.id, '  '))).toBe('400:Informe a cidade (ex.: Jundiaí, SP).');
+  });
+
+  it('já enviada à Meta ou no ar não muda; outro workspace → 404', async () => {
+    const { w, svc } = setup();
+    const { campaign: sent } = await seedCampaign(w, { status: 'approved', meta_campaign_id: '9001' });
+    const msg = '400:A campanha já foi publicada: mude direto na Meta.';
+    expect(await status(svc.setBudget(OWNER, WS_A, sent.id, { budget_daily: 10 }))).toBe(msg);
+    expect(await status(svc.setLocation(OWNER, WS_A, sent.id, 'Jundiaí'))).toBe(msg);
+    const { campaign: live } = await seedCampaign(w, { status: 'active' });
+    expect(await status(svc.setBudget(OWNER, WS_A, live.id, { budget_daily: 10 }))).toBe(msg);
+    expect(await status(svc.setLocation(OWNER, WS_B, live.id, 'Jundiaí'))).toBe('404:Campanha não encontrada.');
+  });
+});

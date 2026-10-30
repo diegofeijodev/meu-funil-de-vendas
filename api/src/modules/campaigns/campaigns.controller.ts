@@ -5,7 +5,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CampaignsService } from './campaigns.service';
-import { CreateCampaignDto, CreateCopyDto, SetLandingUrlDto } from './dto/campaigns.dto';
+import { CreateCampaignDto, CreateCopyDto, SetBudgetDto, SetLandingUrlDto, SetLocationDto } from './dto/campaigns.dto';
 
 /** GET = read, o resto = write (viewer só lê). Rotas estáticas antes das `:id`. */
 @ApiTags('Campaigns')
@@ -46,6 +46,22 @@ export class CampaignsController {
     @Param('id', ParseUuidPipe) id: string, @Body() dto: SetLandingUrlDto,
   ) {
     return this.campaigns.setLandingUrl(user.id, ws, id, dto.landing_url);
+  }
+
+  @Patch(':id/budget')
+  setBudget(
+    @CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string,
+    @Param('id', ParseUuidPipe) id: string, @Body() dto: SetBudgetDto,
+  ) {
+    return this.campaigns.setBudget(user.id, ws, id, dto);
+  }
+
+  @Patch(':id/location')
+  setLocation(
+    @CurrentUser() user: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string,
+    @Param('id', ParseUuidPipe) id: string, @Body() dto: SetLocationDto,
+  ) {
+    return this.campaigns.setLocation(user.id, ws, id, dto.location);
   }
 
   @Post(':id/copies')

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDateString, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsDateString, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength } from 'class-validator';
 
 const num = { allowNaN: false, allowInfinity: false } as const;
 
@@ -36,4 +36,14 @@ export class CreateCopyDto {
 /** Corpo de `PATCH :id/landing-url` (a validação de http(s) fica no serviço, com mensagem em português). */
 export class SetLandingUrlDto {
   @IsString() @MaxLength(2000) landing_url!: string;
+}
+
+/** Verba em reais. A conferência de "maior que zero" e do teto fica no serviço (frase pronta para a tela). */
+export class SetBudgetDto {
+  @Type(() => Number) @IsNumber(num) @Max(100000) budget_daily!: number;
+  @IsOptional() @Type(() => Number) @IsNumber(num) @Max(10000000) budget_total?: number | null;
+}
+
+export class SetLocationDto {
+  @IsString() @MaxLength(200) location!: string;
 }
