@@ -26,7 +26,7 @@ async function setup(opts: { pinterest?: boolean } = {}) {
     brands: new FakeTable(),
     campaigns: new FakeTable(),
     style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, campaign_id: null, source_id: null, pin_id: null, kind: 'image' })),
-    style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null })),
+    style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [] })),
     workspace_members: {
       findUnique: async ({ where }: any) => {
         const k = where.workspace_id_user_id;
@@ -82,7 +82,7 @@ describe('StyleRefsService — envio e leitura do estilo', () => {
     await svc.processPending(5);
     const list = await svc.list(OWNER, WS, BRAND);
     expect(list.refs[0]).toMatchObject({ status: 'failed', error: 'Não conseguimos ler o estilo desta referência. Remova e tente outra.' });
-    expect(await status(svc.upload(OWNER, WS, BRAND, { bytes: new Uint8Array([1, 2, 3]), mime: 'image/png' }))).toBe('400:Envie uma imagem JPG, PNG ou WEBP.');
+    expect(await status(svc.upload(OWNER, WS, BRAND, { bytes: new Uint8Array([1, 2, 3]), mime: 'image/png' }))).toBe('400:Envie uma imagem JPG ou PNG.');
     expect(await status(svc.upload(VIEWER, WS, BRAND, { bytes: img, mime: 'image/png' }))).toMatch(/^403:/);
   });
 
@@ -162,5 +162,55 @@ describe('StyleRefsService — Pinterest', () => {
     await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
     expect(t.style_references.rows).toHaveLength(30);
     expect(t.style_references.rows.some((r) => r.pin_id === 'p0')).toBe(false);
+  });
+});
+
+describe('StyleRefsService — revisão das Fatias 5/6', () => {
+  const RSS_URL = 'https://www.pinterest.com/foodnetwork/5-star-recipes.rss';
+  const IMG1 = 'https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg';
+  const IMG2 = 'https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg';
+
+  it('Pin removido de uma pasta não volta na renovação seguinte', async () => {
+    const { t, svc, routes, image } = await setup();
+    routes.set(RSS_URL, () => new Response(RSS, { status: 200 }));
+    routes.set(IMG1, image);
+    routes.set(IMG2, image);
+    await svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/foodnetwork/5-star-recipes/');
+    const gone = t.style_references.rows.find((r) => r.pin_id === '424605071146230977')!;
+    await svc.remove(OWNER, WS, BRAND, gone.id);
+    t.style_ref_sources.rows[0]!.last_synced_at = new Date(Date.now() - 25 * 3600_000);
+    await svc.refreshDueSources(5);
+    expect(t.style_references.rows.map((r) => r.pin_id)).toEqual(['e1_AfqPShxtN_7i28uqhW']);
+  });
+
+  it('o mesmo Pin colado duas vezes ao mesmo tempo: o segundo recebe "já está" (sem 500) e o arquivo dele é apagado', async () => {
+    const { t, svc, routes, image, files } = await setup();
+    const PIN = 'https://www.pinterest.com/pin/424605071146230977/';
+    routes.set(`https://www.pinterest.com/oembed.json?url=${encodeURIComponent(PIN)}`, () => Response.json({ thumbnail_url: 'https://i.pinimg.com/236x/9a/95/x.jpg' }));
+    routes.set('https://i.pinimg.com/736x/9a/95/x.jpg', image);
+    const orig = t.style_references.create.bind(t.style_references);
+    let n = 0;
+    t.style_references.create = (async (a: any) => {
+      if (++n === 2) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      return orig(a);
+    }) as any;
+    const [a, b] = await Promise.all([status(svc.addPinterest(OWNER, WS, BRAND, PIN)), status(svc.addPinterest(OWNER, WS, BRAND, PIN))]);
+    expect([a, b].sort()).toEqual(['400:Esse Pin já está nas referências.', 'ok']);
+    expect(files.size).toBe(1);
+  });
+
+  it('WEBP: a frase diz que só JPG e PNG valem (o decodificador do servidor não lê WEBP)', async () => {
+    const { svc } = await setup();
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1, 2]);
+    expect(await status(svc.upload(OWNER, WS, BRAND, { bytes: webp, mime: 'image/webp' }))).toBe('400:Envie uma imagem JPG ou PNG.');
+  });
+
+  it('resposta sem content-length maior que o teto é cortada (não entra inteira na memória)', async () => {
+    const { svc, routes } = await setup();
+    const big = new ReadableStream({ start(c) { for (let i = 0; i < 4; i++) c.enqueue(new Uint8Array(1024 * 1024)); c.close(); } });
+    routes.set(RSS_URL, () => new Response(big, { status: 200 }));
+    expect(await status(svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/foodnetwork/5-star-recipes/'))).toBe(
+      '400:Não conseguimos ler essa pasta do Pinterest agora. Confira se ela é pública e tente de novo.',
+    );
   });
 });

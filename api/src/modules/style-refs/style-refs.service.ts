@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
 import type { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
+import { isUniqueViolation } from '../../common/database/next-version';
 import { WorkspaceAccessService } from '../access/access.service';
 import { AiService } from '../ai/ai.service';
 import { FilesService } from '../files/files.service';
@@ -27,6 +28,8 @@ const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
 const STALE_CLAIM_MS = 10 * 60_000;
+const SEEN_CAP = 300;
+const VIEW_URL_TTL_S = 3600;
 const UA = 'Mozilla/5.0 (compatible; MeuFunil/1.0; +https://www.meufunildevendas.com.br)';
 
 const bad = (message: string) => new BadRequestException({ code: 'BAD_REQUEST', message });
@@ -36,6 +39,29 @@ const MSG_READ_FAILED = 'Não conseguimos ler o estilo desta referência. Remova
 const MSG_RSS_DOWN = 'O Pinterest não respondeu agora. Tentamos de novo amanhã.';
 
 class FetchFailed extends Error {}
+
+/** Corpo lido em streaming e cortado ao passar do teto (resposta sem content-length não entra inteira na memória). */
+async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
+  if (Number(res.headers.get('content-length') ?? 0) > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new FetchFailed('grande demais');
+  }
+  if (!res.body) return new Uint8Array(await res.arrayBuffer());
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new FetchFailed('grande demais');
+    }
+    chunks.push(value);
+  }
+  return new Uint8Array(Buffer.concat(chunks));
+}
 
 type RefRow = {
   id: string; workspace_id: string; brand_id: string; campaign_id: string | null; source_id: string | null; source: string;
@@ -48,20 +74,19 @@ export type StyleRefView = {
   image_url: string | null; campaign_id: string | null; from_source: boolean; created_at: Date;
 };
 
-/** JPEG ≤ 1024 px. Lança se não for imagem (o tipo é conferido pelo conteúdo, não pelo nome). */
+/** JPEG ≤ 1024 px. Lança se não for JPG/PNG (o tipo é conferido pelo conteúdo, não pelo nome; o decodificador do servidor não lê WEBP). */
 async function shrink(images: ImageService, bytes: Uint8Array): Promise<Uint8Array> {
   const head = bytes.subarray(0, 12);
   const isJpeg = head[0] === 0xff && head[1] === 0xd8;
   const isPng = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
-  const isWebp = Buffer.from(head.subarray(0, 4)).toString() === 'RIFF' && Buffer.from(head.subarray(8, 12)).toString() === 'WEBP';
-  if (!isJpeg && !isPng && !isWebp) throw bad('Envie uma imagem JPG, PNG ou WEBP.');
+  if (!isJpeg && !isPng) throw bad('Envie uma imagem JPG ou PNG.');
   // `ImageService.read` barra a imagem-bomba (poucos bytes declarando bilhões de pixels) antes de decodificar.
   let img;
   try {
     img = await images.read(bytes);
   } catch (e) {
     if (e instanceof BadRequestException) throw e;
-    throw bad('Envie uma imagem JPG, PNG ou WEBP.');
+    throw bad('Envie uma imagem JPG ou PNG.');
   }
   const w = img.bitmap.width as number;
   const h = img.bitmap.height as number;
@@ -171,7 +196,13 @@ export class StyleRefsService {
     if (!source) {
       const count = await this.prisma.style_ref_sources.count({ where: { workspace_id: ws, brand_id: brandId } });
       if (count >= SOURCE_CAP) throw bad('Você já acompanha 5 pastas nesta marca. Pare uma para pôr outra.');
-      source = await this.prisma.style_ref_sources.create({ data: { workspace_id: ws, brand_id: brandId, url: link.url, rss_url: link.rssUrl, created_by: userId } });
+      try {
+        source = await this.prisma.style_ref_sources.create({ data: { workspace_id: ws, brand_id: brandId, url: link.url, rss_url: link.rssUrl, created_by: userId } });
+      } catch (e) {
+        if (!isUniqueViolation(e)) throw e;
+        source = await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: link.rssUrl } });
+        if (!source) throw e;
+      }
     }
     const added = await this.sync(source);
     if (added === null) throw bad('Não conseguimos ler essa pasta do Pinterest agora. Confira se ela é pública e tente de novo.');
@@ -259,7 +290,8 @@ export class StyleRefsService {
       status: r.status,
       summary: r.status === 'ready' ? notesSummary(normalizeStyleNotes(r.style_notes)) : null,
       error: r.error,
-      image_url: r.storage_path ? this.files.signedUrl(BUCKET, r.storage_path) : null,
+      // Só para a tela e por pouco tempo: a imagem de terceiro não fica circulando (a lista é buscada de novo ao abrir).
+      image_url: r.storage_path ? this.files.signedUrl(BUCKET, r.storage_path, VIEW_URL_TTL_S) : null,
       campaign_id: r.campaign_id,
       from_source: !!r.source_id,
       created_at: r.created_at,
@@ -284,13 +316,20 @@ export class StyleRefsService {
   ): Promise<RefRow> {
     const key = `${ws}/${brandId}/${randomUUID()}.jpg`;
     await this.files.put(BUCKET, key, jpeg);
-    return (await this.prisma.style_references.create({
-      data: {
-        workspace_id: ws, brand_id: brandId, campaign_id: o.campaignId, source_id: o.sourceId ?? null, source: o.source,
-        source_url: o.sourceUrl ?? null, pin_id: o.pinId ?? null, title: o.title ?? null, kind: 'image', storage_path: key,
-        status: 'processing', created_by: o.createdBy ?? null,
-      },
-    })) as RefRow;
+    try {
+      return (await this.prisma.style_references.create({
+        data: {
+          workspace_id: ws, brand_id: brandId, campaign_id: o.campaignId, source_id: o.sourceId ?? null, source: o.source,
+          source_url: o.sourceUrl ?? null, pin_id: o.pinId ?? null, title: o.title ?? null, kind: 'image', storage_path: key,
+          status: 'processing', created_by: o.createdBy ?? null,
+        },
+      })) as RefRow;
+    } catch (e) {
+      await this.files.delete(BUCKET, key).catch(() => undefined);
+      // O mesmo Pin colado duas vezes ao mesmo tempo: o índice único decide; o segundo recebe a frase, não um 500.
+      if (isUniqueViolation(e)) throw bad('Esse Pin já está nas referências.');
+      throw e;
+    }
   }
 
   private async drop(r: RefRow) {
@@ -333,10 +372,7 @@ export class StyleRefsService {
         continue;
       }
       if (!res.ok) throw new FetchFailed(`HTTP ${res.status}`);
-      if (Number(res.headers.get('content-length') ?? 0) > maxBytes) throw new FetchFailed('grande demais');
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.length > maxBytes) throw new FetchFailed('grande demais');
-      return { bytes, type: res.headers.get('content-type') ?? '', finalUrl: current };
+      return { bytes: await readCapped(res, maxBytes), type: res.headers.get('content-type') ?? '', finalUrl: current };
     }
     throw new FetchFailed('redirecionamentos demais');
   }
@@ -389,7 +425,7 @@ export class StyleRefsService {
   }
 
   /** Lê o RSS da fonte e adiciona até 8 Pins novos. Devolve quantos entraram, ou null se o Pinterest não respondeu. */
-  private async sync(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; created_by?: string | null }): Promise<number | null> {
+  private async sync(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; created_by?: string | null; seen_pin_ids?: string[] }): Promise<number | null> {
     let xml: string;
     try {
       xml = Buffer.from((await this.get(source.rss_url, isPinterestHost, MAX_PAGE_BYTES)).bytes).toString('utf8');
@@ -404,6 +440,8 @@ export class StyleRefsService {
         .map((r) => r.pin_id)
         .filter(Boolean) as string[],
     );
+    // Pins já vistos nesta pasta (removidos ou que saíram pelo teto) não voltam: senão cada renovação reimportava e relia com IA.
+    for (const id of source.seen_pin_ids ?? []) known.add(id);
     const fresh = pins.filter((p) => !known.has(p.pinId)).slice(0, PINS_PER_SYNC);
     const room = fresh.length ? await this.makeRoom(source.workspace_id, source.brand_id, null, fresh.length, false) : 0;
     let added = 0;
@@ -418,7 +456,12 @@ export class StyleRefsService {
     }
     await this.prisma.style_ref_sources.update({
       where: { id: source.id },
-      data: { last_synced_at: new Date(), last_error: pins.length ? null : 'A pasta está vazia ou não é pública.', title: rssTitle(xml) },
+      data: {
+        last_synced_at: new Date(),
+        last_error: pins.length ? null : 'A pasta está vazia ou não é pública.',
+        title: rssTitle(xml),
+        seen_pin_ids: [...new Set([...fresh.slice(0, room).map((p) => p.pinId), ...(source.seen_pin_ids ?? [])])].slice(0, SEEN_CAP),
+      },
     });
     return added;
   }

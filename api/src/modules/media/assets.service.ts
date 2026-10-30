@@ -5,7 +5,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
-import { FilesService } from '../files/files.service';
+import { FilesService, DISPLAY_ONLY_BUCKETS } from '../files/files.service';
 import { assertExternalUrl, EXTERNAL_FETCH, ExternalFetch } from './external-fetch';
 import { aspectFor, TargetFormat, targetFromAspect } from './formats';
 import { ImageService } from './image.service';
@@ -90,6 +90,8 @@ export class AssetsService {
     }
     const own = this.files.parseOwnUrl(url);
     if (own) {
+      // Referência de estilo (imagem de terceiro) nunca vira mídia, criativo ou anexo do gerador.
+      if (DISPLAY_ONLY_BUCKETS.includes(own.bucket)) throw new UserError('Referência de estilo não vira mídia: ela só orienta o estilo em texto.');
       this.files.verify(own.bucket, own.key, own.exp ?? undefined, own.sig ?? undefined);
       const bytes = await this.files.read(own.bucket, own.key);
       return { bytes: new Uint8Array(bytes), mime: null };

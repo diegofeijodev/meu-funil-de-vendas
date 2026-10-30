@@ -33,7 +33,12 @@ export function parsePinterestLink(raw: string): PinterestLink | null {
     return null;
   }
   const host = u.hostname.toLowerCase();
-  const seg = u.pathname.split('/').filter(Boolean).map((s) => decodeURIComponent(s));
+  let seg: string[];
+  try {
+    seg = u.pathname.split('/').filter(Boolean).map((s) => decodeURIComponent(s));
+  } catch {
+    return null; // % quebrado no caminho: não é um link de Pin/pasta.
+  }
   if (host === 'pin.it') return seg.length === 1 && ID.test(seg[0]!) ? { kind: 'shortlink', url: `https://pin.it/${seg[0]}` } : null;
   if (!PINTEREST_HOST.test(host) || !seg.length) return null;
   if (seg[0] === 'pin') return seg[1] && ID.test(seg[1]) ? { kind: 'pin', pinId: seg[1], url: `${BASE}/pin/${seg[1]}/` } : null;

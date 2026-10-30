@@ -49,7 +49,13 @@ export class StyleRefsController {
     const part = await (req as unknown as { file: () => Promise<FilePart | undefined> }).file();
     if (!part) throw bad('Nenhum arquivo enviado.');
     const chunks: Buffer[] = [];
-    for await (const c of part.file) chunks.push(c);
+    let total = 0;
+    for await (const c of part.file) {
+      total += c.length;
+      // Corta no teto desta rota (15 MB), sem esperar o teto geral do multipart (100 MB).
+      if (total > 15 * 1024 * 1024) throw bad('A imagem passa de 15 MB.');
+      chunks.push(c);
+    }
     if (part.file.truncated) throw bad('A imagem passa de 15 MB.');
     const bytes = Buffer.concat(chunks);
     if (bytes.length === 0) throw bad('Arquivo vazio.');

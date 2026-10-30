@@ -7,7 +7,12 @@ import { Env } from '../../common/config/env.validation';
 import { deriveKey } from '../../common/crypto/hkdf';
 
 /** Buckets do protótipo: `creative-assets` (privado) e `ig-media`. */
-export const BUCKETS = ['creative-assets', 'ig-media'] as const;
+export const BUCKETS = ['creative-assets', 'ig-media', 'style-refs'] as const;
+/**
+ * Buckets só para MOSTRAR na tela: `style-refs` guarda imagem de terceiro (Pinterest/referência enviada) que nunca pode virar mídia,
+ * logo, primeiro quadro ou anexo do gerador. Quem lê "URL assinada nossa" para usar o conteúdo recusa estes.
+ */
+export const DISPLAY_ONLY_BUCKETS: readonly string[] = ['style-refs'];
 /** Validade padrão das URLs assinadas: 5 anos (igual às URLs que o protótipo gravava no banco). */
 export const DEFAULT_URL_TTL_SECONDS = 60 * 60 * 24 * 365 * 5;
 /** Prefixos de chave aceitos no upload do navegador (`<kind>/<workspaceId>/...`). */

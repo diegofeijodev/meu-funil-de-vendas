@@ -129,7 +129,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
             <p className="text-xs text-muted-foreground">Achou no Pinterest? Salve a imagem no celular e envie aqui.</p>
           )}
           <div>
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
             <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
               {busy === "upload" ? "Enviando…" : "Enviar imagem"}
             </Button>

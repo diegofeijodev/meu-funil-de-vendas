@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { PrismaService } from '../../common/database/prisma.service';
 import { AiImageInput } from '../ai/ai.types';
-import { FilesService } from '../files/files.service';
+import { FilesService, DISPLAY_ONLY_BUCKETS } from '../files/files.service';
 import { AssetsService } from '../media/assets.service';
 import { ImageService } from '../media/image.service';
 import { parseFont } from './compose';
@@ -59,7 +59,16 @@ export class RefsService {
    */
   async loadStyleNotes(workspaceId: string, brandId: string | null | undefined, campaignId?: string | null): Promise<string | null> {
     if (!this.styleRefs || !brandId) return null;
-    return this.styleRefs.loadStyleNotes(workspaceId, brandId, campaignId ?? null).catch(() => null);
+    return this.styleRefs.loadStyleNotes(workspaceId, brandId, campaignId ?? null).catch((e) => {
+      this.logger.warn(`notas de estilo (${workspaceId}/${brandId}): ${(e as Error).message}`);
+      return null;
+    });
+  }
+
+  /** Na subida: confirma no log que as notas de estilo estão ligadas (o @Optional não pode falhar calado). */
+  onModuleInit() {
+    if (this.styleRefs) this.logger.log('notas de estilo das referências ligadas');
+    else this.logger.warn('notas de estilo DESLIGADAS: StyleRefsService não foi injetado');
   }
 
   /** Bytes de um arquivo de marca; `storage_path` só vale se for do workspace (`brands/<ws>/...`). */
@@ -126,6 +135,8 @@ export class RefsService {
   private async ownFileBytes(workspaceId: string, url: string | null): Promise<Uint8Array | null> {
     const own = url ? this.files.parseOwnUrl(url) : null;
     if (!own || !this.files.keyBelongsToWorkspace(own.key, workspaceId) || /\.(svg|pdf)$/i.test(own.key)) return null;
+    // Referência de estilo (imagem de terceiro) nunca vira logo nem pixel do criativo.
+    if (DISPLAY_ONLY_BUCKETS.includes(own.bucket)) return null;
     try {
       return new Uint8Array(await this.files.read(own.bucket, own.key));
     } catch {

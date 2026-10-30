@@ -1462,6 +1462,7 @@ model style_ref_sources {
   title          String?
   last_synced_at DateTime?          @db.Timestamptz(6)
   last_error     String?
+  seen_pin_ids   String[]           @default([])
   created_by     String?            @db.Uuid
   created_at     DateTime           @default(now()) @db.Timestamptz(6)
   workspace      workspaces         @relation("style_ref_sources_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
