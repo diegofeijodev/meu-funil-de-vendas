@@ -10,6 +10,10 @@ import { buildCopyPrompt, COPY_SCHEMA } from './copy-ai.prompt';
 export type CopyEngine = 'auto' | 'chatgpt' | 'gemini';
 const MAX_INPUT_CHARS = 30_000;
 
+export type CopyInput = {
+  workspaceId: string; engine?: CopyEngine; brand: Record<string, unknown>; brief: Record<string, unknown>; seed?: number; campaignId?: string | null; angle?: string | null;
+};
+
 /** Mensagens da cópia do protótipo (as do `AiService` são as genéricas do criativo). */
 function copyError(e: unknown): unknown {
   if (!(e instanceof AiError)) return e;
@@ -34,12 +38,14 @@ export class CopyAiService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async generate(
-    userId: string,
-    input: { workspaceId: string; engine?: CopyEngine; brand: Record<string, unknown>; brief: Record<string, unknown>; seed?: number; campaignId?: string | null; angle?: string | null },
-  ): Promise<{ content: any; engine: string }> {
+  async generate(userId: string, input: CopyInput): Promise<{ content: any; engine: string }> {
     // Gasta crédito de IA: precisa poder editar (a tela esconde o botão do viewer).
     await this.access.require(userId, input.workspaceId, 'write');
+    return this.generateAsSystem(input);
+  }
+
+  /** Mesmo miolo, sem papel de tela: quem chama (o piloto) já conferiu a empresa e a aprovação. */
+  async generateAsSystem(input: CopyInput): Promise<{ content: any; engine: string }> {
     if (JSON.stringify(input.brand).length + JSON.stringify(input.brief).length > MAX_INPUT_CHARS) {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Briefing grande demais.' });
     }

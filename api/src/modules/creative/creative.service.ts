@@ -173,6 +173,24 @@ export class CreativeService {
   /** `generateCreative`: ponta a ponta. Erros do provedor VOLTAM em `error` (status `failed`), não são lançados. */
   async generate(userId: string, dto: GenerateCreativeDto): Promise<ArtOutcome> {
     await this.access.require(userId, dto.workspaceId, 'write');
+    const r = await this.runFromDto(dto, userId);
+    if (r.status === 'ready') await this.activity.log(dto.workspaceId, userId, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: r.provider });
+    return r;
+  }
+
+  /**
+   * Mesmo caminho do `generate`, sem papel de tela: o piloto já conferiu a empresa e a aprovação do pacote. As linhas levam
+   * `created_by` = quem aprovou; a atividade sai sem ator e com a origem (`via: 'pilot'`).
+   */
+  async generateAsSystem(dto: GenerateCreativeDto, actorId: string, via: { runId: string }): Promise<ArtOutcome> {
+    const r = await this.runFromDto(dto, actorId);
+    if (r.status === 'ready') {
+      await this.activity.log(dto.workspaceId, null, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: r.provider, via: 'pilot', run_id: via.runId });
+    }
+    return r;
+  }
+
+  private async runFromDto(dto: GenerateCreativeDto, userId: string): Promise<ArtOutcome> {
     const n = this.normalize(dto);
     const { brand, campaign } = await this.buildBrandBrain(dto.workspaceId, dto);
     const r = await this.runArtDirected({
@@ -181,7 +199,6 @@ export class CreativeService {
       visualPrompt: dto.visualPrompt, artDirection: dto.artDirection, adjust: dto.adjust, layout: n.layout, variations: n.variations,
       headline: dto.headline, price: dto.price, cta: dto.cta, angle: dto.angle, useBrandImage: dto.useBrandImage, coverWithLogo: dto.coverWithLogo, userId,
     });
-    if (r.status === 'ready') await this.activity.log(dto.workspaceId, userId, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: r.provider });
     return r;
   }
 

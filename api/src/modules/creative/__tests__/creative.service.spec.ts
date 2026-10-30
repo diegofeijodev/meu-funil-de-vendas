@@ -391,3 +391,16 @@ describe('recursos do Studio (leituras/escritas diretas)', () => {
     w.cleanup();
   });
 });
+
+describe('generateAsSystem (piloto)', () => {
+  it('gera sem exigir papel; created_by = quem aprovou; atividade sem ator e via pilot', async () => {
+    const w = await creativeWorld();
+    const { brand, campaign } = await seed(w);
+    const RUN = '99999999-9999-4999-8999-999999999999';
+    const r = await w.svc.generateAsSystem(dto({ campaignId: campaign.id, brandId: brand.id }), OWNER, { runId: RUN });
+    expect(r.status).toBe('ready');
+    expect(w.t['creative_generation_jobs']!.rows[0]!.created_by).toBe(OWNER);
+    expect(w.logs).toEqual([[WS_A, null, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: 'gemini', via: 'pilot', run_id: RUN }]]);
+    w.cleanup();
+  });
+});

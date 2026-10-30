@@ -145,19 +145,31 @@ export class StrategistService {
   /** 1.1 Gera (ou regera) a estratégia e salva uma nova versão em rascunho. */
   async generate(userId: string, campaignId: string) {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
+    const r = await this.generateAsSystem(c.workspace_id, c.id);
+    await this.activity.log(c.workspace_id, userId, 'campaign.strategy_generated', 'campaign', { campaign_id: c.id, version: r.version });
+    return r;
+  }
+
+  /** Miolo do 1.1 sem papel de tela (o piloto já conferiu a empresa): gera e grava a próxima versão em rascunho. */
+  async generateAsSystem(workspaceId: string, campaignId: string) {
     // Valida/normaliza antes de gravar: nunca salva estratégia com lista faltando.
-    const content = normalizeStoredStrategy(await this.generateStrategyAI(c.workspace_id, c.id))!;
+    const content = normalizeStoredStrategy(await this.generateStrategyAI(workspaceId, campaignId))!;
     // A versão é calculada DEPOIS da geração (até ~1 min), como no protótipo.
     const { version } = await createWithNextVersion(
-      async () => (await this.prisma.campaign_strategies.findFirst({
-        where: { campaign_id: c.id, workspace_id: c.workspace_id }, orderBy: { version: 'desc' }, select: { version: true },
-      }))?.version,
+      async () => (await this.latestVersion(workspaceId, campaignId)) ?? undefined,
       (v) => this.prisma.campaign_strategies.create({
-        data: { workspace_id: c.workspace_id, campaign_id: c.id, content: content as unknown as Prisma.InputJsonObject, status: 'draft', version: v },
+        data: { workspace_id: workspaceId, campaign_id: campaignId, content: content as unknown as Prisma.InputJsonObject, status: 'draft', version: v },
       }),
     );
-    await this.activity.log(c.workspace_id, userId, 'campaign.strategy_generated', 'campaign', { campaign_id: c.id, version });
     return { version, content };
+  }
+
+  /** Última versão gravada da estratégia da campanha (null = nenhuma). */
+  async latestVersion(workspaceId: string, campaignId: string): Promise<number | null> {
+    const row = await this.prisma.campaign_strategies.findFirst({
+      where: { campaign_id: campaignId, workspace_id: workspaceId }, orderBy: { version: 'desc' }, select: { version: true },
+    });
+    return row?.version ?? null;
   }
 
   /** 1.2 Aprova a versão: as aprovadas anteriores viram `superseded`. */
@@ -169,25 +181,49 @@ export class StrategistService {
     });
     if (!s || !(await this.access.roleOf(userId, s.workspace_id))) throw notFound();
     await this.access.require(userId, s.workspace_id, 'write');
+    await this.markApproved(s);
+    await this.activity.log(s.workspace_id, userId, 'campaign.strategy_approved', 'campaign', { campaign_id: s.campaign_id, version: s.version });
+    return { ok: true };
+  }
+
+  /** Aprova uma versão pelo número (piloto: o "Aprovar e começar" do pacote). Mesma transação do 1.2. */
+  async approveVersion(workspaceId: string, campaignId: string, version: number, actorId: string | null) {
+    const s = await this.prisma.campaign_strategies.findFirst({
+      where: { workspace_id: workspaceId, campaign_id: campaignId, version }, select: { id: true, workspace_id: true, campaign_id: true, version: true },
+    });
+    if (!s) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Estratégia não encontrada.' });
+    await this.markApproved(s);
+    await this.activity.log(workspaceId, actorId, 'campaign.strategy_approved', 'campaign', { campaign_id: campaignId, version, via: 'pilot' });
+  }
+
+  private async markApproved(s: { id: string; workspace_id: string; campaign_id: string }) {
     await this.prisma.$transaction(async (tx) => {
       await tx.campaign_strategies.updateMany({ where: { campaign_id: s.campaign_id, workspace_id: s.workspace_id, status: 'approved' }, data: { status: 'superseded' } });
       await tx.campaign_strategies.update({ where: { id: s.id }, data: { status: 'approved' } });
     });
-    await this.activity.log(s.workspace_id, userId, 'campaign.strategy_approved', 'campaign', { campaign_id: s.campaign_id, version: s.version });
-    return { ok: true };
   }
 
   /** 1.3 Cria o plano de conteúdo do Instagram a partir da estratégia (pilares, pesos, temas, frequência). */
   async createIgPlan(userId: string, campaignId: string) {
     const c = await this.guards.resolveCampaign(userId, campaignId, 'write');
-    if (c.status === CAMPAIGN_FINISHED) throw new BadRequestException({ code: 'BAD_REQUEST', message: MSG_CAMPAIGN_ENDED });
+    const r = await this.createIgPlanAsSystem(c.workspace_id, c.id);
+    if ('planId' in r) return r;
+    const bad = (message: string) => new BadRequestException({ code: 'BAD_REQUEST', message });
+    if (r.error === 'CAMPAIGN_ENDED') throw bad(MSG_CAMPAIGN_ENDED);
+    if (r.error === 'NO_STRATEGY') throw bad('Gere a estratégia da campanha primeiro.');
+    throw bad('Esta versão da estratégia não tem plano do Instagram. Regere a estratégia.');
+  }
+
+  /** Miolo do 1.3 sem papel de tela (piloto). Recusas voltam como código para quem chama decidir o que mostrar. */
+  async createIgPlanAsSystem(workspaceId: string, campaignId: string): Promise<{ planId: string } | { error: 'NO_IG_PLAN' | 'NO_STRATEGY' | 'CAMPAIGN_ENDED' }> {
+    const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: workspaceId } });
+    if (!c) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Campanha não encontrada.' });
+    if (c.status === CAMPAIGN_FINISHED) return { error: 'CAMPAIGN_ENDED' };
     const s = await this.currentStrategy(c.workspace_id, c.id);
-    if (!s) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Gere a estratégia da campanha primeiro.' });
+    if (!s) return { error: 'NO_STRATEGY' };
     const plan = s.plano_instagram;
     const pillars = (plan?.pilares ?? []).map((p) => p.nome).filter(Boolean);
-    if (!pillars.length) {
-      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Esta versão da estratégia não tem plano do Instagram. Regere a estratégia.' });
-    }
+    if (!pillars.length) return { error: 'NO_IG_PLAN' };
     const total = (plan?.pilares ?? []).reduce((acc, p) => acc + (Number(p.peso) || 0), 0) || 1;
     const weights = Object.fromEntries((plan?.pilares ?? []).map((p) => [p.nome, Math.round(((Number(p.peso) || 0) / total) * 100) / 100]));
     const brand = c.brand_id

@@ -110,3 +110,11 @@ describe('copy refeita na campanha (revisão da Fatia 1)', () => {
     expect(calls[0][1].prompt).toContain('CONDIÇÕES DA OFERTA (obrigatório): prometa só "Primeira contratação grátis".');
   });
 });
+
+describe('CopyAiService.generateAsSystem (piloto)', () => {
+  it('não exige papel na empresa', async () => {
+    const { svc } = setup();
+    expect(await status(svc.generate(STRANGER, input()))).toMatch(/^40[34]:/);
+    expect(await svc.generateAsSystem(input())).toEqual({ content: { headline: 'H' }, engine: 'IA do app' });
+  });
+});

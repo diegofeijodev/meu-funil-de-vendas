@@ -223,7 +223,7 @@ export class CampaignsService {
   }
 
   /** INSERT em `copies` (versão = anterior + 1) + atividade `campaign.copy_generated`. */
-  async createCopy(userId: string, workspaceId: string, campaignId: string, dto: CreateCopyDto) {
+  async createCopy(actorId: string | null, workspaceId: string, campaignId: string, dto: CreateCopyDto) {
     const c = await this.prisma.campaigns.findFirst({ where: { id: campaignId, workspace_id: workspaceId }, select: { id: true } });
     if (!c) throw notFound();
     if (jsonLen(dto.content) > MAX_JSON_CHARS) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Copy grande demais.' });
@@ -231,7 +231,7 @@ export class CampaignsService {
       async () => (await this.prisma.copies.findFirst({ where: { campaign_id: campaignId, workspace_id: workspaceId }, orderBy: { version: 'desc' }, select: { version: true } }))?.version,
       (version) => this.prisma.copies.create({ data: { workspace_id: workspaceId, campaign_id: campaignId, content: dto.content as Prisma.InputJsonObject, status: 'draft', version } }),
     );
-    await this.activity.log(workspaceId, userId, 'campaign.copy_generated', 'campaign', { campaign_id: campaignId });
+    await this.activity.log(workspaceId, actorId, 'campaign.copy_generated', 'campaign', { campaign_id: campaignId });
     return copy;
   }
 

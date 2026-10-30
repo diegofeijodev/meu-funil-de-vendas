@@ -302,3 +302,40 @@ describe('StrategistService.currentStrategy / createIgPlan', () => {
     expect(w.t.ig_content_plans.rows).toHaveLength(0);
   });
 });
+
+describe('Entradas de sistema (piloto)', () => {
+  it('generateAsSystem grava versão draft sem exigir papel e sem atividade', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    const r = await svc.generateAsSystem(WS_A, campaign.id);
+    expect(r.version).toBe(1);
+    expect(r.content.big_idea).toBe('Chopp que une');
+    expect(w.t.campaign_strategies.rows).toEqual([expect.objectContaining({ campaign_id: campaign.id, version: 1, status: 'draft' })]);
+    expect(await svc.latestVersion(WS_A, campaign.id)).toBe(1);
+    expect(await svc.latestVersion('00000000-0000-4000-8000-000000000000', campaign.id)).toBeNull();
+  });
+
+  it('approveVersion aprova e supersede a anterior; versão inexistente = 404', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    await w.t.campaign_strategies.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, version: 1, status: 'approved', content: { big_idea: 'v1' } } });
+    await w.t.campaign_strategies.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, version: 2, status: 'draft', content: { big_idea: 'v2' } } });
+    await svc.approveVersion(WS_A, campaign.id, 2, null);
+    expect(w.t.campaign_strategies.rows.map((r) => [r.version, r.status])).toEqual([[1, 'superseded'], [2, 'approved']]);
+    expect(await status(svc.approveVersion(WS_A, campaign.id, 9, null))).toBe('404:Estratégia não encontrada.');
+  });
+
+  it('createIgPlanAsSystem devolve NO_IG_PLAN sem pilares; createIgPlan mantém a mensagem de hoje', async () => {
+    const { w, svc } = setup();
+    const { campaign } = await seedCampaign(w);
+    expect(await svc.createIgPlanAsSystem(WS_A, campaign.id)).toEqual({ error: 'NO_STRATEGY' });
+    await w.t.campaign_strategies.create({ data: { workspace_id: WS_A, campaign_id: campaign.id, version: 1, status: 'approved', content: { big_idea: 'x' } } });
+    expect(await svc.createIgPlanAsSystem(WS_A, campaign.id)).toEqual({ error: 'NO_IG_PLAN' });
+    expect(await status(svc.createIgPlan(OWNER, campaign.id))).toBe('400:Esta versão da estratégia não tem plano do Instagram. Regere a estratégia.');
+    w.t.campaign_strategies.rows[0]!.content = normalizeStrategy(RAW);
+    const r = await svc.createIgPlanAsSystem(WS_A, campaign.id);
+    expect('planId' in r && w.t.ig_content_plans.rows.find((p) => p.id === r.planId)).toBeTruthy();
+    await w.t.campaigns.update({ where: { id: campaign.id }, data: { status: 'finished' } });
+    expect(await svc.createIgPlanAsSystem(WS_A, campaign.id)).toEqual({ error: 'CAMPAIGN_ENDED' });
+  });
+});
