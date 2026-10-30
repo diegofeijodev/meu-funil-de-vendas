@@ -2,7 +2,7 @@
 
 import { Link, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { AlertTriangle, CircleStop, Rocket, Sparkles } from "lucide-react";
@@ -38,6 +38,8 @@ import { parseMoneyInput } from "@/lib/money-input";
 import { campaignPeriod } from "@/lib/campaign-period";
 import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
+import { PilotPanel } from "@/components/pilot/pilot-panel";
+import { useFeatures } from "@/modules/features/infrastructure/features.api";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
 import { generateCopySmart, type CampaignBrief, type CopyContent } from "@/lib/ai/agents";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
@@ -60,6 +62,9 @@ export function CampaignDetail() {
   const { workspaceId, canEdit, role } = useWorkspace();
   const canManage = role === "owner" || role === "admin";
   const qc = useQueryClient();
+  const { data: features } = useFeatures(workspaceId);
+  // O piloto avisa quando peças ficam prontas: o detalhe recarrega (miniaturas, aba de criativos).
+  const refreshDetail = useCallback(() => void qc.invalidateQueries({ queryKey: ["campaign", id] }), [qc, id]);
   const runSync = useServerFn(syncAdsInsightsNow);
   const runRecos = useServerFn(generateAdsRecommendations);
   const metaStatus = useServerFn(metaAdsStatus);
@@ -567,6 +572,17 @@ export function CampaignDetail() {
           Campanha encerrada: os anúncios ficam pausados e ela não pode ser publicada nem ativada de novo. Os resultados continuam aqui.
         </div>
       ) : null}
+      {features?.campaign_pilot && workspaceId && (
+        <PilotPanel
+          workspaceId={workspaceId}
+          campaign={c}
+          strategy={data.strategy?.content}
+          creatives={data.creatives}
+          canEdit={canEdit}
+          canManage={canManage}
+          onChanged={refreshDetail}
+        />
+      )}
       <div className="mb-6">
         <HowTo title={GUIDES.campaign.title} steps={GUIDES.campaign.steps} references={GUIDES.campaign.references ?? []} />
       </div>
