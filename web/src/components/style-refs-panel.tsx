@@ -117,7 +117,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
                   value={link}
                   onChange={(e) => setLink(e.target.value)}
                 />
-                <Button onClick={() => void addFromPinterest()} disabled={busy === "pin" || !link.trim()}>
+                <Button className="h-11 sm:h-9" onClick={() => void addFromPinterest()} disabled={busy === "pin" || !link.trim()}>
                   {busy === "pin" ? "Buscando…" : "Usar"}
                 </Button>
               </div>
@@ -130,7 +130,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
           )}
           <div>
             <input ref={fileRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
-            <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
+            <Button variant="outline" className="h-11 sm:h-9" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
               {busy === "upload" ? "Enviando…" : "Enviar imagem"}
             </Button>
           </div>
@@ -152,7 +152,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
                   </p>
                 </div>
                 {canEdit && (
-                  <Button variant="ghost" size="sm" onClick={() => void stopSource(s.id)}>
+                  <Button variant="ghost" size="sm" className="h-11 sm:h-8" onClick={() => void stopSource(s.id)}>
                     Parar
                   </Button>
                 )}
@@ -182,7 +182,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
                 {r.status === "failed" && <p className="text-destructive">{r.error}</p>}
               </div>
               {canEdit && (
-                <Button variant="ghost" size="sm" className="self-start" onClick={() => void remove(r.id)}>
+                <Button variant="ghost" size="sm" className="h-11 self-start sm:h-8" onClick={() => void remove(r.id)}>
                   Remover
                 </Button>
               )}

@@ -379,6 +379,15 @@ describe('MetaAdsService.publish — Fatia 0 (data de fim, verba e cidade)', () 
     expect(await status(w.meta.publish(OWNER, WS_A, lost.id))).toBe('400:A Meta não achou a cidade "Cidade Inventada". Escolha de novo na região da campanha.');
   });
 
+  it('várias cidades em texto: se a Meta não acha uma delas, recusa com o nome (não some calada)', async () => {
+    const w = adsWorld();
+    respondPublish(w);
+    const c = w.seedCampaign({ audience: { localizacao: 'Jundiaí, SP; Cidade Inventada' } });
+    w.seedCreative(c.id);
+    expect(await status(w.meta.publish(OWNER, WS_A, c.id))).toBe('400:A Meta não achou a cidade "Cidade Inventada". Escreva como no mapa (ex.: Jundiaí, SP).');
+    expect(postsTo(w, '/campaigns')).toHaveLength(0);
+  });
+
   it('destino que já tem UTM não ganha UTM repetida', async () => {
     const w = adsWorld();
     respondPublish(w);

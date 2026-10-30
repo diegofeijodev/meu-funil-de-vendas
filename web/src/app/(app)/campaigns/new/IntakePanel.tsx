@@ -165,7 +165,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
   /** "Ver/ajustar": o formulário não tem as condições da oferta, então elas são respondidas aqui antes (o servidor exige). */
   const editDetails = () => {
     if (need("offer_terms") && !(offerWhat() && offerUntil && newOnly !== null)) {
-      setErrors({ "q-offer": "Responda as condições da oferta antes de ajustar os detalhes." });
+      setErrors({ "q-offer": "Antes de abrir os detalhes, diga o que é grátis, até quando vale e se é só para empresa nova." });
       document.getElementById("q-offer")?.focus();
       return;
     }
@@ -255,17 +255,20 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
         <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
           <p>{aiError}</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => void send()}>Tentar de novo</Button>
+            <Button variant="outline" size="sm" className="h-11 sm:h-8" onClick={() => void send()}>Tentar de novo</Button>
             <Button variant="ghost" size="sm" onClick={onUseForm}>Preencher formulário ›</Button>
           </div>
         </div>
       )}
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Button variant="link" className="justify-start px-0" onClick={onUseForm}>
-          Prefere ir campo a campo? Preencher formulário ›
-        </Button>
-        <Button onClick={() => void send()} disabled={loading}>
+        <p className="text-sm text-muted-foreground">
+          Prefere ir campo a campo?{" "}
+          <Button variant="link" className="h-11 px-0 sm:h-auto" onClick={onUseForm}>
+            Preencher formulário ›
+          </Button>
+        </p>
+        <Button className="h-11 sm:h-9" variant={res ? "outline" : "default"} onClick={() => void send()} disabled={loading}>
           <Sparkles className="mr-2 size-4" />
           {loading ? "Lendo o seu pedido…" : res ? "Mandar de novo" : "Mandar para o estrategista"}
         </Button>
@@ -349,8 +352,8 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
                 aria-describedby={errors["q-landing"] ? "q-landing-err" : undefined}
               />
               {question("landing_url")?.suggestion && landing.trim() !== question("landing_url")?.suggestion && (
-                <Button variant="outline" size="sm" className="h-auto whitespace-normal text-left" onClick={() => setLanding(question("landing_url")!.suggestion!)}>
-                  Usar o último: {question("landing_url")!.suggestion}
+                <Button variant="outline" size="sm" className="h-auto min-h-11 whitespace-normal break-all text-left" onClick={() => setLanding(question("landing_url")!.suggestion!)}>
+                  Usar o último link: {question("landing_url")!.suggestion}
                 </Button>
               )}
               {fieldError("q-landing")}
@@ -401,7 +404,9 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
                 aria-describedby={errors["q-city"] ? "q-city-help q-city-err" : "q-city-help"}
               />
               <p id="q-city-help" className="text-xs text-muted-foreground">
-                Mais de uma cidade ou o país inteiro: conferimos cada cidade na Meta ao publicar (até 20 km em volta de cada uma).
+                {/^\s*(o\s+)?(brasil|todo\s+o\s+pa[ií]s|nacional)/i.test(regionText)
+                  ? "O anúncio aparece no Brasil inteiro. Para limitar, escreva as cidades separadas por ponto e vírgula (ex.: Jundiaí, SP; Campinas, SP)."
+                  : "Cada cidade é conferida na Meta ao publicar, com até 20 km em volta. Se alguma não for achada, o anúncio não é montado e avisamos qual."}
               </p>
               <Button
                 variant="link"
@@ -412,7 +417,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
                   setRegionText(null);
                 }}
               >
-                Escolher uma cidade na lista da Meta ›
+                Usar só {splitCityUf(regionText.split(/;|,|\se\s/)[0] ?? "").name || "uma cidade"} e escolher na lista ›
               </Button>
               {fieldError("q-city")}
             </div>
@@ -428,7 +433,7 @@ export function IntakePanel({ workspaceId, brands, brandId, onBrandChange, busy,
             <Button variant="link" className="justify-start px-0" onClick={editDetails}>
               Ver/ajustar todos os detalhes ›
             </Button>
-            <Button onClick={create} disabled={busy}>
+            <Button className="h-11 sm:h-9" onClick={create} disabled={busy}>
               {busy ? "Criando a campanha…" : "Criar campanha"}
             </Button>
           </div>

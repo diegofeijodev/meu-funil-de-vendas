@@ -319,8 +319,9 @@ export class MetaOpsService {
       if (!hit) missed.push(part.city);
       else if (!cities.some((c) => c.key === hit.key)) cities.push({ key: hit.key, radius: 20, distance_unit: 'kilometer', name: hit.name });
     }
-    // Nunca "Brasil inteiro" por engano: sem nenhuma cidade achada, a publicação para aqui (antes de criar algo na Meta).
+    // Nunca "Brasil inteiro" por engano, e nunca menos cidades do que o pedido: qualquer cidade não achada para aqui (antes de criar algo na Meta).
     if (!cities.length) throw geoError(`A Meta não achou a cidade "${text}". Escreva como no mapa (ex.: Jundiaí, SP).`);
+    if (missed.length) throw geoError(`A Meta não achou a cidade "${missed.join('", "')}". Escreva como no mapa (ex.: Jundiaí, SP).`);
     const label = `${cities.map((c) => c.name).join(', ')} (raio de 20 km)${missed.length ? `; a Meta não achou: ${missed.join(', ')}` : ''}`;
     return { geo: { cities: cities.map(({ name: _n, ...c }) => c) }, label };
   }

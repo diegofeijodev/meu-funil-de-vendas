@@ -165,18 +165,22 @@ export function NewCampaign() {
         <HowTo title={GUIDES.campaignNew.title} steps={GUIDES.campaignNew.steps} references={GUIDES.campaignNew.references ?? []} />
       </div>
 
-      {currentMode === "intake" && workspaceId && brand ? (
-        <IntakePanel
-          workspaceId={workspaceId}
-          brands={brands.map((b) => ({ id: b.id, name: b.name }))}
-          brandId={brand.id}
-          onBrandChange={setBrandId}
-          busy={busy}
-          onCreate={(input) => void finish(input)}
-          onEditDetails={applyDraft}
-          onUseForm={() => setMode("form")}
-        />
-      ) : (
+      {/* A conversa fica montada (escondida) no formulário: "Voltar para o resumo" não perde o texto nem as respostas. */}
+      {features?.campaign_intake && workspaceId && brand && (
+        <div hidden={currentMode !== "intake"}>
+          <IntakePanel
+            workspaceId={workspaceId}
+            brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+            brandId={brand.id}
+            onBrandChange={setBrandId}
+            busy={busy}
+            onCreate={(input) => void finish(input)}
+            onEditDetails={applyDraft}
+            onUseForm={() => setMode("form")}
+          />
+        </div>
+      )}
+      {currentMode === "form" && (
       <>
 
       <div className="mb-6 flex flex-wrap gap-2">
@@ -350,9 +354,15 @@ export function NewCampaign() {
         )}
 
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <Button variant="ghost" onClick={() => (step === 0 ? navigate({ to: "/campaigns" }) : setStep(step - 1))}>
-            {step === 0 ? "Cancelar" : "Voltar"}
-          </Button>
+          {step === 0 && features?.campaign_intake ? (
+            <Button variant="ghost" className="h-11 sm:h-9" onClick={() => setMode("intake")}>
+              ‹ Voltar para o resumo
+            </Button>
+          ) : (
+            <Button variant="ghost" className="h-11 sm:h-9" onClick={() => (step === 0 ? navigate({ to: "/campaigns" }) : setStep(step - 1))}>
+              {step === 0 ? "Cancelar" : "Voltar"}
+            </Button>
+          )}
           {step < STEPS.length - 1 ? (
             <Button onClick={() => setStep(step + 1)} disabled={!canNext()}>
               Continuar

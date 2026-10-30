@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CAMPAIGN_STATUS, CREATIVE_STATUS, FORMATS, OBJECTIVES } from "@/lib/labels";
 import { brl, fullDate, num } from "@/lib/format";
 import { parseMoneyInput } from "@/lib/money-input";
+import { campaignPeriod } from "@/lib/campaign-period";
 import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
 import { computeKpis, type PerformanceRow } from "@/lib/metrics";
@@ -189,7 +190,7 @@ export function CampaignDetail() {
       setBudgetIn("");
       setBudgetTotalIn("");
       await qc.invalidateQueries({ queryKey: ["campaign", id] });
-      toast.success(`Verba salva: ${brl(daily)} por dia.`);
+      toast.success(metaId ? "Verba anotada. Na Meta, nada mudou." : `Verba salva: ${brl(daily)} por dia.`);
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível salvar a verba"));
     } finally {
@@ -425,6 +426,8 @@ export function CampaignDetail() {
     }
   };
   const ended = c.status === "finished";
+  // Fim do período (Brasília): encerrado não publica nem liga; último dia liga, mas não publica (a Meta pede 24 h).
+  const period = campaignPeriod(c.end_date);
   const metaId = (c as { meta_campaign_id?: string | null }).meta_campaign_id;
   // Verba e cidade ainda podem mudar aqui (depois de publicada, o anúncio vive na Meta). Depois do pedido de aprovação, só dono/admin.
   const canChangeTerms = canEdit && (c.status === "draft" || canManage);
@@ -470,7 +473,7 @@ export function CampaignDetail() {
                 Pausar na Meta
               </Button>
             )}
-            {canEdit && canManage && metaId && metaDelivery !== "ACTIVE" && (c.status === "approved" || c.status === "active") && (
+            {canEdit && canManage && metaId && metaDelivery !== "ACTIVE" && period !== "ended" && (c.status === "approved" || c.status === "active") && (
               <Button variant="outline" disabled={busy === "delivery"} onClick={() => setDelivery("ACTIVE")}>
                 Ativar na Meta
               </Button>
@@ -485,7 +488,7 @@ export function CampaignDetail() {
                 {busy === "end" ? "Cancelando..." : "Cancelar os posts agendados"}
               </Button>
             )}
-            {canEdit && !metaId && (c.status === "approved" || c.status === "active") && (
+            {canEdit && !metaId && period === "open" && (c.status === "approved" || c.status === "active") && (
               <Button onClick={publish} disabled={busy === "publish"}>
                 <Rocket className="mr-2 size-4" />
                 {busy === "publish" ? "Publicando..." : "Publicar na Meta"}
@@ -604,11 +607,26 @@ export function CampaignDetail() {
         </div>
       )}
 
-      {budgetFixable && !(Number(c.budget_daily) > 0) && (
+      {!ended && period !== "open" && (!metaId || period === "ended") && (
+        <div role="status" className="panel mb-6 border-amber-500/40 p-5">
+          <p className="text-sm font-semibold">
+            {period === "ended"
+              ? `O período desta campanha terminou em ${fullDate(c.end_date)}. Crie uma campanha nova para anunciar de novo.`
+              : "Esta campanha termina hoje: a Meta pede pelo menos 24 horas de anúncio. Crie uma campanha nova com mais dias."}
+          </p>
+          <Button asChild className="mt-3 h-11 sm:h-9">
+            <Link to="/campaigns/new">Criar campanha nova</Link>
+          </Button>
+        </div>
+      )}
+
+      {budgetFixable && period === "open" && !(Number(c.budget_daily) > 0) && (
         <div id="fix-budget" className="panel mb-6 border-amber-500/40 p-5">
           <p className="text-sm font-semibold">Falta a verba por dia</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Quanto o anúncio pode gastar por dia. Sem ela a campanha não vai para a Meta (antes ia com R$ 20 sem avisar).
+            {metaId
+              ? "O anúncio já está na Meta e continua com o valor de lá. Este número serve para o Google/TikTok e para os relatórios. Para mudar o gasto, mude no Gerenciador de Anúncios da Meta."
+              : "Quanto o anúncio pode gastar por dia. Sem isso não dá para publicar na Meta."}
           </p>
           <form
             className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end"
@@ -631,14 +649,14 @@ export function CampaignDetail() {
                 className="sm:w-48"
               />
             </label>
-            <Button type="submit" disabled={busy === "budget" || !budgetIn.trim()}>
+            <Button type="submit" className="h-11 sm:h-9" disabled={busy === "budget" || !budgetIn.trim()}>
               {busy === "budget" ? "Salvando..." : "Salvar verba"}
             </Button>
           </form>
         </div>
       )}
 
-      {fixableBeforeMeta && (!city || geoProblem) && (
+      {fixableBeforeMeta && period === "open" && (!city || geoProblem) && (
         <div id="fix-city" className="panel mb-6 border-amber-500/40 p-5">
           <p className="text-sm font-semibold">{city ? "A Meta não achou esta cidade" : "Em que cidade o anúncio aparece"}</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -659,6 +677,7 @@ export function CampaignDetail() {
             )}
             <Button
               type="submit"
+              className="h-11 sm:h-9"
               disabled={busy === "city" || !(geoIn ?? regionFromCampaign)?.name || (geoProblem && !geoIn && !regionFromCampaign?.meta_key)}
             >
               {busy === "city" ? "Salvando..." : "Salvar região"}
