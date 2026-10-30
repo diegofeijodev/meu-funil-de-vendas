@@ -190,6 +190,15 @@ automático referências do pinterest, se sim, implemente". Depois: "vá seguind
    - Pin de vídeo: o RSS traz a capa; ela vira referência de imagem. Vídeo em si fica fora.
    - Risco: a Pinterest pode barrar IP de nuvem. Antes de ligar em produção, testar um `curl` do RSS de dentro do EC2. Se barrar, sobra o envio
      manual (F5).
+6. **30/10 — no ar e decisão do portão.** F0–F2 e F5/F6 subiram em 30/10 (API `pre-2026-10-30` de volta; web na Vercel). Conferido com
+   `/chrome` na Freela App: Meta conectada (conta `act_602171464691993` "Freela", ativa, BRL; Página Freela; Instagram @freelaservicos), RSS do
+   Pinterest responde do EC2. Resposta literal do Denner sobre o piloto: "Faz do jeito que ele pediu, opção 1 e pode fazer agora".
+   - **Portão = G1** (`meta.review_creatives = false` no pacote): o piloto aprova só os criativos dele com nota ≥ 28/50 (vídeo ≥ `MIN_VIDEO_SCORE`)
+     e monta o anúncio **pausado**; a pessoa ainda tira uma arte na conferência ("Não usar esta arte") e liga com um toque.
+   - **Modo do Instagram no pacote: `approval` por padrão** — recomendação da §4 #4, *decisão da consolidação, não do dono*; o pacote deixa trocar.
+   - Achado na Meta (29/10): o "Conjunto 1" de uma campanha com destino WhatsApp foi recusado porque o WhatsApp da Página é conta pessoal. O piloto
+     não escolhe destino (vem do intake); o bloqueio aparece como erro da etapa meta.
+   - `OFFER_UNCONFIRMED` ainda **não existe** no Ativar (a F1 só grava `offer_terms`): a guarda e o "Confirmo que o Freela cumpre" são da F4.
 
 ---
 
