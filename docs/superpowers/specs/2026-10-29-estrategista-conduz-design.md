@@ -177,6 +177,9 @@ automático referências do pinterest, se sim, implemente". Depois: "vá seguind
    - Link: `https://www.freelaservicos.com.br/cadastro?perfil=empresa`. Política de privacidade: `https://www.freelaservicos.com.br/privacidade`.
    - No Meu Funil (genérico, vale para qualquer empresa): o intake pergunta o link de destino e sugere o último usado pela empresa. Ao publicar, o
      sistema **acrescenta** `utm_source=meta&utm_medium=paid_social&utm_campaign=<slug da campanha>` quando o link não tem UTM.
+     *(Código real, `ads-utm.ts`: `utm_medium=paid` e `utm_campaign` = nome da campanha.)*
+   - **Objetivo = Tráfego (decidido pelo Denner em 03/11).** O intake já cria assim: a tela troca o `leads` da IA por `traffic`
+     (`IntakePanel.tsx`, `toTraffic`). `leads` (formulário instantâneo da Meta) só se alguém escolher à mão.
 3. **Verba configurável.** Sem padrão: valor por dia obrigatório no intake e teto do mês opcional (`budget_total`), editáveis pela rota de verba.
 4. **Meta conectada:** não deu para conferir em 29/10 à noite (a leitura da produção foi barrada e o Claude in Chrome não estava ligado na sessão).
    Só a F4 depende disso. Conferir em Integrações com `/chrome` ligado.

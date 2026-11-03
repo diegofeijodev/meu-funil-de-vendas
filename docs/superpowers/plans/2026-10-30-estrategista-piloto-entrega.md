@@ -19,9 +19,11 @@ Branch `feat/estrategista-piloto` (sobre `bac3c32`, que é o `stack-freela` no a
 4. `bash ~/meufunil-deploy/subir-web.sh`.
 Voltar: `cd /opt/meu-funil && IMAGE_TAG=pre-piloto-2026-10-30 docker compose -f docker-compose.prod.yml up -d --no-build api` (e desligar `CAMPAIGN_PILOT_ENABLED`).
 
-## Decisão pendente do dono
-O intake escolhe o objetivo pela IA; para "cadastros" quase sempre `leads` = **formulário instantâneo da Meta** (o contato fica na Meta / CRM do Meu Funil),
-não a página de cadastro do Freela combinada em 29/10 (§0.8 #2). Para levar à página: objetivo "Tráfego" na campanha. A conferência mostra qual é.
+## Objetivo da campanha de Jundiaí: decidido 03/11 (Denner) = Tráfego para o site
+A IA do intake devolve `leads` para "cadastros", mas a tela do intake (`IntakePanel.tsx`, `toTraffic`, desde 29/10 `c0177cbf`) já troca `leads` por
+`traffic` ao criar e ao abrir "Ver/ajustar": a campanha criada pela conversa leva à página de cadastro do Freela (§0.8 #2), com
+`utm_source=meta&utm_medium=paid&utm_campaign=<nome>` (`ads-utm.ts`). Nada a mudar no código. Só o formulário sem conversa ("Usar o formulário")
+começa em Leads: aí é escolher Tráfego. A conferência mostra o destino real antes de ligar.
 
 ## Decisões que tomei e pendências (copiadas dos ledgers)
 
