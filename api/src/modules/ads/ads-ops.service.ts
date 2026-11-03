@@ -30,6 +30,7 @@ const APPLY_LEASE_MS = 10 * 60 * 1000;
 /** Intervalo mínimo entre duas sincronizações manuais de 30 dias da mesma empresa. */
 const SYNC_COOLDOWN_MS = 60 * 1000;
 const EXECUTABLE = new Set(['pause_ad', 'activate_ad', 'increase_budget', 'decrease_budget']);
+export const MSG_AD_EXCLUDED = 'Esta arte foi tirada do anúncio ("Não usar esta arte"): o anúncio dela fica desligado.';
 const daysAgo = (n: number) => addDays(todaySp(), -n);
 const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
 
@@ -412,6 +413,17 @@ export class AdsOpsService {
     return true;
   }
 
+  /** O anúncio é de uma arte marcada "Não usar esta arte" na conferência (`meta_ad_map` → criativo com `extras.excluded_from_ads_at`). */
+  private async adOfExcludedCreative(rec: { campaign_id: string | null; workspace_id: string }, adId: string): Promise<boolean> {
+    if (!rec.campaign_id) return false;
+    const c = await this.prisma.campaigns.findFirst({ where: { id: rec.campaign_id, workspace_id: rec.workspace_id }, select: { meta_ad_map: true } });
+    const map = (c?.meta_ad_map && typeof c.meta_ad_map === 'object' ? c.meta_ad_map : {}) as Record<string, { creativeId?: string } | undefined>;
+    const creativeId = map[adId]?.creativeId;
+    if (!creativeId) return false;
+    const cr = await this.prisma.creatives.findFirst({ where: { id: creativeId, workspace_id: rec.workspace_id }, select: { extras: true } });
+    return !!(cr?.extras as { excluded_from_ads_at?: string } | null)?.excluded_from_ads_at;
+  }
+
   /**
    * Recupera recomendações presas em "applying" (o processo caiu entre a reserva e o resultado): reserva com mais de 10 min
    * (ou sem carimbo, de antes da coluna) volta a "pending" e pode ser aplicada ou descartada de novo. Uma reserva viva
@@ -444,6 +456,7 @@ export class AdsOpsService {
     try {
       if (EXECUTABLE.has(rec.action)) {
         if (!(await this.targetBelongs(rec, p))) throw new UserError('Recomendação sem alvo válido.');
+        if (rec.action === 'activate_ad' && p.adId && (await this.adOfExcludedCreative(rec, p.adId))) throw new UserError(MSG_AD_EXCLUDED);
         result = await guarded(async () => {
           if (rec.action === 'pause_ad' && p.adId) {
             await this.ops.setAdStatus(ws, p.adId, 'PAUSED');

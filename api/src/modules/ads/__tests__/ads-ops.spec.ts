@@ -290,6 +290,27 @@ describe('decidir recomendação (2.2)', () => {
     expect(r.applied_at).toBeInstanceOf(Date);
   });
 
+  it('"ativar anúncio" de uma arte tirada na conferência ("Não usar esta arte") é recusado e nada liga na Meta', async () => {
+    const w = adsWorld();
+    const c = publishedCamp(w);
+    const cr = w.seedCreative(c.id, { status: 'approved', extras: { excluded_from_ads_at: new Date().toISOString() } });
+    c.meta_ad_map = { '9302': { creativeId: cr.id } };
+    const r = rec(w, c, { action: 'activate_ad', payload: { executable: true, adId: '9302' } });
+    expect(await status(w.adsOps.decide(OWNER, r.id, 'apply'))).toBe('400:Esta arte foi tirada do anúncio ("Não usar esta arte"): o anúncio dela fica desligado.');
+    expect(w.calls).toHaveLength(0);
+    expect(r.status).toBe('pending');
+  });
+
+  it('"ativar anúncio" de arte que não foi tirada continua ligando', async () => {
+    const w = adsWorld();
+    const c = publishedCamp(w);
+    const cr = w.seedCreative(c.id, { status: 'approved' });
+    c.meta_ad_map = { '9302': { creativeId: cr.id } };
+    const r = rec(w, c, { action: 'activate_ad', payload: { executable: true, adId: '9302' } });
+    expect(await w.adsOps.decide(OWNER, r.id, 'apply')).toEqual({ result: 'Anúncio ativado na Meta.' });
+    expect(w.calls).toEqual([expect.objectContaining({ path: '/9302', opts: expect.objectContaining({ params: { status: 'ACTIVE' } }) })]);
+  });
+
   it('aumento de verba é limitado a +30% sobre a verba atual', async () => {
     const w = adsWorld();
     const c = publishedCamp(w);
