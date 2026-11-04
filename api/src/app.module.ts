@@ -6,6 +6,7 @@ import { EnvModule } from './common/config/env.module';
 import { PrismaModule } from './common/database/prisma.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { HealthModule } from './common/health/health.module';
+import { HealthAlertsModule } from './modules/health-alerts/health-alerts.module';
 import { WireInterceptor } from './common/http/wire.interceptor';
 import { AccessModule } from './modules/access/access.module';
 import { ActivityModule } from './modules/activity/activity.module';
@@ -56,6 +57,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     ActivityModule,
     BrandsModule,
     OverviewModule,
+    HealthAlertsModule,
     SetupModule,
     AgencyModule,
     CampaignsModule,
