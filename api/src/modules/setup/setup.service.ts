@@ -3,6 +3,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
+import { AiCreditAlertsService, AiCreditStatus } from '../ai/ai-credit-alerts.service';
 import { AiKeysService } from '../ai/ai-keys.service';
 import { CrmDefaultsService } from '../crm-defaults/crm-defaults.service';
 import { VaultService } from '../vault/vault.service';
@@ -12,6 +13,19 @@ const ago = (iso: Date, now: number) => {
   const min = Math.round((now - iso.getTime()) / 60000);
   return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} dias`;
 };
+
+/** "o ChatGPT (OpenAI) e o Gemini (Google)" — os provedores sem saldo, na ordem do aviso. */
+const vendorList = (st: AiCreditStatus) => {
+  const names = st.vendors.map((v) => `o ${v.label}`);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}` : (names[0] ?? 'a IA');
+};
+
+/** Frase do checklist quando a IA PAROU por falta de saldo (contrato §12). */
+export function creditStoppedDetail(st: AiCreditStatus): string {
+  const verb = st.vendors.length > 1 ? 'recusaram' : 'recusou';
+  const inherited = st.inherited_from ? ` A IA desta empresa vem da ${st.inherited_from.name}.` : '';
+  return `Sua IA está sem créditos: ${vendorList(st)} ${verb} os pedidos por falta de saldo. Coloque créditos e clique em Testar em Integrações.${inherited}`;
+}
 
 const META_KEYS = ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID'] as const;
 
@@ -31,6 +45,7 @@ export class SetupService {
     private readonly aiKeys: AiKeysService,
     private readonly crmDefaults: CrmDefaultsService,
     @Inject(ENV) private readonly env: Env,
+    private readonly aiAlerts: AiCreditAlertsService,
   ) {}
 
   async status(userId: string, ws: string, now = Date.now()): Promise<{ items: SetupItem[] }> {
@@ -74,21 +89,27 @@ export class SetupService {
       this.aiKeys.get(ws, 'openai'), this.aiKeys.get(ws, 'gemini'), this.higgsfieldConnected(ws), this.canvaConnected(ws),
     ]);
     const ownText = !!(oKey || gKey); // Higgsfield só gera imagem/vídeo: não substitui a IA de texto
+    // Chave sem saldo (aviso gravado nas chamadas e no "Testar"): parada = nenhuma IA responde (contrato §30).
+    const credit = ownText ? await this.aiAlerts.status(ws) : null;
+    const stopped = credit?.level === 'stopped';
     add({
       key: 'app-ai', group: 'Conexões', label: 'IA do app',
-      status: appAi ? 'ok' : ownText ? 'optional' : 'error',
+      status: appAi ? 'ok' : stopped ? 'error' : ownText ? 'optional' : 'error',
       detail: appAi
         ? 'Disponível para estratégia, copy, imagens e SDR.'
-        : ownText
-          ? 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).'
-          : 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.',
-      link: '/integrations', required: appAi || !ownText,
+        : stopped
+          ? creditStoppedDetail(credit)
+          : ownText
+            ? 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).'
+            : 'Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações.',
+      link: '/integrations', required: appAi || stopped || !ownText,
     });
     const own = [oKey && 'OpenAI', gKey && 'Gemini', higgs && 'Higgsfield'].filter(Boolean);
+    const noCredit = credit ? ` Sem créditos: ${credit.vendors.map((v) => v.label).join(' e ')}.` : '';
     add({
-      key: 'own-ai', group: 'Conexões', label: 'Contas de IA próprias ou da agência', status: own.length ? 'ok' : appAi ? 'optional' : 'pending',
+      key: 'own-ai', group: 'Conexões', label: 'Contas de IA próprias ou da agência', status: stopped ? 'error' : own.length ? 'ok' : appAi ? 'optional' : 'pending',
       detail: own.length
-        ? `Conectadas: ${own.join(', ')}.`
+        ? `Conectadas: ${own.join(', ')}.${noCredit}`
         : appAi
           ? 'Opcional: conecte Higgsfield, OpenAI ou Gemini para gerar com a sua conta (sem gastar créditos do app).'
           : 'Conecte a chave da OpenAI ou do Gemini: é ela que a IA usa para estratégia, copy e imagens.',

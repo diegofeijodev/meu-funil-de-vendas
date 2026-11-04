@@ -9,6 +9,7 @@ const NOW = Date.parse('2026-10-02T12:00:00Z');
 type Over = {
   role?: string | null; brands?: any[]; strategies?: any[]; published?: any; ig?: any; crm?: any[]; sdr?: any; stages?: any[]; beats?: any[];
   vault?: Record<string, string>; env?: Record<string, string>; aiKeys?: Record<string, string>; mcp?: boolean;
+  credit?: any;
 };
 
 function setup(o: Over = {}) {
@@ -28,7 +29,8 @@ function setup(o: Over = {}) {
   const aiKeys: any = { get: async (_ws: string, v: string) => o.aiKeys?.[v] ?? null, inheritSource: async () => null };
   const ensured: string[] = [];
   const crmDefaults: any = { ensure: async (ws: string) => ensured.push(ws) };
-  const svc = new SetupService(prisma, new WorkspaceAccessService(prisma), vault, aiKeys, crmDefaults, { AI_GATEWAY_URL: 'http://gw', AI_GATEWAY_API_KEY: 'k', ...o.env } as any);
+  const aiAlerts: any = { status: async () => o.credit ?? null };
+  const svc = new SetupService(prisma, new WorkspaceAccessService(prisma), vault, aiKeys, crmDefaults, { AI_GATEWAY_URL: 'http://gw', AI_GATEWAY_API_KEY: 'k', ...o.env } as any, aiAlerts);
   return { svc, ensured };
 }
 
@@ -78,6 +80,28 @@ describe('SetupService.status', () => {
     // Só Higgsfield (imagem/vídeo) não substitui a IA de texto.
     const { items } = await setup({ env: { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' }, mcp: true }).svc.status(USER, WS, NOW);
     expect(byKey(items, 'app-ai').status).toBe('error');
+  });
+
+  it('IA PARADA por falta de saldo: "IA do app" vira erro com a frase do crédito (e não "Tudo certo…"); contas próprias listam quem está sem saldo', async () => {
+    const noGw = { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' };
+    const v = (vendor: string, label: string) => ({ vendor, label, since: new Date(NOW), last_at: new Date(NOW), message: 'x', owner_id: WS });
+    const both = { level: 'stopped', fallback: null, inherited_from: null, vendors: [v('openai', 'ChatGPT (OpenAI)'), v('gemini', 'Gemini (Google)')] };
+    const { items } = await setup({ env: noGw, aiKeys: { openai: 'sk', gemini: 'AIza' }, credit: both }).svc.status(USER, WS, NOW);
+    expect(byKey(items, 'app-ai')).toMatchObject({
+      status: 'error', required: true,
+      detail: 'Sua IA está sem créditos: o ChatGPT (OpenAI) e o Gemini (Google) recusaram os pedidos por falta de saldo. Coloque créditos e clique em Testar em Integrações.',
+    });
+    expect(byKey(items, 'own-ai')).toMatchObject({ status: 'error', detail: 'Conectadas: OpenAI, Gemini. Sem créditos: ChatGPT (OpenAI) e Gemini (Google).' });
+    // Herança: cita a empresa de onde vem a IA; um provedor só fica no singular.
+    const one = { ...both, vendors: [v('openai', 'ChatGPT (OpenAI)')], inherited_from: { id: 'x', name: 'Freela App' } };
+    expect(byKey((await setup({ env: noGw, aiKeys: { openai: 'sk' }, credit: one }).svc.status(USER, WS, NOW)).items, 'app-ai').detail).toBe(
+      'Sua IA está sem créditos: o ChatGPT (OpenAI) recusou os pedidos por falta de saldo. Coloque créditos e clique em Testar em Integrações. A IA desta empresa vem da Freela App.',
+    );
+    // Parcial (o outro provedor segura): "IA do app" continua "Tudo certo…"; as contas próprias avisam quem está sem saldo.
+    const partial = { level: 'partial', fallback: 'gemini', inherited_from: null, vendors: [v('openai', 'ChatGPT (OpenAI)')] };
+    const p = (await setup({ env: noGw, aiKeys: { openai: 'sk', gemini: 'AIza' }, credit: partial }).svc.status(USER, WS, NOW)).items;
+    expect(byKey(p, 'app-ai')).toMatchObject({ status: 'optional', detail: 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).' });
+    expect(byKey(p, 'own-ai')).toMatchObject({ status: 'ok', detail: 'Conectadas: OpenAI, Gemini. Sem créditos: ChatGPT (OpenAI).' });
   });
 
   it('marca completa, estratégia aprovada e campanha publicada', async () => {
