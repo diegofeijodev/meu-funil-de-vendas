@@ -14,17 +14,20 @@ const ago = (iso: Date, now: number) => {
   return min < 60 ? `${min} min` : min < 48 * 60 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} dias`;
 };
 
-/** "o ChatGPT (OpenAI) e o Gemini (Google)" — os provedores sem saldo, na ordem do aviso. */
-const vendorList = (st: AiCreditStatus) => {
-  const names = st.vendors.map((v) => `o ${v.label}`);
-  return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}` : (names[0] ?? 'a IA');
-};
+const joinPt = (items: string[]) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} e ${items[items.length - 1]}` : (items[0] ?? ''));
 
-/** Frase do checklist quando a IA PAROU por falta de saldo (contrato §12). */
+/**
+ * Frase do checklist quando a IA PAROU (contrato §12): por falta de saldo ("coloque créditos") e/ou pela cota de hoje do modelo de
+ * texto ("volta sozinho amanhã") — cada provedor com o seu motivo.
+ */
 export function creditStoppedDetail(st: AiCreditStatus): string {
-  const verb = st.vendors.length > 1 ? 'recusaram' : 'recusou';
+  const noCredit = st.vendors.filter((v) => v.reason === 'no_credit').map((v) => `o ${v.label}`);
+  const daily = st.vendors.filter((v) => v.reason === 'daily_limit').map((v) => `o ${v.label}`);
   const inherited = st.inherited_from ? ` A IA desta empresa vem da ${st.inherited_from.name}.` : '';
-  return `Sua IA está sem créditos: ${vendorList(st)} ${verb} os pedidos por falta de saldo. Coloque créditos e clique em Testar em Integrações.${inherited}`;
+  const credit = noCredit.length ? `${joinPt(noCredit)} ${noCredit.length > 1 ? 'recusaram' : 'recusou'} os pedidos por falta de saldo` : '';
+  const limit = daily.length ? `${joinPt(daily)} ${daily.length > 1 ? 'chegaram' : 'chegou'} ao limite de uso de hoje` : '';
+  if (!credit) return `A IA parou até amanhã: ${limit}. Volta sozinha amanhã, ou antes se você colocar créditos e clicar em Testar em Integrações.${inherited}`;
+  return `Sua IA está sem créditos: ${limit ? `${credit} e ${limit}` : credit}. Coloque créditos e clique em Testar em Integrações.${inherited}`;
 }
 
 const META_KEYS = ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID'] as const;
@@ -105,7 +108,11 @@ export class SetupService {
       link: '/integrations', required: appAi || stopped || !ownText,
     });
     const own = [oKey && 'OpenAI', gKey && 'Gemini', higgs && 'Higgsfield'].filter(Boolean);
-    const noCredit = credit ? ` Sem créditos: ${credit.vendors.map((v) => v.label).join(' e ')}.` : '';
+    const byReason = (r: string) => (credit?.vendors ?? []).filter((v) => v.reason === r).map((v) => v.label);
+    const noCredit = [
+      byReason('no_credit').length ? ` Sem créditos: ${byReason('no_credit').join(' e ')}.` : '',
+      byReason('daily_limit').length ? ` No limite de uso de hoje: ${byReason('daily_limit').join(' e ')}.` : '',
+    ].join('');
     add({
       key: 'own-ai', group: 'Conexões', label: 'Contas de IA próprias ou da agência', status: stopped ? 'error' : own.length ? 'ok' : appAi ? 'optional' : 'pending',
       detail: own.length

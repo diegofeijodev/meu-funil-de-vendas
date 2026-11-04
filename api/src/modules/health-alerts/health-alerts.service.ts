@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
-import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
+import { AiAlertReason, AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
 import { AiVendor } from '../ai/ai.types';
 
 /** Janela dos posts do Instagram que falharam e ainda estão como falha. */
@@ -12,7 +12,7 @@ const META_PERMISSION = /Permissão insuficiente na Meta|\(#(?:10|200)\)|does no
 export type HealthAlerts = {
   ai: null | {
     level: 'stopped' | 'partial';
-    vendors: { vendor: AiVendor; label: string; since: Date; last_at: Date }[];
+    vendors: { vendor: AiVendor; label: string; reason: AiAlertReason; since: Date; last_at: Date }[];
     fallback: AiVendor | 'app' | null;
     inherited_from: { id: string; name: string } | null;
   };
@@ -37,7 +37,7 @@ export class HealthAlertsService {
     if (!st) return null;
     return {
       level: st.level,
-      vendors: st.vendors.map(({ vendor, label, since, last_at }) => ({ vendor, label, since, last_at })),
+      vendors: st.vendors.map(({ vendor, label, reason, since, last_at }) => ({ vendor, label, reason, since, last_at })),
       fallback: st.fallback,
       inherited_from: st.inherited_from,
     };

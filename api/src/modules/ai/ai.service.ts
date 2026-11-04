@@ -3,7 +3,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl } from '../media/external-fetch';
 import { AiDownloadBlockedError, AiError } from './ai-error';
-import { AiCreditAlertsService } from './ai-credit-alerts.service';
+import { AiCreditAlertsService, AiKeyUse } from './ai-credit-alerts.service';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
@@ -129,18 +129,21 @@ export class AiService {
   }
 
   /**
-   * Toda chamada com a chave própria passa por aqui: deu certo → apaga o aviso de créditos daquele provedor; falhou por falta de saldo →
-   * grava o aviso na empresa dona da chave. O erro segue para quem chamou (o aviso é best-effort e nunca lança).
+   * Toda chamada com a chave própria passa por aqui: deu certo → apaga o aviso de créditos daquele provedor (sem tocar o banco quando o
+   * cache já sabe que não há aviso); falhou por falta de saldo → grava o aviso na empresa dona da chave; cota de hoje → grava só se for o
+   * modelo de texto (`scope: 'text'`; a de imagem/vídeo é do modelo, não da chave). O erro segue para quem chamou (o aviso nunca lança).
    */
-  private async ownKey<T>(workspaceId: string, vendor: AiVendor, call: () => Promise<T>): Promise<T> {
+  private async ownKey<T>(use: AiKeyUse, call: () => Promise<T>): Promise<T> {
     let out: T;
     try {
       out = await call();
     } catch (e) {
-      if (e instanceof VendorKeyError && e.kind === 'noCredit') await this.alerts?.exhausted(workspaceId, e.vendor, e.message);
+      if (e instanceof VendorKeyError && (e.kind === 'noCredit' || e.kind === 'dailyLimit')) {
+        await this.alerts?.exhausted(use, e.kind === 'noCredit' ? 'no_credit' : 'daily_limit', e.message);
+      }
       throw e;
     }
-    await this.alerts?.recovered(workspaceId, vendor);
+    await this.alerts?.recovered(use);
     return out;
   }
 
@@ -232,10 +235,10 @@ export class AiService {
     const prompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
     const fails: KeyFailure[] = [];
     if (o) {
-      try { return await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, prompt, false)); } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
+      try { return await this.ownKey({ workspaceId, vendor: 'openai', key: o, scope: 'text' }, () => this.openaiText(o, prompt, false)); } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
-      try { return await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, [{ text: prompt }], false)); } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
+      try { return await this.ownKey({ workspaceId, vendor: 'gemini', key: g, scope: 'text' }, () => this.geminiText(g, [{ text: prompt }], false)); } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
     this.requireGatewayOr(fails, [o, g]);
     const j = await this.gatewayChat(this.model(req.model), prompt);
@@ -259,13 +262,13 @@ export class AiService {
         const content = images.length
           ? [...images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${b64(i.bytes)}` } })), { type: 'text', text: visionText }]
           : full;
-        return parseJsonLoose(await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, content, true)));
+        return parseJsonLoose(await this.ownKey({ workspaceId, vendor: 'openai', key: o, scope: 'text' }, () => this.openaiText(o, content, true)));
       } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
       try {
         const parts = [...images.map((i) => ({ inlineData: { mimeType: i.mime, data: b64(i.bytes) } })), { text: images.length ? visionText : full }];
-        return parseJsonLoose(await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, parts, true)));
+        return parseJsonLoose(await this.ownKey({ workspaceId, vendor: 'gemini', key: g, scope: 'text' }, () => this.geminiText(g, parts, true)));
       } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
     this.requireGatewayOr(fails, [o, g]);
@@ -286,11 +289,11 @@ export class AiService {
     const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
     const fails: KeyFailure[] = [];
     if ((engine === 'chatgpt' || engine === 'auto') && o) {
-      try { return { content: parseJsonLoose(await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, req.prompt, true))), engine: 'Sua conta OpenAI' }; }
+      try { return { content: parseJsonLoose(await this.ownKey({ workspaceId, vendor: 'openai', key: o, scope: 'text' }, () => this.openaiText(o, req.prompt, true))), engine: 'Sua conta OpenAI' }; }
       catch (e) { fails.push({ vendor: 'openai', error: e }); }
     }
     if ((engine === 'gemini' || engine === 'auto') && g) {
-      try { return { content: parseJsonLoose(await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, [{ text: req.prompt }], true))), engine: 'Sua conta Gemini' }; }
+      try { return { content: parseJsonLoose(await this.ownKey({ workspaceId, vendor: 'gemini', key: g, scope: 'text' }, () => this.geminiText(g, [{ text: req.prompt }], true))), engine: 'Sua conta Gemini' }; }
       catch (e) { fails.push({ vendor: 'gemini', error: e }); }
     }
     if (fails.length) this.logger.warn(this.redact(`chaves próprias falharam: ${fails.map((f) => `${f.vendor}: ${f.error instanceof Error ? f.error.message : 'falhou'}`).join(' | ')}`, [o, g]));
@@ -365,7 +368,7 @@ export class AiService {
     const fails: KeyFailure[] = [];
     if (userKey) {
       try {
-        const r = await this.ownKey(workspaceId, req.vendor, () => (req.vendor === 'openai' ? this.openaiDirectImage(userKey, req) : this.geminiDirectImage(userKey, req)));
+        const r = await this.ownKey({ workspaceId, vendor: req.vendor, key: userKey, scope: 'media' }, () => (req.vendor === 'openai' ? this.openaiDirectImage(userKey, req) : this.geminiDirectImage(userKey, req)));
         return { ...r, cost: 0, note: req.vendor === 'openai' ? 'ChatGPT (chave do workspace)' : 'Gemini (chave do workspace)' };
       } catch (e) {
         if (req.strict) throw e;
@@ -485,7 +488,7 @@ export class AiService {
     const fails: KeyFailure[] = [];
     if (userKey) {
       try {
-        const r = await this.ownKey(workspaceId, 'gemini', () => this.geminiDirectVideo(userKey, req, deadline));
+        const r = await this.ownKey({ workspaceId, vendor: 'gemini', key: userKey, scope: 'media' }, () => this.geminiDirectVideo(userKey, req, deadline));
         if ('pending' in r) return { status: 'pending', jobId: `gveo:${r.pending}`, cost: 0, note: 'Vídeo pela chave Gemini, ainda gerando' };
         return { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId: r.id, cost: 0, note: 'Vídeo pela chave Gemini' };
       } catch (e) {
@@ -512,7 +515,7 @@ export class AiService {
     if (jobId.startsWith('gveo:')) {
       const key = await this.keys.get(workspaceId, 'gemini');
       if (!key) return { status: 'failed' };
-      const r = await this.ownKey(workspaceId, 'gemini', () => this.geminiVideoWait(key, jobId.slice(5), deadline));
+      const r = await this.ownKey({ workspaceId, vendor: 'gemini', key, scope: 'media' }, () => this.geminiVideoWait(key, jobId.slice(5), deadline));
       return 'pending' in r ? { status: 'pending', jobId, cost: 0, note: null } : { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId, cost: 0, note: null };
     }
     return { status: 'failed' };

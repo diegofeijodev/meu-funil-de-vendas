@@ -1536,6 +1536,8 @@ model campaign_pilot_runs {
 model ai_credit_alerts {
   workspace_id String     @db.Uuid
   vendor       String
+  /// 'no_credit' (falta de saldo definitiva) | 'daily_limit' (cota diária do modelo de texto) — CHECK na migração.
+  reason       String     @default("no_credit")
   message      String
   first_at     DateTime   @default(now()) @db.Timestamptz(6)
   last_at      DateTime   @default(now()) @db.Timestamptz(6)

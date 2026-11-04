@@ -66,7 +66,7 @@ export class AiKeysActionsService {
     const k = await this.keys.resolve(workspaceId, vendor);
     if (!k) return { ok: false, error: 'Nenhuma chave salva.' };
     const t = await this.keys.test(vendor, k.key);
-    await this.alerts.noteTest(k.ownerId, vendor, t);
+    await this.alerts.noteTest(k.ownerId, vendor, k.key, t);
     return t.ok ? { ok: true } : { ok: false, error: t.error };
   }
 

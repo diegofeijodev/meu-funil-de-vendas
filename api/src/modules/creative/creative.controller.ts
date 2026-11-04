@@ -134,7 +134,8 @@ export class AiKeysHealthController {
   async health(@CurrentUser() u: AuthUser, @Body() d: WorkspaceIdDto) {
     await this.access.require(u.id, d.workspaceId, 'read');
     const st = await this.alerts.status(d.workspaceId);
-    return { outOfCredit: (st?.vendors ?? []).map((v) => ({ vendor: v.vendor, error: v.message })) };
+    // Só falta de saldo: o limite de hoje é do modelo de texto e não impede as artes.
+    return { outOfCredit: (st?.vendors ?? []).filter((v) => v.reason === 'no_credit').map((v) => ({ vendor: v.vendor, error: v.message })) };
   }
 }
 

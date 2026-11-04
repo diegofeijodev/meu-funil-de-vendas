@@ -34,7 +34,7 @@ function setup(opts: { inherit?: Record<string, string>; providerStatus?: number
   // Aviso de créditos: só registra o que o serviço pediu (a tabela tem spec próprio).
   const alerts: string[] = [];
   const alertSvc = {
-    noteTest: async (owner: string, v: string, r: any) => void alerts.push(`teste:${owner}:${v}:${r.ok ? 'ok' : r.kind ?? 'sem-kind'}`),
+    noteTest: async (owner: string, v: string, key: string, r: any) => void alerts.push(`teste:${owner}:${v}:${key === GOOD ? 'chave' : '?'}:${r.ok ? 'ok' : r.kind ?? 'sem-kind'}`),
     clear: async (owner: string, v: string) => void alerts.push(`limpa:${owner}:${v}`),
   } as any;
   const svc = new AiKeysActionsService(new WorkspaceAccessService({ workspace_members: memMembers } as any), keys, alertSvc);
@@ -94,6 +94,10 @@ describe('AiKeysActionsService — só a dica sai, o segredo fica no cofre', () 
     expect(s402.store.rows.size).toBe(0);
     expect((await setup({ providerStatus: 429, providerBody: NO_QUOTA }).svc.save(OWNER, WS_A, 'openai', GOOD)).error).toBe('Conta sem créditos. Adicione saldo na OpenAI e teste de novo.');
     expect((await setup({ providerStatus: 429 }).svc.save(OWNER, WS_A, 'gemini', GOOD)).error).toBe('O Gemini (Google) recebeu pedidos demais agora. Tente de novo em alguns minutos.');
+    const DAY = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}';
+    expect((await setup({ providerStatus: 429, providerBody: DAY }).svc.save(OWNER, WS_A, 'gemini', GOOD)).error).toBe(
+      'O Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.',
+    );
     expect((await setup({ providerStatus: 404, providerBody: '{"error":{"code":"model_not_found"}}' }).svc.save(OWNER, WS_A, 'openai', GOOD)).error).toBe(
       'O modelo gpt-4o-mini não está disponível na chave do ChatGPT (OpenAI). Confira o acesso da chave em Integrações.',
     );
@@ -138,14 +142,14 @@ describe('AiKeysActionsService — só a dica sai, o segredo fica no cofre', () 
     await own.svc.save(OWNER, WS_A, 'openai', GOOD);
     await own.svc.test(VIEWER, WS_A, 'openai');
     await own.svc.remove(OWNER, WS_A, 'openai');
-    expect(own.alerts).toEqual([`limpa:${WS_A}:openai`, `teste:${WS_A}:openai:ok`, `limpa:${WS_A}:openai`]);
+    expect(own.alerts).toEqual([`limpa:${WS_A}:openai`, `teste:${WS_A}:openai:chave:ok`, `limpa:${WS_A}:openai`]);
     // Herança: a filha (WS_B) testa a chave da agência (WS_A) e o resultado vai para a agência.
     const inh = setup({ inherit: { [WS_B]: WS_A } });
     await inh.svc.save(OWNER, WS_A, 'gemini', GOOD);
     inh.alerts.length = 0;
     (inh.keys as any).http = async () => new Response(NO_QUOTA, { status: 429 });
     expect(await inh.svc.test(STRANGER, WS_B, 'gemini')).toMatchObject({ ok: false }); // estranho de WS_A, mas membro de WS_B
-    expect(inh.alerts).toEqual([`teste:${WS_A}:gemini:noCredit`]);
+    expect(inh.alerts).toEqual([`teste:${WS_A}:gemini:chave:noCredit`]);
   });
 
   it('remove apaga só a chave própria; depois o status volta a desconectado', async () => {

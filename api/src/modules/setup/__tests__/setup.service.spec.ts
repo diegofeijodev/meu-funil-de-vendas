@@ -84,7 +84,7 @@ describe('SetupService.status', () => {
 
   it('IA PARADA por falta de saldo: "IA do app" vira erro com a frase do crédito (e não "Tudo certo…"); contas próprias listam quem está sem saldo', async () => {
     const noGw = { AI_GATEWAY_URL: '', AI_GATEWAY_API_KEY: '' };
-    const v = (vendor: string, label: string) => ({ vendor, label, since: new Date(NOW), last_at: new Date(NOW), message: 'x', owner_id: WS });
+    const v = (vendor: string, label: string, reason = 'no_credit') => ({ vendor, label, reason, since: new Date(NOW), last_at: new Date(NOW), message: 'x', owner_id: WS });
     const both = { level: 'stopped', fallback: null, inherited_from: null, vendors: [v('openai', 'ChatGPT (OpenAI)'), v('gemini', 'Gemini (Google)')] };
     const { items } = await setup({ env: noGw, aiKeys: { openai: 'sk', gemini: 'AIza' }, credit: both }).svc.status(USER, WS, NOW);
     expect(byKey(items, 'app-ai')).toMatchObject({
@@ -102,6 +102,19 @@ describe('SetupService.status', () => {
     const p = (await setup({ env: noGw, aiKeys: { openai: 'sk', gemini: 'AIza' }, credit: partial }).svc.status(USER, WS, NOW)).items;
     expect(byKey(p, 'app-ai')).toMatchObject({ status: 'optional', detail: 'Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini).' });
     expect(byKey(p, 'own-ai')).toMatchObject({ status: 'ok', detail: 'Conectadas: OpenAI, Gemini. Sem créditos: ChatGPT (OpenAI).' });
+    // Cota de hoje do modelo de texto: frase própria ("volta sozinha amanhã"), sem dizer que falta saldo.
+    const day = { level: 'stopped', fallback: null, inherited_from: null, vendors: [v('gemini', 'Gemini (Google)', 'daily_limit')] };
+    const d = (await setup({ env: noGw, aiKeys: { gemini: 'AIza' }, credit: day }).svc.status(USER, WS, NOW)).items;
+    expect(byKey(d, 'app-ai')).toMatchObject({
+      status: 'error',
+      detail: 'A IA parou até amanhã: o Gemini (Google) chegou ao limite de uso de hoje. Volta sozinha amanhã, ou antes se você colocar créditos e clicar em Testar em Integrações.',
+    });
+    expect(byKey(d, 'own-ai').detail).toBe('Conectadas: Gemini. No limite de uso de hoje: Gemini (Google).');
+    // Os dois motivos juntos.
+    const mixed = { ...day, vendors: [v('openai', 'ChatGPT (OpenAI)'), v('gemini', 'Gemini (Google)', 'daily_limit')] };
+    expect(byKey((await setup({ env: noGw, aiKeys: { openai: 'sk', gemini: 'AIza' }, credit: mixed }).svc.status(USER, WS, NOW)).items, 'app-ai').detail).toBe(
+      'Sua IA está sem créditos: o ChatGPT (OpenAI) recusou os pedidos por falta de saldo e o Gemini (Google) chegou ao limite de uso de hoje. Coloque créditos e clique em Testar em Integrações.',
+    );
   });
 
   it('marca completa, estratégia aprovada e campanha publicada', async () => {

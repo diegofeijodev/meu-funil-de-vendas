@@ -10,7 +10,11 @@ describe('AiKeysHealthController (aviso de crédito do Studio)', () => {
   };
 
   it('lê o aviso gravado (sem chamar o provedor) e devolve o formato antigo { outOfCredit:[{ vendor, error }] }', async () => {
-    const { ctrl } = setup({ level: 'partial', fallback: 'gemini', inherited_from: null, vendors: [{ vendor: 'openai', label: 'ChatGPT (OpenAI)', message: 'Sua conta OpenAI está sem créditos…', since: new Date(), last_at: new Date(), owner_id: WS_A }] });
+    const { ctrl } = setup({ level: 'partial', fallback: 'gemini', inherited_from: null, vendors: [
+      { vendor: 'openai', label: 'ChatGPT (OpenAI)', reason: 'no_credit', message: 'Sua conta OpenAI está sem créditos…', since: new Date(), last_at: new Date(), owner_id: WS_A },
+      // Limite de hoje é do modelo de texto: não entra no aviso do Studio (as artes podem sair).
+      { vendor: 'gemini', label: 'Gemini (Google)', reason: 'daily_limit', message: 'limite de hoje', since: new Date(), last_at: new Date(), owner_id: WS_A },
+    ] });
     expect(await ctrl.health({ id: VIEWER } as any, { workspaceId: WS_A })).toEqual({ outOfCredit: [{ vendor: 'openai', error: 'Sua conta OpenAI está sem créditos…' }] });
     expect(await setup(null).ctrl.health({ id: OWNER } as any, { workspaceId: WS_A })).toEqual({ outOfCredit: [] });
   });

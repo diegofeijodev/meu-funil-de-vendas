@@ -28,11 +28,11 @@ describe('HealthAlertsService — IA', () => {
   it('repassa nível, provedores (sem a mensagem interna nem a dona), fallback e herança', async () => {
     const since = daysAgo(3);
     const { svc } = setup({
-      [WS_A]: { level: 'stopped', fallback: null, inherited_from: { id: WS_B, name: 'Freela App' }, vendors: [{ vendor: 'openai', label: 'ChatGPT (OpenAI)', since, last_at: NOW, message: 'interna', owner_id: WS_B }] },
+      [WS_A]: { level: 'stopped', fallback: null, inherited_from: { id: WS_B, name: 'Freela App' }, vendors: [{ vendor: 'openai', label: 'ChatGPT (OpenAI)', reason: 'daily_limit', since, last_at: NOW, message: 'interna', owner_id: WS_B }] },
     });
     expect((await svc.get(WS_A, NOW)).ai).toEqual({
       level: 'stopped', fallback: null, inherited_from: { id: WS_B, name: 'Freela App' },
-      vendors: [{ vendor: 'openai', label: 'ChatGPT (OpenAI)', since, last_at: NOW }],
+      vendors: [{ vendor: 'openai', label: 'ChatGPT (OpenAI)', reason: 'daily_limit', since, last_at: NOW }],
     });
   });
 });

@@ -1,6 +1,6 @@
 import { validateEnv } from '../../../common/config/env.validation';
 import { AiKeysService } from '../ai-keys.service';
-import { AiService, parseJsonLoose } from '../ai.service';
+import { AiService, parseJsonLoose, VEO_FALLBACK_MODEL } from '../ai.service';
 import { resolveModel } from '../model-map';
 import { AiFetch } from '../ai.types';
 
@@ -499,9 +499,11 @@ describe('AiService — aviso de créditos (ai_credit_alerts) nas chamadas com c
   const RPM = '{"error":{"message":"Rate limit reached on requests per min (RPM)","code":"rate_limit_exceeded"}}';
   function withAlerts(envVars: Record<string, string>, keys: { openai?: string; gemini?: string }, http: AiFetch) {
     const log: string[] = [];
+    const who = (u: any) => `${u.vendor}:${u.workspaceId === WS ? 'ws' : u.workspaceId}`;
     const alerts = {
-      exhausted: async (ws: string, v: string, msg: string) => void log.push(`sem-saldo:${v}:${ws === WS ? 'ws' : ws}:${msg.slice(0, 20)}`),
-      recovered: async (ws: string, v: string) => void log.push(`ok:${v}:${ws === WS ? 'ws' : ws}`),
+      exhausted: async (u: any, reason: string, msg: string) =>
+        void log.push(`${reason === 'no_credit' ? 'sem-saldo' : `${reason}/${u.scope}`}:${who(u)}:${msg.slice(0, 20)}`),
+      recovered: async (u: any) => void log.push(`ok:${who(u)}${u.scope === 'media' ? '/media' : ''}`),
     };
     const keySvc = { get: async (_ws: string, v: 'openai' | 'gemini') => keys[v] ?? null } as unknown as AiKeysService;
     return { ai: new AiService(keySvc, http, validateEnv(envVars), undefined, alerts as any), log };
@@ -539,11 +541,41 @@ describe('AiService — aviso de créditos (ai_credit_alerts) nas chamadas com c
     const i = withAlerts(baseEnv, { openai: 'sk-a-000000' }, fakeFetch([['api.openai.com', () => new Response(NO_QUOTA, { status: 429 })]]).fn);
     await expect(i.ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toMatchObject({ status: 502 });
     expect(i.log).toEqual(['sem-saldo:openai:ws:Sua conta OpenAI est']);
+    const ok = withAlerts(baseEnv, { openai: 'sk-a-000000' }, fakeFetch([['api.openai.com', () => json({ data: [{ b64_json: Buffer.from('PNG').toString('base64') }] })]]).fn);
+    await ok.ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' });
+    expect(ok.log).toEqual(['ok:openai:ws/media']);
 
     const vf = fakeFetch([['predictLongRunning', () => new Response('{"error":{"code":402,"message":"Your prepayment credits are depleted."}}', { status: 402 })]]);
     const v = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, vf.fn);
     await expect(v.ai.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject({ status: 502 });
     expect(v.log).toEqual(['sem-saldo:gemini:ws:Sua conta do Gemini ']);
     expect(vf.calls).toHaveLength(1);
+  });
+
+  it('cota de hoje: no texto grava daily_limit; no Veo segue para o modelo de reserva (cota própria) e não diz nada da chave', async () => {
+    const DAY = '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}';
+    const t = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, fakeFetch([['generativelanguage', () => new Response(DAY, { status: 429 })]]).fn);
+    await expect(t.ai.text(WS, { prompt: 'P' })).rejects.toMatchObject({
+      response: { message: 'O Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.' },
+    });
+    expect(t.log).toEqual(['daily_limit/text:gemini:ws:O Gemini (Google) ch']);
+
+    const vf = fakeFetch([
+      ['veo-3.1-fast-generate-preview:predictLongRunning', () => new Response(DAY, { status: 429 })],
+      [`${VEO_FALLBACK_MODEL}:predictLongRunning`, () => json({ name: 'operations/op1' })],
+      ['operations/op1', () => json({ done: false })],
+    ]);
+    const v = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, vf.fn);
+    expect(await v.ai.video(WS, { prompt: 'p', aspectRatio: '9:16', maxWaitMs: 1 })).toMatchObject({ status: 'pending', jobId: 'gveo:operations/op1' });
+    expect(vf.calls.filter((c) => c.url.includes(':predictLongRunning')).map((c) => c.url.split('/models/')[1])).toEqual([
+      'veo-3.1-fast-generate-preview:predictLongRunning',
+      `${VEO_FALLBACK_MODEL}:predictLongRunning`,
+    ]);
+    // A cota do Veo fica dentro do laço (não chega ao aviso); o sucesso do reserva só confere a falta de saldo (escopo media).
+    expect(v.log).toEqual(['ok:gemini:ws/media']);
+    // Os dois modelos na cota de hoje: o erro chega ao aviso como escopo media (que o serviço ignora: cota é do modelo, não da chave).
+    const both = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, fakeFetch([['predictLongRunning', () => new Response(DAY, { status: 429 })]]).fn);
+    await expect(both.ai.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject({ status: 502 });
+    expect(both.log).toEqual(['daily_limit/media:gemini:ws:O Gemini (Google) ch']);
   });
 });
