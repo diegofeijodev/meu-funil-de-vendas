@@ -153,10 +153,13 @@ a chave do ChatGPT (OpenAI) foi recusada e a conta do Gemini (Google) está sem 
 vai para o log, redigido); sem chave própria nenhuma → `502 AI_NOT_CONFIGURED "Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações."`.
 Vale para `text`, `json`/`vision`, `jsonWithEngine`, `image` e `video`. Frases da chave própria (qualquer rota que use a chave):
 401/403 ou 400 de chave inválida (`API_KEY_INVALID`, "API key not valid", "Incorrect API key") → "A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave
-nova em Integrações." · falta de saldo (todo **402**; ou 429/403/400 cujo corpo prova saldo — `isCreditExhausted` em `ai/vendor-failure.ts`:
-`insufficient_quota`, "prepayment credits are depleted", "credit", cota DIÁRIA `PerDay`/"per day", billing desligado; "billing" sozinho NÃO conta, porque o
-429 por minuto do Google e o da OpenAI também falam de billing) → "Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou
-cadastre a chave do Gemini em Integrações." · 429 sem prova de saldo (limite por minuto: `rate_limit_exceeded`, `PerMinute`, "rate-limits"; **na dúvida
+nova em Integrações." · falta de saldo DEFINITIVA (todo **402**; ou 429/403/400 cujo corpo prova saldo — `isCreditExhausted` em `ai/vendor-failure.ts`:
+`insufficient_quota`, "prepayment credits are depleted", "credit", billing desligado; "billing" sozinho NÃO conta, porque o 429 por minuto do Google e o da
+OpenAI também falam de billing) → "Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em
+Integrações." · cota DIÁRIA (429 com `PerDay`/"per day"/RPD e sem marca de minuto — `isDailyLimit`; no Google e na OpenAI ela é **por modelo**) → "O ChatGPT
+(OpenAI) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos." (trecho: "o ChatGPT (OpenAI) chegou ao limite de uso de
+hoje"; pausa a programação do Instagram como antes — `isCreditFailure` reconhece "limite de uso de hoje"); no vídeo, a cota de hoje de um Veo segue para o
+modelo de reserva (`VEO_FALLBACK_MODEL`, cota própria) e só a falta de saldo definitiva para o laço · 429 sem prova de saldo (limite por minuto: `rate_limit_exceeded`, `PerMinute`, "rate-limits"; **na dúvida
 NÃO é saldo**) → "O ChatGPT (OpenAI) recebeu pedidos demais agora. Tente de novo em alguns minutos." (trecho na frase das duas: "o ChatGPT (OpenAI)
 recebeu pedidos demais agora"; não pausa a programação do Instagram, que tenta de novo em 5 min) · 404 ou 400 de modelo → "O modelo M não está disponível na chave do ChatGPT (OpenAI). Confira o acesso da chave em Integrações." · outro 4xx →
 "A OpenAI recusou o pedido (erro N)." · 5xx/rede → "A OpenAI não respondeu agora. Tente de novo em alguns minutos."
@@ -164,11 +167,16 @@ recebeu pedidos demais agora"; não pausa a programação do Instagram, que tent
 cadastre a chave do ChatGPT (OpenAI) em Integrações.", "O Gemini (Google) recebeu pedidos demais agora. Tente de novo em alguns minutos.", "O Gemini (Google) não respondeu agora…"). Na cadeia automática de criativos, sem gateway o provedor "Créditos de IA do app" não entra no fim.
 
 **Aviso de créditos — tabela `ai_credit_alerts` (04/11/2026).** Uma linha por (empresa DONA da chave, provedor): `workspace_id`, `vendor` (`openai`\|`gemini`),
-`message` (a frase do caso), `first_at` (1ª falha), `last_at` (a mais recente), `updated_at`. Dona = a empresa onde a chave está guardada (a própria, se ela
-tem a chave daquele provedor; senão a de `ai_inherit_from`) — `AiKeysService.keyOwner`. Chave própria que falha por **falta de saldo** em `text`, `json`/`vision`,
-`jsonWithEngine`, `image`, `video`/`videoStatus` grava ou atualiza a linha (mantém `first_at`); a MESMA chave que dá certo apaga a linha daquele provedor.
-Gravação best-effort (`AiCreditAlertsService`): erro de banco só vai para o log (sem a chave) e nunca derruba a chamada de IA. O botão "Testar" (§27) também
-grava (sem saldo) ou apaga (ok). Trocar ou remover a chave (`AiKeysService.set`) apaga a linha daquela empresa/provedor. Leitura: §30.
+`reason` (`no_credit` = falta de saldo definitiva · `daily_limit` = cota de hoje do modelo de texto), `message` (a frase do caso), `first_at` (1ª falha),
+`last_at` (a mais recente), `updated_at`. Dona = a empresa onde a chave está guardada (a própria, se ela tem a chave daquele provedor; senão a de
+`ai_inherit_from`) — `AiKeysService.resolve`. Toda chamada com chave própria passa por `ownKey` com um escopo: **texto** (`text`, `json`/`vision`,
+`jsonWithEngine`, teste da chave) e **mídia** (`image`, `video`/`videoStatus`). Falta de saldo grava em qualquer escopo; cota de hoje grava só no texto (a de
+imagem/vídeo é do modelo, não da chave — senão a faixa piscaria com o próximo texto que dá certo). Sucesso de texto apaga a linha; sucesso de mídia apaga só
+`no_credit`. Mantém `first_at`. Gravação best-effort (`AiCreditAlertsService`): erro de banco só vai para o log (sem a chave) e nunca derruba a chamada de IA.
+Caminho feliz sem banco: cache em memória "sem aviso" por (escopo, empresa que chamou, provedor, impressão sha256 da chave), invalidado por toda gravação de
+aviso da mesma chave (de qualquer empresa que a use) e protegido por versão contra sucesso que termina depois de uma falha mais nova; vale porque a API roda em
+UMA instância. O botão "Testar" (§27) também grava (sem saldo/limite de hoje) ou apaga (ok); salvar ou remover a chave apaga a linha daquela empresa/provedor.
+Leitura: §30.
 
 - `text(ws, { prompt, system?, model? })`, `json(ws, { prompt, schema, name, images?, model? })` (JSON estrito; o gateway usa `json_schema` strict
   em `chat/completions`; sempre passa pelo parser tolerante `{…}`), `vision(...)` = `json` com imagens. A chave OpenAI própria também aceita imagens
@@ -262,9 +270,12 @@ KPIs/agrupamentos continuam no navegador (`lib/metrics.ts`).
 Corpo `{ workspaceId }` (uuid; senão `400`), qualquer membro (`read`) → `{ items: SetupItem[] }`, `SetupItem = { key, group: "Começo"|"Conexões"|"CRM"|"Agendadores", label, status: "ok"|"pending"|"error"|"optional", detail, link, required }`.
 Mesmos itens, textos e regras do protótipo. Chama `CrmDefaultsService.ensure` antes (as etapas do funil nascem na 1ª leitura). Diferenças: "IA do app" testa `AI_GATEWAY_URL` + `AI_GATEWAY_API_KEY`
 (era `LOVABLE_API_KEY`) e é opcional: sem gateway e com chave própria OpenAI/Gemini → `optional` (não obrigatório) "Tudo certo: as IAs funcionam com as chaves da sua empresa (OpenAI/Gemini)."; sem gateway e sem chave → `error`
-"Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações." e "Contas de IA próprias" vira passo obrigatório (`pending`); IA PARADA por falta de saldo (§30 `ai.level = 'stopped'`) → "IA do app" vira `error` (obrigatório) com
+"Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações." e "Contas de IA próprias" vira passo obrigatório (`pending`); IA PARADA (§30 `ai.level = 'stopped'`) → "IA do app" vira `error` (obrigatório) com
 "Sua IA está sem créditos: o ChatGPT (OpenAI) e o Gemini (Google) recusaram os pedidos por falta de saldo. Coloque créditos e clique em Testar em Integrações." (só os
-provedores afetados; com herança acrescenta "A IA desta empresa vem da {nome}.") e "Contas de IA próprias" lista "Sem créditos: …" no detalhe (`error` quando parada); os agendadores usam `cron_heartbeats` (`SCHEDULER_ENABLED=true`). As sondas de Meta/Google/TikTok/Canva/Higgsfield leem o cofre/tabelas com as mesmas chaves do protótipo
+provedores afetados; um sem saldo e outro no limite de hoje → "…o ChatGPT (OpenAI) recusou os pedidos por falta de saldo e o Gemini (Google) chegou ao limite de uso de
+hoje…"; só limite de hoje → "A IA parou até amanhã: o Gemini (Google) chegou ao limite de uso de hoje. Volta sozinha amanhã, ou antes se você colocar créditos e clicar
+em Testar em Integrações."; com herança acrescenta "A IA desta empresa vem da {nome}.") e "Contas de IA próprias" lista "Sem créditos: …" / "No limite de uso de hoje: …"
+no detalhe (`error` quando parada); os agendadores usam `cron_heartbeats` (`SCHEDULER_ENABLED=true`). As sondas de Meta/Google/TikTok/Canva/Higgsfield leem o cofre/tabelas com as mesmas chaves do protótipo
 (`META_*`, `GOOGLE_ADS_*`, `TIKTOK_*`, `CANVA_TOKENS`, `mcp_connections`), sem chamar os provedores.
 
 ## 13. Agência — `POST /v1/agency/*` (sem workspace na URL)
@@ -390,7 +401,7 @@ recebe `404` (`"Job de geração não encontrado."` / `"Criativo não encontrado
 | `new-creative-version` | `{ creativeId }` | idem; atualiza o MESMO criativo (`version + 1`, linha em `creative_versions`) |
 | `capcut-package` | `{ creativeId }` | `{ url }` — zip (vídeo/imagem, `legendas.srt`, `capa.jpg`, `LEIA-ME.txt` com o roteiro do Reels), link de **10 min** (no protótipo, 5 anos). `400 "Este criativo ainda não tem arquivo."` |
 | `generate-brand-guide` | (Task 2) | as fotos de referência agora são reduzidas a ≤ 1024 px JPEG (jimp) antes de ir à IA, como no protótipo |
-| `POST /v1/ai-keys/ai-keys-health` `{ workspaceId }` | membro | `{ outOfCredit:[{vendor,error}] }` — só esta ação de chaves de IA mora aqui; as demais ficam em Integrações. Desde 04/11/2026 lê o aviso gravado (`ai_credit_alerts`, §6; `error` = a frase gravada) em vez de chamar o provedor a cada visita (o "Testar" passou a gastar uma chamada real) |
+| `POST /v1/ai-keys/ai-keys-health` `{ workspaceId }` | membro | `{ outOfCredit:[{vendor,error}] }` — só esta ação de chaves de IA mora aqui; as demais ficam em Integrações. Desde 04/11/2026 lê o aviso gravado (`ai_credit_alerts`, §6; só `reason = no_credit` — o limite de hoje é do modelo de texto e não impede as artes; `error` = a frase gravada) em vez de chamar o provedor a cada visita (o "Testar" passou a gastar uma chamada real) |
 
 **Pipeline de imagem** (`PipelineService`): diretor de arte (LLM com schema estrito: sujeito, cena, luz, câmera, paleta… `prompt_final`, `negative`, cenas e tomadas **em português do Brasil** — nomes próprios da marca/produto não são traduzidos; com foto do produto o prompt termina com "Use o produto exatamente como nas imagens de referência"; o texto/preço/logo nunca vão para a imagem, `text_in_image` é `"none"`; a frase enviada ao provedor é `… Não inclua texto, letras nem logotipos na imagem. Evite: …`; prompt editado legado em inglês é descartado e o diretor de arte escreve de novo) → N variações em paralelo (1–4) → cada uma entra na biblioteca (`source = provedor`) e é nota­da pelo **crítico visual**
 (visão: produto, fidelidade, composição, defeitos, paleta; 0–10 cada, total/50; candidata reduzida a 768 px) → se a melhor tiver < 28/50, **1 nova rodada** com o motivo do crítico → a vencedora recebe, por cima, **título/preço/chamada e logo**
@@ -911,7 +922,8 @@ desprezível com o modelo de texto que a chave própria usa no app (`AI_BYO_OPEN
 `{ model, messages:[{role:'user',content:'ok'}], max_completion_tokens: 1 }` (gateway/modelo que não conhece `max_completion_tokens` → repete com `max_tokens: 1`);
 Gemini `POST /models/{modelo}:generateContent` `{ contents:[{parts:[{text:'ok'}]}], generationConfig:{ maxOutputTokens: 1 } }`. Só o status HTTP conta (com 1 token a
 resposta pode vir vazia). Respostas: ok → `{ ok:true }` · chave recusada (401/403, 400 de chave) → "Chave inválida ou sem permissão." · sem saldo (mesma regra do §6) →
-"Conta sem créditos. Adicione saldo na OpenAI e teste de novo." / "Conta sem créditos. Adicione saldo no Google e teste de novo." · limite por minuto → a frase do §6
+"Conta sem créditos. Adicione saldo na OpenAI e teste de novo." / "Conta sem créditos. Adicione saldo no Google e teste de novo." · cota de hoje → a frase do §6
+("O Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.") · limite por minuto → a frase do §6
 ("O ChatGPT (OpenAI) recebeu pedidos demais agora. Tente de novo em alguns minutos.") · modelo indisponível (404/400 de modelo) → a frase do §6 ("O modelo M não está
 disponível na chave do …. Confira o acesso da chave em Integrações.") · outro status → "O provedor respondeu N." · rede → "Não foi possível falar com o provedor agora.".
 
@@ -993,7 +1005,7 @@ no navegador). Qualquer membro lê (`WorkspaceAccessGuard`: não-membro `403`, i
 {
   "ai": null | {
     "level": "stopped" | "partial",
-    "vendors": [{ "vendor": "openai" | "gemini", "label": "ChatGPT (OpenAI)" | "Gemini (Google)", "since": "<first_at ISO>", "last_at": "<ISO>" }],
+    "vendors": [{ "vendor": "openai" | "gemini", "label": "ChatGPT (OpenAI)" | "Gemini (Google)", "reason": "no_credit" | "daily_limit", "since": "<first_at ISO>", "last_at": "<ISO>" }],
     "fallback": "openai" | "gemini" | "app" | null,
     "inherited_from": null | { "id": "<uuid>", "name": "Freela App" }
   },
@@ -1002,12 +1014,18 @@ no navegador). Qualquer membro lê (`WorkspaceAccessGuard`: não-membro `403`, i
 ```
 
 - `ai`: só os provedores que TÊM chave na empresa dona (a própria ou a da agência) entram na conta; aviso de chave removida/trocada não aparece. `vendors` = os sem
-  saldo (`ai_credit_alerts`, §6), na ordem openai, gemini. `stopped` = todos os provedores com chave estão sem saldo E o servidor não tem gateway (a IA parou);
-  `partial` = ainda há quem responda — `fallback` diz quem: o outro provedor com chave ou, sem ele, `app` (gateway do app); `null` só em `stopped`.
+  saldo ou no limite de hoje (`ai_credit_alerts`, §6; `reason` diz qual), na ordem openai, gemini. `stopped` = todos os provedores com chave estão sem saldo/no
+  limite E o servidor não tem gateway (a IA parou); `partial` = sobra um caminho — `fallback`: o outro provedor com chave ou, sem ele, `app` = o servidor tem
+  gateway configurado (NÃO conferimos se ele tem crédito; a faixa diz "a IA pode seguir pelos créditos do app", sem afirmar); `null` só em `stopped`.
   `inherited_from` = a empresa dona da chave sem saldo quando não é a própria (a IA vem da agência); a frase do web cita o nome.
 - `instagram`: posts com `status = 'failed'` AGORA (republicado, reagendado ou cancelado não conta), de qualquer tipo de falha (publicação ou arte), com
   `updated_at` nos últimos 7 dias. `last_error`/`last_at` = o mais recente. `permission = true` quando algum desses erros é de permissão da Meta (frase
   "Permissão insuficiente na Meta", códigos `(#10)`/`(#200)` ou "does not have permission"). Nenhum → `null`.
-- Web (`components/health-alerts-banner.tsx`, textos em `lib/health-alerts.ts`): "Já coloquei créditos — testar agora" chama `ai-keys-test` (§27) para cada
-  provedor afetado e aparece para **qualquer membro** (a rota de teste já é de leitura; viewer também testa); o resultado atualiza o aviso e a faixa recarrega.
+- Web (`components/health-alerts-banner.tsx`, textos em `lib/health-alerts.ts`): falta de saldo = vermelho "Sua IA está sem créditos"; só limite de hoje =
+  amarelo "Sua IA chegou ao limite de uso de hoje" ("Volta sozinho amanhã, ou antes se você colocar créditos."); parcial = amarelo. "Já coloquei créditos — testar
+  agora" chama `ai-keys-test` (§27) para cada provedor afetado e aparece para **qualquer membro** (a rota de teste já é de leitura; viewer também testa); o
+  resultado atualiza o aviso e a faixa recarrega.
+- Aceitos (revisão de 04/11/2026): (1) uma falha que termina depois de um sucesso pode regravar o aviso — ele some no próximo sucesso da chave ou no "Testar";
+  (2) o "Testar" não tem intervalo mínimo (custa 1 token por clique); (3) o teste da OpenAI com modelo de raciocínio (o-series/gpt-5 em `AI_BYO_OPENAI_TEXT_MODEL`)
+  não foi conferido — o padrão em produção é `gpt-4o-mini`.
 
