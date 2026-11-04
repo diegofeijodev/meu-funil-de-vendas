@@ -20,6 +20,7 @@ export function keyTestMessage(vendor: AiVendor, kind: VendorFailureKind, d: { s
       return 'Chave inválida ou sem permissão.';
     case 'noCredit':
       return vendor === 'openai' ? 'Conta sem créditos. Adicione saldo na OpenAI e teste de novo.' : 'Conta sem créditos. Adicione saldo no Google e teste de novo.';
+    case 'dailyLimit':
     case 'rateLimited':
     case 'model':
       return vendorMessage(vendor, kind, d);

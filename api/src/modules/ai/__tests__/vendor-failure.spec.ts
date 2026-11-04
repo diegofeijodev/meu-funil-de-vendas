@@ -1,4 +1,4 @@
-import { classifyVendorFailure, isCreditExhausted } from '../vendor-failure';
+import { classifyVendorFailure, isCreditExhausted, isDailyLimit, vendorMessage } from '../vendor-failure';
 
 /** Corpos reais (resumidos) dos provedores. */
 const OPENAI_NO_QUOTA = JSON.stringify({
@@ -36,11 +36,22 @@ describe('isCreditExhausted — só conta como falta de saldo o que o corpo prov
     expect(isCreditExhausted(429, OPENAI_RPM)).toBe(false);
   });
 
-  it('Google 429 RESOURCE_EXHAUSTED: cota diária conta; limite por minuto e corpo sem detalhe não (na dúvida, não)', () => {
-    expect(isCreditExhausted(429, GEMINI_DAY)).toBe(true);
+  it('Google 429 RESOURCE_EXHAUSTED: nem cota diária, nem limite por minuto, nem corpo sem detalhe são falta de saldo (na dúvida, não)', () => {
+    expect(isCreditExhausted(429, GEMINI_DAY)).toBe(false);
     expect(isCreditExhausted(429, GEMINI_RPM)).toBe(false);
     expect(isCreditExhausted(429, GEMINI_BARE_429)).toBe(false);
-    expect(isCreditExhausted(429, OPENAI_RPD)).toBe(true);
+    expect(isCreditExhausted(429, OPENAI_RPD)).toBe(false);
+  });
+});
+
+describe('isDailyLimit — cota DIÁRIA (por modelo) é um caso à parte', () => {
+  it('Google PerDay e OpenAI RPD = limite de hoje; por minuto, saldo e outros status não', () => {
+    expect(isDailyLimit(429, GEMINI_DAY)).toBe(true);
+    expect(isDailyLimit(429, OPENAI_RPD)).toBe(true);
+    expect(isDailyLimit(429, GEMINI_RPM)).toBe(false);
+    expect(isDailyLimit(429, OPENAI_NO_QUOTA)).toBe(false);
+    expect(isDailyLimit(429, GEMINI_BARE_429)).toBe(false);
+    expect(isDailyLimit(400, GEMINI_DAY)).toBe(false);
   });
 
   it('403/400 só com prova (billing desligado, crédito); corpo vazio ou genérico não é saldo', () => {
@@ -63,6 +74,7 @@ describe('classifyVendorFailure', () => {
     expect(classifyVendorFailure(402, '')).toBe('noCredit');
     expect(classifyVendorFailure(429, OPENAI_NO_QUOTA)).toBe('noCredit');
     expect(classifyVendorFailure(429, GEMINI_RPM)).toBe('rateLimited');
+    expect(classifyVendorFailure(429, GEMINI_DAY)).toBe('dailyLimit');
     expect(classifyVendorFailure(429, 'x')).toBe('rateLimited');
     expect(classifyVendorFailure(400, '{"error":{"details":[{"reason":"API_KEY_INVALID"}]}}')).toBe('refused');
     expect(classifyVendorFailure(404, 'model_not_found')).toBe('model');
@@ -73,5 +85,12 @@ describe('classifyVendorFailure', () => {
 
   it('a falta de saldo vence a regra de modelo (o corpo de saldo pode citar o modelo)', () => {
     expect(classifyVendorFailure(400, '{"error":{"message":"No credits left for model gpt-4o-mini"}}')).toBe('noCredit');
+  });
+});
+
+describe('vendorMessage — limite de hoje', () => {
+  it('frase própria em português simples', () => {
+    expect(vendorMessage('gemini', 'dailyLimit')).toBe('O Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.');
+    expect(vendorMessage('openai', 'dailyLimit')).toBe('O ChatGPT (OpenAI) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.');
   });
 });

@@ -85,6 +85,10 @@ describe('dateIssues — regras de data só por código (tabela)', () => {
 describe('helpers puros', () => {
   it('isCreditFailure reconhece falta de crédito/cota', () => {
     for (const m of ['Créditos de IA esgotados.', 'HTTP 402', 'quota exceeded', 'insufficient funds', 'billing problem']) expect(isCreditFailure(m)).toBe(true);
+    // Cota diária da chave própria, na frase das duas chaves (sem a palavra "créditos"): continua pausando.
+    expect(isCreditFailure('Nenhuma IA funcionou: o ChatGPT (OpenAI) chegou ao limite de uso de hoje e o Gemini (Google) não respondeu.')).toBe(true);
+    // Pedidos demais agora (limite por minuto) NÃO pausa: tenta de novo em 5 min.
+    expect(isCreditFailure('Nenhuma IA funcionou: o ChatGPT (OpenAI) recebeu pedidos demais agora e o Gemini (Google) não respondeu.')).toBe(false);
     for (const m of ['IA fora do ar', 'timeout', '']) expect(isCreditFailure(m)).toBe(false);
   });
   it('brandContext só leva o DNA relevante', () => {

@@ -70,6 +70,8 @@ function vendorClause(f: KeyFailure, redact: (t: string) => string): string {
         return `a chave do ${x} foi recusada`;
       case 'noCredit':
         return `a conta do ${x} está sem créditos`;
+      case 'dailyLimit':
+        return `o ${x} chegou ao limite de uso de hoje`;
       case 'rateLimited':
         return `o ${x} recebeu pedidos demais agora`;
       case 'model':
@@ -583,7 +585,9 @@ export class AiService {
         return await this.geminiVideoWait(key, op.name, deadline);
       } catch (e) {
         if (e instanceof AiDownloadBlockedError) throw e; // bloqueio de segurança/tamanho: não tenta outro modelo
-        if (e instanceof VendorKeyError && e.kind === 'noCredit') throw e; // conta sem saldo: outro modelo também não sai
+        // Só falta de saldo DEFINITIVA (402, insufficient_quota, pré-pago esgotado, billing desligado) para o laço: a conta inteira parou.
+        // Cota de hoje (`dailyLimit`) é por modelo: o Veo de reserva tem a dele e é tentado.
+        if (e instanceof VendorKeyError && e.kind === 'noCredit') throw e;
         lastErr = e;
         this.warn(`vídeo com ${model}`, e);
       }

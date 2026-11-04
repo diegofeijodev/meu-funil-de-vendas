@@ -86,7 +86,8 @@ export function brandContext(brand: any) {
   };
 }
 
-export const isCreditFailure = (msg: string) => /cr[eé]dito|402|quota|insufficient|esgotad|billing/i.test(msg);
+// "limite de uso de hoje" = cota diária da chave própria (04/11/2026): pausa como antes, quando ela vinha como "sem créditos".
+export const isCreditFailure = (msg: string) => /cr[eé]dito|402|quota|insufficient|esgotad|billing|limite de uso de hoje/i.test(msg);
 
 /** Dias distintos do período ("quinta-feira, 01/10/2026"), na ordem dos horários. */
 export function periodDays(slots: { at: string }[]): string[] {
