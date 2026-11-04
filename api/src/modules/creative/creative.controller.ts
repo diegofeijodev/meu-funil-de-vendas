@@ -7,7 +7,7 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessService } from '../access/access.service';
 import { ActivityService } from '../activity/activity.service';
-import { AiKeysService } from '../ai/ai-keys.service';
+import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { JOB_SCHEDULES } from '../scheduler/job-schedules';
 import { SchedulerService } from '../scheduler/scheduler.service';
@@ -118,6 +118,7 @@ export class CreativeResourceController {
 
 /**
  * `aiKeysHealth` (`ai-keys.functions.ts`): quais chaves próprias estão sem crédito (aviso no Studio).
+ * Lê o aviso gravado (`ai_credit_alerts`) em vez de chamar o provedor a cada visita: o teste da chave virou uma chamada real.
  * Só esta ação mora aqui; o resto das ações de chaves de IA fica na tarefa de Integrações.
  */
 @ApiTags('Creative')
@@ -126,20 +127,14 @@ export class CreativeResourceController {
 export class AiKeysHealthController {
   constructor(
     private readonly access: WorkspaceAccessService,
-    private readonly keys: AiKeysService,
+    private readonly alerts: AiCreditAlertsService,
   ) {}
 
   @Post('ai-keys-health') @HttpCode(200)
   async health(@CurrentUser() u: AuthUser, @Body() d: WorkspaceIdDto) {
     await this.access.require(u.id, d.workspaceId, 'read');
-    const out: { vendor: 'openai' | 'gemini'; error: string }[] = [];
-    for (const v of ['openai', 'gemini'] as const) {
-      const k = await this.keys.get(d.workspaceId, v);
-      if (!k) continue;
-      const t = await this.keys.test(v, k);
-      if (!t.ok && /saldo|cota|limite|cr[ée]dito|quota/i.test(t.error ?? '')) out.push({ vendor: v, error: t.error ?? '' });
-    }
-    return { outOfCredit: out };
+    const st = await this.alerts.status(d.workspaceId);
+    return { outOfCredit: (st?.vendors ?? []).map((v) => ({ vendor: v.vendor, error: v.message })) };
   }
 }
 

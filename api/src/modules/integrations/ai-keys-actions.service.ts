@@ -1,6 +1,7 @@
 import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
+import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
 import { AiKeysService } from '../ai/ai-keys.service';
 import { AiVendor } from '../ai/ai.types';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -21,6 +22,7 @@ export class AiKeysActionsService {
   constructor(
     private readonly access: WorkspaceAccessService,
     private readonly keys: AiKeysService,
+    private readonly alerts: AiCreditAlertsService,
     @Optional() @Inject(ENV) private readonly env?: Pick<Env, 'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY'>,
   ) {}
 
@@ -42,25 +44,36 @@ export class AiKeysActionsService {
     };
   }
 
-  /** Testa e só então grava. Recusa do provedor volta como `{ ok:false, error }` (HTTP 200), como no protótipo. */
+  /**
+   * Testa (chamada real de 1 token) e só então grava. Recusa do provedor volta como `{ ok:false, error }` (HTTP 200), como no protótipo:
+   * chave sem saldo também não é gravada. Chave nova = o aviso de créditos da chave antiga desta empresa não vale mais.
+   */
   async save(userId: string, workspaceId: string, vendor: AiVendor, apiKey: string) {
     await this.requireMember(userId, workspaceId, true);
     const t = await this.keys.test(vendor, apiKey);
-    if (!t.ok) return { ok: false, error: t.error ?? 'Chave recusada.' };
+    if (!t.ok) return { ok: false, error: t.error || 'Chave recusada.' };
     await this.keys.set(workspaceId, vendor, apiKey);
+    await this.alerts.clear(workspaceId, vendor);
     return { ok: true, error: null as string | null };
   }
 
-  async test(userId: string, workspaceId: string, vendor: AiVendor) {
+  /**
+   * Qualquer membro testa (viewer também). Testa a chave que a empresa de fato usa — a própria ou, sem ela, a herdada da agência —
+   * e o resultado atualiza o aviso de créditos da empresa DONA da chave (ok apaga, sem saldo grava).
+   */
+  async test(userId: string, workspaceId: string, vendor: AiVendor): Promise<{ ok: boolean; error?: string }> {
     await this.requireMember(userId, workspaceId);
-    const k = await this.keys.get(workspaceId, vendor);
+    const k = await this.keys.resolve(workspaceId, vendor);
     if (!k) return { ok: false, error: 'Nenhuma chave salva.' };
-    return this.keys.test(vendor, k);
+    const t = await this.keys.test(vendor, k.key);
+    await this.alerts.noteTest(k.ownerId, vendor, t);
+    return t.ok ? { ok: true } : { ok: false, error: t.error };
   }
 
   async remove(userId: string, workspaceId: string, vendor: AiVendor) {
     await this.requireMember(userId, workspaceId, true);
     await this.keys.set(workspaceId, vendor, null);
+    await this.alerts.clear(workspaceId, vendor);
     return { ok: true };
   }
 }

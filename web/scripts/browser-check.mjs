@@ -152,6 +152,18 @@ const gateway = createServer((req, res) => {
       else { res.statusCode = 401; res.end('{}'); }
       return;
     }
+    // Teste da chave própria (04/11/2026): chamada real de 1 token. Só a chave falsa boa passa; o gateway (Bearer fake) segue para baixo.
+    {
+      const bearer = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+      const goog = String(req.headers['x-goog-api-key'] ?? '');
+      const byoOpenai = req.method === 'POST' && req.url === '/v1/chat/completions' && (body.max_completion_tokens === 1 || body.max_tokens === 1);
+      const byoGemini = req.method === 'POST' && /^\/v1beta\/models\/[^/]+:generateContent$/.test(req.url ?? '');
+      if (byoOpenai || byoGemini) {
+        if ((byoOpenai && bearer.startsWith('sk-fake-good')) || (byoGemini && goog.startsWith('AIzaFakeGood'))) res.end(JSON.stringify(byoOpenai ? { choices: [{ message: { content: 'o' } }] } : { candidates: [{ content: { parts: [{ text: 'o' }] } }] }));
+        else { res.statusCode = 401; res.end('{}'); }
+        return;
+      }
+    }
     // Produção automática (C1): Veo do gateway — POST /v1/videos (registra o corpo), GET /v1/videos/:id (pronto na hora), GET …/content (MP4 real).
     if (req.method === 'POST' && req.url === '/v1/videos') {
       fakeAi.videos.push(body);

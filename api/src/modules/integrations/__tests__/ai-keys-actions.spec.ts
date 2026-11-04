@@ -16,20 +16,29 @@ class MemStore extends CredentialStore {
 
 const GOOD = 'sk-test-0123456789abcdefghij-WXYZ';
 
-function setup(opts: { inherit?: Record<string, string>; providerStatus?: number; env?: Record<string, unknown> } = {}) {
+const NO_QUOTA = '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}';
+const MODELS = { AI_BYO_OPENAI_TEXT_MODEL: 'gpt-4o-mini', AI_BYO_GEMINI_TEXT_MODEL: 'gemini-flash-latest' };
+
+function setup(opts: { inherit?: Record<string, string>; providerStatus?: number; providerBody?: string; env?: Record<string, unknown> } = {}) {
   const store = new MemStore();
   const vault = new VaultService(store, { CREDENTIALS_ENCRYPTION_KEY: 'k'.repeat(40), NODE_ENV: 'test' });
-  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const calls: { url: string; headers: Record<string, string>; method?: string; body: any }[] = [];
   const http = async (url: string, init: RequestInit = {}) => {
-    calls.push({ url, headers: init.headers as Record<string, string> });
+    calls.push({ url, headers: init.headers as Record<string, string>, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
     const bearer = (init.headers as Record<string, string>)['Authorization'];
     const status = opts.providerStatus ?? (bearer === `Bearer ${GOOD}` || (init.headers as any)['x-goog-api-key'] === GOOD ? 200 : 401);
-    return new Response('{}', { status });
+    return new Response(opts.providerBody ?? '{}', { status });
   };
   const prisma: any = { workspaces: { findUnique: async ({ where }: any) => ({ ai_inherit_from: opts.inherit?.[where.id] ?? null }) } };
-  const keys = new AiKeysService(vault, prisma, http as any, { NODE_ENV: 'test', ...opts.env } as any);
-  const svc = new AiKeysActionsService(new WorkspaceAccessService({ workspace_members: memMembers } as any), keys);
-  return { svc, store, calls, keys };
+  const keys = new AiKeysService(vault, prisma, http as any, { NODE_ENV: 'test', ...MODELS, ...opts.env } as any);
+  // Aviso de créditos: só registra o que o serviço pediu (a tabela tem spec próprio).
+  const alerts: string[] = [];
+  const alertSvc = {
+    noteTest: async (owner: string, v: string, r: any) => void alerts.push(`teste:${owner}:${v}:${r.ok ? 'ok' : r.kind ?? 'sem-kind'}`),
+    clear: async (owner: string, v: string) => void alerts.push(`limpa:${owner}:${v}`),
+  } as any;
+  const svc = new AiKeysActionsService(new WorkspaceAccessService({ workspace_members: memMembers } as any), keys, alertSvc);
+  return { svc, store, calls, keys, alerts };
 }
 
 describe('AiKeysActionsService — autorização', () => {
@@ -79,8 +88,15 @@ describe('AiKeysActionsService — só a dica sai, o segredo fica no cofre', () 
     expect(store.rows.size).toBe(0);
   });
 
-  it('429 vira "sem saldo/cota"; 500 e rede caída têm mensagens próprias', async () => {
-    expect((await setup({ providerStatus: 429 }).svc.save(OWNER, WS_A, 'gemini', GOOD)).error).toBe('Conta sem saldo/cota ou limite atingido.');
+  it('sem saldo (402 ou 429 insufficient_quota), pedidos demais (429 por minuto), 500 e rede caída têm mensagens próprias; nada é gravado', async () => {
+    const s402 = setup({ providerStatus: 402, providerBody: '{"error":{"code":402,"message":"Your prepayment credits are depleted."}}' });
+    expect(await s402.svc.save(OWNER, WS_A, 'gemini', GOOD)).toEqual({ ok: false, error: 'Conta sem créditos. Adicione saldo no Google e teste de novo.' });
+    expect(s402.store.rows.size).toBe(0);
+    expect((await setup({ providerStatus: 429, providerBody: NO_QUOTA }).svc.save(OWNER, WS_A, 'openai', GOOD)).error).toBe('Conta sem créditos. Adicione saldo na OpenAI e teste de novo.');
+    expect((await setup({ providerStatus: 429 }).svc.save(OWNER, WS_A, 'gemini', GOOD)).error).toBe('O Gemini (Google) recebeu pedidos demais agora. Tente de novo em alguns minutos.');
+    expect((await setup({ providerStatus: 404, providerBody: '{"error":{"code":"model_not_found"}}' }).svc.save(OWNER, WS_A, 'openai', GOOD)).error).toBe(
+      'O modelo gpt-4o-mini não está disponível na chave do ChatGPT (OpenAI). Confira o acesso da chave em Integrações.',
+    );
     expect((await setup({ providerStatus: 503 }).svc.save(OWNER, WS_A, 'gemini', GOOD)).error).toBe('O provedor respondeu 503.');
     const { keys } = setup();
     (keys as any).http = async () => { throw new Error('boom'); };
@@ -92,6 +108,44 @@ describe('AiKeysActionsService — só a dica sai, o segredo fica no cofre', () 
     expect(await svc.test(VIEWER, WS_A, 'openai')).toEqual({ ok: false, error: 'Nenhuma chave salva.' });
     await svc.save(OWNER, WS_A, 'openai', GOOD);
     expect(await svc.test(VIEWER, WS_A, 'openai')).toEqual({ ok: true });
+  });
+
+  it('o teste é uma chamada REAL de 1 token no modelo de texto da chave própria (a listagem de modelos dá 200 sem saldo)', async () => {
+    const { keys, calls } = setup();
+    expect(await keys.test('openai', GOOD)).toEqual({ ok: true });
+    expect(await keys.test('gemini', GOOD)).toEqual({ ok: true });
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ['POST', 'https://api.openai.com/v1/chat/completions'],
+      ['POST', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'],
+    ]);
+    expect(calls[0]!.body).toEqual({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'ok' }], max_completion_tokens: 1 });
+    expect(calls[1]!.body).toEqual({ contents: [{ parts: [{ text: 'ok' }] }], generationConfig: { maxOutputTokens: 1 } });
+  });
+
+  it('modelo que não conhece max_completion_tokens: repete uma vez com max_tokens', async () => {
+    const { keys, calls } = setup();
+    let n = 0;
+    (keys as any).http = async (url: string, init: RequestInit) => {
+      calls.push({ url, headers: {}, method: init.method, body: JSON.parse(String(init.body)) });
+      return n++ === 0 ? new Response('{"error":{"message":"Unrecognized request argument supplied: max_completion_tokens"}}', { status: 400 }) : new Response('{}', { status: 200 });
+    };
+    expect(await keys.test('openai', GOOD)).toEqual({ ok: true });
+    expect(calls.map((c) => Object.keys(c.body).filter((k) => k.startsWith('max')))).toEqual([['max_completion_tokens'], ['max_tokens']]);
+  });
+
+  it('test atualiza o aviso de créditos na empresa DONA da chave; save/remove limpam o aviso da própria empresa', async () => {
+    const own = setup();
+    await own.svc.save(OWNER, WS_A, 'openai', GOOD);
+    await own.svc.test(VIEWER, WS_A, 'openai');
+    await own.svc.remove(OWNER, WS_A, 'openai');
+    expect(own.alerts).toEqual([`limpa:${WS_A}:openai`, `teste:${WS_A}:openai:ok`, `limpa:${WS_A}:openai`]);
+    // Herança: a filha (WS_B) testa a chave da agência (WS_A) e o resultado vai para a agência.
+    const inh = setup({ inherit: { [WS_B]: WS_A } });
+    await inh.svc.save(OWNER, WS_A, 'gemini', GOOD);
+    inh.alerts.length = 0;
+    (inh.keys as any).http = async () => new Response(NO_QUOTA, { status: 429 });
+    expect(await inh.svc.test(STRANGER, WS_B, 'gemini')).toMatchObject({ ok: false }); // estranho de WS_A, mas membro de WS_B
+    expect(inh.alerts).toEqual([`teste:${WS_A}:gemini:noCredit`]);
   });
 
   it('remove apaga só a chave própria; depois o status volta a desconectado', async () => {
