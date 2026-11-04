@@ -9,7 +9,7 @@ const schema = z.object({
   ai: z
     .object({
       level: z.enum(["stopped", "partial"]),
-      vendors: z.array(z.object({ vendor, label: z.string(), since: z.string(), last_at: z.string() })),
+      vendors: z.array(z.object({ vendor, label: z.string(), reason: z.enum(["no_credit", "daily_limit"]).catch("no_credit"), since: z.string(), last_at: z.string() })),
       fallback: z.enum(["openai", "gemini", "app"]).nullable(),
       inherited_from: z.object({ id: z.string(), name: z.string() }).nullable(),
     })

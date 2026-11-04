@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { aiAlertText, aiStopsList, dayTimeSp, daySp, instagramAlertText, joinPt, META_PERMISSION_HELP, shortReason } from "./health-alerts";
 
-const o = (since: string) => ({ vendor: "openai" as const, label: "ChatGPT (OpenAI)", since, last_at: since });
-const g = (since: string) => ({ vendor: "gemini" as const, label: "Gemini (Google)", since, last_at: since });
+type R = "no_credit" | "daily_limit";
+const o = (since: string, reason: R = "no_credit") => ({ vendor: "openai" as const, label: "ChatGPT (OpenAI)", reason, since, last_at: since });
+const g = (since: string, reason: R = "no_credit") => ({ vendor: "gemini" as const, label: "Gemini (Google)", reason, since, last_at: since });
 const LIST = "posts e calendário do Instagram, artes e vídeos, textos de anúncio, estratégias de campanha, o piloto de campanhas, as sugestões do gestor de tráfego e as respostas automáticas do SDR no CRM";
 
 describe("datas em Brasília", () => {
@@ -40,8 +41,24 @@ describe("aiAlertText", () => {
     const t = aiAlertText({ level: "partial", fallback: "gemini", inherited_from: null, vendors: [o("2026-10-28T15:00:00Z")] });
     expect(t).toMatchObject({ tone: "warning", title: "Uma das IAs está sem créditos", testVendors: ["openai"] });
     expect(t.body).toBe("A conta do ChatGPT (OpenAI) está sem créditos desde 28/10. Por enquanto a IA está usando o Gemini (Google).");
+    // Gateway do app: não conferimos se ele tem crédito, então o texto não afirma que a IA está usando.
     const app = aiAlertText({ level: "partial", fallback: "app", inherited_from: null, vendors: [o("2026-10-28T15:00:00Z"), g("2026-10-30T15:00:00Z")] });
-    expect(app.body).toBe("As contas do ChatGPT (OpenAI) e do Gemini (Google) estão sem créditos desde 28/10. Por enquanto a IA está usando os créditos do app.");
+    expect(app.body).toBe("As contas do ChatGPT (OpenAI) e do Gemini (Google) estão sem créditos desde 28/10. A IA pode seguir pelos créditos do app.");
+  });
+
+  it("limite de hoje: amarelo, volta sozinho amanhã (colocar créditos não é a única saída)", () => {
+    const stopped = aiAlertText({ level: "stopped", fallback: null, inherited_from: null, vendors: [g("2026-11-02T00:00:00Z", "daily_limit")] });
+    expect(stopped).toMatchObject({ tone: "warning", title: "Sua IA chegou ao limite de uso de hoje", testVendors: ["gemini"] });
+    expect(stopped.body).toBe(
+      `Desde 01/11 às 21:00, o Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos. Enquanto isso, nada novo é criado: ${LIST}. O que já estava pronto e agendado continua sendo publicado.`,
+    );
+    // Um sem saldo e outro no limite de hoje: vermelho, cada um com o seu motivo.
+    const mixed = aiAlertText({ level: "stopped", fallback: null, inherited_from: null, vendors: [o("2026-10-28T15:00:00Z"), g("2026-11-02T00:00:00Z", "daily_limit")] });
+    expect(mixed).toMatchObject({ tone: "danger", title: "Sua IA está sem créditos" });
+    expect(mixed.body).toMatch(/^Desde 01\/11 às 21:00, o ChatGPT \(OpenAI\) recusou os pedidos por falta de saldo e o Gemini \(Google\) chegou ao limite de uso de hoje\. Enquanto isso/);
+    const partial = aiAlertText({ level: "partial", fallback: "openai", inherited_from: null, vendors: [g("2026-11-02T00:00:00Z", "daily_limit")] });
+    expect(partial).toMatchObject({ tone: "warning", title: "Uma das IAs chegou ao limite de uso de hoje" });
+    expect(partial.body).toBe("O Gemini (Google) chegou ao limite de uso de hoje (volta sozinho amanhã). Por enquanto a IA está usando o ChatGPT (OpenAI).");
   });
 });
 

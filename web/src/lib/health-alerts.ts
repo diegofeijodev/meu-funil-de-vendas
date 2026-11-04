@@ -4,10 +4,12 @@
  */
 
 export type AiVendor = "openai" | "gemini";
+/** "no_credit" = falta de saldo (a conta parou) · "daily_limit" = cota de hoje do modelo de texto (volta sozinha amanhã). */
+export type AiAlertReason = "no_credit" | "daily_limit";
 
 export type AiCreditAlert = {
   level: "stopped" | "partial";
-  vendors: { vendor: AiVendor; label: string; since: string; last_at: string }[];
+  vendors: { vendor: AiVendor; label: string; reason: AiAlertReason; since: string; last_at: string }[];
   fallback: AiVendor | "app" | null;
   inherited_from: { id: string; name: string } | null;
 };
@@ -82,42 +84,74 @@ export type AiAlertText = {
   testVendors: AiVendor[];
 };
 
-const labelOf = (v: { vendor: AiVendor; label?: string }) => v.label || LABEL[v.vendor];
 const latest = (isos: string[]) => isos.reduce((a, b) => (new Date(b).getTime() > new Date(a).getTime() ? b : a));
 const earliest = (isos: string[]) => isos.reduce((a, b) => (new Date(b).getTime() < new Date(a).getTime() ? b : a));
 
-/** Faixa da IA. `stopped` (vermelho): nada novo é criado. `partial` (amarelo): a IA segue pelo outro provedor (ou pelos créditos do app). */
+const labelOf = (v: { vendor: AiVendor; label?: string }) => v.label || LABEL[v.vendor];
+const DAILY_BACK = "Volta sozinho amanhã, ou antes se você colocar créditos.";
+
+/** "o X recusou os pedidos por falta de saldo e o Y chegou ao limite de uso de hoje" — cada provedor com o seu motivo. */
+function stoppedClauses(vendors: AiCreditAlert["vendors"]): string {
+  const credit = vendors.filter((v) => v.reason !== "daily_limit").map((v) => `o ${labelOf(v)}`);
+  const daily = vendors.filter((v) => v.reason === "daily_limit").map((v) => `o ${labelOf(v)}`);
+  const parts = [
+    credit.length ? `${joinPt(credit)} ${credit.length > 1 ? "recusaram" : "recusou"} os pedidos por falta de saldo` : "",
+    daily.length ? `${joinPt(daily)} ${daily.length > 1 ? "chegaram" : "chegou"} ao limite de uso de hoje` : "",
+  ].filter(Boolean);
+  return parts.join(" e ");
+}
+
+/**
+ * Faixa da IA. `stopped`: nada novo é criado — vermelho com falta de saldo; amarelo quando é só a cota de hoje (volta sozinha).
+ * `partial` (amarelo): sobra um caminho (o outro provedor, ou o gateway do app — que não conferimos, então o texto não afirma).
+ */
 export function aiAlertText(ai: AiCreditAlert, opts: { vacancyStories?: boolean } = {}): AiAlertText {
   const vendors = ai.vendors;
-  const names = vendors.map((v) => `o ${labelOf(v)}`);
+  const onlyDaily = vendors.every((v) => v.reason === "daily_limit");
   const links = vendors.map((v) => ({ vendor: v.vendor, ...CREDIT_LINKS[v.vendor] }));
   const inherited = ai.inherited_from ? `A IA desta empresa vem da ${ai.inherited_from.name}.` : null;
   const testVendors = vendors.map((v) => v.vendor);
   if (ai.level === "stopped") {
-    // A IA parou quando o ÚLTIMO provedor ficou sem saldo.
+    // A IA parou quando o ÚLTIMO provedor falhou.
     const since = dayTimeSp(latest(vendors.map((v) => v.since)));
-    const verb = vendors.length > 1 ? "recusaram" : "recusou";
     return {
-      tone: "danger",
-      title: "Sua IA está sem créditos",
+      tone: onlyDaily ? "warning" : "danger",
+      title: onlyDaily ? "Sua IA chegou ao limite de uso de hoje" : "Sua IA está sem créditos",
       body:
-        `Desde ${since}, ${joinPt(names)} ${verb} os pedidos por falta de saldo. ` +
+        `Desde ${since}, ${stoppedClauses(vendors)}.${onlyDaily ? ` ${DAILY_BACK}` : ""} ` +
         `Enquanto isso, nada novo é criado: ${aiStopsList(opts)}. O que já estava pronto e agendado continua sendo publicado.`,
       inherited,
       links,
       testVendors,
     };
   }
-  const since = daySp(earliest(vendors.map((v) => v.since)));
-  const using = ai.fallback === "app" ? "os créditos do app" : ai.fallback ? `o ${LABEL[ai.fallback]}` : "outra IA";
-  const subject =
-    vendors.length > 1
-      ? `As contas ${joinPt(vendors.map((v) => `do ${labelOf(v)}`))} estão sem créditos desde ${since}.`
-      : `A conta do ${labelOf(vendors[0]!)} está sem créditos desde ${since}.`;
+  const credit = vendors.filter((v) => v.reason !== "daily_limit");
+  const daily = vendors.filter((v) => v.reason === "daily_limit");
+  const sentences: string[] = [];
+  if (credit.length) {
+    const since = daySp(earliest(credit.map((v) => v.since)));
+    sentences.push(
+      credit.length > 1
+        ? `As contas ${joinPt(credit.map((v) => `do ${labelOf(v)}`))} estão sem créditos desde ${since}.`
+        : `A conta do ${labelOf(credit[0]!)} está sem créditos desde ${since}.`,
+    );
+  }
+  if (daily.length) {
+    const who = joinPt(daily.map((v) => `o ${labelOf(v)}`));
+    sentences.push(`${who[0]!.toUpperCase()}${who.slice(1)} ${daily.length > 1 ? "chegaram" : "chegou"} ao limite de uso de hoje (volta sozinho amanhã).`);
+  }
+  sentences.push(
+    ai.fallback === "app"
+      ? "A IA pode seguir pelos créditos do app."
+      : `Por enquanto a IA está usando ${ai.fallback ? `o ${LABEL[ai.fallback]}` : "outra IA"}.`,
+  );
+  const many = vendors.length > 1;
   return {
     tone: "warning",
-    title: vendors.length > 1 ? "As contas de IA estão sem créditos" : "Uma das IAs está sem créditos",
-    body: `${subject} Por enquanto a IA está usando ${using}.`,
+    title: onlyDaily
+      ? many ? "As IAs chegaram ao limite de uso de hoje" : "Uma das IAs chegou ao limite de uso de hoje"
+      : many ? "As contas de IA estão sem créditos" : "Uma das IAs está sem créditos",
+    body: sentences.join(" "),
     inherited,
     links,
     testVendors,
