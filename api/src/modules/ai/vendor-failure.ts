@@ -3,6 +3,12 @@
  * Pura e sem framework: usada pelo `AiService` (frases da tela) e pelo teste da chave (`AiKeysService.test`).
  */
 
+import { AiVendor } from './ai.types';
+
+/** Nome do provedor nos textos: "ChatGPT (OpenAI)" / "Gemini (Google)". */
+export const AI_VENDOR_LABEL: Record<AiVendor, string> = { openai: 'ChatGPT (OpenAI)', gemini: 'Gemini (Google)' };
+const VENDOR_LABEL = AI_VENDOR_LABEL;
+
 /** Por que a chave própria falhou. `rateLimited` = pedidos demais agora (limite por minuto), NÃO é falta de saldo. */
 export type VendorFailureKind = 'refused' | 'noCredit' | 'rateLimited' | 'model' | 'rejected' | 'down';
 
@@ -48,4 +54,25 @@ export function classifyVendorFailure(status: number, body: string): VendorFailu
   if (status === 404 || (status === 400 && MODEL_MISSING.test(body))) return 'model';
   if (status >= 400 && status < 500) return 'rejected';
   return 'down';
+}
+
+/** Frase completa (uma falha só) por caso — texto final do design, 27/10/2026. */
+export function vendorMessage(vendor: AiVendor, kind: VendorFailureKind, d: { status?: number; model?: string } = {}): string {
+  const openai = vendor === 'openai';
+  switch (kind) {
+    case 'refused':
+      return `A chave do ${VENDOR_LABEL[vendor]} foi recusada. Cole uma chave nova em Integrações.`;
+    case 'noCredit':
+      return openai
+        ? 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.'
+        : 'Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações.';
+    case 'rateLimited':
+      return `O ${VENDOR_LABEL[vendor]} recebeu pedidos demais agora. Tente de novo em alguns minutos.`;
+    case 'model':
+      return `O modelo ${d.model ?? 'pedido'} não está disponível na chave do ${VENDOR_LABEL[vendor]}. Confira o acesso da chave em Integrações.`;
+    case 'rejected':
+      return `${openai ? 'A OpenAI' : 'O Gemini (Google)'} recusou o pedido (erro ${d.status ?? '?'}).`;
+    default:
+      return `${openai ? 'A OpenAI' : 'O Gemini (Google)'} não respondeu agora. Tente de novo em alguns minutos.`;
+  }
 }

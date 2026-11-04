@@ -117,6 +117,7 @@ model workspaces {
   style_ref_sources          style_ref_sources[]        @relation("style_ref_sources_workspace_id")
   style_references           style_references[]         @relation("style_references_workspace_id")
   campaign_pilot_runs        campaign_pilot_runs[]      @relation("campaign_pilot_runs_workspace_id")
+  ai_credit_alerts           ai_credit_alerts[]         @relation("ai_credit_alerts_workspace_id")
 }
 
 model workspace_members {
@@ -1528,4 +1529,18 @@ model campaign_pilot_runs {
   @@unique([workspace_id, idempotency_key])
   @@index([status, next_run_at])
   @@index([campaign_id, created_at(sort: Desc)])
+}
+
+/// Aviso de créditos de IA (04/11/2026): uma linha por (empresa DONA da chave própria, provedor) enquanto a chave estiver sem saldo.
+/// Gravada quando a chave falha por falta de saldo, apagada quando a mesma chave volta a responder (ou é trocada/removida). Contrato §6/§30.
+model ai_credit_alerts {
+  workspace_id String     @db.Uuid
+  vendor       String
+  message      String
+  first_at     DateTime   @default(now()) @db.Timestamptz(6)
+  last_at      DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime   @default(now()) @db.Timestamptz(6)
+  workspace    workspaces @relation("ai_credit_alerts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@id([workspace_id, vendor])
 }

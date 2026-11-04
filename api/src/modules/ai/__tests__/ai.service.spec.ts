@@ -494,3 +494,56 @@ describe('AiService.video — Veo 3.1 fast, 8 s e o áudio do modo (C1)', () => 
     ]);
   });
 });
+
+describe('AiService — aviso de créditos (ai_credit_alerts) nas chamadas com chave própria', () => {
+  const RPM = '{"error":{"message":"Rate limit reached on requests per min (RPM)","code":"rate_limit_exceeded"}}';
+  function withAlerts(envVars: Record<string, string>, keys: { openai?: string; gemini?: string }, http: AiFetch) {
+    const log: string[] = [];
+    const alerts = {
+      exhausted: async (ws: string, v: string, msg: string) => void log.push(`sem-saldo:${v}:${ws === WS ? 'ws' : ws}:${msg.slice(0, 20)}`),
+      recovered: async (ws: string, v: string) => void log.push(`ok:${v}:${ws === WS ? 'ws' : ws}`),
+    };
+    const keySvc = { get: async (_ws: string, v: 'openai' | 'gemini') => keys[v] ?? null } as unknown as AiKeysService;
+    return { ai: new AiService(keySvc, http, validateEnv(envVars), undefined, alerts as any), log };
+  }
+
+  it('texto: OpenAI sem saldo grava o aviso dela e o Gemini que respondeu limpa o dele', async () => {
+    const f = fakeFetch([['api.openai.com', () => new Response(NO_QUOTA, { status: 429 })], ['generativelanguage', () => json({ candidates: [{ content: { parts: [{ text: 'oi' }] } }] })]]);
+    const { ai, log } = withAlerts(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn);
+    expect(await ai.text(WS, { prompt: 'P' })).toBe('oi');
+    expect(log).toEqual(['sem-saldo:openai:ws:Sua conta OpenAI est', 'ok:gemini:ws']);
+  });
+
+  it('limite por minuto e chave recusada NÃO gravam aviso de crédito; 402 do Gemini grava', async () => {
+    const f = fakeFetch([['api.openai.com', () => new Response(RPM, { status: 429 })], ['generativelanguage', () => new Response('{"error":{"code":402}}', { status: 402 })]]);
+    const { ai, log } = withAlerts(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn);
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject({ status: 502 });
+    expect(log).toEqual(['sem-saldo:gemini:ws:Sua conta do Gemini ']);
+    const r = withAlerts(baseEnv, { openai: 'sk-a-000000' }, fakeFetch([['api.openai.com', () => new Response('no', { status: 401 })]]).fn);
+    await expect(r.ai.text(WS, { prompt: 'P' })).rejects.toMatchObject({ status: 502 });
+    expect(r.log).toEqual([]);
+  });
+
+  it('resposta fora do formato ainda prova que a chave tem saldo (limpa o aviso)', async () => {
+    const f = fakeFetch([['api.openai.com', () => chat('sem json')], ['generativelanguage', () => new Response(NO_QUOTA, { status: 429 })]]);
+    const { ai, log } = withAlerts(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn);
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n' })).rejects.toMatchObject({ status: 502 });
+    expect(log).toEqual(['ok:openai:ws', 'sem-saldo:gemini:ws:Sua conta do Gemini ']);
+  });
+
+  it('copy (jsonWithEngine), imagem (strict) e vídeo também gravam/limpam; vídeo sem saldo não tenta o outro modelo Veo', async () => {
+    const e = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, fakeFetch([['generativelanguage', () => json({ candidates: [{ content: { parts: [{ text: '{"a":"x"}' }] } }] })]]).fn);
+    expect(await e.ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n' })).toMatchObject({ engine: 'Sua conta Gemini' });
+    expect(e.log).toEqual(['ok:gemini:ws']);
+
+    const i = withAlerts(baseEnv, { openai: 'sk-a-000000' }, fakeFetch([['api.openai.com', () => new Response(NO_QUOTA, { status: 429 })]]).fn);
+    await expect(i.ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toMatchObject({ status: 502 });
+    expect(i.log).toEqual(['sem-saldo:openai:ws:Sua conta OpenAI est']);
+
+    const vf = fakeFetch([['predictLongRunning', () => new Response('{"error":{"code":402,"message":"Your prepayment credits are depleted."}}', { status: 402 })]]);
+    const v = withAlerts(baseEnv, { gemini: 'gk-b-000000' }, vf.fn);
+    await expect(v.ai.video(WS, { prompt: 'p', aspectRatio: '9:16' })).rejects.toMatchObject({ status: 502 });
+    expect(v.log).toEqual(['sem-saldo:gemini:ws:Sua conta do Gemini ']);
+    expect(vf.calls).toHaveLength(1);
+  });
+});

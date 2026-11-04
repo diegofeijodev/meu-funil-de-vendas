@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { AiCreditAlertsService } from './ai-credit-alerts.service';
 import { AiKeysService } from './ai-keys.service';
 import { AiService } from './ai.service';
 import { ENV } from '../../common/config/env.module';
@@ -14,8 +15,9 @@ import { testOverridesAllowed } from '../../common/config/test-overrides';
     { provide: AI_FETCH, useValue: ((url, init) => fetch(url, init)) as AiFetch },
     { provide: AI_GUARDED_FETCH, inject: [ENV], useFactory: (env: Env) => createGuardedFetch(testOverridesAllowed(env)) },
     AiKeysService,
+    AiCreditAlertsService,
     AiService,
   ],
-  exports: [AiService, AiKeysService, AI_FETCH],
+  exports: [AiService, AiKeysService, AiCreditAlertsService, AI_FETCH],
 })
 export class AiModule {}

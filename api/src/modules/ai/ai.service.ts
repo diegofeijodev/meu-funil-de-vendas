@@ -3,10 +3,11 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl } from '../media/external-fetch';
 import { AiDownloadBlockedError, AiError } from './ai-error';
+import { AiCreditAlertsService } from './ai-credit-alerts.service';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
-import { classifyVendorFailure, VendorFailureKind } from './vendor-failure';
+import { AI_VENDOR_LABEL as VENDOR_LABEL, classifyVendorFailure, vendorMessage, VendorFailureKind } from './vendor-failure';
 import {
   AI_FETCH, AI_GUARDED_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
@@ -43,10 +44,8 @@ type KeyFailure = { vendor: AiVendor; error: unknown };
 const withPeriod = (t: string) => (/[.!?…]$/.test(t) ? t : `${t}.`);
 const FORMAT_MSG = 'A IA não devolveu o formato esperado.';
 
-/** Nome do provedor nos textos: "ChatGPT (OpenAI)" / "Gemini (Google)". */
-const VENDOR_LABEL: Record<AiVendor, string> = { openai: 'ChatGPT (OpenAI)', gemini: 'Gemini (Google)' };
-
 /** Por que a chave própria falhou (classificado pelo status HTTP e pelo corpo de erro do provedor, em `vendor-failure.ts`). */
+export { vendorMessage } from './vendor-failure';
 export type { VendorFailureKind } from './vendor-failure';
 
 /** Erro de chave própria com o caso classificado (para juntar duas falhas numa frase só). */
@@ -58,27 +57,6 @@ export class VendorKeyError extends AiError {
     readonly detail: { status?: number; model?: string } = {},
   ) {
     super(message);
-  }
-}
-
-/** Frase completa (uma falha só) por caso — texto final do design, 27/10/2026. */
-export function vendorMessage(vendor: AiVendor, kind: VendorFailureKind, d: { status?: number; model?: string } = {}): string {
-  const openai = vendor === 'openai';
-  switch (kind) {
-    case 'refused':
-      return `A chave do ${VENDOR_LABEL[vendor]} foi recusada. Cole uma chave nova em Integrações.`;
-    case 'noCredit':
-      return openai
-        ? 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.'
-        : 'Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações.';
-    case 'rateLimited':
-      return `O ${VENDOR_LABEL[vendor]} recebeu pedidos demais agora. Tente de novo em alguns minutos.`;
-    case 'model':
-      return `O modelo ${d.model ?? 'pedido'} não está disponível na chave do ${VENDOR_LABEL[vendor]}. Confira o acesso da chave em Integrações.`;
-    case 'rejected':
-      return `${openai ? 'A OpenAI' : 'O Gemini (Google)'} recusou o pedido (erro ${d.status ?? '?'}).`;
-    default:
-      return `${openai ? 'A OpenAI' : 'O Gemini (Google)'} não respondeu agora. Tente de novo em alguns minutos.`;
   }
 }
 
@@ -137,6 +115,8 @@ export class AiService {
     @Inject(ENV) private readonly env: Env,
     /** Fetch com DNS verificado (SSRF) para baixar URLs devolvidas pelo provedor; sem ele (testes) usa a porta comum. */
     @Optional() @Inject(AI_GUARDED_FETCH) private readonly guarded?: AiFetch,
+    /** Aviso de créditos (`ai_credit_alerts`); o `AiModule` sempre injeta — ausente só nos testes que não olham o aviso. */
+    @Optional() private readonly alerts?: AiCreditAlertsService,
   ) {
     // Fail-closed: em produção o download de URLs do provedor SEMPRE passa pelo fetch com DNS verificado (SSRF).
     if (!testOverridesAllowed(env) && !guarded) throw new Error('AI_GUARDED_FETCH ausente fora de desenvolvimento/teste: o download de vídeo exige o fetch guardado (SSRF).');
@@ -144,6 +124,22 @@ export class AiService {
 
   model(id?: string): string {
     return resolveModel(this.env, id);
+  }
+
+  /**
+   * Toda chamada com a chave própria passa por aqui: deu certo → apaga o aviso de créditos daquele provedor; falhou por falta de saldo →
+   * grava o aviso na empresa dona da chave. O erro segue para quem chamou (o aviso é best-effort e nunca lança).
+   */
+  private async ownKey<T>(workspaceId: string, vendor: AiVendor, call: () => Promise<T>): Promise<T> {
+    let out: T;
+    try {
+      out = await call();
+    } catch (e) {
+      if (e instanceof VendorKeyError && e.kind === 'noCredit') await this.alerts?.exhausted(workspaceId, e.vendor, e.message);
+      throw e;
+    }
+    await this.alerts?.recovered(workspaceId, vendor);
+    return out;
   }
 
   // ------------------------------------------------------------------ erros
@@ -234,10 +230,10 @@ export class AiService {
     const prompt = req.system ? `${req.system}\n\n${req.prompt}` : req.prompt;
     const fails: KeyFailure[] = [];
     if (o) {
-      try { return await this.openaiText(o, prompt, false); } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
+      try { return await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, prompt, false)); } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
-      try { return await this.geminiText(g, [{ text: prompt }], false); } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
+      try { return await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, [{ text: prompt }], false)); } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
     this.requireGatewayOr(fails, [o, g]);
     const j = await this.gatewayChat(this.model(req.model), prompt);
@@ -261,13 +257,13 @@ export class AiService {
         const content = images.length
           ? [...images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${b64(i.bytes)}` } })), { type: 'text', text: visionText }]
           : full;
-        return parseJsonLoose(await this.openaiText(o, content, true));
+        return parseJsonLoose(await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, content, true)));
       } catch (e) { this.warn('chave OpenAI', e); fails.push({ vendor: 'openai', error: e }); }
     }
     if (g) {
       try {
         const parts = [...images.map((i) => ({ inlineData: { mimeType: i.mime, data: b64(i.bytes) } })), { text: images.length ? visionText : full }];
-        return parseJsonLoose(await this.geminiText(g, parts, true));
+        return parseJsonLoose(await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, parts, true)));
       } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
     this.requireGatewayOr(fails, [o, g]);
@@ -288,11 +284,11 @@ export class AiService {
     const [o, g] = await Promise.all([this.keys.get(workspaceId, 'openai'), this.keys.get(workspaceId, 'gemini')]);
     const fails: KeyFailure[] = [];
     if ((engine === 'chatgpt' || engine === 'auto') && o) {
-      try { return { content: parseJsonLoose(await this.openaiText(o, req.prompt, true)), engine: 'Sua conta OpenAI' }; }
+      try { return { content: parseJsonLoose(await this.ownKey(workspaceId, 'openai', () => this.openaiText(o, req.prompt, true))), engine: 'Sua conta OpenAI' }; }
       catch (e) { fails.push({ vendor: 'openai', error: e }); }
     }
     if ((engine === 'gemini' || engine === 'auto') && g) {
-      try { return { content: parseJsonLoose(await this.geminiText(g, [{ text: req.prompt }], true)), engine: 'Sua conta Gemini' }; }
+      try { return { content: parseJsonLoose(await this.ownKey(workspaceId, 'gemini', () => this.geminiText(g, [{ text: req.prompt }], true))), engine: 'Sua conta Gemini' }; }
       catch (e) { fails.push({ vendor: 'gemini', error: e }); }
     }
     if (fails.length) this.logger.warn(this.redact(`chaves próprias falharam: ${fails.map((f) => `${f.vendor}: ${f.error instanceof Error ? f.error.message : 'falhou'}`).join(' | ')}`, [o, g]));
@@ -367,7 +363,7 @@ export class AiService {
     const fails: KeyFailure[] = [];
     if (userKey) {
       try {
-        const r = req.vendor === 'openai' ? await this.openaiDirectImage(userKey, req) : await this.geminiDirectImage(userKey, req);
+        const r = await this.ownKey(workspaceId, req.vendor, () => (req.vendor === 'openai' ? this.openaiDirectImage(userKey, req) : this.geminiDirectImage(userKey, req)));
         return { ...r, cost: 0, note: req.vendor === 'openai' ? 'ChatGPT (chave do workspace)' : 'Gemini (chave do workspace)' };
       } catch (e) {
         if (req.strict) throw e;
@@ -487,7 +483,7 @@ export class AiService {
     const fails: KeyFailure[] = [];
     if (userKey) {
       try {
-        const r = await this.geminiDirectVideo(userKey, req, deadline);
+        const r = await this.ownKey(workspaceId, 'gemini', () => this.geminiDirectVideo(userKey, req, deadline));
         if ('pending' in r) return { status: 'pending', jobId: `gveo:${r.pending}`, cost: 0, note: 'Vídeo pela chave Gemini, ainda gerando' };
         return { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId: r.id, cost: 0, note: 'Vídeo pela chave Gemini' };
       } catch (e) {
@@ -514,7 +510,7 @@ export class AiService {
     if (jobId.startsWith('gveo:')) {
       const key = await this.keys.get(workspaceId, 'gemini');
       if (!key) return { status: 'failed' };
-      const r = await this.geminiVideoWait(key, jobId.slice(5), deadline);
+      const r = await this.ownKey(workspaceId, 'gemini', () => this.geminiVideoWait(key, jobId.slice(5), deadline));
       return 'pending' in r ? { status: 'pending', jobId, cost: 0, note: null } : { status: 'ready', bytes: r.bytes, mime: 'video/mp4', jobId, cost: 0, note: null };
     }
     return { status: 'failed' };
@@ -587,6 +583,7 @@ export class AiService {
         return await this.geminiVideoWait(key, op.name, deadline);
       } catch (e) {
         if (e instanceof AiDownloadBlockedError) throw e; // bloqueio de segurança/tamanho: não tenta outro modelo
+        if (e instanceof VendorKeyError && e.kind === 'noCredit') throw e; // conta sem saldo: outro modelo também não sai
         lastErr = e;
         this.warn(`vídeo com ${model}`, e);
       }
