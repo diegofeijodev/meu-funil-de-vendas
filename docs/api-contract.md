@@ -1008,4 +1008,6 @@ no navegador). Qualquer membro lê (`WorkspaceAccessGuard`: não-membro `403`, i
 - `instagram`: posts com `status = 'failed'` AGORA (republicado, reagendado ou cancelado não conta), de qualquer tipo de falha (publicação ou arte), com
   `updated_at` nos últimos 7 dias. `last_error`/`last_at` = o mais recente. `permission = true` quando algum desses erros é de permissão da Meta (frase
   "Permissão insuficiente na Meta", códigos `(#10)`/`(#200)` ou "does not have permission"). Nenhum → `null`.
+- Web (`components/health-alerts-banner.tsx`, textos em `lib/health-alerts.ts`): "Já coloquei créditos — testar agora" chama `ai-keys-test` (§27) para cada
+  provedor afetado e aparece para **qualquer membro** (a rota de teste já é de leitura; viewer também testa); o resultado atualiza o aviso e a faixa recarrega.
 
