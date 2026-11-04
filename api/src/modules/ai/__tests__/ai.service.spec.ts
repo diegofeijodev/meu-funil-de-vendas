@@ -22,6 +22,8 @@ function fakeFetch(handlers: [string, (init?: RequestInit) => Response][]) {
 }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const chat = (content: string) => json({ choices: [{ message: { content } }] });
+/** 429 da OpenAI por falta de saldo (o 429 sem prova de saldo agora é "pedidos demais"). */
+const NO_QUOTA = '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}';
 
 function setup(envVars: Record<string, string>, keys: { openai?: string; gemini?: string }, http: AiFetch) {
   const env = validateEnv(envVars);
@@ -98,7 +100,7 @@ describe('AiService.json', () => {
   it('sem gateway: chave própria que falha devolve o motivo REAL da chave, em frases simples (não "nenhuma IA")', async () => {
     const f = fakeFetch([
       ['api.openai.com', () => new Response('no', { status: 401 })],
-      ['generativelanguage', () => new Response('no', { status: 429 })],
+      ['generativelanguage', () => new Response(NO_QUOTA, { status: 429 })],
     ]);
     const ai = setup(baseEnv, { openai: 'sk-cliente-0123456789', gemini: 'gk-cliente' }, f.fn);
     const both = {
@@ -131,6 +133,14 @@ describe('AiService.json', () => {
     expect(await one('gemini', 400, '{"error":{"message":"models/gemini-flash-latest is not found for API version v1beta"}}'))
       .toBe('O modelo gemini-flash-latest não está disponível na chave do Gemini (Google). Confira o acesso da chave em Integrações.');
     expect(await one('openai', 422, '{"error":{"message":"bad"}}')).toBe('A OpenAI recusou o pedido (erro 422).');
+    // 402 (Gemini pré-pago esgotado) é falta de saldo, não "recusou o pedido (erro 402)" — o caso de 01/11/2026 em produção.
+    expect(await one('gemini', 402, '{"error":{"code":402,"message":"Your prepayment credits are depleted.","status":"RESOURCE_EXHAUSTED"}}'))
+      .toBe('Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações.');
+    expect(await one('openai', 429, NO_QUOTA)).toBe('Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.');
+    // 429 sem prova de saldo (limite por minuto) tem frase própria.
+    expect(await one('openai', 429, '{"error":{"message":"Rate limit reached for gpt-4o-mini on requests per min (RPM)","code":"rate_limit_exceeded"}}'))
+      .toBe('O ChatGPT (OpenAI) recebeu pedidos demais agora. Tente de novo em alguns minutos.');
+    expect(await one('gemini', 429, 'x')).toBe('O Gemini (Google) recebeu pedidos demais agora. Tente de novo em alguns minutos.');
     expect(await one('gemini', 503, 'overloaded')).toBe('O Gemini (Google) não respondeu agora. Tente de novo em alguns minutos.');
   });
 
@@ -143,8 +153,13 @@ describe('AiService.json', () => {
       'Nenhuma IA funcionou: o modelo gpt-4o-mini não está disponível na chave do ChatGPT (OpenAI) e o Gemini (Google) não respondeu. Confira as chaves em Integrações.',
     );
     expect(await both([409, 'x'], [403, 'x'])).toBe('Nenhuma IA funcionou: o ChatGPT (OpenAI) recusou o pedido (erro 409) e a chave do Gemini (Google) foi recusada. Confira as chaves em Integrações.');
+    // A frase de produção de 01/11/2026, agora com o 402 do Gemini como falta de saldo.
+    expect(await both([429, NO_QUOTA], [402, '{"error":{"code":402}}'])).toBe(
+      'Nenhuma IA funcionou: a conta do ChatGPT (OpenAI) está sem créditos e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações.',
+    );
+    expect(await both([429, 'x'], [500, 'x'])).toBe('Nenhuma IA funcionou: o ChatGPT (OpenAI) recebeu pedidos demais agora e o Gemini (Google) não respondeu. Confira as chaves em Integrações.');
     // Resposta fora do formato (JSON) também vira trecho próprio.
-    const f = fakeFetch([['api.openai.com', () => chat('sem json')], ['generativelanguage', () => new Response('x', { status: 429 })]]);
+    const f = fakeFetch([['api.openai.com', () => chat('sem json')], ['generativelanguage', () => new Response(NO_QUOTA, { status: 429 })]]);
     expect(await setup(baseEnv, { openai: 'sk-a-000000', gemini: 'gk-b-000000' }, f.fn).json(WS, { prompt: 'P', schema, name: 'n' }).catch((e) => e.getResponse().message)).toBe(
       'Nenhuma IA funcionou: o ChatGPT (OpenAI) devolveu uma resposta fora do formato e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações.',
     );
@@ -250,7 +265,7 @@ describe('AiService.image / video / text', () => {
   });
 
   it('sem gateway: imagem/vídeo pela chave própria que falha devolvem o motivo da chave', async () => {
-    const o = setup(baseEnv, { openai: 'sk' }, fakeFetch([['api.openai.com', () => new Response('x', { status: 429 })]]).fn);
+    const o = setup(baseEnv, { openai: 'sk' }, fakeFetch([['api.openai.com', () => new Response(NO_QUOTA, { status: 429 })]]).fn);
     await expect(o.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).rejects.toMatchObject({
       response: { code: 'AI_ERROR', message: 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.' },
     });

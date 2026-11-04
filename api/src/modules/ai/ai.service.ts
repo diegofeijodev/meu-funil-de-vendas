@@ -6,6 +6,7 @@ import { AiDownloadBlockedError, AiError } from './ai-error';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
+import { classifyVendorFailure, VendorFailureKind } from './vendor-failure';
 import {
   AI_FETCH, AI_GUARDED_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
@@ -45,8 +46,8 @@ const FORMAT_MSG = 'A IA não devolveu o formato esperado.';
 /** Nome do provedor nos textos: "ChatGPT (OpenAI)" / "Gemini (Google)". */
 const VENDOR_LABEL: Record<AiVendor, string> = { openai: 'ChatGPT (OpenAI)', gemini: 'Gemini (Google)' };
 
-/** Por que a chave própria falhou (classificado pelo status HTTP e pelo corpo de erro do provedor). */
-export type VendorFailureKind = 'refused' | 'noCredit' | 'model' | 'rejected' | 'down';
+/** Por que a chave própria falhou (classificado pelo status HTTP e pelo corpo de erro do provedor, em `vendor-failure.ts`). */
+export type { VendorFailureKind } from './vendor-failure';
 
 /** Erro de chave própria com o caso classificado (para juntar duas falhas numa frase só). */
 export class VendorKeyError extends AiError {
@@ -70,6 +71,8 @@ export function vendorMessage(vendor: AiVendor, kind: VendorFailureKind, d: { st
       return openai
         ? 'Sua conta OpenAI está sem créditos ou no limite de uso. Adicione créditos na OpenAI ou cadastre a chave do Gemini em Integrações.'
         : 'Sua conta do Gemini (Google) está sem créditos ou no limite de uso. Adicione créditos no Google ou cadastre a chave do ChatGPT (OpenAI) em Integrações.';
+    case 'rateLimited':
+      return `O ${VENDOR_LABEL[vendor]} recebeu pedidos demais agora. Tente de novo em alguns minutos.`;
     case 'model':
       return `O modelo ${d.model ?? 'pedido'} não está disponível na chave do ${VENDOR_LABEL[vendor]}. Confira o acesso da chave em Integrações.`;
     case 'rejected':
@@ -89,6 +92,8 @@ function vendorClause(f: KeyFailure, redact: (t: string) => string): string {
         return `a chave do ${x} foi recusada`;
       case 'noCredit':
         return `a conta do ${x} está sem créditos`;
+      case 'rateLimited':
+        return `o ${x} recebeu pedidos demais agora`;
       case 'model':
         return `o modelo ${e.detail.model ?? 'pedido'} não está disponível na chave do ${x}`;
       case 'rejected':
@@ -144,22 +149,16 @@ export class AiService {
   // ------------------------------------------------------------------ erros
 
   /**
-   * Erro da chave própria em português simples, por caso; o corpo cru do provedor vai só para o log (sem a chave).
-   * 401/403 e 400 de chave inválida (`API_KEY_INVALID`, "API key not valid", "Incorrect API key") → recusada; 429 → sem crédito;
-   * 404 ou 400 de modelo (`model_not_found`, "does not exist", "not found", "model") → modelo indisponível nesta chave; outros 4xx →
-   * "recusou o pedido (erro N)"; 5xx → "não respondeu agora".
+   * Erro da chave própria em português simples, por caso (`classifyVendorFailure`); o corpo cru do provedor vai só para o log (sem a chave).
+   * 401/403 e 400 de chave inválida → recusada; 402, ou 429/403/400 cujo corpo prova falta de saldo → sem crédito; 429 sem prova de saldo
+   * (limite por minuto) → pedidos demais agora; 404 ou 400 de modelo → modelo indisponível nesta chave; outros 4xx → "recusou o pedido
+   * (erro N)"; 5xx → "não respondeu agora".
    */
   private async vendorError(vendor: AiVendor, res: Response, model?: string): Promise<AiError> {
     const body = await res.text().catch(() => '');
     this.logger.warn(`${vendor} respondeu ${res.status}: ${this.redact(body.slice(0, 300), [])}`);
     const st = res.status;
-    let kind: VendorFailureKind;
-    if (st === 401 || st === 403) kind = 'refused';
-    else if (st === 429) kind = 'noCredit';
-    else if (st === 400 && /API_KEY_INVALID|API key not valid|Incorrect API key|invalid_api_key/i.test(body)) kind = 'refused';
-    else if (st === 404 || (st === 400 && /model_not_found|does not exist|not found|\bmodel\b/i.test(body))) kind = 'model';
-    else if (st >= 400 && st < 500) kind = 'rejected';
-    else kind = 'down';
+    const kind: VendorFailureKind = classifyVendorFailure(st, body);
     const detail = { status: st, model };
     return new VendorKeyError(vendorMessage(vendor, kind, detail), vendor, kind, detail);
   }
