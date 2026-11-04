@@ -30,6 +30,7 @@ import { useVacancySettings } from "@/modules/vacancy-stories/infrastructure/vac
 import { ROLE_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { meuFunilLogo, meuFunilSymbol } from "@/lib/assets";
+import { HealthAlertsBanner } from "@/components/health-alerts-banner";
 
 const NAV = [
   { to: "/agency", label: "Agência", icon: Building2 },
@@ -149,7 +150,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="font-display font-bold text-brand-navy">Meu Funil</span>
         </header>
         <main className="surface-grid min-w-0 flex-1 px-4 py-8 md:px-8 lg:px-10">
-          <div className="mx-auto w-full max-w-[1400px]">{children}</div>
+          <div className="mx-auto w-full max-w-[1400px]">
+            {/* Avisos da empresa atual (IA sem créditos, posts do Instagram que falharam) em todas as telas logadas. */}
+            <HealthAlertsBanner />
+            {children}
+          </div>
         </main>
       </div>
     </div>
