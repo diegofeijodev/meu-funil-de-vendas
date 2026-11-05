@@ -5,6 +5,7 @@ import { WorkspaceAccessService } from '../access/access.service';
 import { FilesService } from '../files/files.service';
 import {
   BlockerItem,
+  CampaignChannels,
   confirmNameMatches,
   DeletionBlocker,
   deletionBlockers,
@@ -14,6 +15,19 @@ import {
 } from './workspace-deletion';
 
 type Db = Prisma.TransactionClient;
+
+const CHANNEL_COLUMNS = {
+  id: true,
+  name: true,
+  meta_campaign_id: true,
+  meta_delivery_status: true,
+  google_campaign_id: true,
+  google_status: true,
+  google_creating_at: true,
+  tiktok_campaign_id: true,
+  tiktok_status: true,
+  tiktok_creating_at: true,
+} as const;
 
 /** Post do Instagram que já saiu ou não vai sair: o resto (ideia, em produção, aprovado, agendado, saindo agora) conta como "ainda vai sair". */
 const IG_GONE = ['published', 'cancelled', 'failed'];
@@ -79,9 +93,14 @@ export class WorkspaceDeletionService {
       const rows = await tx.$queryRaw<{ name: string }[]>`SELECT name FROM workspaces WHERE id = ${id}::uuid FOR UPDATE`;
       const name = rows[0]?.name;
       if (name === undefined) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Não encontrado.' });
+      // O papel de novo, travado (FOR SHARE): ninguém rebaixa o dono entre a checagem de fora e a exclusão.
+      const member = await tx.$queryRaw<{ role: string }[]>`
+        SELECT role::text AS role FROM workspace_members WHERE workspace_id = ${id}::uuid AND user_id = ${userId}::uuid FOR SHARE`;
+      if (member[0]?.role !== 'owner') throw new ForbiddenException({ code: 'FORBIDDEN', message: ERR_ONLY_OWNER_DELETES });
       if (!confirmNameMatches(confirmName, name)) throw new BadRequestException({ code: 'NAME_MISMATCH', message: ERR_NAME_MISMATCH });
-      // Os mesmos bloqueios do preview, de novo aqui dentro (alguém pode ter ligado uma campanha entre o preview e o clique).
-      const blockers = await this.blockers(tx, userId, id);
+      // Os mesmos bloqueios do preview, de novo aqui dentro e com as campanhas TRAVADAS (FOR UPDATE): um "Ativar"/"criar no canal" que
+      // chegue agora espera o commit e, sem a linha, cai na compensação de quem ativa (`[workspace-delete-race]`).
+      const blockers = await this.blockers(tx, userId, id, true);
       if (blockers.length) throw new ConflictException({ code: blockers[0].code, message: blockers[0].message });
 
       const counts = await this.counts(tx, id);
@@ -121,25 +140,35 @@ export class WorkspaceDeletionService {
     if (role !== 'owner') throw new ForbiddenException({ code: 'FORBIDDEN', message: ERR_ONLY_OWNER_DELETES });
   }
 
-  private async blockers(db: Db, userId: string, id: string): Promise<DeletionBlocker[]> {
-    const [published, memberships] = await Promise.all([
-      db.campaigns.findMany({
-        where: { workspace_id: id, OR: [{ meta_campaign_id: { not: null } }, { google_campaign_id: { not: null } }, { tiktok_campaign_id: { not: null } }] },
-        select: {
-          id: true,
-          name: true,
-          meta_campaign_id: true,
-          meta_delivery_status: true,
-          google_campaign_id: true,
-          google_status: true,
-          tiktok_campaign_id: true,
-          tiktok_status: true,
-        },
-        orderBy: { created_at: 'asc' },
-      }),
-      db.workspace_members.count({ where: { user_id: userId } }),
-    ]);
-    return deletionBlockers({ live: liveCampaigns(published), memberships });
+  private async blockers(db: Db, userId: string, id: string, lock = false): Promise<DeletionBlocker[]> {
+    const [rows, memberships] = await Promise.all([lock ? this.lockedCampaigns(db, id) : this.campaignChannels(db, id), db.workspace_members.count({ where: { user_id: userId } })]);
+    return deletionBlockers({ live: liveCampaigns(rows), memberships });
+  }
+
+  /** Campanhas com algum canal (publicada ou sendo criada), sem trava — a prévia só lê. */
+  private campaignChannels(db: Db, id: string): Promise<CampaignChannels[]> {
+    return db.campaigns.findMany({
+      where: {
+        workspace_id: id,
+        OR: [
+          { meta_campaign_id: { not: null } },
+          { google_campaign_id: { not: null } },
+          { tiktok_campaign_id: { not: null } },
+          { google_creating_at: { not: null } },
+          { tiktok_creating_at: { not: null } },
+        ],
+      },
+      select: CHANNEL_COLUMNS,
+      orderBy: { created_at: 'asc' },
+    });
+  }
+
+  /** Todas as campanhas da empresa com `FOR UPDATE` (na transação do DELETE); o filtro de canal fica no `liveCampaigns`. */
+  private lockedCampaigns(db: Db, id: string): Promise<CampaignChannels[]> {
+    return db.$queryRaw<CampaignChannels[]>`
+      SELECT id, name, meta_campaign_id, meta_delivery_status, google_campaign_id, google_status, google_creating_at,
+             tiktok_campaign_id, tiktok_status, tiktok_creating_at
+        FROM campaigns WHERE workspace_id = ${id}::uuid ORDER BY created_at ASC FOR UPDATE`;
   }
 
   private async counts(db: Db, id: string): Promise<DeletionCounts> {

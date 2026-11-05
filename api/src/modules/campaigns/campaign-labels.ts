@@ -17,3 +17,9 @@ export const brl = (value: number | null | undefined): string =>
 export const CAMPAIGN_FINISHED = 'finished';
 /** Guarda dos botões de publicar/ativar numa campanha encerrada. */
 export const MSG_CAMPAIGN_ENDED = 'Campanha encerrada.';
+
+/**
+ * Reserva de "criando a campanha no Google/TikTok" (`campaigns.google_creating_at` / `tiktok_creating_at`): dentro deste prazo a
+ * criação está em andamento (outra requisição recebe 409 e "Apagar empresa" bloqueia); vencida, pode ser reassumida.
+ */
+export const CHANNEL_CREATE_LEASE_MS = 10 * 60 * 1000;

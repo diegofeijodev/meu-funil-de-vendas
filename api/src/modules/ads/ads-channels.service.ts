@@ -18,10 +18,10 @@ import { OAuthStateService } from './oauth-state.service';
 import { TikTokAdsClient } from './tiktok-ads.client';
 import { assertPeriodOpen, campaignEndDay, MSG_OFFER_UNCONFIRMED, offerNeedsConfirmation, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
-import { CAMPAIGN_FINISHED, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
+import { CAMPAIGN_FINISHED, CHANNEL_CREATE_LEASE_MS, MSG_CAMPAIGN_ENDED } from '../campaigns/campaign-labels';
 
 /** Reserva de criação vencida (processo morreu no meio): outra tentativa pode assumir. */
-const CREATE_LEASE_MS = 10 * 60 * 1000;
+const CREATE_LEASE_MS = CHANNEL_CREATE_LEASE_MS;
 
 const GOOGLE_KEYS = ['GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'];
 const TIKTOK_KEYS = ['TIKTOK_APP_ID', 'TIKTOK_APP_SECRET', 'TIKTOK_ADVERTISER_ID'];

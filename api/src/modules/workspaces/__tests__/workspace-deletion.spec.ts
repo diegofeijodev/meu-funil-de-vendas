@@ -39,6 +39,23 @@ describe('regras puras do "Apagar empresa"', () => {
     expect(live.map((l) => `${l.channel}:${l.name}`)).toEqual(['meta:Ativa', 'meta:Encerrada mas ligada', 'meta:Sem status', 'google:Google', 'tiktok:TikTok']);
   });
 
+  it('sendo criada = reserva *_creating_at viva e ainda sem id externo; reserva vencida (> 10 min) não bloqueia', () => {
+    const now = new Date('2026-11-04T12:00:00Z');
+    const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+    const rows = [
+      camp({ name: 'Google criando', google_creating_at: ago(2) }),
+      camp({ name: 'TikTok criando', tiktok_creating_at: ago(9) }),
+      camp({ name: 'Google reserva vencida', google_creating_at: ago(11) }),
+      camp({ name: 'Google já criada (pausada)', google_campaign_id: 'g', google_status: 'PAUSED', google_creating_at: ago(1) }),
+    ];
+    expect(liveCampaigns(rows, now).map((l) => `${l.channel}:${l.state}:${l.name}`)).toEqual(['google:creating:Google criando', 'tiktok:creating:TikTok criando']);
+    const b = deletionBlockers({ live: liveCampaigns(rows, now), memberships: 2 });
+    expect(b.map((x) => x.code)).toEqual(['CAMPAIGN_BEING_CREATED']);
+    expect(b[0].message).toBe(
+      'Estas campanhas estão sendo criadas agora no Google Ads e no TikTok Ads: Google criando, TikTok criando. Espere terminar (leva alguns minutos) e tente de novo.',
+    );
+  });
+
   it('bloqueios: Meta (com os nomes), Google/TikTok (sem repetir a campanha) e última empresa, nessa ordem', () => {
     const m1 = { id: 'a', name: 'Black Friday', channel: 'meta' as const };
     const m2 = { id: 'b', name: 'Natal', channel: 'meta' as const };
@@ -141,7 +158,13 @@ function makeDb(state: State, side: 'prisma' | 'tx', log: string[]) {
     crm_integrations: counter('crm_integrations'),
     $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => { rec(`exec:${strings.join('?').trim()}|${values.join(',')}`); return 1; },
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      rec(`query:${strings.join('?').trim()}`);
+      const sql = strings.join('?').replace(/\s+/g, ' ').trim();
+      rec(`query:${sql}`);
+      if (sql.includes('FROM workspace_members')) {
+        const m = state.members.find((x) => x.workspace_id === values[0] && x.user_id === values[1]);
+        return m ? [{ role: m.role }] : [];
+      }
+      if (sql.includes('FROM campaigns')) return state.campaigns.filter((c) => c.workspace_id === values[0]);
       const w = state.workspaces.find((x) => x.id === values[0]);
       return w ? [{ name: w.name }] : [];
     },
@@ -276,6 +299,8 @@ describe('WorkspaceDeletionService.remove', () => {
     const inTx = log.slice(log.indexOf('tx:begin'), log.indexOf('tx:commit'));
     expect(inTx.find((l) => l.startsWith('tx:exec:'))).toBe(`tx:exec:SELECT pg_advisory_xact_lock(hashtext(?))|workspace-delete:${OWNER}`);
     expect(inTx).toContain('tx:query:SELECT name FROM workspaces WHERE id = ?::uuid FOR UPDATE');
+    expect(inTx).toContain('tx:query:SELECT role::text AS role FROM workspace_members WHERE workspace_id = ?::uuid AND user_id = ?::uuid FOR SHARE');
+    expect(inTx.some((l) => /^tx:query:SELECT id, name, meta_campaign_id.* FROM campaigns WHERE workspace_id = \?::uuid ORDER BY created_at ASC FOR UPDATE$/.test(l))).toBe(true);
     expect(inTx).toContain(`tx:oauth_states.deleteMany:${WS}`);
     expect(inTx).toContain(`tx:app_credentials.deleteMany:${JSON.stringify(globalKeysOf(WS))}`);
     expect(inTx[inTx.length - 1]).toBe(`tx:workspaces.delete:${WS}`);
@@ -305,6 +330,22 @@ describe('WorkspaceDeletionService.remove', () => {
     await expect(svc.remove(OWNER, WS, 'Freela Serviços')).resolves.toBeUndefined();
     expect(state.workspaces.some((w) => w.id === WS)).toBe(false);
     expect(warnSpy.mock.calls.map((c) => String(c[0])).some((m) => m.includes('disco cheio'))).toBe(true);
+  });
+
+  it('dono rebaixado entre a checagem de fora e a trava → 403 dentro da transação, nada apagado', async () => {
+    const { svc, log } = setup({ txState: (s) => { s.members.find((m) => m.user_id === OWNER && m.workspace_id === WS)!.role = 'admin'; } });
+    expect(await err(svc.remove(OWNER, WS, 'Freela Serviços'))).toBe(`403:FORBIDDEN:${ERR_ONLY_OWNER_DELETES}`);
+    expect(deletes(log)).toEqual([]);
+  });
+
+  it('campanha sendo criada no Google agora → 409 CAMPAIGN_BEING_CREATED (prévia mostra o mesmo bloqueio)', async () => {
+    const { svc, state, log } = setup();
+    state.campaigns.push({ ...camp({ name: 'Busca Nova', google_creating_at: new Date(Date.now() - 60_000) }), workspace_id: WS, created_at: new Date() });
+    expect((await svc.preview(OWNER, WS)).blockers.map((b) => b.code)).toEqual(['CAMPAIGN_BEING_CREATED']);
+    expect(await err(svc.remove(OWNER, WS, 'Freela Serviços'))).toBe(
+      '409:CAMPAIGN_BEING_CREATED:Esta campanha está sendo criada agora no Google Ads: Busca Nova. Espere terminar (leva alguns minutos) e tente de novo.',
+    );
+    expect(deletes(log)).toEqual([]);
   });
 
   it('empresa sumiu entre o acesso e a trava → 404', async () => {
