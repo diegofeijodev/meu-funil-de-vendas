@@ -8,6 +8,7 @@ import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section, StatusPill } from "@/components/ui-bits";
 import { SetupChecklist } from "@/components/setup-checklist";
+import { DeleteWorkspaceCard } from "@/components/delete-workspace-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -125,6 +126,9 @@ export function SettingsPage() {
             Todas as ações relevantes ficam registradas no audit log, disponível na página de Aprovações.
           </p>
         </Section>
+
+        {/* Só o dono apaga (a API confere de novo; admin recebe 403). `isOwner` acima inclui admin. */}
+        {role === "owner" && <DeleteWorkspaceCard />}
       </div>
     </>
   );

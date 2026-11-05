@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { api } from "@/modules/shared/infrastructure/http";
+import type { DeletionPreview } from "@/lib/workspace-deletion";
 
 const member = z.object({ id: z.string(), user_id: z.string(), role: z.string(), created_at: z.string() }).passthrough();
 const profile = z
@@ -33,4 +34,35 @@ export async function updateWorkspaceName(workspaceId: string, name: string) {
 
 export async function updateMyName(fullName: string) {
   await api.patch("/v1/profiles/me", { full_name: fullName });
+}
+
+const item = z.object({ id: z.string(), name: z.string() });
+const deletionPreview = z.object({
+  workspace: item,
+  counts: z.object({
+    brands: z.number(),
+    campaigns: z.number(),
+    creatives: z.number(),
+    media_assets: z.number(),
+    ig_posts_pending: z.number(),
+    ig_posts_published: z.number(),
+    crm_leads: z.number(),
+    members: z.number(),
+    saved_keys: z.number(),
+    connections: z.number(),
+  }),
+  inheritors: z.array(item),
+  inheritors_hidden: z.number(),
+  blockers: z.array(z.object({ code: z.string(), message: z.string(), items: z.array(item).optional() })),
+});
+
+/** `GET /v1/workspaces/:ws/deletion-preview` — só o dono (contrato §31). */
+export async function fetchDeletionPreview(workspaceId: string): Promise<DeletionPreview> {
+  const { data } = await api.get(`/v1/workspaces/${workspaceId}/deletion-preview`);
+  return deletionPreview.parse(data);
+}
+
+/** `DELETE /v1/workspaces/:ws` `{ confirmName }` — `204`; erros `NAME_MISMATCH` (400) e bloqueios (409) com a mensagem pronta. */
+export async function deleteWorkspace(workspaceId: string, confirmName: string): Promise<void> {
+  await api.delete(`/v1/workspaces/${workspaceId}`, { data: { confirmName } });
 }
