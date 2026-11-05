@@ -1372,6 +1372,53 @@ PSQL "DELETE FROM cron_tokens WHERE name='vacancy-stories' AND token='$VTOK'" >/
 PSQL "DELETE FROM cron_heartbeats WHERE name='vacancy-stories' AND last_run_at >= '$TV'" >/dev/null
 rm -f /tmp/mf-smoke-vaga.png
 
+echo "── Apagar empresa (§31) ──"
+DEL=$(curl -s -X POST $API/v1/workspaces -H "$H" -H "$J" -d "{\"name\":\"Apagar Smoke $SUF\"}" | jq -r .id)
+HEIR=$(curl -s -X POST $API/v1/workspaces -H "$H" -H "$J" -d "{\"name\":\"Herdeira Smoke $SUF\"}" | jq -r .id)
+DWS=$API/v1/workspaces/$DEL
+check "apagar: sem token → 401 (preview e delete)" "401,401" "$(curl -s -o /dev/null -w '%{http_code}' $DWS/deletion-preview),$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$J" -d '{"confirmName":"x"}')"
+PSQL "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES ('$DEL','$VID','admin')" >/dev/null
+check "apagar: admin não vê a prévia nem apaga (só o dono)" "Só o dono da empresa pode apagá-la.|403" "$(curl -s $DWS/deletion-preview -H "$HV" | jq -r .error.message)|$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$HV" -H "$J" -d "{\"confirmName\":\"Apagar Smoke $SUF\"}")"
+check "apagar: estranho → 403" "403,403" "$(curl -s -o /dev/null -w '%{http_code}' $DWS/deletion-preview -H "$HD"),$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$HD" -H "$J" -d "{\"confirmName\":\"Apagar Smoke $SUF\"}")"
+check "apagar: id malformado → 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/v1/workspaces/xxx -H "$H" -H "$J" -d '{"confirmName":"x"}')"
+# Dados em várias tabelas: marca + atividade, funil padrão do CRM (setup chama o ensure), lead, campanha, arquivo, state de OAuth, chaves.
+DB=$(curl -s -X POST $DWS/brands -H "$H" -H "$J" -d '{"name":"Marca Apagar"}' | jq -r .id)
+curl -s -o /dev/null -X POST $API/v1/setup/status -H "$H" -H "$J" -d "{\"workspaceId\":\"$DEL\"}"
+PSQL "INSERT INTO crm_leads(workspace_id,name) VALUES ('$DEL','Lead Apagar')" >/dev/null
+DCAMP=$(PSQL "INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,meta_campaign_id,meta_delivery_status) VALUES ('$DEL','$DB','Campanha Ligada','leads','active','smoke-meta-$SUF','ACTIVE') RETURNING id" | head -1)
+printf '\x89PNG\r\n\x1a\nfake-png-bytes' > /tmp/mf-smoke-del.png
+DUP=$(curl -s -X POST "$DWS/files?kind=brands" -H "$H" -F "file=@/tmp/mf-smoke-del.png;type=image/png" | jq -r .key)
+PSQL "INSERT INTO oauth_states(state_hash,channel,workspace_id,user_id,expires_at) VALUES ('smoke-del-$SUF','google','$DEL','$(curl -s $API/v1/auth/me -H "$H" | jq -r .user.id)',now()+interval '1 hour')" >/dev/null
+PSQL "INSERT INTO app_credentials(workspace_id,key,value) VALUES ('$DEL','SMOKE_DEL','enc:v2:x'),(NULL,'AI_OPENAI_KEY:$DEL','enc:v2:x')" >/dev/null
+PSQL "UPDATE workspaces SET ai_inherit_from='$DEL' WHERE id='$HEIR'" >/dev/null
+check "apagar: dados semeados (arquivo da empresa no disco)" "1" "$(ls "$(dirname "$0")/../uploads/creative-assets/brands/$DEL" 2>/dev/null | wc -l)"
+DPV=$(curl -s $DWS/deletion-preview -H "$H")
+check "apagar: prévia com as contagens" "1,1,1,2,2,0" "$(echo "$DPV" | jq -r '[.counts.brands,.counts.campaigns,.counts.crm_leads,.counts.members,.counts.saved_keys,.counts.connections]|map(tostring)|join(",")')"
+check "apagar: prévia lista a herdeira da IA" "Herdeira Smoke $SUF|0" "$(echo "$DPV" | jq -r '"\(.inheritors[0].name)|\(.inheritors_hidden)"')"
+check "apagar: campanha ligada na Meta bloqueia (com o nome)" "LIVE_META_CAMPAIGNS|Campanha Ligada|$DCAMP" "$(echo "$DPV" | jq -r '.blockers[0] | "\(.code)|\(.items[0].name)|\(.items[0].id)"')"
+check "apagar: sem corpo → 400 VALIDATION_ERROR" "VALIDATION_ERROR" "$(curl -s -X DELETE $DWS -H "$H" -H "$J" -d '{}' | jq -r .error.code)"
+check "apagar: campo extra barrado (whitelist)" "VALIDATION_ERROR" "$(curl -s -X DELETE $DWS -H "$H" -H "$J" -d '{"confirmName":"x","workspace_id":"y"}' | jq -r .error.code)"
+check "apagar: nome errado → 400 NAME_MISMATCH (corpo JSON no DELETE chega)" "NAME_MISMATCH" "$(curl -s -X DELETE $DWS -H "$H" -H "$J" -d '{"confirmName":"Outra Empresa"}' | jq -r .error.code)"
+DLV=$(curl -s -w '\n%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d "{\"confirmName\":\"  Apagar Smoke $SUF \"}")
+check "apagar: campanha ligada → 409 com o nome, nada apagado" "409|LIVE_META_CAMPAIGNS|1|Esta campanha ainda está ligada na Meta: Campanha Ligada. Encerre a campanha (ou pause na Meta) antes de apagar a empresa." "$(echo "$DLV" | tail -1)|$(echo "$DLV" | head -1 | jq -r .error.code)|$(PSQL "SELECT count(*) FROM workspaces WHERE id='$DEL'")|$(echo "$DLV" | head -1 | jq -r .error.message)"
+PSQL "UPDATE campaigns SET status='finished', meta_delivery_status='PAUSED' WHERE id='$DCAMP'" >/dev/null
+check "apagar: pausada não bloqueia mais" "0" "$(curl -s $DWS/deletion-preview -H "$H" | jq '.blockers|length')"
+check "apagar: nome certo (espaços nas pontas não contam) → 204" "204" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d "{\"confirmName\":\"  Apagar Smoke $SUF \"}")"
+DTABLES=$(PSQL "SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='workspace_id' ORDER BY 1")
+DLEFT=$(for t in $DTABLES; do n=$(PSQL "SELECT count(*) FROM \"$t\" WHERE workspace_id='$DEL'"); [ "$n" != "0" ] && printf '%s=%s ' "$t" "$n"; done)
+check "apagar: nenhuma das tabelas com workspace_id ficou com linhas da empresa ($(echo "$DTABLES" | wc -l) tabelas conferidas)" "" "$DLEFT"
+check "apagar: linha de workspaces, chave de IA global e pasta do disco sumiram" "0,0,0" "$(PSQL "SELECT count(*) FROM workspaces WHERE id='$DEL'"),$(PSQL "SELECT count(*) FROM app_credentials WHERE workspace_id IS NULL AND key LIKE '%:$DEL'"),$(ls -d "$(dirname "$0")/../uploads/creative-assets/brands/$DEL" 2>/dev/null | wc -l)"
+check "apagar: herdeira ficou sem herança; dono continua com as outras empresas" "null|0" "$(curl -s $API/v1/workspaces/$HEIR -H "$H" | jq -r .ai_inherit_from)|$(curl -s $API/v1/workspaces -H "$H" | jq --arg d "$DEL" '[.[]|select(.workspace_id==$d)]|length')"
+check "apagar: de novo → 403 (já não é membro de nada com esse id)" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d '{"confirmName":"x"}')"
+check "apagar: linha de auditoria no log da API (sem MF_API_LOG falha, como a das vagas)" "1" "$(grep -c "\"action\":\"workspace.deleted\",\"user_id\":\"[^\"]*\",\"workspace_id\":\"$DEL\"" "${MF_API_LOG:-/dev/null}")"
+EMAIL4="smoke4$SUF@meufunil.local"
+S4=$(curl -s -X POST $API/v1/auth/signup -H "$J" -d "{\"email\":\"$EMAIL4\",\"password\":\"segredo1\",\"full_name\":\"Única\",\"company_name\":\"Empresa Única\"}")
+H4="Authorization: Bearer $(echo "$S4" | jq -r .access_token)"
+W4=$(curl -s $API/v1/workspaces -H "$H4" | jq -r '.[0].workspace_id')
+check "apagar: última empresa do usuário → prévia bloqueia e DELETE 409 LAST_WORKSPACE" "LAST_WORKSPACE|LAST_WORKSPACE|1" "$(curl -s $API/v1/workspaces/$W4/deletion-preview -H "$H4" | jq -r '.blockers[0].code')|$(curl -s -X DELETE $API/v1/workspaces/$W4 -H "$H4" -H "$J" -d '{"confirmName":"Empresa Única"}' | jq -r .error.code)|$(PSQL "SELECT count(*) FROM workspaces WHERE id='$W4'")"
+curl -s -o /dev/null -X POST $API/v1/auth/logout -H "$H4"
+rm -f /tmp/mf-smoke-del.png
+
 echo "── Refresh e logout ──"
 R=$(curl -s -X POST $API/v1/auth/refresh -H "$J" -d "{\"refresh_token\":\"$RT\"}")
 check "refresh ok" "$EMAIL" "$(echo "$R" | jq -r .user.email)"
@@ -1382,9 +1429,9 @@ check "refresh revogado após logout" "INVALID_REFRESH_TOKEN" "$(curl -s -X POST
 echo "── Limpeza ──"
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^meu-funil-postgres$'; then
   docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "
-    DELETE FROM workspaces WHERE owner_id IN (SELECT id FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3'));
-    DELETE FROM profiles WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3');
-    DELETE FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3');" >/dev/null && ok "usuário de teste removido"
+    DELETE FROM workspaces WHERE owner_id IN (SELECT id FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3','${EMAIL4:-}'));
+    DELETE FROM profiles WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3','${EMAIL4:-}');
+    DELETE FROM users WHERE email IN ('$EMAIL','$EMAIL2','$EMAIL3','${EMAIL4:-}');" >/dev/null && ok "usuário de teste removido"
 fi
 rm -f /tmp/mf-smoke.png /tmp/mf-smoke-dl.png
 echo; echo "Passaram: $PASS  Falharam: $FAIL"
