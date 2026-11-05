@@ -61,6 +61,27 @@ async function imageFromGateway(body: Record<string, unknown>) {
   return upload(new Uint8Array(Buffer.from(b64, "base64")), "png", "image/png");
 }
 
+/** Erros que valem para qualquer modelo (sem crédito / limite / recusa): não adianta tentar a alternativa. */
+const noFallback = (e: unknown) => {
+  const m = e instanceof Error ? e.message : String(e);
+  return /esgotados|Muitas solicitações|recusa de conteúdo|sem créditos|inválida/.test(m);
+};
+
+/** Tenta cada modelo de imagem da OpenAI em ordem (principal → alternativa). */
+async function withImageModels<T>(label: string, run: (model: string) => Promise<T>): Promise<T> {
+  let lastErr: unknown = null;
+  for (const model of OPENAI_IMAGE_MODELS) {
+    try {
+      return await run(model);
+    } catch (e) {
+      lastErr = e;
+      if (noFallback(e)) break;
+      console.warn(`[${label}] ${model} falhou, tentando alternativa:`, e instanceof Error ? e.message : e);
+    }
+  }
+  throw lastErr ?? new Error("Nenhum modelo de imagem da OpenAI disponível.");
+}
+
 /** Veo (Google) — cria o job e acompanha até terminar (ou até o prazo, devolvendo o job para o cron). */
 async function veoVideo(req: GenerationRequest, model: string) {
   // Pede 1080p; se o modelo não aceitar, repete em 720p.
@@ -115,6 +136,7 @@ async function veoWait(id: string, deadline: number): Promise<{ url: string; id:
 }
 
 import { vendorError } from "../ai-keys.server";
+import { OPENAI_IMAGE_MODELS, gatewayImageModel } from "../openai-image-models";
 
 function editForm(model: string, req: GenerationRequest, size: string) {
   const fd = new FormData();
@@ -148,31 +170,27 @@ async function imageEditFromGateway(model: string, req: GenerationRequest, size:
 
 const b64of = (b: Uint8Array) => Buffer.from(b).toString("base64");
 
-/** OpenAI direto com a chave do cliente. */
+/** OpenAI direto com a chave do cliente (modelo principal; alternativa se ele falhar). */
 async function openaiDirectImage(key: string, req: GenerationRequest) {
-  const size = req.aspectRatio === "9:16" || req.aspectRatio === "4:5" ? "1024x1536" : req.aspectRatio === "16:9" ? "1536x1024" : "1024x1024";
-  if (req.referenceImages?.length) {
-    const r = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}` },
-      body: editForm("gpt-image-1", req, size),
-    });
+  const size = OPENAI_SIZE[req.aspectRatio] ?? "1024x1024";
+  return withImageModels("chatgpt", async (model) => {
+    const r = req.referenceImages?.length
+      ? await fetch("https://api.openai.com/v1/images/edits", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}` },
+          body: editForm(model, req, size),
+        })
+      : await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, prompt: req.finalPrompt.slice(0, 30000), size, quality: "high" }),
+        });
     if (!r.ok) throw await vendorError("openai", r);
     const j = (await r.json()) as { data?: { b64_json?: string }[] };
     const b = j.data?.[0]?.b64_json;
     if (!b) throw new Error("A OpenAI não devolveu imagem (possível recusa de conteúdo).");
     return upload(new Uint8Array(Buffer.from(b, "base64")), "png", "image/png");
-  }
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-image-1", prompt: req.finalPrompt.slice(0, 30000), size, quality: "high" }),
   });
-  if (!res.ok) throw await vendorError("openai", res);
-  const json = (await res.json()) as { data?: { b64_json?: string }[] };
-  const b64 = json.data?.[0]?.b64_json;
-  if (!b64) throw new Error("A OpenAI não devolveu imagem (possível recusa de conteúdo).");
-  return upload(new Uint8Array(Buffer.from(b64, "base64")), "png", "image/png");
 }
 
 const G = "https://generativelanguage.googleapis.com/v1beta";
@@ -287,15 +305,14 @@ export function createChatgptProvider(userKey: string | null, opts: { strict?: b
       }
       const size = OPENAI_SIZE[req.aspectRatio] ?? "1024x1024";
       if (req.referenceImages?.length) {
-        const edited = await imageEditFromGateway("openai/gpt-image-2.5-sunburst", req, size);
-        if (edited) return ready(edited, 1.5);
+        for (const model of OPENAI_IMAGE_MODELS) {
+          const edited = await imageEditFromGateway(gatewayImageModel(model), req, size);
+          if (edited) return ready(edited, 1.5);
+        }
       }
-      const url = await imageFromGateway({
-        model: "openai/gpt-image-2.5-sunburst",
-        prompt: req.finalPrompt,
-        size: OPENAI_SIZE[req.aspectRatio] ?? "1024x1024",
-        quality: "high",
-      });
+      const url = await withImageModels("chatgpt", (model) =>
+        imageFromGateway({ model: gatewayImageModel(model), prompt: req.finalPrompt, size, quality: "high" }),
+      );
       return ready(url, 1.5);
     },
     async generateVideo() {

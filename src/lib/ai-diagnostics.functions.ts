@@ -43,12 +43,29 @@ export const diagnoseAi = createServerFn({ method: "POST" })
         const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${openai}` } });
         if (!r.ok) throw new Error(`OpenAI respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
         const ids = new Set(((await r.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? []);
-        const need = ["gpt-image-1", "gpt-4o-mini", "whisper-1"];
+        const need = ["gpt-4o-mini", "whisper-1"];
         const missing = need.filter((m) => !ids.has(m));
         checks.push({
           name: "Chave OpenAI",
           ok: missing.length === 0,
-          detail: missing.length ? `Válida, mas sem acesso a: ${missing.join(", ")} (gpt-image-1 exige organização verificada).` : "Válida, com gpt-image-1, gpt-4o-mini e whisper-1.",
+          detail: missing.length ? `Válida, mas sem acesso a: ${missing.join(", ")}.` : `Válida, com ${need.join(" e ")}.`,
+        });
+        // Modelos de imagem: consulta cada um e mostra a resposta real da OpenAI (sem supor o motivo).
+        const { OPENAI_IMAGE_MODELS } = await import("./openai-image-models");
+        const { vendorMessage } = await import("./ai-keys.server");
+        const probes = await Promise.all(
+          OPENAI_IMAGE_MODELS.map(async (m) => {
+            const pr = await fetch(`https://api.openai.com/v1/models/${encodeURIComponent(m)}`, { headers: { Authorization: `Bearer ${openai}` } });
+            if (pr.ok) return { m, ok: true, detail: "disponível" };
+            return { m, ok: false, detail: `OpenAI respondeu ${pr.status}: ${vendorMessage(await pr.text().catch(() => "")) || "sem detalhes"}` };
+          }),
+        );
+        const mainOk = probes[0]?.ok === true;
+        const altOk = probes.slice(1).some((p) => p.ok);
+        checks.push({
+          name: `Imagem OpenAI (${OPENAI_IMAGE_MODELS.join(" → ")})`,
+          ok: mainOk || altOk,
+          detail: probes.map((p) => `${p.m}: ${p.detail}`).join(" · ") + (!mainOk && altOk ? " — usando a alternativa." : ""),
         });
       } catch (e) {
         checks.push({ name: "Chave OpenAI", ok: false, detail: msg(e) });
