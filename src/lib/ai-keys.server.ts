@@ -52,7 +52,23 @@ export async function testAiKey(vendor: AiVendor, key: string): Promise<{ ok: bo
 export async function vendorError(vendor: AiVendor, res: Response) {
   const body = await res.text().catch(() => "");
   const name = vendor === "openai" ? "OpenAI" : "Google Gemini";
-  if (res.status === 401 || res.status === 403) return new Error(`Chave da ${name} inválida ou sem permissão.`);
-  if (res.status === 429) return new Error(`Sua conta ${name} está sem créditos ou atingiu o limite.`);
-  return new Error(`${name} respondeu ${res.status}: ${body.slice(0, 300)}`);
+  const detail = vendorMessage(body);
+  if (res.status === 401) return new Error(`Chave da ${name} inválida.${detail ? ` (${detail})` : ""}`);
+  // 403 costuma ser do modelo (acesso/verificação), não da chave: mostra o motivo real.
+  if (res.status === 403) return new Error(`${name} negou acesso (403): ${detail || "sem detalhes"}`);
+  if (res.status === 429) return new Error(`Sua conta ${name} está sem créditos ou atingiu o limite.${detail ? ` (${detail})` : ""}`);
+  return new Error(`${name} respondeu ${res.status}: ${detail || body.slice(0, 300)}`);
+}
+
+/** Extrai a mensagem de erro do corpo JSON da OpenAI/Gemini ({ error: { message, code } }). */
+export function vendorMessage(body: string): string {
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string; code?: string | number; status?: string } };
+    const m = j.error?.message?.trim();
+    const code = j.error?.code ?? j.error?.status;
+    if (m) return (code ? `${m} [${code}]` : m).slice(0, 300);
+  } catch {
+    /* corpo não é JSON */
+  }
+  return body.trim().slice(0, 300);
 }
