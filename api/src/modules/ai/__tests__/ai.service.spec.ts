@@ -242,6 +242,47 @@ describe('AiService.image / video / text', () => {
     await expect(bad.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toMatchObject({ response: { message: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.' } });
   });
 
+  it('imagem OpenAI: padrão gpt-image-2.5-sunburst; modelo indisponível cai para gpt-image-2.5-flare', async () => {
+    const f = fakeFetch([['api.openai.com/v1/images/generations', (init) => {
+      const model = JSON.parse(String(init!.body)).model;
+      return model === 'gpt-image-2.5-sunburst' ? json({ error: { code: 'model_not_found', message: 'The model does not exist' } }, 404) : json({ data: [{ b64_json: Buffer.from('FLARE').toString('base64') }] });
+    }]]);
+    const ai = setup(baseEnv, { openai: 'sk' }, f.fn);
+    expect((await ai.image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).bytes.toString()).toBe('FLARE');
+    expect(f.calls.map((c) => JSON.parse(String(c.init!.body)).model)).toEqual(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']);
+  });
+
+  it('imagem OpenAI: chave recusada ou sem saldo NÃO tenta a alternativa; alternativa igual ao principal = sem alternativa, só uma chamada', async () => {
+    for (const [st, body] of [[401, 'x'], [429, NO_QUOTA]] as const) {
+      const f = fakeFetch([['api.openai.com', () => new Response(body, { status: st })]]);
+      await expect(setup(baseEnv, { openai: 'sk' }, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toBeTruthy();
+      expect(f.calls).toHaveLength(1);
+    }
+    const g = fakeFetch([['api.openai.com', () => json({ error: { code: 'model_not_found' } }, 404)]]);
+    await expect(setup({ ...baseEnv, AI_MODEL_IMAGE_OPENAI_FALLBACK: 'gpt-image-2.5-sunburst' }, { openai: 'sk' }, g.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai', strict: true })).rejects.toBeTruthy();
+    expect(g.calls).toHaveLength(1);
+  });
+
+  it('imagem OpenAI com referências: a alternativa também vai por /images/edits', async () => {
+    const f = fakeFetch([['api.openai.com/v1/images/edits', (init) => {
+      const model = (init!.body as FormData).get('model');
+      return model === 'gpt-image-2.5-sunburst' ? json({ error: { message: 'Your organization must be verified to use the model' } }, 403) : json({ data: [{ b64_json: Buffer.from('E').toString('base64') }] });
+    }]]);
+    const ai = setup(baseEnv, { openai: 'sk' }, f.fn);
+    const ref = { bytes: Buffer.from('jpg'), mime: 'image/jpeg' };
+    expect((await ai.image(WS, { prompt: 'p', aspectRatio: '9:16', vendor: 'openai', strict: true, referenceImages: [ref] } as any)).bytes.toString()).toBe('E');
+    expect(f.calls.map((c) => (c.init!.body as FormData).get('model'))).toEqual(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']);
+  });
+
+  it('imagem pelo gateway: modelo indisponível cai para a alternativa; 402 não', async () => {
+    const f = fakeFetch([['/images/generations', (init) => (JSON.parse(String(init!.body)).model === 'gpt-image-2.5-sunburst' ? new Response('model not found', { status: 404 }) : json({ data: [{ b64_json: Buffer.from('GW').toString('base64') }] }))]]);
+    expect((await setup(gwEnv, {}, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).bytes.toString()).toBe('GW');
+    expect(f.calls.map((c) => JSON.parse(String(c.init!.body)).model)).toEqual(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']);
+    const sem = fakeFetch([['/images/generations', () => new Response('x', { status: 402 })]]);
+    await expect(setup(gwEnv, {}, sem.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'openai' })).rejects.toThrow('Créditos de IA esgotados');
+    expect(sem.calls).toHaveLength(1);
+  });
+
   it('imagem Gemini com chave do cliente lê inlineData', async () => {
     const f = fakeFetch([['generativelanguage', () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: Buffer.from('JPG').toString('base64') } }] } }] })]]);
     const ai = setup(gwEnv, { gemini: 'gk' }, f.fn);

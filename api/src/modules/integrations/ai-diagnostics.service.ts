@@ -28,7 +28,7 @@ const withStatus = (c: Check): DiagnosticCheck => ({ ...c, status: c.status ?? (
 
 type EnvSlice = Pick<
   Env,
-  'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY' | 'AI_MODEL_IMAGE_OPENAI' | 'AI_MODEL_IMAGE_GEMINI' | 'AI_MODEL_VIDEO' | 'AI_BYO_OPENAI_TEXT_MODEL' | 'AI_BYO_GEMINI_TEXT_MODEL'
+  'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY' | 'AI_MODEL_IMAGE_OPENAI' | 'AI_MODEL_IMAGE_OPENAI_FALLBACK' | 'AI_MODEL_IMAGE_GEMINI' | 'AI_MODEL_VIDEO' | 'AI_BYO_OPENAI_TEXT_MODEL' | 'AI_BYO_GEMINI_TEXT_MODEL'
 >;
 
 const HIGGSFIELD_TOOLS = ['generate_image', 'generate_video', 'job_status'];
@@ -99,12 +99,19 @@ export class AiDiagnosticsService {
         const ids = new Set(((await r.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? []);
         // "Serve para texto" só com o modelo de texto configurado acessível (senão a IA do app não pode ficar "Não precisa").
         if (ids.has(this.env.AI_BYO_OPENAI_TEXT_MODEL)) validKey = true;
-        const need = [this.env.AI_MODEL_IMAGE_OPENAI, this.env.AI_BYO_OPENAI_TEXT_MODEL, 'whisper-1'];
+        // Imagem: basta o principal OU a alternativa (a geração tenta os dois, nessa ordem).
+        const fallback = this.env.AI_MODEL_IMAGE_OPENAI_FALLBACK?.trim();
+        const image = [this.env.AI_MODEL_IMAGE_OPENAI, fallback].find((m) => m && ids.has(m)) ?? this.env.AI_MODEL_IMAGE_OPENAI;
+        const need = [image, this.env.AI_BYO_OPENAI_TEXT_MODEL, 'whisper-1'];
         const missing = need.filter((m) => !ids.has(m));
+        const alt = fallback && fallback !== this.env.AI_MODEL_IMAGE_OPENAI ? ` (nem ${fallback})` : '';
+        const label = (m: string) => (m === image ? `${m}${alt}` : m);
         return {
           name: 'Chave OpenAI',
           ok: missing.length === 0,
-          detail: missing.length ? `Válida, mas sem acesso a: ${missing.join(', ')} (gpt-image-1 exige organização verificada).` : `Válida, com ${need.slice(0, -1).join(', ')} e ${need[need.length - 1]}.`,
+          detail: missing.length
+            ? `Válida, mas sem acesso a: ${missing.map(label).join(', ')}.${missing.includes(image) ? ' Para imagens, a OpenAI pode exigir organização verificada.' : ''}`
+            : `Válida, com ${need.slice(0, -1).join(', ')} e ${need[need.length - 1]}.`,
         };
       });
     }

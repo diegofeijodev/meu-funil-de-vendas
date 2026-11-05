@@ -5,7 +5,7 @@ import { AiDiagnosticsService, geminiHas } from '../ai-diagnostics.service';
 
 const ENV = {
   NODE_ENV: 'test', AI_GATEWAY_URL: 'http://gw.test/v1', AI_GATEWAY_API_KEY: 'k', AI_MODEL_TEXT: 'gpt-4o',
-  AI_MODEL_IMAGE_OPENAI: 'gpt-image-1', AI_MODEL_IMAGE_GEMINI: 'gemini-2.5-flash-image', AI_MODEL_VIDEO: 'veo-3.0-fast-generate-preview',
+  AI_MODEL_IMAGE_OPENAI: 'gpt-image-2.5-sunburst', AI_MODEL_IMAGE_OPENAI_FALLBACK: 'gpt-image-2.5-flare', AI_MODEL_IMAGE_GEMINI: 'gemini-2.5-flash-image', AI_MODEL_VIDEO: 'veo-3.0-fast-generate-preview',
   AI_BYO_OPENAI_TEXT_MODEL: 'gpt-4o-mini', AI_BYO_GEMINI_TEXT_MODEL: 'gemini-flash-latest',
 } as any;
 
@@ -22,7 +22,7 @@ function setup(w: World = {}) {
   const http = async (url: string) => {
     if (url.includes('api.openai.com')) {
       if (w.openaiStatus) return new Response(w.openaiBody ?? 'nope', { status: w.openaiStatus });
-      return new Response(JSON.stringify({ data: (w.openaiModels ?? ['gpt-image-1', 'gpt-4o-mini', 'whisper-1']).map((id) => ({ id })) }));
+      return new Response(JSON.stringify({ data: (w.openaiModels ?? ['gpt-image-2.5-sunburst', 'gpt-4o-mini', 'whisper-1']).map((id) => ({ id })) }));
     }
     return new Response(JSON.stringify({ models: (w.geminiModels ?? ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest']).map((name) => ({ name: `models/${name}` })) }));
   };
@@ -74,7 +74,7 @@ describe('AiDiagnosticsService — cada verificação', () => {
     // Chave aceita mas SEM o modelo de texto configurado não serve para texto: não pode ficar "Não precisa".
     const noText = await setup({ env: noGw, gemini: 'AIza', geminiModels: ['gemini-2.5-flash-image'] }).diagnose(OWNER, WS_A, false);
     expect(by(noText, 'IA do app')).toMatchObject({ ok: false, status: 'fail' });
-    const noTextOpenai = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-image-1'] }).diagnose(OWNER, WS_A, false);
+    const noTextOpenai = await setup({ env: noGw, openai: 'sk-x', openaiModels: ['gpt-image-2.5-sunburst'] }).diagnose(OWNER, WS_A, false);
     expect(by(noTextOpenai, 'IA do app').status).toBe('fail');
     const bad = await setup({ env: noGw, openai: 'sk-x', openaiStatus: 401 }).diagnose(OWNER, WS_A, false);
     expect(by(bad, 'IA do app')).toMatchObject({ ok: false, status: 'fail', detail: 'Nenhuma IA funcionando: as chaves da empresa falharam ou não têm o modelo de texto (veja os detalhes abaixo). Corrija no quadro "IAs com a sua conta", mais acima nesta página.' });
@@ -96,10 +96,17 @@ describe('AiDiagnosticsService — cada verificação', () => {
   });
 
   it('chave OpenAI: completa, sem modelos, recusada', async () => {
-    expect(by(await setup({ openai: 'sk-x' }).diagnose(OWNER, WS_A, false), 'Chave OpenAI')).toMatchObject({ ok: true, detail: 'Válida, com gpt-image-1, gpt-4o-mini e whisper-1.' });
+    expect(by(await setup({ openai: 'sk-x' }).diagnose(OWNER, WS_A, false), 'Chave OpenAI')).toMatchObject({ ok: true, detail: 'Válida, com gpt-image-2.5-sunburst, gpt-4o-mini e whisper-1.' });
     const falta = by(await setup({ openai: 'sk-x', openaiModels: ['gpt-4o-mini'] }).diagnose(OWNER, WS_A, false), 'Chave OpenAI');
     expect(falta.ok).toBe(false);
-    expect(falta.detail).toContain('sem acesso a: gpt-image-1, whisper-1');
+    expect(falta.detail).toBe('Válida, mas sem acesso a: gpt-image-2.5-sunburst (nem gpt-image-2.5-flare), whisper-1. Para imagens, a OpenAI pode exigir organização verificada.');
+    // Só a alternativa disponível: a geração usa ela, então a chave está completa.
+    expect(by(await setup({ openai: 'sk-x', openaiModels: ['gpt-image-2.5-flare', 'gpt-4o-mini', 'whisper-1'] }).diagnose(OWNER, WS_A, false), 'Chave OpenAI'))
+      .toMatchObject({ ok: true, detail: 'Válida, com gpt-image-2.5-flare, gpt-4o-mini e whisper-1.' });
+    // gpt-image-1 (desligado em 23/10/2026) não conta mais.
+    expect(by(await setup({ openai: 'sk-x', openaiModels: ['gpt-image-1', 'gpt-4o-mini', 'whisper-1'] }).diagnose(OWNER, WS_A, false), 'Chave OpenAI').ok).toBe(false);
+    // Sem modelo de imagem faltando, sem a frase da organização.
+    expect(by(await setup({ openai: 'sk-x', openaiModels: ['gpt-image-2.5-sunburst', 'gpt-4o-mini'] }).diagnose(OWNER, WS_A, false), 'Chave OpenAI').detail).toBe('Válida, mas sem acesso a: whisper-1.');
     expect(by(await setup({ openai: 'sk-x', openaiStatus: 401 }).diagnose(OWNER, WS_A, false), 'Chave OpenAI')).toMatchObject({ ok: false, detail: 'OpenAI respondeu 401: nope' });
   });
 

@@ -1,4 +1,4 @@
-import { classifyVendorFailure, isCreditExhausted, isDailyLimit, vendorMessage } from '../vendor-failure';
+import { canTryOtherImageModel, classifyVendorFailure, isCreditExhausted, isDailyLimit, vendorMessage } from '../vendor-failure';
 
 /** Corpos reais (resumidos) dos provedores. */
 const OPENAI_NO_QUOTA = JSON.stringify({
@@ -92,5 +92,24 @@ describe('vendorMessage — limite de hoje', () => {
   it('frase própria em português simples', () => {
     expect(vendorMessage('gemini', 'dailyLimit')).toBe('O Gemini (Google) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.');
     expect(vendorMessage('openai', 'dailyLimit')).toBe('O ChatGPT (OpenAI) chegou ao limite de uso de hoje. Volta sozinho amanhã, ou antes se você colocar créditos.');
+  });
+});
+
+describe('canTryOtherImageModel — só tenta o modelo alternativo quando a falha é do modelo', () => {
+  it('tenta: modelo indisponível, sem acesso ao modelo (403), cota do dia, parâmetro recusado, provedor fora do ar', () => {
+    expect(canTryOtherImageModel(404, '{"error":{"code":"model_not_found","message":"The model `gpt-image-2.5-sunburst` does not exist"}}')).toBe(true);
+    expect(canTryOtherImageModel(400, '{"error":{"message":"Invalid model: gpt-image-1"}}')).toBe(true);
+    expect(canTryOtherImageModel(403, '{"error":{"message":"Your organization must be verified to use the model `gpt-image-2.5-sunburst`."}}')).toBe(true);
+    expect(canTryOtherImageModel(429, '{"error":{"message":"Rate limit reached for requests per day (RPD)"}}')).toBe(true);
+    expect(canTryOtherImageModel(400, '{"error":{"message":"Invalid value for size"}}')).toBe(true);
+    expect(canTryOtherImageModel(503, 'overloaded')).toBe(true);
+  });
+  it('não tenta: chave recusada, falta de saldo, limite por minuto, recusa de conteúdo', () => {
+    expect(canTryOtherImageModel(401, '{"error":{"code":"invalid_api_key"}}')).toBe(false);
+    expect(canTryOtherImageModel(403, '{"error":{"message":"Project does not have access"}}')).toBe(false);
+    expect(canTryOtherImageModel(429, '{"error":{"code":"insufficient_quota"}}')).toBe(false);
+    expect(canTryOtherImageModel(402, '')).toBe(false);
+    expect(canTryOtherImageModel(429, '{"error":{"message":"Rate limit reached for requests per min (RPM)"}}')).toBe(false);
+    expect(canTryOtherImageModel(400, '{"error":{"code":"moderation_blocked","message":"Your request was rejected by the safety system"}}')).toBe(false);
   });
 });

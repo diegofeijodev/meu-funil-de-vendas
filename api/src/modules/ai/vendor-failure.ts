@@ -65,6 +65,21 @@ export function classifyVendorFailure(status: number, body: string): VendorFailu
   return 'down';
 }
 
+/** Recusa de conteúdo (moderação): vale para qualquer modelo. */
+const CONTENT_BLOCKED = /moderation|content[_ ]policy|safety[_ ]system|safety_violation/i;
+
+/**
+ * A falha de geração de IMAGEM é do modelo (e outro modelo da mesma chave pode sair)? Sim para modelo indisponível, cota do dia
+ * (é por modelo), pedido recusado por parâmetro, provedor fora do ar e 403 que cita o modelo/verificação. Não para chave recusada,
+ * falta de saldo, pedidos demais por minuto e recusa de conteúdo: esses valem para qualquer modelo.
+ */
+export function canTryOtherImageModel(status: number, body: string): boolean {
+  if (CONTENT_BLOCKED.test(body)) return false;
+  const kind = classifyVendorFailure(status, body);
+  if (kind === 'model' || kind === 'dailyLimit' || kind === 'rejected' || kind === 'down') return true;
+  return kind === 'refused' && status === 403 && /\bmodel\b|verif/i.test(body);
+}
+
 /** Frase completa (uma falha só) por caso — texto final do design, 27/10/2026. */
 export function vendorMessage(vendor: AiVendor, kind: VendorFailureKind, d: { status?: number; model?: string } = {}): string {
   const openai = vendor === 'openai';
