@@ -1,10 +1,11 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/modules/shared/infrastructure/http";
 import type { AuthUser } from "@/modules/auth/domain/auth.types";
 import { getStoredWorkspaceId, storeWorkspaceId } from "@/modules/auth/infrastructure/auth.storage";
+import { isForbidden, pickWorkspaceId } from "@/lib/workspace-selection";
 
 export type Membership = {
   workspace_id: string;
@@ -38,12 +39,30 @@ export function WorkspaceProvider({ user, children }: { user: AuthUser | null; c
     },
   });
 
+  // A escolhida (ou a salva no navegador) só vale se ainda está na lista: empresa apagada em outra aba, ou de que a pessoa saiu,
+  // cai para a primeira e o navegador guarda a troca (as telas não ficam pedindo a empresa que não existe).
   useEffect(() => {
     if (!memberships.length) return;
     const stored = getStoredWorkspaceId();
-    const valid = memberships.find((m) => m.workspace_id === stored);
-    setSelected((cur) => cur ?? valid?.workspace_id ?? memberships[0]?.workspace_id ?? null);
-  }, [memberships]);
+    const next = pickWorkspaceId(memberships, selected, stored);
+    if (next !== selected) setSelected(next);
+    // Só regrava quando o que estava guardado/escolhido deixou de valer (nada guardado continua nada guardado).
+    const stale = (id: string | null) => !!id && !memberships.some((m) => m.workspace_id === id);
+    if (next && (stale(stored) || stale(selected))) storeWorkspaceId(next);
+  }, [memberships, selected]);
+
+  // 403 numa leitura (ex.: a empresa foi apagada em outra aba): reconfere a lista uma vez; com ela atualizada a tela troca de empresa
+  // e para de pedir a apagada. A própria lista fica de fora (sem laço).
+  const qc = useQueryClient();
+  useEffect(
+    () =>
+      qc.getQueryCache().subscribe((event) => {
+        if (event.type !== "updated" || event.action.type !== "error") return;
+        if (event.query.queryKey[0] === "memberships" || !isForbidden(event.action.error)) return;
+        void qc.invalidateQueries({ queryKey: ["memberships"] });
+      }),
+    [qc],
+  );
 
   const value = useMemo<Ctx>(() => {
     const current = memberships.find((m) => m.workspace_id === selected) ?? memberships[0] ?? null;
