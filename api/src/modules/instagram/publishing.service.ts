@@ -506,6 +506,7 @@ export class PublishingService implements OnModuleInit {
     });
 
     const results: { job: string; status: string; error?: string }[] = [];
+    // `updateMany` nas marcações do job: job (ou empresa, "Apagar empresa") que sumiu no meio não derruba os outros desta rodada.
     for (const job of jobs) {
       // Lock otimista: só segue se ninguém pegou antes.
       const locked = await this.prisma.publishing_jobs.updateMany({
@@ -518,7 +519,7 @@ export class PublishingService implements OnModuleInit {
       try {
         if (!job.ig_post_id) throw new Guardrail('Job sem post.');
         const r = await this.publishInstagramPost(job.ig_post_id, undefined, { fromQueue: true, jobId: job.id });
-        await this.prisma.publishing_jobs.update({
+        await this.prisma.publishing_jobs.updateMany({
           where: { id: job.id },
           data: { status: 'done', locked_at: null, mode: r.sandbox ? 'mock' : 'live', log: logWith(`publicado ${r.permalink ?? ''}`) },
         });
@@ -531,7 +532,7 @@ export class PublishingService implements OnModuleInit {
           // Outro processo está publicando (volta em 2 min) ou o post já saiu/foi cancelado (o job é encerrado). Não conta tentativa.
           const cur = job.ig_post_id ? await this.prisma.ig_posts.findUnique({ where: { id: job.ig_post_id }, select: { status: true } }) : null;
           const over = !cur || ['published', 'cancelled'].includes(cur.status);
-          await this.prisma.publishing_jobs.update({
+          await this.prisma.publishing_jobs.updateMany({
             where: { id: job.id },
             data: { status: over ? 'cancelled' : 'pending', locked_at: null, attempts: job.attempts, ...(over ? {} : { run_at: new Date(Date.now() + 2 * 60e3) }), log: logWith(msg) },
           });
@@ -539,7 +540,7 @@ export class PublishingService implements OnModuleInit {
           continue;
         }
         if (e instanceof ContainerPending) {
-          await this.prisma.publishing_jobs.update({
+          await this.prisma.publishing_jobs.updateMany({
             where: { id: job.id },
             data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: new Date(Date.now() + 2 * 60e3), log: logWith(msg) },
           });
@@ -550,7 +551,7 @@ export class PublishingService implements OnModuleInit {
           // A fonte da origem (vitrine do Freela) está fora do ar: nada foi criado na Meta. Volta em 10 min sem contar tentativa;
           // o post (que o claim pôs em "publishing") volta para a agenda nesse horário.
           const runAt = new Date(Date.now() + 10 * 60e3);
-          await this.prisma.publishing_jobs.update({
+          await this.prisma.publishing_jobs.updateMany({
             where: { id: job.id },
             data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: runAt, log: logWith(msg) },
           });
@@ -575,7 +576,7 @@ export class PublishingService implements OnModuleInit {
             })
           : null;
         if (post && gone) {
-          await this.prisma.publishing_jobs.update({ where: { id: job.id }, data: { status: 'cancelled', locked_at: null, attempts, log: logWith(`${msg} — cancelado: ${gone}`) } });
+          await this.prisma.publishing_jobs.updateMany({ where: { id: job.id }, data: { status: 'cancelled', locked_at: null, attempts, log: logWith(`${msg} — cancelado: ${gone}`) } });
           await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { notIn: ['published'] } }, data: { status: 'cancelled', last_error: msg, ig_creation_id: null } });
           await this.store.logEvent({ workspace_id: post.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'guardrail', level: 'warn', message: `Publicação cancelada: ${gone}` });
           results.push({ job: job.id, status: 'cancelled', error: msg });
@@ -599,7 +600,7 @@ export class PublishingService implements OnModuleInit {
                 ? `Não foi possível publicar depois de ${attempts} tentativas: ${withPeriod(msg)} Abra o post no calendário e clique em Publicar agora para tentar de novo.`
                 : `Não foi possível publicar: ${msg}`,
           });
-        await this.prisma.publishing_jobs.update({
+        await this.prisma.publishing_jobs.updateMany({
           where: { id: job.id },
           data: {
             status: retry ? 'pending' : 'failed',

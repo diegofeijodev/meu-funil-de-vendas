@@ -85,8 +85,9 @@ export class IgStore {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // updateMany: post que sumiu no meio (empresa apagada, cascata) não derruba o job que o processava — a escrita vira no-op.
   patchPost(id: string, patch: Record<string, any>) {
-    return this.prisma.ig_posts.update({ where: { id }, data: patch });
+    return this.prisma.ig_posts.updateMany({ where: { id }, data: patch });
   }
 
   /** Pega o lease do post junto com `data` se `where` (status etc.) e "lease livre" valem; null = perdeu. */

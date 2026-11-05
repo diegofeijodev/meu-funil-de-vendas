@@ -104,7 +104,8 @@ export class AutopilotService implements OnModuleInit {
       : [];
     for (const p of ideas) {
       const plan = p.plan_id ? byId.get(p.plan_id) : undefined;
-      const r = await this.mediaGen.generatePostAssets(p.workspace_id, p.id, 'auto');
+      // Erro inesperado (ex.: empresa apagada no meio) vira falha deste post, como na produção — não derruba a rodada.
+      const r = await this.mediaGen.generatePostAssets(p.workspace_id, p.id, 'auto').catch((e) => ({ ok: false as const, error: errText(e) }));
       media++;
       if (!r.ok) {
         await this.store.logEvent({ workspace_id: p.workspace_id, plan_id: p.plan_id, post_id: p.id, kind: 'failure', level: 'error', message: `Falha ao gerar a mídia: ${r.error}` });
@@ -140,7 +141,7 @@ export class AutopilotService implements OnModuleInit {
         let next = p.scheduled_at!.getTime() + 86400e3;
         while (next < base + 2 * 3600e3) next += 86400e3;
         const when = new Date(next);
-        await this.prisma.ig_posts.update({ where: { id: p.id }, data: { scheduled_at: when } });
+        await this.prisma.ig_posts.updateMany({ where: { id: p.id }, data: { scheduled_at: when } });
         rescheduled++;
         await this.store.logEvent({
           workspace_id: p.workspace_id,
@@ -251,8 +252,8 @@ export class AutopilotService implements OnModuleInit {
           .join(' '),
       };
       const notes = [...(Array.isArray(plan.ai_notes) ? plan.ai_notes : []), note].slice(-20);
-      await this.prisma.ig_content_plans.update({
-        where: { id: plan.id },
+      await this.prisma.ig_content_plans.updateMany({
+        where: { id: plan.id, workspace_id: plan.workspace_id },
         data: { preferred_times: newTimes as Prisma.InputJsonValue, pillar_weights: weights, ai_notes: notes as Prisma.InputJsonValue },
       });
       await this.store.logEvent({ workspace_id: plan.workspace_id, plan_id: plan.id, kind: 'optimize', message: `Otimização semanal: ${note.summary}` });

@@ -210,7 +210,7 @@ export class MetricsService {
         const vs = ((brand?.visual_style ?? {}) as { exemplos_prompt?: string[] }) ?? {};
         const ex = Array.isArray(vs.exemplos_prompt) ? vs.exemplos_prompt : [];
         if (ex.includes(prompt)) continue;
-        await this.prisma.brands.update({ where: { id: plan.brand_id }, data: { visual_style: { ...vs, exemplos_prompt: [...ex, prompt].slice(-10) } as Prisma.InputJsonObject } });
+        await this.prisma.brands.updateMany({ where: { id: plan.brand_id, workspace_id: ws }, data: { visual_style: { ...vs, exemplos_prompt: [...ex, prompt].slice(-10) } as Prisma.InputJsonObject } });
         added++;
       }
     }

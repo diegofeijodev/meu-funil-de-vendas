@@ -129,11 +129,16 @@ export class CadenceService {
       if (c.trigger_type === 'stage' && !/^[0-9a-f-]{36}$/i.test(value)) continue;
       // Só quem ainda não foi matriculado nesta cadência, do mais antigo ao mais novo: com mais de 200 combinando, a fila anda a cada rodada.
       where.crm_cadence_runs = { none: { cadence_id: c.id } };
-      const leads = await this.prisma.crm_leads.findMany({ where, select: { id: true }, orderBy: { created_at: 'asc' }, take: 200 });
-      for (const lead of leads) {
-        const run = await this.prisma.crm_cadence_runs.findUnique({ where: { cadence_id_lead_id: { cadence_id: c.id, lead_id: lead.id } }, select: { id: true } });
-        if (run) continue;
-        if ('enrolled' in (await this.enrollLead(c.workspace_id, c.id, lead.id))) enrolled += 1;
+      try {
+        const leads = await this.prisma.crm_leads.findMany({ where, select: { id: true }, orderBy: { created_at: 'asc' }, take: 200 });
+        for (const lead of leads) {
+          const run = await this.prisma.crm_cadence_runs.findUnique({ where: { cadence_id_lead_id: { cadence_id: c.id, lead_id: lead.id } }, select: { id: true } });
+          if (run) continue;
+          if ('enrolled' in (await this.enrollLead(c.workspace_id, c.id, lead.id))) enrolled += 1;
+        }
+      } catch (err) {
+        // Uma cadência com erro (ex.: empresa apagada no meio: FK) não impede as outras nem a execução dos runs.
+        this.logger.error(`gatilho da cadência ${c.id}: ${errText(err)}`);
       }
     }
     return enrolled;
@@ -401,16 +406,21 @@ export class CadenceService {
       if (Date.now() - lead.stage_entered_at.getTime() < stage.sla_hours * 3_600_000) continue;
       const title = `SLA estourado em ${stage.name} — ${lead.name}`;
       // Confere e cria sob um lock por lead: duas execuções simultâneas não criam a tarefa (nem a interação) duas vezes.
-      const made = await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'crm-sla:' + lead.id}))`;
-        const existing = await tx.crm_tasks.findFirst({ where: { lead_id: lead.id, title }, select: { id: true } });
-        if (existing) return false;
-        await tx.crm_tasks.create({ data: { workspace_id: lead.workspace_id, lead_id: lead.id, title, assignee_id: lead.owner_id ?? null, due_at: new Date(), status: 'open' } });
-        return true;
-      });
-      if (!made) continue;
-      await this.core.addInteraction({ workspaceId: lead.workspace_id, leadId: lead.id, kind: 'ai_action', authorType: 'system', content: `Lead parado além do SLA da etapa ${stage.name}. Tarefa criada para o responsável.` });
-      created += 1;
+      // Lead/empresa apagados no meio (FK) não derrubam a rodada: só o log.
+      try {
+        const made = await this.prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'crm-sla:' + lead.id}))`;
+          const existing = await tx.crm_tasks.findFirst({ where: { lead_id: lead.id, title }, select: { id: true } });
+          if (existing) return false;
+          await tx.crm_tasks.create({ data: { workspace_id: lead.workspace_id, lead_id: lead.id, title, assignee_id: lead.owner_id ?? null, due_at: new Date(), status: 'open' } });
+          return true;
+        });
+        if (!made) continue;
+        await this.core.addInteraction({ workspaceId: lead.workspace_id, leadId: lead.id, kind: 'ai_action', authorType: 'system', content: `Lead parado além do SLA da etapa ${stage.name}. Tarefa criada para o responsável.` });
+        created += 1;
+      } catch (err) {
+        this.logger.error(`SLA do lead ${lead.id}: ${errText(err)}`);
+      }
     }
     return created;
   }

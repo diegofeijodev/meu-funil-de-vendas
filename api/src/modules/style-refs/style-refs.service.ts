@@ -253,10 +253,11 @@ export class StyleRefsService {
         });
         const notes = normalizeStyleNotes(raw);
         if (!notes) throw new Error('notas vazias');
-        await this.prisma.style_references.update({ where: { id: r.id }, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
+        // updateMany: referência apagada no meio da leitura (ou a empresa inteira) não derruba a rodada.
+        await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
       } catch (e) {
         this.logger.warn(`estilo da referência ${r.id}: ${(e as Error).message}`);
-        await this.prisma.style_references.update({ where: { id: r.id }, data: { status: 'failed', error: MSG_READ_FAILED } });
+        await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'failed', error: MSG_READ_FAILED } });
       }
       done++;
     }
@@ -270,7 +271,8 @@ export class StyleRefsService {
     const due = (await this.prisma.style_ref_sources.findMany({ orderBy: { created_at: 'asc' }, take: 200 }))
       .filter((s) => !s.last_synced_at || new Date(s.last_synced_at).getTime() < cutoff)
       .slice(0, limit);
-    for (const s of due) await this.sync(s);
+    // Uma fonte com erro (ex.: empresa apagada no meio) não impede as outras.
+    for (const s of due) await this.sync(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
     return due.length;
   }
 
@@ -431,7 +433,7 @@ export class StyleRefsService {
       xml = Buffer.from((await this.get(source.rss_url, isPinterestHost, MAX_PAGE_BYTES)).bytes).toString('utf8');
     } catch (e) {
       this.logger.warn(`RSS ${source.rss_url}: ${(e as Error).message}`);
-      await this.prisma.style_ref_sources.update({ where: { id: source.id }, data: { last_error: MSG_RSS_DOWN, last_synced_at: new Date() } });
+      await this.prisma.style_ref_sources.updateMany({ where: { id: source.id }, data: { last_error: MSG_RSS_DOWN, last_synced_at: new Date() } });
       return null;
     }
     const pins = parseRss(xml);
@@ -454,7 +456,8 @@ export class StyleRefsService {
         this.logger.warn(`Pin ${p.pinId}: ${(e as Error).message}`);
       }
     }
-    await this.prisma.style_ref_sources.update({
+    // updateMany: fonte (ou empresa) apagada durante a leitura do RSS não derruba a rodada.
+    await this.prisma.style_ref_sources.updateMany({
       where: { id: source.id },
       data: {
         last_synced_at: new Date(),

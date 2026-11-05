@@ -58,25 +58,30 @@ export class VacancyPollService {
     let inserted = 0;
     let skipped = 0;
     for (const s of active) {
-      const fresh: Record<string, unknown>[] = [];
-      const skips: Record<string, unknown>[] = [];
-      for (const v of list) {
-        if (!s.enabled_at || !isAfterWatermark(v, s.enabled_at)) continue;
-        const t = triage(v, s, now);
-        const base = {
-          workspace_id: s.workspace_id, source: 'freela', external_id: v.id, snapshot: v as object,
-          fingerprint: fingerprint(v), starts_at: new Date(v.startTime),
-        };
-        if (t.status === 'new') fresh.push({ ...base, status: 'new' });
-        else skips.push({ ...base, status: 'skipped', skip_reason: t.reason });
+      try {
+        const fresh: Record<string, unknown>[] = [];
+        const skips: Record<string, unknown>[] = [];
+        for (const v of list) {
+          if (!s.enabled_at || !isAfterWatermark(v, s.enabled_at)) continue;
+          const t = triage(v, s, now);
+          const base = {
+            workspace_id: s.workspace_id, source: 'freela', external_id: v.id, snapshot: v as object,
+            fingerprint: fingerprint(v), starts_at: new Date(v.startTime),
+          };
+          if (t.status === 'new') fresh.push({ ...base, status: 'new' });
+          else skips.push({ ...base, status: 'skipped', skip_reason: t.reason });
+        }
+        // Duplicata (mesma vaga numa rodada anterior) é ignorada pelo índice único: a triagem de hoje não reescreve a de ontem.
+        if (fresh.length) inserted += (await this.prisma.vacancy_stories.createMany({ data: fresh as never, skipDuplicates: true })).count;
+        if (skips.length) skipped += (await this.prisma.vacancy_stories.createMany({ data: skips as never, skipDuplicates: true })).count;
+        await this.prisma.vacancy_story_settings.update({
+          where: { workspace_id: s.workspace_id },
+          data: { last_poll_at: now, last_poll_ok_at: now, last_poll_error: null, recent_cities: cities },
+        });
+      } catch (e) {
+        // Uma empresa com erro (ex.: apagada durante a consulta: FK/linha sumida) não derruba as outras desta rodada.
+        this.logger.error(`[vagas] ${s.workspace_id}: gravar a consulta falhou: ${e instanceof Error ? e.message : String(e)}`);
       }
-      // Duplicata (mesma vaga numa rodada anterior) é ignorada pelo índice único: a triagem de hoje não reescreve a de ontem.
-      if (fresh.length) inserted += (await this.prisma.vacancy_stories.createMany({ data: fresh as never, skipDuplicates: true })).count;
-      if (skips.length) skipped += (await this.prisma.vacancy_stories.createMany({ data: skips as never, skipDuplicates: true })).count;
-      await this.prisma.vacancy_story_settings.update({
-        where: { workspace_id: s.workspace_id },
-        data: { last_poll_at: now, last_poll_ok_at: now, last_poll_error: null, recent_cities: cities },
-      });
     }
     return { workspaces: active.length, inserted, skipped };
   }
@@ -155,7 +160,12 @@ export class VacancyPollService {
     const orphans = await this.prisma.vacancy_story_settings.findMany({ where: { enabled: true, template_asset_id: null } });
     let n = 0;
     for (const s of orphans) {
-      await this.settings.turnOff(s.workspace_id, null, { reason: 'arte modelo apagada' });
+      try {
+        await this.settings.turnOff(s.workspace_id, null, { reason: 'arte modelo apagada' });
+      } catch (e) {
+        this.logger.error(`[vagas] ${s.workspace_id}: desligar falhou: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
+      }
       n++;
       this.logger.warn(`[vagas] ${s.workspace_id}: desligado, arte modelo apagada`);
     }

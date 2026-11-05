@@ -725,7 +725,7 @@ export class AutoCalendarService {
     let scheduled = 0;
     for (const p of ready) {
       const r = await this.publishing.scheduleAutomated(p.id).catch(async (e) => {
-        await this.prisma.ig_posts.update({ where: { id: p.id }, data: { last_error: errText(e) } });
+        await this.prisma.ig_posts.updateMany({ where: { id: p.id }, data: { last_error: errText(e) } });
         return null;
       });
       if (r && 'scheduled' in r) scheduled++;
@@ -755,7 +755,7 @@ export class AutoCalendarService {
       let next = p.scheduled_at!.getTime() + 86400e3;
       while (next < Date.now() + 30 * MIN) next += 86400e3;
       const when = new Date(next);
-      await this.prisma.ig_posts.update({ where: { id: p.id }, data: { scheduled_at: when } });
+      await this.prisma.ig_posts.updateMany({ where: { id: p.id }, data: { scheduled_at: when } });
       await this.store.logEvent({
         workspace_id: p.workspace_id,
         plan_id: p.plan_id,
@@ -774,7 +774,7 @@ export class AutoCalendarService {
     const active = await this.prisma.ig_auto_runs.findMany({ where: { status: 'active' }, take: 50, select: { id: true } });
     for (const r of active) {
       const open = await this.prisma.ig_posts.count({ where: { run_id: r.id, status: { notIn: ['published', 'cancelled', 'failed'] } } });
-      if (open === 0) await this.prisma.ig_auto_runs.update({ where: { id: r.id }, data: { status: 'done' } });
+      if (open === 0) await this.prisma.ig_auto_runs.updateMany({ where: { id: r.id }, data: { status: 'done' } });
     }
     return out;
   }

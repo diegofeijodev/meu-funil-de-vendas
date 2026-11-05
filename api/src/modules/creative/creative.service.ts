@@ -294,8 +294,9 @@ export class CreativeService {
     return this.finalizeWith(null, input);
   }
 
-  private failJob(jobId: string, data: Prisma.creative_generation_jobsUncheckedUpdateInput) {
-    return this.prisma.creative_generation_jobs.update({ where: { id: jobId }, data: { status: 'failed', completed_at: new Date(), ...data } });
+  // updateMany: job que sumiu (empresa apagada, cascata) não derruba o poller — a marcação vira no-op.
+  private failJob(jobId: string, data: Prisma.creative_generation_jobsUncheckedUpdateManyInput) {
+    return this.prisma.creative_generation_jobs.updateMany({ where: { id: jobId }, data: { status: 'failed', completed_at: new Date(), ...data } });
   }
 
   /**
