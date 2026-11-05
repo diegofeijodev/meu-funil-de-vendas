@@ -311,7 +311,7 @@ export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | nul
     getAsset: jest.fn(async () => null),
   };
   const providers = { resolve: jest.fn(async () => provider) } as any;
-  const refs = { loadBrandRefs: jest.fn(async () => []), loadFont: jest.fn(async () => new ArrayBuffer(0)), loadLogo: jest.fn(async () => null) } as any;
+  const refs = { loadBrandRefs: jest.fn(async () => []), loadFont: jest.fn(async () => new ArrayBuffer(0)), loadLogo: jest.fn(async () => null), loadStyleNotes: jest.fn(async () => null) } as any;
   const pipeline = {
     run: jest.fn(async (inp: any) => {
       const asset = { id: uuid(), workspace_id: inp.workspaceId, url: 'https://cdn.test/final.jpg', kind: 'image', width: 1080, height: 1080, ig_ready: true, quality_report: {}, provider: 'gemini', source: 'gemini' };
