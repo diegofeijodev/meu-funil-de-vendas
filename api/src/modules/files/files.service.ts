@@ -131,6 +131,10 @@ export class FilesService {
    */
   async removeWorkspaceFolders(workspaceId: string): Promise<string[]> {
     if (!isUuid(workspaceId)) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Empresa inválida.' });
+    // Raiz REAL (o volume pode ser um link): todo alvo, depois de resolvido, precisa continuar dentro dela — um bucket ou pasta
+    // intermediária que seja link para fora nunca leva o `rm` junto.
+    const root = await fs.realpath(this.root).catch(() => null);
+    if (!root) return [];
     const removed: string[] = [];
     for (const bucket of BUCKETS) {
       const entries = await fs.readdir(path.join(this.root, bucket), { withFileTypes: true }).catch(() => []);
@@ -139,7 +143,9 @@ export class FilesService {
         const full = this.resolvePath(bucket, key);
         const st = await fs.lstat(full).catch(() => null);
         if (!st?.isDirectory()) continue;
-        await fs.rm(full, { recursive: true, force: true });
+        const real = await fs.realpath(full).catch(() => null);
+        if (!real || !real.startsWith(root + path.sep)) continue;
+        await fs.rm(real, { recursive: true, force: true });
         removed.push(`${bucket}/${key}`);
       }
     }

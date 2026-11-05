@@ -156,6 +156,22 @@ describe('FilesService.removeWorkspaceFolders (apagar empresa)', () => {
     expect(await svc.removeWorkspaceFolders(WS)).toEqual([]);
   });
 
+  it('bucket que é link para fora da raiz: o realpath sai da raiz e nada lá fora é apagado', async () => {
+    const root2 = mkdtempSync(path.join(tmpdir(), 'mf-files-ws2-'));
+    const fora = mkdtempSync(path.join(tmpdir(), 'mf-files-fora2-'));
+    try {
+      mkdirSync(path.join(fora, WS, 'marca'), { recursive: true });
+      writeFileSync(path.join(fora, WS, 'marca', 'ref.jpg'), 'x');
+      symlinkSync(fora, path.join(root2, 'style-refs')); // o bucket inteiro aponta para fora
+      mkdirSync(path.join(root2, 'creative-assets', 'brands', WS), { recursive: true });
+      const svc2 = new FilesService({ UPLOADS_DIR: root2, JWT_SECRET: 'segredo-de-teste-16+', PUBLIC_URL: 'http://api.test' } as any);
+      expect(await svc2.removeWorkspaceFolders(WS)).toEqual([`creative-assets/brands/${WS}`]);
+      expect(existsSync(path.join(fora, WS, 'marca', 'ref.jpg'))).toBe(true);
+    } finally {
+      [root2, fora].forEach((d) => rmSync(d, { recursive: true, force: true }));
+    }
+  });
+
   it('id que não é uuid → 400, sem tocar no disco', async () => {
     await expect(svc.removeWorkspaceFolders('..')).rejects.toMatchObject({ status: 400 });
     await expect(svc.removeWorkspaceFolders('')).rejects.toMatchObject({ status: 400 });
