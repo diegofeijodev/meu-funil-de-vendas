@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { deriveKey } from '../../common/crypto/hkdf';
+import { isUuid } from '../../common/ids/uuid';
 
 /** Buckets do protótipo: `creative-assets` (privado) e `ig-media`. */
 export const BUCKETS = ['creative-assets', 'ig-media', 'style-refs'] as const;
@@ -51,6 +52,9 @@ export function contentMatchesMime(mime: string, bytes: Buffer): boolean {
   if (mime === 'image/svg+xml') return /<svg[\s>]/i.test(bytes.subarray(0, 4096).toString('utf8'));
   return true;
 }
+/** Nome de pasta que pode entrar numa chave (as pastas dos buckets são `brands`, `media`, `2026-10-05`…). */
+const SAFE_DIR = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export const mimeFromKey = (key: string) => EXT_MIME[path.extname(key).slice(1).toLowerCase()] ?? 'application/octet-stream';
 export const extFromMime = (mime: string) => MIME_EXT[mime] ?? 'bin';
 
@@ -116,6 +120,30 @@ export class FilesService {
 
   async delete(bucket: string, key: string): Promise<void> {
     await fs.rm(this.resolvePath(bucket, key), { force: true });
+  }
+
+  /**
+   * Apaga as pastas de UMA empresa em todos os buckets e devolve as que existiam (`<bucket>/<chave>`). As chaves com o id da empresa
+   * ficam em `<bucket>/<workspaceId>/…` (referências de estilo) ou `<bucket>/<pasta>/<workspaceId>/…` (uploads `brands|media|posts|tmp`,
+   * mídia gerada `media/`, exports, mídia do CRM `crm/`): procura nos dois níveis em vez de listar prefixos, para um prefixo novo não
+   * escapar. Arquivos gerados com chave `YYYY-MM-DD/<uuid>` não levam o id e ficam (órfãos inofensivos). Só pasta de verdade
+   * (nada de link simbólico) e sempre pela contenção de `resolvePath`.
+   */
+  async removeWorkspaceFolders(workspaceId: string): Promise<string[]> {
+    if (!isUuid(workspaceId)) throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Empresa inválida.' });
+    const removed: string[] = [];
+    for (const bucket of BUCKETS) {
+      const entries = await fs.readdir(path.join(this.root, bucket), { withFileTypes: true }).catch(() => []);
+      const keys = [workspaceId, ...entries.filter((e) => e.isDirectory() && SAFE_DIR.test(e.name) && e.name !== workspaceId).map((e) => `${e.name}/${workspaceId}`)];
+      for (const key of keys) {
+        const full = this.resolvePath(bucket, key);
+        const st = await fs.lstat(full).catch(() => null);
+        if (!st?.isDirectory()) continue;
+        await fs.rm(full, { recursive: true, force: true });
+        removed.push(`${bucket}/${key}`);
+      }
+    }
+    return removed;
   }
 
   /** Chave nova no formato do protótipo para arquivos gerados: `YYYY-MM-DD/<uuid>.<ext>`. */

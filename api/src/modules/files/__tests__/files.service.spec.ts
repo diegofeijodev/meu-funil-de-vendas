@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { FilesService, mimeFromKey } from '../files.service';
@@ -116,5 +116,48 @@ describe('uploads da marca — fontes e SVG', () => {
     expect(contentMatchesMime('image/svg+xml', Buffer.from('<?xml version="1.0"?><svg xmlns="x"></svg>'))).toBe(true);
     expect(contentMatchesMime('image/svg+xml', Buffer.from('<html><script>alert(1)</script>'))).toBe(false);
     expect(contentMatchesMime('image/png', Buffer.from('qualquer'))).toBe(true);
+  });
+});
+
+describe('FilesService.removeWorkspaceFolders (apagar empresa)', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'mf-files-ws-'));
+  const outside = mkdtempSync(path.join(tmpdir(), 'mf-files-fora-'));
+  afterAll(() => [root, outside].forEach((d) => rmSync(d, { recursive: true, force: true })));
+  const svc = new FilesService({ UPLOADS_DIR: root, JWT_SECRET: 'segredo-de-teste-16+', PUBLIC_URL: 'http://api.test' } as any);
+  const WS = '7f6b15ec-b067-4cae-bb33-9c939ad361de';
+  const OTHER = '11111111-2222-4333-8444-555555555555';
+  const put = (rel: string) => {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    writeFileSync(path.join(root, rel), 'x');
+  };
+
+  it('apaga as pastas da empresa nos dois níveis de todos os buckets e mais nada (outra empresa, data, link simbólico)', async () => {
+    put(`creative-assets/brands/${WS}/logo.png`);
+    put(`creative-assets/media/${WS}/2026-11-04/a.jpg`);
+    put(`creative-assets/exports/${WS}/z.zip`);
+    put(`creative-assets/crm/${WS}/2026-11-04/audio.ogg`);
+    put(`style-refs/${WS}/marca/ref.jpg`);
+    put(`creative-assets/media/${OTHER}/b.jpg`);
+    put(`style-refs/${OTHER}/marca/ref.jpg`);
+    put(`creative-assets/2026-11-04/${WS}.png`); // arquivo (não pasta) com o id no nome: fica
+    writeFileSync(path.join(outside, 'segredo.txt'), 'não apagar');
+    mkdirSync(path.join(root, 'creative-assets/posts'), { recursive: true });
+    symlinkSync(outside, path.join(root, `creative-assets/posts/${WS}`));
+
+    const removed = await svc.removeWorkspaceFolders(WS);
+    expect(removed.sort()).toEqual(
+      [`creative-assets/brands/${WS}`, `creative-assets/crm/${WS}`, `creative-assets/exports/${WS}`, `creative-assets/media/${WS}`, `style-refs/${WS}`].sort(),
+    );
+    expect(existsSync(path.join(root, `creative-assets/media/${OTHER}/b.jpg`))).toBe(true);
+    expect(existsSync(path.join(root, `style-refs/${OTHER}/marca/ref.jpg`))).toBe(true);
+    expect(existsSync(path.join(root, `creative-assets/2026-11-04/${WS}.png`))).toBe(true);
+    expect(existsSync(path.join(outside, 'segredo.txt'))).toBe(true);
+    // Segunda vez: nada a apagar, sem erro (bucket que nem existe, como ig-media, também não quebra).
+    expect(await svc.removeWorkspaceFolders(WS)).toEqual([]);
+  });
+
+  it('id que não é uuid → 400, sem tocar no disco', async () => {
+    await expect(svc.removeWorkspaceFolders('..')).rejects.toMatchObject({ status: 400 });
+    await expect(svc.removeWorkspaceFolders('')).rejects.toMatchObject({ status: 400 });
   });
 });
