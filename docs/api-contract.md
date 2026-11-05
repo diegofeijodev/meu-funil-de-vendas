@@ -107,6 +107,8 @@ Mensagens (iguais às do GoTrue que `routes/auth.tsx` mapeia):
 | `POST /v1/workspaces` `{ name }` | — | `201` `{ id }` — equivalente a `create_workspace(_name)`: nome vazio → `400 "nome obrigatório"`; `slug` = `ws-` + 12 hex; criador vira `owner` |
 | `GET /v1/workspaces/:workspaceId` | read | linha de `workspaces` |
 | `PATCH /v1/workspaces/:workspaceId` `{ name }` | manage | linha de `workspaces` |
+| `GET /v1/workspaces/:workspaceId/deletion-preview` | **owner** | o que "Apagar empresa" leva junto e o que impede — §31 |
+| `DELETE /v1/workspaces/:workspaceId` `{ confirmName }` | **owner** | `204` — apaga a empresa e tudo dela (§31) |
 | `GET /v1/workspaces/:workspaceId/geo/search?q=` | read | **Fatia 2 (29/10)**. `{ items: [{ meta_key, name, uf, region }] }` — até 8 cidades do BR pela busca `adgeolocation` da Meta (UF tirada do `region`, "São Paulo (state)" → SP); `q` < 2 letras → `{ items: [] }`. Sem Meta conectada: `200 { error: { code: 'META_NOT_CONNECTED', message: "Conecte a Meta em Integrações para buscar a cidade. Até lá, escreva cidade e estado." } }` (a tela salva só o nome; o publicar resolve). Erro da Meta → `502 META_ERROR` |
 | `GET /v1/workspaces/:workspaceId/features` | read | `{ campaign_intake, campaign_pilot, style_refs_pinterest, vacancy_stories }` (booleanos): fonte única do "liberado para a empresa". `campaign_intake` = empresa em `CAMPAIGN_INTAKE_WORKSPACE_IDS`; `vacancy_stories` = `VACANCY_STORIES_WORKSPACE_IDS`; piloto e Pinterest ligam nas fatias deles (29/10) |
 | `GET /v1/workspaces/:workspaceId/members` | read | `{ members: workspace_members[], profiles: profiles[] }` — perfis dos membros (no Supabase o RLS só devolvia o próprio; aqui qualquer membro vê os colegas do MESMO workspace) |
@@ -1029,3 +1031,51 @@ no navegador). Qualquer membro lê (`WorkspaceAccessGuard`: não-membro `403`, i
   (2) o "Testar" não tem intervalo mínimo (custa 1 token por clique); (3) o teste da OpenAI com modelo de raciocínio (o-series/gpt-5 em `AI_BYO_OPENAI_TEXT_MODEL`)
   não foi conferido — o padrão em produção é `gpt-4o-mini`.
 
+## 31. Apagar empresa — `GET /v1/workspaces/:workspaceId/deletion-preview` e `DELETE /v1/workspaces/:workspaceId` (owner, 04/11/2026)
+
+Só quem tem `workspace_members.role = 'owner'` na empresa (mesmo `WorkspaceAccessService.require` das outras rotas + papel conferido no serviço).
+Admin, marketing e viewer → `403 FORBIDDEN "Só o dono da empresa pode apagá-la."`; não-membro → `403 "Você não tem acesso a esta empresa."`; id malformado → `404`.
+
+`GET …/deletion-preview` (só leitura):
+
+```json
+{
+  "workspace": { "id": "<uuid>", "name": "Freela Serviços" },
+  "counts": { "brands": 0, "campaigns": 0, "creatives": 0, "media_assets": 0, "ig_posts_pending": 0, "ig_posts_published": 0,
+              "crm_leads": 0, "members": 1, "saved_keys": 0, "connections": 0 },
+  "inheritors": [{ "id": "<uuid>", "name": "Frutá Frozen" }],
+  "inheritors_hidden": 0,
+  "blockers": [{ "code": "LIVE_META_CAMPAIGNS", "message": "…", "items": [{ "id": "<campaign uuid>", "name": "Black Friday" }] }]
+}
+```
+
+- `ig_posts_pending` = posts do Instagram que ainda vão sair (tudo menos `published`, `cancelled`, `failed`); `members` conta o próprio dono;
+  `saved_keys` = chaves do cofre da empresa + chaves de IA do cofre global com o id no nome (`AI_*_KEY:<id>`, §6); `connections` = Instagram + contas
+  da Meta + conexões MCP + `integration_connections` + `crm_integrations`.
+- `inheritors` = empresas com `ai_inherit_from` = esta (perdem a IA herdada: a FK é `ON DELETE SET NULL`). Nome só das empresas de que o usuário também
+  é membro; as de outro cliente entram só em `inheritors_hidden` (número).
+- `blockers` (vazio = pode apagar), na ordem:
+  - `LIVE_META_CAMPAIGNS`: campanha com `meta_campaign_id` e `meta_delivery_status` diferente de `PAUSED` (vazio também conta). Olha a veiculação, não
+    o `status`: uma campanha `finished` cuja pausa na Meta falhou continua gastando. Mensagem com os nomes: "Esta campanha ainda está ligada na Meta: X.
+    Encerre a campanha (ou pause na Meta) antes de apagar a empresa." (plural: "Estas campanhas ainda estão ligadas…").
+  - `LIVE_OTHER_AD_CAMPAIGNS`: o mesmo para Google Ads (`google_status ≠ PAUSED`) e TikTok Ads (`tiktok_status ≠ DISABLE`).
+  - `LAST_WORKSPACE`: o usuário só é membro (qualquer papel) desta empresa — o app não tem tela para "nenhuma empresa". "Esta é a sua única empresa.
+    Crie outra empresa antes de apagar esta."
+  - Por quê: apagar a empresa apaga os ids das campanhas e as credenciais dos canais; nada é pausado na Meta/Google/TikTok, e ninguém mais conseguiria
+    pausar pelo app.
+
+`DELETE /v1/workspaces/:workspaceId` corpo `{ confirmName }` (string, até 200; obrigatório — sem ele `400 VALIDATION_ERROR`):
+
+- `400 NAME_MISMATCH` "O nome digitado não confere com o nome da empresa." — compara com o nome ATUAL, sem os espaços das pontas (maiúsculas contam).
+- `409` com o `code` do primeiro bloqueio acima (a mensagem traz os nomes das campanhas; o filtro de erro só leva `code` + `message`, a lista fica no preview).
+- `204` sem corpo. Uma transação: trava por usuário (`pg_advisory_xact_lock`, dois "apagar" seguidos não passam juntos pelo `LAST_WORKSPACE`) + `SELECT … FOR
+  UPDATE` na linha de `workspaces` → nome → bloqueios de novo (alguém pode ter ligado uma campanha depois do preview) → apaga `oauth_states` (sem FK),
+  as chaves do cofre global com `workspace_id` nulo e `key` terminando em `:<id>`, e a linha de `workspaces`; as 63 tabelas com `workspace_id` vão pela
+  cascata. Depois do commit, em best-effort (erro só no log): as pastas da empresa nos buckets (`<bucket>/<id>/` e `<bucket>/<pasta>/<id>/`; arquivos
+  gerados `YYYY-MM-DD/<uuid>` não levam o id e ficam).
+- Auditoria: `activity_logs` é da própria empresa (sai na cascata), então o registro vai para o log da API — uma linha
+  `[workspace-delete] {"action":"workspace.deleted","user_id","workspace_id","name","counts","inheritors_unlinked","oauth_states","global_keys","file_folders","at"}`.
+- Não faz: pausar anúncio em canal (por isso o bloqueio), apagar a conta do usuário, avisar os outros membros. Membro que só tinha esta empresa fica com
+  `GET /v1/workspaces` vazio e cria outra pelo "+ Nova empresa" do menu.
+- Web: Configurações → "Zona de perigo" (só para o dono) → diálogo com o preview, bloqueios e o campo do nome; sucesso troca a empresa escolhida
+  (`aimos.workspace`) para outra do usuário e vai para `/overview`.
