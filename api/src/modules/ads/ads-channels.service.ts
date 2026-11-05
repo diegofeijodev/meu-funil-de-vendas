@@ -1,5 +1,5 @@
 /** As 7 server fns de `ads/channels.functions.ts` (Google Ads / TikTok Ads): `POST /v1/ads/<nome-em-kebab>`. */
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
@@ -12,6 +12,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { AdsChannel } from './ads.dto';
 import { guarded } from './ads-errors';
+import { logDeleteRace } from './delete-race';
 import { onlyDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { OAuthStateService } from './oauth-state.service';
@@ -45,6 +46,8 @@ const SEARCH_SCHEMA = {
 
 @Injectable()
 export class AdsChannelsService {
+  private readonly logger = new Logger(AdsChannelsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
@@ -151,6 +154,12 @@ export class AdsChannelsService {
     await this.prisma.campaigns.updateMany({ where: { id, workspace_id: ws }, data: { [col]: null } }).catch(() => undefined);
   }
 
+  /** Criada no canal (pausada, não gasta) mas a campanha/empresa sumiu no meio: o id externo fica no log para alguém apagar lá. */
+  private createdButGone(channel: AdsChannel, ws: string, campaignId: string, externalId: string): never {
+    logDeleteRace(this.logger, { channel, action: 'create', workspace_id: ws, campaign_id: campaignId, external_id: externalId, outcome: 'created_paused' });
+    throw notFound('Campanha não encontrada.');
+  }
+
   /** Cria a campanha pausada no Google (Pesquisa) ou no TikTok (vídeo) a partir da copy, da estratégia e dos criativos aprovados. */
   async create(userId: string, campaignId: string, channel: AdsChannel) {
     const base = await this.guards.resolveCampaign(userId, campaignId, 'write');
@@ -196,7 +205,8 @@ export class AdsChannelsService {
             keywords: ai.palavras_chave ?? [],
           }),
         );
-        await this.prisma.campaigns.update({ where: { id: c.id }, data: { google_campaign_id: r.campaignId, google_status: 'PAUSED', google_creating_at: null } });
+        const saved = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { google_campaign_id: r.campaignId, google_status: 'PAUSED', google_creating_at: null } });
+        if (!saved.count) this.createdButGone('google', ws, c.id, r.campaignId);
         return r;
       } catch (e) {
         await this.release(c.id, ws, 'google');
@@ -224,7 +234,8 @@ export class AdsChannelsService {
           videos,
         }),
       );
-      await this.prisma.campaigns.update({ where: { id: c.id }, data: { tiktok_campaign_id: r.campaignId, tiktok_status: 'DISABLE', tiktok_creating_at: null } satisfies Prisma.campaignsUpdateInput });
+      const saved = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { tiktok_campaign_id: r.campaignId, tiktok_status: 'DISABLE', tiktok_creating_at: null } satisfies Prisma.campaignsUpdateManyMutationInput });
+      if (!saved.count) this.createdButGone('tiktok', ws, c.id, r.campaignId);
       return r;
     } catch (e) {
       await this.release(c.id, ws, 'tiktok');
@@ -244,7 +255,11 @@ export class AdsChannelsService {
     const google = channel === 'google';
     const ext = google ? c.google_campaign_id : c.tiktok_campaign_id;
     if (!ext) throw new UserError(google ? 'Sem campanha no Google Ads.' : 'Sem campanha no TikTok Ads.');
-    const call = (on: boolean) => (google ? this.google.setStatus(ws, ext, on ? 'ENABLED' : 'PAUSED') : this.tiktok.setStatus(ws, ext, on ? 'ENABLE' : 'DISABLE'));
+    // Credenciais lidas ANTES de ligar: se a empresa for apagada no meio, a pausa de compensação ainda fala com o canal.
+    const gCreds = active && google ? await this.google.creds(ws) : undefined;
+    const tCreds = active && !google ? await this.tiktok.creds(ws) : undefined;
+    const call = (on: boolean) =>
+      google ? this.google.setStatus(ws, ext, on ? 'ENABLED' : 'PAUSED', gCreds) : this.tiktok.setStatus(ws, ext, on ? 'ENABLE' : 'DISABLE', tCreds);
     const column = (on: boolean) => (google ? { google_status: on ? 'ENABLED' : 'PAUSED' } : { tiktok_status: on ? 'ENABLE' : 'DISABLE' });
     await guarded(() => call(active));
     if (!active) {
@@ -254,7 +269,13 @@ export class AdsChannelsService {
     // Condicional: encerrada enquanto o canal ativava → pausa de novo (se falhar, fica ativa para "Pausar os canais de novo").
     const upd = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws, status: { not: CAMPAIGN_FINISHED } }, data: column(true) });
     if (!upd.count) {
-      const repaused = await call(false).then(() => true, () => false);
+      let pauseError: string | undefined;
+      const repaused = await call(false).then(() => true, (e) => ((pauseError = e instanceof Error ? e.message : String(e)), false));
+      // A campanha (ou a empresa: "Apagar empresa") sumiu enquanto o canal ligava: nada para gravar; fica o id externo no log.
+      if (!(await this.prisma.campaigns.findFirst({ where: { id: c.id, workspace_id: ws }, select: { id: true } }))) {
+        logDeleteRace(this.logger, { channel, action: 'activate', workspace_id: ws, campaign_id: c.id, external_id: ext, outcome: repaused ? 'paused' : 'pause_failed', detail: pauseError });
+        throw notFound('Campanha não encontrada.');
+      }
       await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: column(!repaused) });
       throw new UserError(MSG_CAMPAIGN_ENDED);
     }

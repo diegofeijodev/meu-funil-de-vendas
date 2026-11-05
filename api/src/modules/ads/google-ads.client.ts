@@ -14,7 +14,7 @@ import { isDigits } from './ads-ids';
 const SCOPE = 'https://www.googleapis.com/auth/adwords';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-type Creds = { clientId: string | null; clientSecret: string | null; developerToken: string | null; refreshToken: string | null; customerId: string | null; loginCustomerId: string | null };
+export type GoogleAdsCreds = { clientId: string | null; clientSecret: string | null; developerToken: string | null; refreshToken: string | null; customerId: string | null; loginCustomerId: string | null };
 export type ExternalDailyRow = { externalCampaignId: string; date: string; spend: number; impressions: number; clicks: number; conversions: number; revenue: number; name: string };
 export type GoogleCampaignInput = { name: string; objective: string; dailyBudget: number; landingUrl: string; headlines: string[]; descriptions: string[]; keywords: string[] };
 export type ChannelStep = { label: string; status: 'done' | 'failed'; detail: string };
@@ -40,7 +40,7 @@ export class GoogleAdsClient {
     return (await this.vault.get(ws, key)) ?? (await this.vault.get(null, key)) ?? (fromEnv?.trim() || null);
   }
 
-  async creds(ws: string): Promise<Creds> {
+  async creds(ws: string): Promise<GoogleAdsCreds> {
     const [clientId, clientSecret, developerToken, refreshToken, customerId, loginCustomerId] = await Promise.all([
       this.pick(ws, 'GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_ID'),
       this.pick(ws, 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_CLIENT_SECRET'),
@@ -82,7 +82,7 @@ export class GoogleAdsClient {
     await this.vault.set(ws, { GOOGLE_ADS_REFRESH_TOKEN: j.refresh_token });
   }
 
-  private async accessToken(c: Creds): Promise<string> {
+  private async accessToken(c: GoogleAdsCreds): Promise<string> {
     if (!c.clientId || !c.clientSecret || !c.refreshToken) throw new AdsSetupError('Google Ads não conectado nesta empresa.');
     const res = await this.http(TOKEN_URL, {
       method: 'POST',
@@ -95,8 +95,9 @@ export class GoogleAdsClient {
     return j.access_token;
   }
 
-  private async call<T = any>(ws: string, path: string, body?: unknown, method = 'POST'): Promise<T> {
-    const c = await this.creds(ws);
+  /** `creds` já lidas: compensação depois que a empresa foi apagada (o cofre dela não existe mais). */
+  private async call<T = any>(ws: string, path: string, body?: unknown, method = 'POST', creds?: GoogleAdsCreds): Promise<T> {
+    const c = creds ?? (await this.creds(ws));
     if (!c.developerToken) throw new AdsSetupError('Token de desenvolvedor do Google Ads não configurado.');
     const token = await this.accessToken(c);
     const res = await this.http(`${this.base}${path}`, {
@@ -124,7 +125,7 @@ export class GoogleAdsClient {
     return j as T;
   }
 
-  private customer(c: Creds): string {
+  private customer(c: GoogleAdsCreds): string {
     if (!c.customerId) throw new AdsSetupError('Escolha a conta do Google Ads em Integrações.');
     if (!isDigits(c.customerId)) throw new AdsSetupError('O ID da conta do Google Ads é inválido (use só números).');
     return c.customerId;
@@ -239,11 +240,11 @@ export class GoogleAdsClient {
     return { campaignId, steps };
   }
 
-  async setStatus(ws: string, campaignId: string, status: 'ENABLED' | 'PAUSED') {
-    const c = await this.creds(ws);
+  async setStatus(ws: string, campaignId: string, status: 'ENABLED' | 'PAUSED', creds?: GoogleAdsCreds) {
+    const c = creds ?? (await this.creds(ws));
     if (!c.customerId) throw new AdsSetupError('Conta do Google Ads não escolhida.');
     const cid = this.customer(c);
     if (!isDigits(campaignId)) throw new AdsSetupError('ID da campanha do Google Ads inválido.');
-    await this.call(ws, `/customers/${cid}/campaigns:mutate`, { operations: [{ update: { resourceName: `customers/${cid}/campaigns/${campaignId}`, status }, updateMask: 'status' }] });
+    await this.call(ws, `/customers/${cid}/campaigns:mutate`, { operations: [{ update: { resourceName: `customers/${cid}/campaigns/${campaignId}`, status }, updateMask: 'status' }] }, 'POST', c);
   }
 }

@@ -1,5 +1,5 @@
 /** As 11 server fns de `meta-ads.functions.ts` (`POST /v1/meta/meta-ads-*`, `meta-save-app`, `meta-login-url`, `meta-list-assets`, `meta-save-assets`). */
-import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -10,6 +10,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { readAdsConfig } from './ads-config';
 import { guarded } from './ads-errors';
+import { logDeleteRace } from './delete-race';
 import { assertCanPublishUntil, assertPeriodOpen, campaignEndDay, MSG_OFFER_UNCONFIRMED, offerNeedsConfirmation, requireDailyBudget } from './ads-preflight';
 import { withUtm } from './ads-utm';
 import { readGeoTargets } from '../campaigns/geo-targets';
@@ -25,6 +26,7 @@ const forbidden = (message: string) => new ForbiddenException({ code: 'FORBIDDEN
 
 @Injectable()
 export class MetaAdsService {
+  private readonly logger = new Logger(MetaAdsService.name);
   /** Campanhas sendo enviadas agora (a API roda em UMA instância): evita publicar duas vezes no mesmo clique duplo. */
   private readonly publishing = new Set<string>();
 
@@ -189,8 +191,8 @@ export class MetaAdsService {
       await this.prisma.publishing_jobs.create({ data: { workspace_id: ws, campaign_id: c.id, target: 'meta', status: 'failed', mode: 'live', log: text } });
       throw e;
     }
-    await this.prisma.campaigns.update({
-      where: { id: c.id },
+    const saved = await this.prisma.campaigns.updateMany({
+      where: { id: c.id, workspace_id: ws },
       data: {
         meta_campaign_id: result.campaignId,
         meta_adset_id: result.adsetId,
@@ -201,6 +203,11 @@ export class MetaAdsService {
         meta_delivery_status: 'PAUSED',
       },
     });
+    if (!saved.count) {
+      // Campanha/empresa apagada durante a publicação: na Meta tudo nasceu PAUSADO (não gasta), mas sobra lá — o id fica no log.
+      logDeleteRace(this.logger, { channel: 'meta', action: 'create', workspace_id: ws, campaign_id: c.id, external_id: result.campaignId, outcome: 'created_paused' });
+      throw notFound('Campanha não encontrada.');
+    }
     await this.prisma.publishing_jobs.create({
       data: {
         workspace_id: ws, campaign_id: c.id, target: 'meta', mode: 'live',
@@ -246,6 +253,8 @@ export class MetaAdsService {
       throw new BadRequestException({ code: 'NO_AD_LEFT', message: 'Nenhum anúncio sobraria ligado. Deixe pelo menos uma arte no anúncio.' });
     }
     const adsetIds = (c.meta_adset_ids?.length ? c.meta_adset_ids : [c.meta_adset_id]).filter(Boolean) as string[];
+    // Credenciais lidas ANTES de ligar: se a empresa for apagada no meio, a pausa de compensação abaixo ainda fala com a Meta.
+    const creds = status === 'ACTIVE' ? await this.ops.credentials(ws) : undefined;
     await guarded(() =>
       this.ops.setDeliveryStatus(
         ws,
@@ -256,15 +265,22 @@ export class MetaAdsService {
           adIds: (c.meta_ad_ids ?? []).filter((id) => status === 'PAUSED' || (!pausedByOptimizer.has(id) && !excludedAds.has(id))),
         },
         status,
+        creds,
       ),
     );
     // Condicional: se a campanha foi encerrada enquanto a Meta ativava, ela não volta a "ativa" — pausa de novo e avisa.
     const upd = await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws, status: { not: CAMPAIGN_FINISHED } }, data: { meta_delivery_status: status, status: newStatus } });
     if (!upd.count) {
       if (status === 'ACTIVE') {
+        let pauseError: string | undefined;
         const repaused = await this.ops
-          .setDeliveryStatus(ws, { campaignId: c.meta_campaign_id!, adsetIds, adIds: c.meta_ad_ids ?? [] }, 'PAUSED')
-          .then(() => true, () => false);
+          .setDeliveryStatus(ws, { campaignId: c.meta_campaign_id!, adsetIds, adIds: c.meta_ad_ids ?? [] }, 'PAUSED', creds)
+          .then(() => true, (e) => ((pauseError = e instanceof Error ? e.message : String(e)), false));
+        // A campanha (ou a empresa: "Apagar empresa") sumiu enquanto a Meta ligava: nada para gravar; fica o id externo no log.
+        if (!(await this.prisma.campaigns.findFirst({ where: { id: c.id, workspace_id: ws }, select: { id: true } }))) {
+          logDeleteRace(this.logger, { channel: 'meta', action: 'activate', workspace_id: ws, campaign_id: c.id, external_id: c.meta_campaign_id, outcome: repaused ? 'paused' : 'pause_failed', detail: pauseError });
+          throw notFound('Campanha não encontrada.');
+        }
         // Se a nova pausa falhar, fica ACTIVE: a tela mostra "Pausar os canais de novo".
         await this.prisma.campaigns.updateMany({ where: { id: c.id, workspace_id: ws }, data: { meta_delivery_status: repaused ? 'PAUSED' : 'ACTIVE' } });
         throw new UserError(MSG_CAMPAIGN_ENDED);

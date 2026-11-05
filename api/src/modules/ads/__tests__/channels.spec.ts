@@ -242,10 +242,11 @@ describe('canais — campanha externa (create/link/setStatus)', () => {
     expect(await status(w.channels.setStatus(MARKETING, c.id, 'google', true))).toBe('403:Seu perfil não tem permissão para esta ação.');
     expect(w.google.setStatus).not.toHaveBeenCalled();
     await w.channels.setStatus(ADMIN, c.id, 'google', true);
-    expect(w.google.setStatus).toHaveBeenCalledWith(WS_A, '4242', 'ENABLED');
+    // Ligar leva as credenciais lidas antes (compensação se a empresa sumir no meio); pausar lê na hora.
+    expect(w.google.setStatus).toHaveBeenCalledWith(WS_A, '4242', 'ENABLED', expect.objectContaining({ refreshToken: null }));
     expect(c.google_status).toBe('ENABLED');
     await w.channels.setStatus(MARKETING, c.id, 'tiktok', false);
-    expect(w.tiktok.setStatus).toHaveBeenCalledWith(WS_A, '700', 'DISABLE');
+    expect(w.tiktok.setStatus).toHaveBeenCalledWith(WS_A, '700', 'DISABLE', undefined);
     expect(c.tiktok_status).toBe('DISABLE');
     const none = w.seedCampaign();
     expect(await status(w.channels.setStatus(OWNER, none.id, 'google', false))).toBe('400:Sem campanha no Google Ads.');

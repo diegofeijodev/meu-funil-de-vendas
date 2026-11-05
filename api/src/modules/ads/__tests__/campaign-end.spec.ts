@@ -221,7 +221,8 @@ describe('campanha encerrada não volta ao ar pelos botões', () => {
     const g = published(w, { status: 'approved', google_status: 'PAUSED' });
     w.google.setStatus = jest.fn(async (_ws: string, _id: string, st: string) => { if (st === 'ENABLED') g.status = 'finished'; });
     expect(await status(w.channels.setStatus(OWNER, g.id, 'google', true))).toBe(`400:${MSG_CAMPAIGN_ENDED}`);
-    expect(w.google.setStatus).toHaveBeenLastCalledWith(WS_A, '4242', 'PAUSED');
+    // A pausa de compensação usa as MESMAS credenciais lidas antes de ligar.
+    expect(w.google.setStatus).toHaveBeenLastCalledWith(WS_A, '4242', 'PAUSED', (w.google.setStatus as jest.Mock).mock.calls[0][3]);
     expect(g).toMatchObject({ status: 'finished', google_status: 'PAUSED' });
   });
 });

@@ -18,6 +18,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { VaultService } from '../vault/vault.service';
 import { readRules, sanitizeAdsConfig, sanitizeRules } from './ads-config';
 import { errMsg, guarded } from './ads-errors';
+import { logDeleteRace } from './delete-race';
 import { isDigits } from './ads-ids';
 import { GoogleAdsClient } from './google-ads.client';
 import { MetaOpsService } from './meta-ops.service';
@@ -453,6 +454,8 @@ export class AdsOpsService {
     const ws = rec.workspace_id;
     const p = (rec.payload ?? {}) as { adId?: string | null; adsetId?: string | null; newDailyBudget?: number | null };
     let result = 'Registrada. Esta ação é feita fora do Meta Ads (ex.: gerar variação no Estúdio).';
+    // Ligar anúncio: credenciais lidas ANTES, para a pausa de compensação se a empresa for apagada no meio ("Apagar empresa").
+    const creds = rec.action === 'activate_ad' && p.adId ? await this.ops.credentials(ws).catch(() => undefined) : undefined;
     try {
       if (EXECUTABLE.has(rec.action)) {
         if (!(await this.targetBelongs(rec, p))) throw new UserError('Recomendação sem alvo válido.');
@@ -463,7 +466,7 @@ export class AdsOpsService {
             return 'Anúncio pausado na Meta.';
           }
           if (rec.action === 'activate_ad' && p.adId) {
-            await this.ops.setAdStatus(ws, p.adId, 'ACTIVE');
+            await this.ops.setAdStatus(ws, p.adId, 'ACTIVE', creds);
             return 'Anúncio ativado na Meta.';
           }
           const nb = Number(p.newDailyBudget);
@@ -481,7 +484,16 @@ export class AdsOpsService {
       await this.prisma.ai_recommendations.updateMany({ where: { id, status: 'applying' }, data: { status: 'pending', applying_at: null } });
       throw e;
     }
-    await this.prisma.ai_recommendations.update({ where: { id }, data: { status: 'applied', applied_at: new Date(), applied_by: userId, result, applying_at: null } });
+    const done = await this.prisma.ai_recommendations.updateMany({ where: { id }, data: { status: 'applied', applied_at: new Date(), applied_by: userId, result, applying_at: null } });
+    if (!done.count) {
+      // A recomendação sumiu com a empresa ("Apagar empresa") enquanto a Meta executava: anúncio ligado volta a pausar.
+      if (rec.action === 'activate_ad' && p.adId) {
+        let pauseError: string | undefined;
+        const paused = await this.ops.setAdStatus(ws, p.adId, 'PAUSED', creds).then(() => true, (e) => ((pauseError = errMsg(e)), false));
+        logDeleteRace(this.logger, { channel: 'meta', action: 'activate_ad', workspace_id: ws, campaign_id: rec.campaign_id ?? '', external_id: p.adId, outcome: paused ? 'paused' : 'pause_failed', detail: pauseError });
+      }
+      throw notFound('Recomendação não encontrada.');
+    }
     return { result };
   }
 

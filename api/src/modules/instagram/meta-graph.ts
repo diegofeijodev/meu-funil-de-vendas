@@ -82,7 +82,8 @@ export class MetaConfigService {
   }
 }
 
-export type GraphOpts = { method?: 'GET' | 'POST' | 'DELETE'; params?: Record<string, unknown>; token?: string };
+/** `config`: credenciais já lidas (compensação depois que a empresa foi apagada: o cofre dela não existe mais). */
+export type GraphOpts = { method?: 'GET' | 'POST' | 'DELETE'; params?: Record<string, unknown>; token?: string; config?: MetaConfig };
 
 @Injectable()
 export class MetaGraphClient {
@@ -106,7 +107,7 @@ export class MetaGraphClient {
 
   /** `graph(path, …)` do protótipo, com a empresa explícita. Erros viram `MetaError` (mensagem pt-BR). */
   async graph<T = any>(workspaceId: string | null, path: string, opts: GraphOpts = {}): Promise<T> {
-    const cfg = await this.cfg.config(workspaceId);
+    const cfg = opts.config ?? (await this.cfg.config(workspaceId));
     const token = opts.token ?? cfg.token;
     if (!token) throw new MetaError('Token da Meta não configurado no cofre (META_SYSTEM_USER_TOKEN).');
     if (!cfg.appSecret) throw new MetaError('META_APP_SECRET não configurado no cofre.');

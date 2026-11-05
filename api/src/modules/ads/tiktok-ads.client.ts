@@ -16,6 +16,8 @@ const BASE = 'https://business-api.tiktok.com/open_api/v1.3';
 export type TikTokCampaignInput = { name: string; objective: string; dailyBudget: number; landingUrl: string; adText: string; brandName: string; logoUrl: string | null; videos: { title: string; url: string; cover: string | null }[] };
 const msg = (e: unknown) => (e instanceof Error ? e.message : 'falhou');
 
+export type TikTokAdsCreds = Awaited<ReturnType<TikTokAdsClient['creds']>>;
+
 @Injectable()
 export class TikTokAdsClient {
   constructor(
@@ -201,8 +203,9 @@ export class TikTokAdsClient {
     return { campaignId: camp.campaign_id, adgroupId: group.adgroup_id, steps };
   }
 
-  async setStatus(ws: string, campaignId: string, status: 'ENABLE' | 'DISABLE') {
-    const c = await this.creds(ws);
+  /** `creds` já lidas: compensação depois que a empresa foi apagada (o cofre dela não existe mais). */
+  async setStatus(ws: string, campaignId: string, status: 'ENABLE' | 'DISABLE', creds?: TikTokAdsCreds) {
+    const c = creds ?? (await this.creds(ws));
     if (!c.token || !c.advertiserId) throw new AdsSetupError('TikTok não conectado.');
     if (!isDigits(campaignId)) throw new AdsSetupError('ID da campanha do TikTok inválido.');
     await this.req(c.token, '/campaign/status/update/', { method: 'POST', body: { advertiser_id: c.advertiserId, campaign_ids: [campaignId], operation_status: status } });

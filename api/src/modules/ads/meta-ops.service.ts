@@ -7,7 +7,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { todaySp } from '../../common/time/dates';
 import { AssetsService } from '../media/assets.service';
-import { MetaError, MetaGraphClient } from '../instagram/meta-graph';
+import { GraphOpts, MetaConfig, MetaError, MetaGraphClient } from '../instagram/meta-graph';
 import { actId, gid, isDigits } from './ads-ids';
 import { AdsConfig, DEFAULT_ADS_CONFIG, PLACEMENTS } from './ads-config';
 import { GeoTarget, geoLabel } from '../campaigns/geo-targets';
@@ -178,8 +178,16 @@ export class MetaOpsService {
     private readonly assets: AssetsService,
   ) {}
 
-  private graph<T = any>(ws: string, path: string, opts: { method?: 'GET' | 'POST' | 'DELETE'; params?: Record<string, unknown>; token?: string } = {}) {
+  private graph<T = any>(ws: string, path: string, opts: GraphOpts = {}) {
     return this.graphClient.graph<T>(ws, path, opts);
+  }
+
+  /**
+   * Credenciais da Meta lidas AGORA (cofre da empresa → global → ambiente). Quem liga anúncio guarda isto antes da chamada: se a
+   * empresa for apagada no meio, a pausa de compensação ainda tem com o que falar com a Meta.
+   */
+  credentials(ws: string): Promise<MetaConfig> {
+    return this.graphClient.config(ws);
   }
 
   async missing(ws: string): Promise<string[]> {
@@ -631,8 +639,8 @@ export class MetaOpsService {
   }
 
   /** Pausa ou ativa um anúncio. */
-  async setAdStatus(ws: string, adId: string, status: 'ACTIVE' | 'PAUSED') {
-    await this.graph(ws, `/${gid(adId, 'anúncio')}`, { method: 'POST', params: { status } });
+  async setAdStatus(ws: string, adId: string, status: 'ACTIVE' | 'PAUSED', config?: MetaConfig) {
+    await this.graph(ws, `/${gid(adId, 'anúncio')}`, { method: 'POST', params: { status }, config });
   }
 
   /** `effective_status` do anúncio (as regras só pausam o que está ACTIVE). */
@@ -695,9 +703,9 @@ export class MetaOpsService {
   }
 
   /** Ativa ou pausa campanha, conjuntos e anúncios. */
-  async setDeliveryStatus(ws: string, ids: { campaignId: string; adsetIds?: string[]; adIds?: string[] }, status: 'ACTIVE' | 'PAUSED') {
+  async setDeliveryStatus(ws: string, ids: { campaignId: string; adsetIds?: string[]; adIds?: string[] }, status: 'ACTIVE' | 'PAUSED', config?: MetaConfig) {
     const all = [ids.campaignId, ...(ids.adsetIds ?? []), ...(ids.adIds ?? [])].filter(Boolean).map((id) => gid(id));
-    for (const id of all) await this.graph(ws, `/${id}`, { method: 'POST', params: { status } });
+    for (const id of all) await this.graph(ws, `/${id}`, { method: 'POST', params: { status }, config });
     return { updated: all.length };
   }
 
