@@ -22,7 +22,7 @@ createServer((req, res) => {
   if (req.method === 'POST' && /^\/v1beta\/models\/[^/]+:generateContent$/.test(url.pathname) && g.startsWith('AIzaFakeGood')) {
     return send(res, 200, { candidates: [{ content: { parts: [{ text: 'o' }] }, finishReason: 'MAX_TOKENS' }] });
   }
-  if (url.pathname === '/v1/models' && bearer.startsWith('sk-fake-good')) return send(res, 200, { data: ['gpt-image-1', 'gpt-4o-mini', 'whisper-1'].map((id) => ({ id })) });
+  if (url.pathname === '/v1/models' && bearer.startsWith('sk-fake-good')) return send(res, 200, { data: ['gpt-image-2.5-sunburst', 'gpt-4o-mini', 'whisper-1'].map((id) => ({ id })) });
   if (url.pathname === '/v1beta/models' && g.startsWith('AIzaFakeGood')) {
     return send(res, 200, { models: ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest'].map((name) => ({ name: `models/${name}` })) });
   }

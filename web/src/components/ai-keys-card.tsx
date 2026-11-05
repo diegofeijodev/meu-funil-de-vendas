@@ -23,7 +23,7 @@ const INFO: Record<Vendor, { title: string; does: string; placeholder: string; s
     steps: [
       { text: "Entre na plataforma da OpenAI com sua conta (a mesma do ChatGPT serve):", link: { label: "platform.openai.com", url: "https://platform.openai.com" } },
       { text: "Adicione cartão e créditos — a assinatura ChatGPT Plus não vale para a API:", link: { label: "Faturamento", url: "https://platform.openai.com/settings/organization/billing/overview" } },
-      { text: "Verifique a organização (necessário para gerar imagens com gpt-image-1):", link: { label: "Configurações da organização", url: "https://platform.openai.com/settings/organization/general" } },
+      { text: "Verifique a organização (a OpenAI pode pedir isso para gerar imagens com o GPT Image 2.5):", link: { label: "Configurações da organização", url: "https://platform.openai.com/settings/organization/general" } },
       { text: "Crie uma chave secreta (ex.: Meu Funil) e copie (começa com sk-):", link: { label: "Chaves de API", url: "https://platform.openai.com/api-keys" } },
       "Cole abaixo e clique em Salvar. Testamos a chave antes de guardar no cofre do servidor.",
     ],

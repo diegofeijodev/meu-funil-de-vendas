@@ -102,7 +102,10 @@ const envSchema = z
     /** Mapa dos ids de modelo do protótipo para modelos reais. */
     AI_MODEL_TEXT: z.string().default('gpt-4o'),
     AI_MODEL_TEXT_FAST: z.string().default('gpt-4o-mini'),
-    AI_MODEL_IMAGE_OPENAI: z.string().default('gpt-image-1'),
+    /** gpt-image-1 foi desligado pela OpenAI em 23/10/2026; o substituto oficial é o GPT Image 2.5 (sunburst = principal). */
+    AI_MODEL_IMAGE_OPENAI: z.string().default('gpt-image-2.5-sunburst'),
+    /** Tentado quando o principal falha por motivo do MODELO (indisponível, sem acesso, cota do dia); igual ao principal = sem alternativa. */
+    AI_MODEL_IMAGE_OPENAI_FALLBACK: z.string().default('gpt-image-2.5-flare'),
     AI_MODEL_IMAGE_GEMINI: z.string().default('gemini-2.5-flash-image'),
     AI_MODEL_VIDEO: z.string().default('veo-3.1-fast-generate-preview'),
     AI_MODEL_GEMINI_FLASH: z.string().default('gemini-2.5-flash'),

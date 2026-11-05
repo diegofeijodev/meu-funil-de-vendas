@@ -188,6 +188,7 @@ Leitura: §30.
 - **Mapa de modelos** (`AI_MODEL_*`): `openai/gpt-6-astra`→`AI_MODEL_TEXT`, `openai/gpt-image-2.5-sunburst`→`AI_MODEL_IMAGE_OPENAI`,
   `google/gemini-3.1-flash-image`→`AI_MODEL_IMAGE_GEMINI`, `google/veo-3.1-fast`→`AI_MODEL_VIDEO`, `google/gemini-3.1-flash`→`AI_MODEL_GEMINI_FLASH`,
   `google/gemini-3.1-pro`→`AI_MODEL_GEMINI_PRO`; id desconhecido passa como está. O valor gravado em `crm_sdr_agents.model` continua sendo o id do protótipo.
+- **Imagem OpenAI** (05/11/2026): `gpt-image-1` foi desligado pela OpenAI em 23/10/2026. Padrão `AI_MODEL_IMAGE_OPENAI=gpt-image-2.5-sunburst`; se ele falhar por motivo do MODELO (indisponível, 403 que cita modelo/verificação, cota do dia, parâmetro recusado, 5xx), a geração tenta `AI_MODEL_IMAGE_OPENAI_FALLBACK=gpt-image-2.5-flare` (chave própria e gateway). Chave recusada, falta de saldo, limite por minuto e recusa de conteúdo NÃO tentam a alternativa (`canTryOtherImageModel`, `vendor-failure.ts`). O diagnóstico aceita qualquer um dos dois.
 
 ## 7. Agendador (interno)
 

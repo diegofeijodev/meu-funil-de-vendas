@@ -7,7 +7,7 @@ import { AiCreditAlertsService, AiKeyUse } from './ai-credit-alerts.service';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
 import { isValidVideoJobId } from './video-job-id';
-import { AI_VENDOR_LABEL as VENDOR_LABEL, classifyVendorFailure, vendorMessage, VendorFailureKind } from './vendor-failure';
+import { AI_VENDOR_LABEL as VENDOR_LABEL, canTryOtherImageModel, classifyVendorFailure, vendorMessage, VendorFailureKind } from './vendor-failure';
 import {
   AI_FETCH, AI_GUARDED_FETCH, AiFetch, AiImageInput, AiImageRequest, AiImageResult, AiJsonRequest, AiTextRequest, AiVendor, AiVideoRequest, AiVideoResult,
 } from './ai.types';
@@ -396,20 +396,36 @@ export class AiService {
     return fd;
   }
 
+  /** Modelos de imagem da OpenAI em ordem de preferência (principal, alternativa), sem repetidos nem vazios. */
+  openaiImageModels(): string[] {
+    return [...new Set([this.env.AI_MODEL_IMAGE_OPENAI, this.env.AI_MODEL_IMAGE_OPENAI_FALLBACK].map((m) => m?.trim()).filter((m): m is string => !!m))];
+  }
+
   private async openaiDirectImage(key: string, req: AiImageRequest) {
     const size = OPENAI_SIZE[req.aspectRatio] ?? '1024x1024';
-    const model = this.env.AI_MODEL_IMAGE_OPENAI;
-    const res = req.referenceImages?.length
-      ? await this.http(`${OPENAI}/images/edits`, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: this.editForm(model, req, size), signal: AbortSignal.timeout(180_000) })
-      : await this.http(`${OPENAI}/images/generations`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, prompt: req.prompt.slice(0, 30000), size, quality: 'high' }),
-          signal: AbortSignal.timeout(180_000),
-        });
-    if (!res.ok) throw await this.vendorError('openai', res, model);
-    const j = (await res.json()) as { data?: { b64_json?: string }[] };
-    return this.pngResult(j.data?.[0]?.b64_json, 'A OpenAI');
+    const models = this.openaiImageModels();
+    for (let i = 0; ; i++) {
+      const model = models[i]!;
+      const res = req.referenceImages?.length
+        ? await this.http(`${OPENAI}/images/edits`, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: this.editForm(model, req, size), signal: AbortSignal.timeout(180_000) })
+        : await this.http(`${OPENAI}/images/generations`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt: req.prompt.slice(0, 30000), size, quality: 'high' }),
+            signal: AbortSignal.timeout(180_000),
+          });
+      if (res.ok) {
+        const j = (await res.json()) as { data?: { b64_json?: string }[] };
+        return this.pngResult(j.data?.[0]?.b64_json, 'A OpenAI');
+      }
+      const body = await res.clone().text().catch(() => '');
+      const err = await this.vendorError('openai', res, model);
+      if (i + 1 < models.length && canTryOtherImageModel(res.status, body)) {
+        this.logger.warn(`imagem OpenAI: ${model} falhou (${res.status}); tentando ${models[i + 1]}`);
+        continue;
+      }
+      throw err;
+    }
   }
 
   private async geminiDirectImage(key: string, req: AiImageRequest) {
@@ -446,10 +462,21 @@ export class AiService {
         return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note: null };
       }
     }
-    const res = await this.gw('/images/generations', { json: { model, prompt: req.prompt, size, quality: 'high' } });
-    if (!res.ok) throw await this.gatewayError(res);
-    const j = (await res.json()) as { data?: { b64_json?: string }[] };
-    return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note };
+    // Principal e, se ele falhar por motivo do modelo, a alternativa (`AI_MODEL_IMAGE_OPENAI_FALLBACK`).
+    const models = [model, ...this.openaiImageModels().filter((m) => m !== model)];
+    for (let i = 0; ; i++) {
+      const res = await this.gw('/images/generations', { json: { model: models[i], prompt: req.prompt, size, quality: 'high' } });
+      if (res.ok) {
+        const j = (await res.json()) as { data?: { b64_json?: string }[] };
+        return { ...this.pngResult(j.data?.[0]?.b64_json, 'A IA'), note };
+      }
+      const body = await res.clone().text().catch(() => '');
+      if (i + 1 < models.length && canTryOtherImageModel(res.status, body)) {
+        this.logger.warn(`imagem pelo gateway: ${models[i]} falhou (${res.status}); tentando ${models[i + 1]}`);
+        continue;
+      }
+      throw await this.gatewayError(res);
+    }
   }
 
   private async gatewayGeminiImage(req: AiImageRequest): Promise<{ bytes: Buffer; mime: string; ext: string; note: string | null }> {

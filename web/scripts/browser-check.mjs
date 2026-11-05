@@ -147,7 +147,7 @@ const gateway = createServer((req, res) => {
     if (req.method === 'GET' && (req.url?.startsWith('/v1/models') || req.url?.startsWith('/v1beta/models'))) {
       const bearer = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
       const goog = String(req.headers['x-goog-api-key'] ?? '');
-      if (req.url.startsWith('/v1/models') && bearer.startsWith('sk-fake-good')) res.end(JSON.stringify({ data: ['gpt-image-1', 'gpt-4o-mini', 'whisper-1'].map((id) => ({ id })) }));
+      if (req.url.startsWith('/v1/models') && bearer.startsWith('sk-fake-good')) res.end(JSON.stringify({ data: ['gpt-image-2.5-sunburst', 'gpt-4o-mini', 'whisper-1'].map((id) => ({ id })) }));
       else if (req.url.startsWith('/v1beta/models') && goog.startsWith('AIzaFakeGood')) res.end(JSON.stringify({ models: ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest'].map((name) => ({ name: `models/${name}` })) }));
       else { res.statusCode = 401; res.end('{}'); }
       return;
@@ -2207,7 +2207,7 @@ try {
   await page.getByRole('button', { name: 'Rodar diagnóstico' }).click();
   await page.getByText('Testado em').first().waitFor({ timeout: 60000 });
   const diag = await corpo();
-  check('diagnóstico: lista as verificações e a chave OpenAI como válida', tem(diag, 'Chave OpenAI') && tem(diag, 'Válida, com gpt-image-1, gpt-4o-mini e whisper-1.') && tem(diag, 'Higgsfield') && tem(diag, 'Canva') && tem(diag, 'Opcional'));
+  check('diagnóstico: lista as verificações e a chave OpenAI como válida', tem(diag, 'Chave OpenAI') && tem(diag, 'Válida, com gpt-image-2.5-sunburst, gpt-4o-mini e whisper-1.') && tem(diag, 'Higgsfield') && tem(diag, 'Canva') && tem(diag, 'Opcional'));
   await boxOpenai.getByRole('button', { name: 'Testar' }).click();
   await saiu9('Chave funcionando.');
   await boxOpenai.getByRole('button', { name: 'Remover' }).click();
