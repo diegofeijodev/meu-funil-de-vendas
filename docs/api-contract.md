@@ -1055,6 +1055,10 @@ Admin, marketing e viewer → `403 FORBIDDEN "Só o dono da empresa pode apagá-
 - `inheritors` = empresas com `ai_inherit_from` = esta (perdem a IA herdada: a FK é `ON DELETE SET NULL`). Nome só das empresas de que o usuário também
   é membro; as de outro cliente entram só em `inheritors_hidden` (número).
 - `blockers` (vazio = pode apagar), na ordem:
+  - `CAMPAIGN_BEING_CREATED`: o app está criando a campanha no Google/TikTok agora (`google_creating_at`/`tiktok_creating_at` há menos de 10 min
+    e ainda sem id externo). "Esta campanha está sendo criada agora no Google Ads: X. Espere terminar (leva alguns minutos) e tente de novo." Ela nasce
+    pausada; terminada, não bloqueia. Reserva vencida (a criação morreu) não bloqueia. A Meta não tem reserva no banco (publicar nasce PAUSADO): a
+    corrida fica no log abaixo.
   - `LIVE_META_CAMPAIGNS`: campanha com `meta_campaign_id` e `meta_delivery_status` diferente de `PAUSED` (vazio também conta). Olha a veiculação, não
     o `status`: uma campanha `finished` cuja pausa na Meta falhou continua gastando. Mensagem com os nomes: "Esta campanha ainda está ligada na Meta: X.
     Encerre a campanha (ou pause na Meta) antes de apagar a empresa." (plural: "Estas campanhas ainda estão ligadas…").
@@ -1069,12 +1073,23 @@ Admin, marketing e viewer → `403 FORBIDDEN "Só o dono da empresa pode apagá-
 - `400 NAME_MISMATCH` "O nome digitado não confere com o nome da empresa." — compara com o nome ATUAL, sem os espaços das pontas (maiúsculas contam).
 - `409` com o `code` do primeiro bloqueio acima (a mensagem traz os nomes das campanhas; o filtro de erro só leva `code` + `message`, a lista fica no preview).
 - `204` sem corpo. Uma transação: trava por usuário (`pg_advisory_xact_lock`, dois "apagar" seguidos não passam juntos pelo `LAST_WORKSPACE`) + `SELECT … FOR
-  UPDATE` na linha de `workspaces` → nome → bloqueios de novo (alguém pode ter ligado uma campanha depois do preview) → apaga `oauth_states` (sem FK),
+  UPDATE` na linha de `workspaces` → papel do usuário relido com `FOR SHARE` (rebaixado no meio → `403`) → nome → campanhas da empresa lidas com
+  `FOR UPDATE` e os bloqueios de novo (alguém pode ter ligado uma campanha depois do preview; quem tenta gravar nelas espera o commit) → apaga `oauth_states` (sem FK),
   as chaves do cofre global com `workspace_id` nulo e `key` terminando em `:<id>`, e a linha de `workspaces`; as 63 tabelas com `workspace_id` vão pela
   cascata. Depois do commit, em best-effort (erro só no log): as pastas da empresa nos buckets (`<bucket>/<id>/` e `<bucket>/<pasta>/<id>/`; arquivos
   gerados `YYYY-MM-DD/<uuid>` não levam o id e ficam).
 - Auditoria: `activity_logs` é da própria empresa (sai na cascata), então o registro vai para o log da API — uma linha
   `[workspace-delete] {"action":"workspace.deleted","user_id","workspace_id","name","counts","inheritors_unlinked","oauth_states","global_keys","file_folders","at"}`.
+- Corrida com quem fala com um canal de anúncios (ligar na Meta/Google/TikTok, ligar anúncio pelo otimizador, criar a campanha no canal): quem LIGA lê
+  as credenciais ANTES da chamada; se depois a linha da campanha sumiu (a empresa foi apagada no meio), pausa de volta com essas credenciais e responde
+  `404 "Campanha não encontrada."`; quem CRIA (nasce pausado) só responde 404. Nos dois casos uma linha de erro no log da API com o id EXTERNO:
+  `[workspace-delete-race] {"channel","action":"activate|activate_ad|create","workspace_id","campaign_id","external_id","outcome":"paused|pause_failed|created_paused","detail?"}`
+  — `pause_failed` = precisa pausar à mão no canal; `created_paused` = sobrou uma campanha pausada no canal.
+- Jobs no meio de um passo numa empresa apagada (Instagram, criativos, vagas, estilo, CRM): as marcações por id usam `updateMany` (linha sumida = no-op) ou
+  ficam num `try` por item; o erro vira log daquele item e a rodada segue com as outras empresas. Nada volta para a fila: as filas são da própria empresa
+  e saem na cascata.
+- Web: `useWorkspace` só usa a empresa escolhida/salva se ela ainda está na lista; senão cai para a primeira e regrava `aimos.workspace`. Uma leitura
+  com `403` reconfere a lista de empresas (outra aba com a empresa apagada para de pedi-la).
 - Não faz: pausar anúncio em canal (por isso o bloqueio), apagar a conta do usuário, avisar os outros membros. Membro que só tinha esta empresa fica com
   `GET /v1/workspaces` vazio e cria outra pelo "+ Nova empresa" do menu.
 - Web: Configurações → "Zona de perigo" (só para o dono) → diálogo com o preview, bloqueios e o campo do nome; sucesso troca a empresa escolhida

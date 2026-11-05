@@ -1403,6 +1403,11 @@ DLV=$(curl -s -w '\n%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d "{\"confirmN
 check "apagar: campanha ligada → 409 com o nome, nada apagado" "409|LIVE_META_CAMPAIGNS|1|Esta campanha ainda está ligada na Meta: Campanha Ligada. Encerre a campanha (ou pause na Meta) antes de apagar a empresa." "$(echo "$DLV" | tail -1)|$(echo "$DLV" | head -1 | jq -r .error.code)|$(PSQL "SELECT count(*) FROM workspaces WHERE id='$DEL'")|$(echo "$DLV" | head -1 | jq -r .error.message)"
 PSQL "UPDATE campaigns SET status='finished', meta_delivery_status='PAUSED' WHERE id='$DCAMP'" >/dev/null
 check "apagar: pausada não bloqueia mais" "0" "$(curl -s $DWS/deletion-preview -H "$H" | jq '.blockers|length')"
+PSQL "UPDATE campaigns SET google_creating_at=now() WHERE id='$DCAMP'" >/dev/null
+DCR=$(curl -s -w '\n%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d "{\"confirmName\":\"Apagar Smoke $SUF\"}")
+check "apagar: campanha sendo criada no Google agora bloqueia (prévia e DELETE 409, nada apagado)" "CAMPAIGN_BEING_CREATED|409|CAMPAIGN_BEING_CREATED|1" "$(curl -s $DWS/deletion-preview -H "$H" | jq -r '.blockers[0].code')|$(echo "$DCR" | tail -1)|$(echo "$DCR" | head -1 | jq -r .error.code)|$(PSQL "SELECT count(*) FROM workspaces WHERE id='$DEL'")"
+PSQL "UPDATE campaigns SET google_creating_at=now()-interval '11 minutes' WHERE id='$DCAMP'" >/dev/null
+check "apagar: reserva de criação vencida (> 10 min) não bloqueia" "0" "$(curl -s $DWS/deletion-preview -H "$H" | jq '.blockers|length')"
 check "apagar: nome certo (espaços nas pontas não contam) → 204" "204" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $DWS -H "$H" -H "$J" -d "{\"confirmName\":\"  Apagar Smoke $SUF \"}")"
 DTABLES=$(PSQL "SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='workspace_id' ORDER BY 1")
 DLEFT=$(for t in $DTABLES; do n=$(PSQL "SELECT count(*) FROM \"$t\" WHERE workspace_id='$DEL'"); [ "$n" != "0" ] && printf '%s=%s ' "$t" "$n"; done)
