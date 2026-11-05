@@ -364,6 +364,8 @@ const varre = () => {
   // mídia de teste da Biblioteca (uma rodada abortada/morta pelo teto deixava `upload-check` e quebrava o "1 de 1 mídia" da seguinte)
   igPsql(`DELETE FROM media_assets WHERE workspace_id='${wsId}' AND title IN ('upload-check')`);
   igPsql(`DELETE FROM brands WHERE workspace_id='${wsId}' AND (name LIKE 'Marca Check %' OR name LIKE 'Marca Camp %' OR name LIKE 'Marca Studio %' OR name LIKE 'Marca IG Check %' OR name LIKE 'Marca Meta %')`);
+  // empresa descartável do "Apagar empresa" (Configurações) que uma rodada morta no meio deixou
+  igPsql(`DELETE FROM workspaces WHERE name LIKE 'Apagar Check %' AND owner_id=(SELECT owner_id FROM workspaces WHERE id='${wsId}')`);
 };
 
 /**
@@ -676,6 +678,63 @@ try {
   await page.getByText('Workspace atualizado.').waitFor({ timeout: 10000 });
   await page.waitForFunction((n) => [...document.querySelectorAll('aside select option')].some((o) => o.textContent === n), wsOriginal, { timeout: 15000 });
   ok('nome do workspace restaurado');
+
+  // ── Zona de perigo (contrato §31): apagar uma empresa descartável do dono, com bloqueio, celular e troca de empresa ──
+  const nomeDel = `Apagar Check ${Date.now()}`;
+  const novaDel = await apiCall('POST', '/v1/workspaces', { name: nomeDel });
+  const delId = novaDel.body?.id;
+  check('apagar: empresa descartável criada', novaDel.status === 201 && !!delId, String(novaDel.status));
+  limpezas.push(() => { if (delId) igPsql(`DELETE FROM workspaces WHERE id='${delId}'`); });
+  const marcaDel = igPsql(`INSERT INTO brands(workspace_id,name) VALUES ('${delId}','Marca Apagar Check') RETURNING id`).split('\n')[0];
+  const campDel = igPsql(`INSERT INTO campaigns(workspace_id,brand_id,name,objective,status,meta_campaign_id,meta_delivery_status) VALUES ('${delId}','${marcaDel}','Campanha Ligada Check','leads','active','bc-meta-${Date.now()}','ACTIVE') RETURNING id`).split('\n')[0];
+  await page.evaluate((id) => window.localStorage.setItem('aimos.workspace', id), delId);
+  await page.goto(`${BASE}/settings`);
+  await page.waitForFunction((id) => document.querySelector('aside select')?.value === id, delId, { timeout: 30000 });
+  await page.getByText('Zona de perigo').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Apagar esta empresa' }).click();
+  const dlgDel = page.getByRole('alertdialog');
+  await dlgDel.getByText('Ainda não dá para apagar:').waitFor({ timeout: 15000 });
+  const txtBloq = await dlgDel.innerText();
+  check(
+    'apagar: campanha ligada na Meta bloqueia, com o nome e o link para a campanha',
+    txtBloq.includes('Esta campanha ainda está ligada na Meta: Campanha Ligada Check.') && (await dlgDel.getByRole('link', { name: 'Abrir a campanha Campanha Ligada Check' }).count()) === 1,
+    txtBloq.slice(0, 300),
+  );
+  check('apagar: bloqueado = sem botão de apagar nem campo do nome', (await dlgDel.getByRole('button', { name: 'Apagar a empresa' }).count()) === 0 && (await dlgDel.locator('#confirm-workspace-name').count()) === 0);
+  await dlgDel.getByRole('button', { name: 'Não apagar' }).click();
+  igPsql(`UPDATE campaigns SET status='finished', meta_delivery_status='PAUSED' WHERE id='${campDel}'`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  try {
+    await page.getByRole('button', { name: 'Apagar esta empresa' }).click();
+    await dlgDel.getByText('Isso não pode ser desfeito.').waitFor({ timeout: 15000 });
+    const txtDel = await dlgDel.innerText();
+    check('apagar: prévia em linguagem simples ("1 marca", "1 campanha, com os resultados")', txtDel.includes('1 marca') && txtDel.includes('1 campanha, com os resultados'), txtDel.slice(0, 300));
+    const medida = await page.evaluate(() => ({
+      doc: document.documentElement.scrollWidth,
+      win: window.innerWidth,
+      dlg: Math.round(document.querySelector('[role="alertdialog"]')?.getBoundingClientRect().right ?? 9999),
+    }));
+    check('apagar: no celular (390 px) o diálogo cabe na tela, sem rolagem horizontal', medida.doc <= medida.win && medida.dlg <= medida.win, JSON.stringify(medida));
+    const botaoDel = dlgDel.getByRole('button', { name: 'Apagar a empresa' });
+    check('apagar: botão vermelho desativado até digitar o nome', await botaoDel.isDisabled());
+    await dlgDel.locator('#confirm-workspace-name').fill('nome errado');
+    check('apagar: nome errado mantém o botão desativado', await botaoDel.isDisabled());
+    await dlgDel.locator('#confirm-workspace-name').fill(`  ${nomeDel} `);
+    check('apagar: nome certo (espaços nas pontas não contam) libera o botão', await botaoDel.isEnabled());
+    await botaoDel.click();
+    await page.getByText('Empresa apagada').waitFor({ timeout: 15000 });
+    await page.waitForURL('**/overview', { timeout: 15000 });
+    check('apagar: toast "Empresa apagada" e vai para /overview', rel() === '/overview', rel());
+  } finally {
+    await page.setViewportSize({ width: 1500, height: 1000 });
+  }
+  await esperaShell();
+  const depois = await page.evaluate(() => ({
+    atual: window.localStorage.getItem('aimos.workspace'),
+    opcoes: [...document.querySelectorAll('aside select option')].map((o) => o.value),
+  }));
+  check('apagar: empresa escolhida trocou para outra do usuário (a demo) e sumiu do seletor', depois.atual === wsId && !depois.opcoes.includes(delId), JSON.stringify(depois));
+  check('apagar: a empresa não existe mais no banco', igPsql(`SELECT count(*) FROM workspaces WHERE id='${delId}'`) === '0');
   });
 
   await section('agencia', async () => {
