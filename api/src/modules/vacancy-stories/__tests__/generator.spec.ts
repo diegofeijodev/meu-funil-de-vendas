@@ -5,11 +5,11 @@ import { RefsService } from '../../creative/refs.service';
 import { uuid } from '../../instagram/__tests__/harness';
 import { AssetsService } from '../../media/assets.service';
 import { WS_A } from '../../media/__tests__/mem';
-import { ArtAiError, VacancyGeneratorService } from '../vacancy-generator.service';
+import { VacancyGeneratorService, photoTexts } from '../vacancy-generator.service';
 import { photoPrompt, readPrompt } from '../vacancy-prompts';
 import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
 import { SKIP } from '../vacancy-triage';
-import { fingerprint, hourLabel, vacancyFields } from '../vacancy-text';
+import { fingerprint, vacancyFields } from '../vacancy-text';
 import type { ArtRead, FreelaVacancy, SettingsRow, StoryRow } from '../vacancy-types';
 import { vacancyWorld, type VacancyWorld } from './world';
 
@@ -29,20 +29,11 @@ const vac = (o: Partial<FreelaVacancy> = {}): FreelaVacancy => ({
   contractorName: 'COCO BAMBU', publishedAt: '2026-10-29T10:00:00Z', ...o,
 });
 
-/** Leitura às cegas de uma arte certa para a vaga `v`. */
-function readFor(v: FreelaVacancy, extra: string[] = []): ArtRead {
-  const f = vacancyFields(v);
-  return {
-    textos: ['VAGA FREELA', f.funcao.toUpperCase(), 'Valor para o freela', f.valor, `${f.data} · ${f.horario}`, f.cidade, ...(f.estabelecimento ? [f.estabelecimento] : []), ...extra],
-    funcao: f.funcao.toUpperCase(),
-    estabelecimento: f.estabelecimento,
-    data: f.data,
-    inicio: hourLabel(f.expected.startMin),
-    fim: hourLabel(f.expected.endMin),
-    valor: f.valor,
-    cidade: f.cidade,
-  };
+/** Leitura às cegas da foto da IA: limpa (sem texto) ou com os textos de `extra` (placa, fachada, logo). */
+function readFor(_v: FreelaVacancy, extra: string[] = []): ArtRead {
+  return { textos: [...extra], funcao: null, estabelecimento: null, data: null, inicio: null, fim: null, valor: null, cidade: null };
 }
+const SIGN = 'Estrada Joaquim Bueno Neto, 9999';
 
 let w: VacancyWorld;
 afterEach(() => w?.cleanup());
@@ -121,39 +112,31 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.settings()).toMatchObject({ ai_error: null, ai_error_at: null });
     expect(after).toHaveBeenCalledWith(WS_A, post.id);
 
-    // Geração: modelo como referência, 4:5, fornecedor da configuração, sem cair no gateway.
+    // A IA só faz a foto (quadrada, sem referência, sem dado da vaga além da função); todo texto é do sistema.
     expect(t.imageCalls()).toHaveLength(1);
     const img = t.imageCalls()[0];
-    expect(img).toMatchObject({ aspectRatio: '4:5', vendor: 'openai', strict: true });
-    expect(img.referenceImages).toHaveLength(1);
-    expect(img.referenceImages[0].mime).toBe('image/jpeg');
-    expect(img.prompt).toContain('GARÇOM');
-    expect(img.prompt).toContain('R$ 150');
-    // Leitura às cegas: nenhum valor esperado no prompt; imagem = quadro até y 1360 (sem o rodapé).
+    expect(img).toMatchObject({ aspectRatio: '1:1', vendor: 'openai', strict: true, prompt: photoPrompt('Garçom') });
+    expect(img.referenceImages).toBeUndefined();
+    // Leitura às cegas da foto: nenhum valor esperado no prompt.
     expect(t.readCalls()).toHaveLength(1);
     const read = t.readCalls()[0];
     expect(read.prompt).toBe(readPrompt());
-    for (const value of ['Garçom', 'GARÇOM', 'R$ 150', '150', 'Coco Bambu', 'Campinas', '31/10', '18h', '23h']) expect(read.prompt).not.toContain(value);
-    const size = await w.images.size(read.images[0].bytes);
-    expect(size.width / size.height).toBeCloseTo(1080 / 1360, 2);
+    for (const value of ['Garçom', 'R$ 150', '150', 'Coco Bambu', 'Campinas', '31/10', '18h', '23h']) expect(read.prompt).not.toContain(value);
   });
 
-  it('horário errado na 1ª e certo na 2ª: 2 imagens, 2 leituras, a 2ª pede o horário certo', async () => {
+  it('foto com placa na 1ª e limpa na 2ª: 2 fotos, 2 leituras, arte com foto', async () => {
     const t = await setup();
     const v = vac();
     const r0 = await t.story(v);
-    const wrong = { ...readFor(v), inicio: '19h', textos: readFor(v).textos.map((x) => x.replace('18h', '19h')) };
-    await w.programArt({ reads: [wrong, readFor(v)] });
+    await w.programArt({ reads: [readFor(v, [SIGN]), readFor(v)] });
 
     expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
 
     expect(t.imageCalls()).toHaveLength(2);
     expect(t.readCalls()).toHaveLength(2);
-    expect(t.imageCalls()[0].prompt).not.toContain('Na tentativa anterior');
-    expect(t.imageCalls()[1].prompt).toContain('horário');
     const row = t.row(r0.id);
     expect(row.attempts_log).toHaveLength(2);
-    expect(row.attempts_log[0]).toMatchObject({ n: 1, kind: 'ai', ok: false, wrong: ['inicio'] });
+    expect(row.attempts_log[0]).toMatchObject({ n: 1, kind: 'ai', ok: false, wrong: [], forbidden: [SIGN] });
     expect(row.attempts_log[1]).toMatchObject({ n: 2, kind: 'ai', ok: true });
     expect(row).toMatchObject({ status: 'handed_off', mismatch_attempts: 1, used_fallback: false });
     const post = t.posts()[0]!;
@@ -161,14 +144,11 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(post.ai_generation_log.map((x: { ok: boolean }) => x.ok)).toEqual([false, true]);
   });
 
-  it('R28: mismatch_attempts é o contador ao vivo — zera ao pegar a linha, anda 0→1→2, a reserva não passa de 2, a entrega grava o final', async () => {
+  it('R28: mismatch_attempts é o contador ao vivo — zera ao pegar a linha, anda 0→1 e a entrega grava o final', async () => {
     const t = await setup();
     const v = vac();
-    // Valor velho de uma rodada anterior (erro da IA no meio): zera ao pegar a linha.
     const r0 = await t.story(v, { status: 'waiting', mismatch_attempts: 2 });
-    const wrong = { ...readFor(v), inicio: '19h', textos: readFor(v).textos.map((x) => x.replace('18h', '19h')) };
-    await w.programArt({ reads: [wrong, wrong, wrong, readFor(v)] });
-    // A imagem é pedida logo depois do `onStep('art', n)`: o que a tela leria naquela hora.
+    await w.programArt({ reads: [readFor(v, [SIGN])] });
     const seen: number[] = [];
     const draw = w.ai.image.getMockImplementation()!;
     w.ai.image.mockImplementation(async (...a) => {
@@ -177,89 +157,61 @@ describe('VacancyGeneratorService.generateDue', () => {
     });
 
     expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
-    expect(seen).toEqual([0, 1, 2, 2]);
-    expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 3 });
+    expect(seen).toEqual([0, 1]);
+    expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 2 });
   });
 
-  it('texto copiado do modelo nas 3 tentativas → reserva com foto (sem texto)', async () => {
-    const t = await setup();
+  it('foto com texto nas 2 tentativas → a mesma arte sem foto; no modo sozinho vai a ready (todo texto é do sistema)', async () => {
+    const t = await setup({ settings: { auto_publish: true } });
     const v = vac();
     const r0 = await t.story(v);
-    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
-    await w.programArt({ reads: [copied, copied, copied, readFor(v)] });
+    await w.programArt({ reads: [readFor(v, [SIGN])] });
 
     expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
 
-    expect(t.imageCalls()).toHaveLength(4);
-    const photo = t.imageCalls()[3];
-    expect(photo.prompt).toBe(photoPrompt('Garçom'));
-    expect(photo).toMatchObject({ aspectRatio: '9:16', vendor: 'openai', strict: true });
-    expect(photo.referenceImages).toBeUndefined();
-    expect(t.readCalls()).toHaveLength(4);
+    expect(t.imageCalls()).toHaveLength(2);
+    expect(t.readCalls()).toHaveLength(2);
     const row = t.row(r0.id);
-    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 3 });
-    expect(row.attempts_log.map((a: { kind: string }) => a.kind)).toEqual(['ai', 'ai', 'ai', 'fallback_photo']);
-    expect(row.attempts_log[0].forbidden).toEqual(['Estrada Joaquim Bueno Neto, 9999']);
+    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 2 });
+    expect(row.attempts_log.map((a: { kind: string }) => a.kind)).toEqual(['ai', 'ai', 'fallback_plain']);
+    expect(row.attempts_log[0].forbidden).toEqual([SIGN]);
+    expect(row.attempts_log[2]).toMatchObject({ n: 3, ok: true, forbidden: [] });
     const post = t.posts()[0]!;
-    expect(post.creative_brief.vacancy).toMatchObject({ used_fallback: true, attempts: 3 });
-    expect(post.ai_generation_log.map((x: { fallback: boolean }) => x.fallback)).toEqual([false, false, false, true]);
-    expect(post.media[0]).toMatchObject({ width: 1080, height: 1920, ig_ready: true });
-    expect(t.mediaRows()[0]).toMatchObject({ source: 'chatgpt' });
-  });
-
-  it('foto da reserva com erro de IA → reserva sem foto entregue (a leitura que falha não barra); mídia do sistema', async () => {
-    const t = await setup();
-    const v = vac();
-    const r0 = await t.story(v);
-    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
-    await w.programArt({
-      images: [null, null, null, new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')],
-      reads: [copied, copied, copied, new Error('leitura caiu')],
-    });
-
-    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1, waiting: 0 });
-
-    expect(t.imageCalls()).toHaveLength(4);
-    expect(t.readCalls()).toHaveLength(4);
-    const row = t.row(r0.id);
-    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true, mismatch_attempts: 3, ai_error_count: 0 });
-    expect(row.attempts_log.map((a: { kind: string }) => a.kind)).toEqual(['ai', 'ai', 'ai', 'fallback_photo', 'fallback_plain']);
-    expect(row.attempts_log[3]).toMatchObject({ ok: false, error: NO_CREDIT });
-    expect(row.attempts_log[4]).toMatchObject({ ok: true, error: expect.any(String) });
-    const post = t.posts()[0]!;
-    expect(post).toMatchObject({ status: 'pending_approval', ai_provider: 'sistema' });
-    expect(post.creative_brief.vacancy).toMatchObject({ used_fallback: true });
+    expect(post).toMatchObject({ status: 'ready', ai_provider: 'sistema' });
+    expect(post.creative_brief.vacancy).toMatchObject({ used_fallback: true, attempts: 2, requires_approval: false, check_alert: null, check_unread: false });
+    expect(post.ai_generation_log.map((x: { fallback: boolean }) => x.fallback)).toEqual([false, false, true]);
     expect(post.media[0]).toMatchObject({ width: 1080, height: 1920, ig_ready: true });
     expect(t.mediaRows()[0]).toMatchObject({ source: 'other', provider: 'sistema', ig_post_id: post.id });
   });
 
-  it('erro de IA na 1ª imagem: espera 5 min sem contar refação; a 3ª falha seguida espera 45 min', async () => {
+  it('erro de IA na foto (sem créditos): o story sai sem foto na hora e o aviso da IA fica gravado', async () => {
     const t = await setup();
     const v = vac();
     const r0 = await t.story(v);
-    const err = () => new VendorKeyError(NO_CREDIT, 'openai', 'noCredit');
-    await w.programArt({ images: [err(), err(), err()], reads: [readFor(v)] });
+    await w.programArt({ images: [new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')], reads: [readFor(v)] });
 
-    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 1, cancelled: 0 });
-    const reason = `A IA não conseguiu criar a arte: ${NO_CREDIT.replace(/\.$/, '')}.`;
-    expect(t.row(r0.id)).toMatchObject({
-      status: 'waiting', ai_error_count: 1, mismatch_attempts: 0, lease_until: null, next_attempt_at: new Date(NOW.getTime() + 5 * MIN), wait_reason: reason,
-    });
-    expect(t.row(r0.id).attempts_log).toEqual([{ n: 1, at: expect.any(String), kind: 'ai', ok: false, wrong: [], forbidden: [], error: NO_CREDIT }]);
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 1, waiting: 0, cancelled: 0 });
+    const row = t.row(r0.id);
+    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true, ai_error_count: 0, mismatch_attempts: 0 });
+    expect(row.attempts_log).toEqual([
+      { n: 1, at: expect.any(String), kind: 'ai', ok: false, wrong: [], forbidden: [], error: NO_CREDIT },
+      { n: 3, at: expect.any(String), kind: 'fallback_plain', ok: true, wrong: [], forbidden: [] },
+    ]);
     expect(t.settings()).toMatchObject({ ai_error: NO_CREDIT, ai_error_at: NOW });
+    expect(t.imageCalls()).toHaveLength(1);
     expect(t.readCalls()).toHaveLength(0);
-    expect(t.posts()).toHaveLength(0);
+    expect(t.posts()[0]).toMatchObject({ status: 'pending_approval', ai_provider: 'sistema' });
+  });
 
-    // Antes da hora marcada, nada acontece.
-    expect(await t.gen.generateDue(new Date(NOW.getTime() + 4 * MIN))).toMatchObject({ started: 0 });
+  it('leitura da foto falhou: a foto não é usada (não foi conferida) e o story sai sem foto', async () => {
+    const t = await setup();
+    const v = vac();
+    const r0 = await t.story(v);
+    await w.programArt({ reads: [new Error('leitura caiu')] });
 
-    const t2 = new Date(NOW.getTime() + 5 * MIN);
-    await t.gen.generateDue(t2);
-    expect(t.row(r0.id)).toMatchObject({ ai_error_count: 2, next_attempt_at: new Date(t2.getTime() + 15 * MIN) });
-    const t3 = new Date(t2.getTime() + 15 * MIN);
-    await t.gen.generateDue(t3);
-    expect(t.row(r0.id)).toMatchObject({ status: 'waiting', ai_error_count: 3, mismatch_attempts: 0, next_attempt_at: new Date(t3.getTime() + 45 * MIN) });
-    expect(t.imageCalls()).toHaveLength(3);
+    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
+    expect(t.row(r0.id).attempts_log.map((a: { kind: string; ok: boolean }) => [a.kind, a.ok])).toEqual([['ai', false], ['fallback_plain', true]]);
+    expect(t.row(r0.id)).toMatchObject({ used_fallback: true });
   });
 
   it('vaga fechada no Freela (byId → null): linha cancelada com o motivo, nenhuma chamada de IA', async () => {
@@ -295,8 +247,6 @@ describe('VacancyGeneratorService.generateDue', () => {
     await w.programArt({ reads: [readFor(changed)] });
 
     expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
-    expect(t.imageCalls()[0].prompt).toContain('R$ 180');
-    expect(t.imageCalls()[0].prompt).not.toContain('R$ 150');
     expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', fingerprint: fingerprint(changed) });
     expect(t.row(r0.id).snapshot).toMatchObject({ amountInCents: 18000 });
     expect(t.posts()[0]!.creative_brief.vacancy.fingerprint).toBe(fingerprint(changed));
@@ -459,65 +409,6 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(w.t['vacancy_stories']!.rows.find((r) => r.id === r0.id)).toMatchObject({ status: 'cancelled', ig_post_id: null });
   });
 
-  it('reserva com foto reprovada por texto proibido (foto com placa) → reserva sem foto; no modo sozinho, limpa, vai a ready', async () => {
-    const t = await setup({ settings: { auto_publish: true } });
-    const v = vac();
-    const r0 = await t.story(v);
-    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
-    await w.programArt({ reads: [copied, copied, copied, copied, readFor(v)] });
-
-    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
-
-    expect(t.imageCalls()).toHaveLength(4);
-    expect(t.readCalls()).toHaveLength(5);
-    const row = t.row(r0.id);
-    expect(row.attempts_log.map((a: { kind: string }) => a.kind)).toEqual(['ai', 'ai', 'ai', 'fallback_photo', 'fallback_plain']);
-    expect(row.attempts_log[3]).toMatchObject({ n: 4, ok: false, forbidden: ['Estrada Joaquim Bueno Neto, 9999'] });
-    expect(row.attempts_log[3].error).toBeUndefined();
-    expect(row.attempts_log[4]).toMatchObject({ n: 5, ok: true, forbidden: [] });
-    expect(row).toMatchObject({ status: 'handed_off', used_fallback: true });
-    const post = t.posts()[0]!;
-    expect(post).toMatchObject({ status: 'ready', ai_provider: 'sistema' });
-    expect(post.creative_brief.vacancy).toMatchObject({ used_fallback: true, requires_approval: false });
-    expect(t.mediaRows()[0]).toMatchObject({ source: 'other', provider: 'sistema' });
-  });
-
-  it('R22: reserva sem foto que a leitura reprova (texto proibido) espera aprovação mesmo no modo sozinho', async () => {
-    const t = await setup({ settings: { auto_publish: true } });
-    const v = vac();
-    const r0 = await t.story(v);
-    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
-    await w.programArt({ reads: [copied, copied, copied, copied, readFor(v, ['www.marca.com.br'])] });
-
-    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
-
-    const row = t.row(r0.id);
-    expect(row.attempts_log[4]).toMatchObject({ kind: 'fallback_plain', ok: false, forbidden: ['www.marca.com.br'] });
-    const post = t.posts()[0]!;
-    expect(post.status).toBe('pending_approval');
-    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true, check_alert: ['www.marca.com.br'], check_unread: false });
-  });
-
-  it('T9: reserva sem foto cuja leitura FALHOU espera aprovação mesmo no modo sozinho', async () => {
-    const t = await setup({ settings: { auto_publish: true } });
-    const v = vac();
-    const r0 = await t.story(v);
-    const copied = readFor(v, ['Estrada Joaquim Bueno Neto, 9999']);
-    await w.programArt({
-      images: [null, null, null, new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')],
-      reads: [copied, copied, copied, new Error('leitura caiu')],
-    });
-    const after = jest.fn(async () => undefined);
-    t.gen.hooks.afterHandOff = after;
-
-    expect(await t.gen.generateDue(NOW)).toMatchObject({ started: 1, handed: 1 });
-    expect(t.row(r0.id).attempts_log[4]).toMatchObject({ kind: 'fallback_plain', error: expect.any(String) });
-    const post = t.posts()[0]!;
-    expect(post.status).toBe('pending_approval');
-    // R40/M3: a tela não diz "✓ Conferido" — a leitura não respondeu.
-    expect(post.creative_brief.vacancy).toMatchObject({ requires_approval: true, used_fallback: true, check_alert: null, check_unread: true });
-  });
-
   it('lease renovado antes de cada chamada da IA e antes da entrega (o relógio anda durante a geração)', async () => {
     const t = await setup();
     const v = vac();
@@ -569,20 +460,15 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.row(r0.id)).toMatchObject({ status: 'generating', lease_until: foreign, attempts_log: [], wait_reason: null, ai_error_count: 0 });
   });
 
-  it('falha que não é da IA (arquivo da arte modelo sumiu): espera 10 min com o motivo, sem chamar a IA', async () => {
+  it('arquivo da arte modelo sumiu: a arte sai mesmo assim (a logo vem da marca; o modelo não é mais exigido)', async () => {
     const t = await setup();
     const v = vac();
     const r0 = await t.story(v);
     await w.programArt({ reads: [readFor(v)] });
     await w.files.delete('creative-assets', t.template.storage_path);
 
-    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 0, waiting: 1, cancelled: 0 });
-    expect(t.row(r0.id)).toMatchObject({
-      status: 'waiting', lease_until: null, next_attempt_at: new Date(NOW.getTime() + 10 * MIN), ai_error_count: 0,
-      wait_reason: 'A arte modelo não foi encontrada. Envie a arte modelo de novo em Ajustes.',
-    });
-    expect(w.ai.image).not.toHaveBeenCalled();
-    expect(t.settings().ai_error).toBeNull();
+    expect(await t.gen.generateDue(NOW)).toEqual({ started: 1, handed: 1, waiting: 0, cancelled: 0 });
+    expect(t.row(r0.id)).toMatchObject({ status: 'handed_off', used_fallback: false });
   });
 
   it('erro de IA depois de desligarem no meio: a linha fica cancelada e o aviso da IA não é gravado', async () => {
@@ -617,31 +503,37 @@ describe('VacancyGeneratorService.generateDue', () => {
 });
 
 describe('VacancyGeneratorService.makeArt', () => {
-  it('avisa cada etapa (arte, conferência) por tentativa e devolve a arte aprovada', async () => {
+  it('avisa cada etapa (foto, conferência) por tentativa e devolve a arte com todos os campos conferidos', async () => {
     const t = await setup();
     const v = vac();
-    const wrong = { ...readFor(v), valor: 'R$ 95,95' };
-    await w.programArt({ reads: [wrong, readFor(v)] });
+    await w.programArt({ reads: [readFor(v, ['BAR DO ZÉ']), readFor(v)] });
     const steps: [string, number][] = [];
-    const s = t.settings();
-    const art = await t.gen.makeArt(WS_A, s, vacancyFields(v), async (step, n) => {
+    const art = await t.gen.makeArt(WS_A, t.settings(), vacancyFields(v), async (step, n) => {
       steps.push([step, n]);
     });
     expect(steps).toEqual([['art', 1], ['check', 1], ['art', 2], ['check', 2]]);
     expect(art).toMatchObject({ usedFallback: false, vendorLabel: 'ChatGPT (OpenAI)', origin: { source: 'chatgpt', provider: 'chatgpt' } });
     expect(art.check.ok).toBe(true);
+    expect(art.check.fields.map((x) => x.key).sort()).toEqual(ALL_KEYS);
+    expect(art.check.fields.every((x) => x.ok)).toBe(true);
     expect(art.attempts.map((a) => a.ok)).toEqual([false, true]);
     expect((await w.images.size(art.bytes))).toEqual({ width: 1080, height: 1920 });
   });
 
-  it('erro de IA antes de qualquer arte (inclusive depois de uma reprovação) → ArtAiError com a mensagem', async () => {
+  it('erro de IA nunca derruba a arte: sai sem foto, com o erro no registro', async () => {
     const t = await setup();
     const v = vac();
-    const wrong = { ...readFor(v), cidade: 'Jundiaí' };
-    await w.programArt({ images: [null, new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')], reads: [wrong] });
-    const err = await t.gen.makeArt(WS_A, t.settings(), vacancyFields(v)).catch((e) => e);
-    expect(err).toBeInstanceOf(ArtAiError);
-    expect(err.message).toBe(NO_CREDIT);
-    expect(err.attempts.map((a: { ok: boolean; error?: string }) => [a.ok, a.error ?? null])).toEqual([[false, null], [false, NO_CREDIT]]);
+    await w.programArt({ images: [null, new VendorKeyError(NO_CREDIT, 'openai', 'noCredit')], reads: [readFor(v, ['PLACA'])] });
+    const art = await t.gen.makeArt(WS_A, t.settings(), vacancyFields(v));
+    expect(art).toMatchObject({ usedFallback: true, vendorLabel: 'Sistema (sem IA)' });
+    expect(art.attempts.map((a) => [a.kind, a.ok, a.error ?? null])).toEqual([['ai', false, null], ['ai', false, NO_CREDIT], ['fallback_plain', true, null]]);
+    expect((await w.images.size(art.bytes))).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it('photoTexts: só blocos com 3+ letras ou dígitos reprovam a foto', () => {
+    const r = (textos: string[]) => ({ ...readFor(vac()), textos });
+    expect(photoTexts(r([]))).toEqual([]);
+    expect(photoTexts(r(['', ' - ', 'A1']))).toEqual([]);
+    expect(photoTexts(r(['Bar do Zé', '24h']))).toEqual(['Bar do Zé', '24h']);
   });
 });

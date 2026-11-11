@@ -125,6 +125,30 @@ export function formatMoney(cents: number): string {
   return rest === 0 ? `R$ ${int}` : `R$ ${int},${two(rest)}`;
 }
 
+const CONTACT = /\(?\b\d{2}\)?\s?9?\d{4}[-\s]?\d{4}\b|[^\s@]+@[^\s@]+\.[^\s@]+|https?:|www\.|\.com\b|@\w{3,}|\d{8,}/i;
+const STREET = /(^|[\s,(])(rua|r\.|av\.?|avenida|rodovia|rod\.|estrada|travessa|alameda|pra[cç]a|cep|n[ºo°]\s?\d)/i;
+
+/**
+ * Bairro da vaga para o cartão "Região" (bairro, cidade). Sai null — e o cartão mostra só a cidade — quando vem vazio, igual à
+ * cidade, comprido demais, com número (pedaço de endereço) ou com cara de rua.
+ */
+export function cleanRegion(neighborhood: string | null, city: string | null): string | null {
+  const s = (neighborhood ?? '').replace(/\s+/g, ' ').trim();
+  if (!s || s.length > 40 || /\d/.test(s) || STREET.test(s) || CONTACT.test(s) || isTestText(s)) return null;
+  if (norm(s) === norm(city)) return null;
+  return s;
+}
+
+/**
+ * Descrição escrita pelo contratante. É texto livre: se trouxer telefone, e-mail, link, @ de rede social ou endereço, o story sai
+ * SEM descrição (não tentamos consertar). Muito curta ou de teste também não entra.
+ */
+export function cleanDescription(text: string | null): string | null {
+  const s = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (s.length < 3 || CONTACT.test(s) || STREET.test(s) || isTestText(s)) return null;
+  return s;
+}
+
 export function fingerprint(v: FreelaVacancy): string {
   return createHash('sha1')
     .update(JSON.stringify([v.title ?? v.serviceType, v.startTime, v.endTime, v.amountInCents, v.contractorName, v.city]))
@@ -154,6 +178,8 @@ export function vacancyFields(v: FreelaVacancy): VacancyFields {
     horario: when.horario,
     valor: formatMoney(cents),
     cidade: (v.city ?? '').trim(),
+    regiao: cleanRegion(v.neighborhood ?? null, v.city),
+    descricao: cleanDescription(v.description ?? null),
     expected,
   };
 }

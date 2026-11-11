@@ -29,6 +29,8 @@ const itemSchema = z.object({
   endTime: z.string().min(1),
   amountInCents: z.number().nullish().transform((x) => x ?? null),
   contractorName: nullableStr,
+  neighborhood: nullableStr,
+  description: nullableStr,
   publishedAt: z.string().min(1),
   isUpcoming: z.boolean().optional(),
 });

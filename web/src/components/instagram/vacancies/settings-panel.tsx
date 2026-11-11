@@ -47,7 +47,7 @@ const LEADS = [
 ] as const;
 
 const VENDORS = [
-  { value: "openai", label: "OpenAI (recomendado): erra menos letras e números" },
+  { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini (Google)" },
 ] as const;
 
@@ -261,7 +261,7 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
             </div>
           </Field>
 
-          <Field title="Quem desenha a arte" hint="Usa a chave da empresa em Integrações. Cada story gasta de 1 a 3 imagens; se cair na reserva, mais 1.">
+          <Field title="Quem faz a foto" hint="Usa a chave da empresa em Integrações. Cada story gasta 1 ou 2 imagens. Os textos são escritos pelo sistema, não pela IA.">
             {VENDORS.map((v) => (
               <Option key={v.value} type="radio" name="vac-vendor" checked={value("vendor") === v.value} disabled={disabled}
                 onChange={() => set("vendor", v.value)}>

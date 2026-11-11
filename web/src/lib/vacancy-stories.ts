@@ -139,6 +139,12 @@ function kindOf(attempts: AttemptLike[], k: FallbackKind): 'photo' | 'plain' {
  */
 export function fallbackLine(p: { attempts: AttemptLike[]; fallback_kind?: FallbackKind }): string {
   const ai = p.attempts.filter((a) => !a.kind || a.kind === 'ai');
+  // Arte nova (o sistema escreve tudo e a IA só faz a foto): nenhuma tentativa erra campo e não existe mais a reserva com foto.
+  const legacy = p.attempts.some((a) => a.kind === 'fallback_photo' || a.wrong.length > 0);
+  if (!legacy && kindOf(p.attempts, p.fallback_kind) === 'plain') {
+    const why = ai.some((a) => a.error) ? 'a IA estava fora do ar ou sem créditos' : 'as fotos que a IA fez traziam texto ou logo';
+    return `Sem foto: ${why}, então a arte saiu só com os cartões. Os textos são escritos pelo sistema e estão certos.`;
+  }
   const count = new Map<string, number>();
   for (const a of ai) for (const w of a.wrong) count.set(w, (count.get(w) ?? 0) + 1);
   let top: string | null = null;
@@ -415,11 +421,11 @@ export function windowError(start: string, end: string): string | null {
   return start < end ? null : 'O início precisa ser antes do fim.';
 }
 
-/** Passo da prévia em andamento. A reserva aparece como "Conferindo os textos"; a tentativa nunca passa de 3. */
+/** Passo da prévia em andamento: a IA faz só a foto (até 2 tentativas); o sistema escreve os textos. */
 export function previewProgress(p: { step?: 'art' | 'check' | 'fallback'; attempt?: number }): string {
-  if (p.step === 'check' || p.step === 'fallback') return 'Conferindo os textos';
-  const n = Math.min(3, Math.max(1, p.attempt ?? 1));
-  return `Criando a arte (tentativa ${n} de 3)`;
+  if (p.step === 'check' || p.step === 'fallback') return 'Conferindo a foto';
+  const n = Math.min(2, Math.max(1, p.attempt ?? 1));
+  return `Criando a foto (tentativa ${n} de 2)`;
 }
 
 /** Frase quando a prévia usou a vaga de exemplo. */

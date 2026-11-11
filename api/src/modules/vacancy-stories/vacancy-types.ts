@@ -10,6 +10,9 @@ export type FreelaVacancy = {
   endTime: string;
   amountInCents: number | null;
   contractorName: string | null;
+  /** Bairro (sem rua nem número) e descrição: só quando a vitrine do Freela os envia. */
+  neighborhood?: string | null;
+  description?: string | null;
   publishedAt: string;
   isUpcoming?: boolean;
 };
@@ -31,6 +34,10 @@ export type VacancyFields = {
   horario: string;
   valor: string;
   cidade: string;
+  /** Bairro limpo (o cartão mostra "bairro, cidade"); null = cartão só com a cidade. */
+  regiao?: string | null;
+  /** Descrição limpa; null quando não veio ou trazia contato, link ou endereço. */
+  descricao?: string | null;
   expected: ExpectedValues;
 };
 
@@ -60,6 +67,10 @@ export type AttemptLog = {
   wrong: FieldKey[];
   forbidden: string[];
   error?: string;
+  /** Só em tentativa da IA reprovada: o que a leitura viu em cada campo errado. */
+  read?: Partial<Record<FieldKey, string | null>>;
+  /** Só em tentativa da IA reprovada: os textos que a leitura listou (cortados). */
+  textos?: string[];
 };
 
 /** Linhas do banco (configuração por empresa e fila de stories). */

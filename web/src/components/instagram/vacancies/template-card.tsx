@@ -62,7 +62,7 @@ export function TemplateCard({ workspaceId, settings, canEdit }: { workspaceId: 
       <div>
         <h3 className="text-sm font-semibold">Arte modelo</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          A IA segue o estilo desta arte em todo story: cores, letras e posição dos cartões. Os textos são trocados pelos da vaga.
+          O story segue o layout desta arte: título em faixas e um cartão por informação. O sistema escreve os textos da vaga; a IA faz só a foto.
         </p>
       </div>
       <div className="flex items-start gap-4">

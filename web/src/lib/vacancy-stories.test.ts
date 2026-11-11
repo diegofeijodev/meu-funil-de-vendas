@@ -353,12 +353,12 @@ describe('vacancy-stories (puro)', () => {
     expect(windowError('', '08:00')).toBeNull();
   });
 
-  it('previewProgress: reserva vira "Conferindo os textos", tentativa nunca passa de 3', () => {
-    expect(previewProgress({ step: 'art', attempt: 2 })).toBe('Criando a arte (tentativa 2 de 3)');
-    expect(previewProgress({ step: 'art', attempt: 4 })).toBe('Criando a arte (tentativa 3 de 3)');
-    expect(previewProgress({ step: 'check', attempt: 1 })).toBe('Conferindo os textos');
-    expect(previewProgress({ step: 'fallback', attempt: 3 })).toBe('Conferindo os textos');
-    expect(previewProgress({})).toBe('Criando a arte (tentativa 1 de 3)');
+  it('previewProgress: a IA só faz a foto; a tentativa nunca passa de 2', () => {
+    expect(previewProgress({ step: 'art', attempt: 2 })).toBe('Criando a foto (tentativa 2 de 2)');
+    expect(previewProgress({ step: 'art', attempt: 4 })).toBe('Criando a foto (tentativa 2 de 2)');
+    expect(previewProgress({ step: 'check', attempt: 1 })).toBe('Conferindo a foto');
+    expect(previewProgress({ step: 'fallback', attempt: 3 })).toBe('Conferindo a foto');
+    expect(previewProgress({})).toBe('Criando a foto (tentativa 1 de 2)');
   });
 
   it('sampleLine: vaga de exemplo', () => {
@@ -523,5 +523,18 @@ describe('vacancy-stories (puro)', () => {
       { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok' }, body: '{}' },
     ]);
     expect(dontPostKeepaliveRequest('http://api.test', 'ws1', 'st1', null)[1].headers).toEqual({ 'Content-Type': 'application/json' });
+  });
+});
+
+describe('arte escrita pelo sistema (a IA só faz a foto)', () => {
+  it('fallbackLine: sem foto por texto na foto ou por IA fora do ar', () => {
+    const comTexto = [1, 2].map((n) => ({ n, kind: 'ai', ok: false, wrong: [], forbidden: ['BAR DO ZÉ'] }));
+    expect(fallbackLine({ attempts: [...comTexto, { n: 3, kind: 'fallback_plain', ok: true, wrong: [], forbidden: [] }], fallback_kind: 'plain' })).toBe(
+      'Sem foto: as fotos que a IA fez traziam texto ou logo, então a arte saiu só com os cartões. Os textos são escritos pelo sistema e estão certos.',
+    );
+    const fora = [{ n: 1, kind: 'ai', ok: false, wrong: [], forbidden: [], error: 'Sua conta OpenAI está sem créditos.' }];
+    expect(fallbackLine({ attempts: [...fora, { n: 3, kind: 'fallback_plain', ok: true, wrong: [], forbidden: [] }], fallback_kind: 'plain' })).toBe(
+      'Sem foto: a IA estava fora do ar ou sem créditos, então a arte saiu só com os cartões. Os textos são escritos pelo sistema e estão certos.',
+    );
   });
 });

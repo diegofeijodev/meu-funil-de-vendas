@@ -1,5 +1,5 @@
 import {
-  norm, isTestText, cleanFunction, cleanEstablishment, formatWhen, formatMoney,
+  norm, isTestText, cleanFunction, cleanEstablishment, cleanRegion, cleanDescription, formatWhen, formatMoney,
   fingerprint, cityMatches, vacancyFields, hourLabel, leadLabel, shortDay, spParts, dayLabel,
 } from '../vacancy-text';
 import type { FreelaVacancy } from '../vacancy-types';
@@ -72,8 +72,22 @@ describe('vacancy-text', () => {
   });
   it('vacancyFields junta tudo e os valores esperados', () =>
     expect(vacancyFields(vac({ title: 'Garçom', amountInCents: 15000, startTime: '2026-10-31T21:00:00Z', endTime: '2026-11-01T02:00:00Z', city: 'Campinas', contractorName: 'COCO BAMBU' })))
-      .toEqual({ funcao: 'Garçom', estabelecimento: 'Coco Bambu', data: 'Sáb, 31/10', horario: '18h às 23h', valor: 'R$ 150', cidade: 'Campinas',
+      .toEqual({ funcao: 'Garçom', estabelecimento: 'Coco Bambu', data: 'Sáb, 31/10', horario: '18h às 23h', valor: 'R$ 150', cidade: 'Campinas', regiao: null, descricao: null,
         expected: { cents: 15000, day: 31, month: 10, weekday: 6, startMin: 1080, endMin: 1380 } }));
+  it('cleanRegion: só bairro de verdade vira "Região"; pedaço de endereço, número ou a própria cidade não', () => {
+    expect(cleanRegion('Jardim do Lago', 'Campinas')).toBe('Jardim do Lago');
+    expect(cleanRegion('  Centro ', 'Jundiaí')).toBe('Centro');
+    for (const bad of [null, '', 'Campinas', 'Rua das Flores', 'Av. Brasil', 'Jardim 1234', 'Estrada Joaquim Bueno Neto', 'x'.repeat(41), 'bairro teste'])
+      expect(cleanRegion(bad, 'Campinas')).toBeNull();
+  });
+  it('cleanDescription: texto com telefone, e-mail, link, @ ou endereço sai inteiro (story sem descrição)', () => {
+    expect(cleanDescription('Procurar a  nutricionista ao chegar.\nUniforme preto.')).toBe('Procurar a nutricionista ao chegar. Uniforme preto.');
+    for (const bad of [null, '', 'ok', 'Chamar no (11) 97177-7563', 'Falar no 11971777563', 'mande para rh@bar.com', 'veja www.bar.com.br', 'insta @bardoze',
+      'Fica na Rua das Flores, 120', 'Av. Brasil 500, fundos', 'vaga de teste'])
+      expect(cleanDescription(bad)).toBeNull();
+  });
+  it('vacancyFields leva bairro e descrição limpos quando a vitrine envia', () =>
+    expect(vacancyFields(vac({ neighborhood: 'Jardim do Lago', description: 'Chegar 15 minutos antes.' }))).toMatchObject({ regiao: 'Jardim do Lago', descricao: 'Chegar 15 minutos antes.' }));
   it('M7: serviceType com nome do protótipo do objeto ("constructor", "__proto__") não devolve o que está no protótipo', () => {
     const long = 'Uma função com um título comprido demais para a arte';
     expect(cleanFunction(long, 'constructor')).toBe('Constructor');

@@ -65,7 +65,7 @@ export function StoryBadges({ story }: { story: VacancyStory }) {
   if (!story.used_fallback && !redo) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
-      {story.used_fallback && <Badge>Versão de reserva</Badge>}
+      {story.used_fallback && <Badge>{story.fallback_kind === "plain" ? "Sem foto" : "Versão de reserva"}</Badge>}
       {redo && <Badge>{redo}</Badge>}
     </div>
   );

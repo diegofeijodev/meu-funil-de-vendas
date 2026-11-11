@@ -157,7 +157,7 @@ function DetailBody({
                     </Button>
                   )}
                   <Button className="h-11" variant="outline" aria-expanded={showTries} onClick={() => setShowTries((v) => !v)}>
-                    Ver as 3 tentativas
+                    Ver as tentativas
                   </Button>
                 </div>
                 {showTries && (

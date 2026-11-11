@@ -53,7 +53,7 @@ export function PreviewCard({ workspaceId, settings, canEdit }: { workspaceId: s
       <div>
         <h3 className="text-sm font-semibold">Prévia</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Não posta nada. Usa a vaga mais recente do Freela. Gasta de 1 a 3 imagens da chave da empresa.
+          Não posta nada. Usa a vaga mais recente do Freela. Gasta 1 ou 2 imagens da chave da empresa.
         </p>
       </div>
       <Button className="h-11" disabled={!canEdit || running || start.isPending} onClick={() => start.mutate()}>
@@ -61,7 +61,7 @@ export function PreviewCard({ workspaceId, settings, canEdit }: { workspaceId: s
       </Button>
 
       {never && !settings.enabled && (
-        <p className="text-sm text-muted-foreground">Arte modelo salva. Gere uma prévia antes de ligar, para ver se a IA segue o seu modelo.</p>
+        <p className="text-sm text-muted-foreground">Arte modelo salva. Gere uma prévia antes de ligar, para ver como o story fica.</p>
       )}
 
       <div aria-live="polite" className="space-y-1">

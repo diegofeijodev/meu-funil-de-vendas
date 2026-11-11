@@ -9,15 +9,16 @@ import { IgStore, leaseFree } from '../instagram/ig-store.service';
 import { AssetsService, MEDIA_BUCKET, type MediaAsset } from '../media/assets.service';
 import { ImageService } from '../media/image.service';
 import { bad, errMessage } from '../media/user-error';
-import { composeFallback, composeStoryFrame, cropForCheck, loadBadges } from './vacancy-art';
+import { loadBadges } from './vacancy-art';
+import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
-import { ART_ASPECT, artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
+import { photoPrompt, readPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import { forcedTriage, triage } from './vacancy-triage';
-import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
-import { compareArt, READ_SCHEMA } from './vacancy-verify';
+import type { ArtCheck, ArtRead, AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
+import { FIELD_LABELS, READ_SCHEMA } from './vacancy-verify';
 
 /** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
 export const NO_ACCOUNT_WAIT = 'Esperando o Instagram ser reconectado para criar a arte.';
@@ -29,7 +30,8 @@ const LEASE_MS = 15 * MIN;
 const RETRY_MS = 10 * MIN;
 /** Linhas que começam a gerar por rodada do job (no total, como o `production.service`). */
 const PER_TICK = 2;
-const AI_TRIES = 3;
+/** Tentativas da foto da IA antes de a arte sair sem foto. */
+const AI_TRIES = 2;
 /** Espera depois de erro da IA (D9): 5 → 15 → 45 min, e fica em 45. */
 const AI_BACKOFF_MIN = [5, 15, 45];
 const QUEUE = ['new', 'waiting'];
@@ -50,6 +52,18 @@ const VENDORS: Record<AiVendor, { label: string; origin: ArtOrigin }> = {
 };
 /** Reserva sem foto: tudo desenhado pelo sistema (D8). */
 const SYSTEM = { label: 'Sistema (sem IA)', origin: { source: 'other', provider: 'sistema' } as ArtOrigin };
+
+/** Campos da arte escrita pelo sistema: todos conferem (o texto vem direto da vaga). */
+function systemFields(f: VacancyFields): FieldCheck[] {
+  const hour = f.horario;
+  const one = (key: FieldKey, v: string | null): FieldCheck => ({ key, label: FIELD_LABELS[key], ok: true, read: v, expected: v });
+  return [one('funcao', f.funcao), one('estabelecimento', f.estabelecimento), one('cidade', f.cidade), one('valor', f.valor), one('data', f.data), one('inicio', hour), one('fim', hour)];
+}
+
+/** Textos que a leitura achou na foto e que a reprovam: qualquer bloco com 3+ letras ou dígitos (placa, fachada, logo, uniforme). */
+export function photoTexts(read: ArtRead): string[] {
+  return (read.textos ?? []).map((t) => String(t ?? '').trim()).filter((t) => t.replace(/[^\p{L}\p{N}]/gu, '').length >= 3);
+}
 
 /** A IA falhou (chave, crédito, fora do ar, resposta ilegível) antes de existir uma arte aprovada ou de reserva (D9). */
 export class ArtAiError extends Error {
@@ -254,7 +268,11 @@ export class VacancyGeneratorService {
       return (await this.recordAiError(row, lease, e, now)) ? 'waiting' : 'lost';
     }
     await lease.renew();
-    return (await this.handOff({ ...row, lease_until: lease.until }, s, art, v)) === HANDOFF_LOST ? 'lost' : 'handed';
+    if ((await this.handOff({ ...row, lease_until: lease.until }, s, art, v)) === HANDOFF_LOST) return 'lost';
+    // A arte saiu sem foto porque a IA falhou (chave, crédito, queda): o story vai assim mesmo, mas o aviso vermelho fica para o dono.
+    const aiError = art.attempts.find((a) => a.error)?.error;
+    if (aiError) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: aiError, ai_error_at: now } });
+    return 'handed';
   }
 
   /**
@@ -280,11 +298,10 @@ export class VacancyGeneratorService {
   // ------------------------------------------------------------------ arte
 
   /**
-   * Arte do story: até 3 tentativas da IA com o modelo como referência, cada uma encaixada no quadro 1080×1920 e conferida pela
-   * leitura às cegas (só a parte da arte, D3). Reprovou 3 vezes → reserva com foto da IA (conferida só por texto proibido); foto com
-   * erro de IA ou reprovada → reserva sem foto (todo texto é do sistema; aceita mesmo se a leitura falhar). Erro da IA antes de
-   * existir arte aprovada ou de reserva → `ArtAiError`. `onStep` vem antes de cada chamada da IA (a prévia mostra a etapa; a geração
-   * renova o lease) e um erro dele sobe como está; as tentativas da reserva seguem a numeração (4 = com foto, 5 = sem foto).
+   * Arte do story no layout da arte modelo, desenhada pelo SISTEMA (`composeBaseArt`): todo texto é nosso, então nunca sai errado.
+   * A IA só faz a foto do canto (até 2 tentativas); a leitura às cegas confere se a foto não trouxe texto, placa ou logo. Foto com
+   * erro de IA ou reprovada nas 2 → a mesma arte sem foto (`usedFallback`), que não depende de IA. `onStep` vem antes de cada
+   * chamada da IA (a prévia mostra a etapa; a geração renova o lease) e um erro dele sobe como está.
    */
   async makeArt(
     ws: string,
@@ -293,93 +310,62 @@ export class VacancyGeneratorService {
     onStep?: (step: 'art' | 'check', attempt: number) => Promise<void>,
   ): Promise<ArtResult> {
     const vendor: AiVendor = s.vendor === 'gemini' ? 'gemini' : 'openai';
-    // Falhas aqui não são da IA (arquivo, fonte, selos): sobem como estão.
-    const template = await this.loadTemplate(ws, s);
-    const font = await this.refs.loadFont(ws, s.brand_id);
     const badges = loadBadges();
-    const bg = s.template_bg ?? '#ffffff';
+    const fonts = loadBaseFonts();
+    const logo = (await this.refs.loadLogo(ws, s.brand_id)) ?? (await this.templateLogo(ws, s));
     const attempts: AttemptLog[] = [];
-    const log = (n: number, kind: AttemptLog['kind'], ok: boolean, check: ArtCheck | null, error?: string) =>
-      attempts.push({
-        n, at: new Date().toISOString(), kind, ok,
-        wrong: check ? check.fields.filter((x) => !x.ok).map((x) => x.key) : [],
-        forbidden: check?.forbidden ?? [],
-        ...(error ? { error } : {}),
-      });
-    const aiFailure = (n: number, e: unknown) => {
-      const msg = this.aiMessage(ws, e);
-      log(n, 'ai', false, null, msg);
-      return new ArtAiError(msg, attempts);
-    };
+    const log = (n: number, kind: AttemptLog['kind'], ok: boolean, forbidden: string[], error?: string) =>
+      attempts.push({ n, at: new Date().toISOString(), kind, ok, wrong: [], forbidden: forbidden.map((x) => x.slice(0, 120)), ...(error ? { error } : {}) });
+    // Os textos são escritos pelo sistema a partir da vaga: todos os campos estão certos por construção.
+    const fields = systemFields(f);
 
-    let hint: string | null = null;
     for (let n = 1; n <= AI_TRIES; n++) {
       await onStep?.('art', n);
-      let frame: Uint8Array;
+      let photo: Uint8Array;
       try {
-        const art = await this.ai.image(ws, { prompt: artPrompt(f, hint), aspectRatio: ART_ASPECT, referenceImages: [template], vendor, strict: true });
-        frame = await composeStoryFrame(this.images, { art: art.bytes, bg, font, badges });
+        photo = (await this.ai.image(ws, { prompt: photoPrompt(f.funcao), aspectRatio: '1:1', vendor, strict: true })).bytes;
       } catch (e) {
-        throw aiFailure(n, e);
+        log(n, 'ai', false, [], this.aiMessage(ws, e));
+        break; // IA fora (chave, crédito, queda): não insiste; a arte sai sem foto
       }
       await onStep?.('check', n);
-      let read: ArtRead;
+      let found: string[];
       try {
-        read = await this.readArt(ws, frame);
+        found = photoTexts(await this.readPhoto(ws, photo));
       } catch (e) {
-        throw aiFailure(n, e);
+        log(n, 'ai', false, [], this.aiMessage(ws, e));
+        break;
       }
-      const check = compareArt(read, f, s.template_texts);
-      log(n, 'ai', check.ok, check);
-      if (check.ok) return { bytes: frame, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin };
-      hint = check.hint;
-    }
-
-    // Reserva (§6.5): logo da marca e a cor principal dela nos detalhes.
-    const accent = await this.brandColor(ws, s.brand_id);
-    const logo = await this.refs.loadLogo(ws, s.brand_id);
-    const base = { fields: f, bg, accent, logo, font, badges };
-
-    let n = AI_TRIES + 1;
-    await onStep?.('art', n);
-    let photoFrame: Uint8Array | null = null;
-    try {
-      const photo = await this.ai.image(ws, { prompt: photoPrompt(f.funcao), aspectRatio: '9:16', vendor, strict: true });
-      photoFrame = await composeFallback(this.images, { ...base, photo: photo.bytes });
-    } catch (e) {
-      log(n, 'fallback_photo', false, null, this.aiMessage(ws, e));
-    }
-    if (photoFrame) {
-      await onStep?.('check', n);
-      try {
-        const check = compareArt(await this.readArt(ws, photoFrame), f, s.template_texts, { forbiddenOnly: true });
-        log(n, 'fallback_photo', check.ok, check);
-        if (check.ok) return { bytes: photoFrame, check, attempts, usedFallback: true, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin };
-      } catch (e) {
-        log(n, 'fallback_photo', false, null, this.aiMessage(ws, e));
+      log(n, 'ai', found.length === 0, found);
+      if (found.length === 0) {
+        const bytes = await composeBaseArt(this.images, { fields: f, photo, logo, badges, fonts });
+        const check: ArtCheck = { ok: true, fields, forbidden: [], hint: null };
+        return { bytes, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin };
       }
     }
 
-    // Reserva sem foto: todo texto é do sistema, então é aceita mesmo se a leitura falhar (ou acusar algo — fica registrado).
-    n = AI_TRIES + 2;
-    await onStep?.('art', n);
-    const plain = await composeFallback(this.images, { ...base, photo: null });
-    await onStep?.('check', n);
-    let check: ArtCheck = { ok: true, fields: [], forbidden: [], hint: null };
-    let error: string | undefined;
-    try {
-      check = compareArt(await this.readArt(ws, plain), f, s.template_texts, { forbiddenOnly: true });
-    } catch (e) {
-      error = this.aiMessage(ws, e);
-    }
-    log(n, 'fallback_plain', check.ok, check, error);
-    return { bytes: plain, check, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin };
+    const bytes = await composeBaseArt(this.images, { fields: f, photo: null, logo, badges, fonts });
+    log(AI_TRIES + 1, 'fallback_plain', true, []);
+    return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin };
   }
 
-  /** Leitura às cegas do quadro cortado em y < 1360 (sem o rodapé do sistema — D3/R5). */
-  private async readArt(ws: string, frame: Uint8Array): Promise<ArtRead> {
-    const crop = await cropForCheck(this.images, frame);
-    return asRead(await this.ai.json(ws, { name: 'vacancy_art_read', prompt: readPrompt(), schema: READ_SCHEMA, images: [crop] }));
+  /** Leitura às cegas da foto da IA (reduzida a 1024 px): só interessa a lista de textos visíveis. */
+  private async readPhoto(ws: string, photo: Uint8Array): Promise<ArtRead> {
+    const small = await this.images.shrink(photo, 1024);
+    return asRead(await this.ai.json(ws, { name: 'vacancy_art_read', prompt: readPrompt(), schema: READ_SCHEMA, images: [small] }));
+  }
+
+  /** Sem logo na marca: recorta a logo do canto de cima da arte modelo (2%–38% da largura, 2%–17% da altura). Sem modelo, sem logo. */
+  private async templateLogo(ws: string, s: SettingsRow): Promise<Uint8Array | null> {
+    try {
+      const t = await this.images.read((await this.loadTemplate(ws, s)).bytes);
+      const w = t.bitmap.width as number;
+      const h = t.bitmap.height as number;
+      t.crop({ x: Math.round(w * 0.02), y: Math.round(h * 0.02), w: Math.round(w * 0.36), h: Math.round(h * 0.15) });
+      return await this.images.encode(t, true);
+    } catch {
+      return null;
+    }
   }
 
   /** Mensagem pt-BR do erro da IA (a do provedor quando houver); o resto vira texto genérico e o detalhe vai para o log. */
