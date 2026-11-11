@@ -6,7 +6,7 @@ import { uuid } from '../../instagram/__tests__/harness';
 import { AssetsService } from '../../media/assets.service';
 import { WS_A } from '../../media/__tests__/mem';
 import { VacancyGeneratorService, photoTexts } from '../vacancy-generator.service';
-import { photoPrompt, readPrompt } from '../vacancy-prompts';
+import { photoPrompt, photoReadPrompt } from '../vacancy-prompts';
 import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
 import { SKIP } from '../vacancy-triage';
 import { fingerprint, vacancyFields } from '../vacancy-text';
@@ -120,7 +120,7 @@ describe('VacancyGeneratorService.generateDue', () => {
     // Leitura às cegas da foto: nenhum valor esperado no prompt.
     expect(t.readCalls()).toHaveLength(1);
     const read = t.readCalls()[0];
-    expect(read.prompt).toBe(readPrompt());
+    expect(read.prompt).toBe(photoReadPrompt());
     for (const value of ['Garçom', 'R$ 150', '150', 'Coco Bambu', 'Campinas', '31/10', '18h', '23h']) expect(read.prompt).not.toContain(value);
   });
 
@@ -533,7 +533,7 @@ describe('VacancyGeneratorService.makeArt', () => {
   it('photoTexts: só blocos com 3+ letras ou dígitos reprovam a foto', () => {
     const r = (textos: string[]) => ({ ...readFor(vac()), textos });
     expect(photoTexts(r([]))).toEqual([]);
-    expect(photoTexts(r(['', ' - ', 'A1']))).toEqual([]);
+    expect(photoTexts(r(['', ' - ', 'A1', 'Nenhum texto visível', 'Não há texto na foto', 'N/A']))).toEqual([]);
     expect(photoTexts(r(['Bar do Zé', '24h']))).toEqual(['Bar do Zé', '24h']);
   });
 });

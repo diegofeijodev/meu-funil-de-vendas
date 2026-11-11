@@ -48,6 +48,16 @@ export function readPrompt(): string {
   );
 }
 
+/** Leitura às cegas da FOTO da IA: só os textos que estiverem de fato escritos na imagem. */
+export function photoReadPrompt(): string {
+  return (
+    'Esta imagem é uma foto, sem arte por cima. Liste em `textos` somente o que estiver ESCRITO de forma legível na foto: placas, fachadas, ' +
+    'letreiros, cardápios, embalagens, logos e uniformes, exatamente como aparece, um item por bloco. ' +
+    'Se não houver nada escrito, devolva `textos` como lista vazia (não escreva frases como "nenhum texto"). ' +
+    'Preencha todos os outros campos com null.'
+  );
+}
+
 export function templateReadPrompt(): string {
   return (
     'Liste em `textos` todos os textos visíveis nesta arte, inclusive os pequenos, os da foto (placas, fachadas) e os do rodapé, ' +

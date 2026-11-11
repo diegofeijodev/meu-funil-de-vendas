@@ -14,7 +14,7 @@ import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
-import { photoPrompt, readPrompt } from './vacancy-prompts';
+import { photoPrompt, photoReadPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import { forcedTriage, triage } from './vacancy-triage';
 import type { ArtCheck, ArtRead, AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
@@ -62,7 +62,11 @@ function systemFields(f: VacancyFields): FieldCheck[] {
 
 /** Textos que a leitura achou na foto e que a reprovam: qualquer bloco com 3+ letras ou dígitos (placa, fachada, logo, uniforme). */
 export function photoTexts(read: ArtRead): string[] {
-  return (read.textos ?? []).map((t) => String(t ?? '').trim()).filter((t) => t.replace(/[^\p{L}\p{N}]/gu, '').length >= 3);
+  return (read.textos ?? [])
+    .map((t) => String(t ?? '').trim())
+    .filter((t) => t.replace(/[^\p{L}\p{N}]/gu, '').length >= 3)
+    // a leitura às vezes responde com uma frase em vez de lista vazia ("nenhum texto visível")
+    .filter((t) => !/^(n[aã]o h[aá]|nenhum|sem) .*(texto|escrit)/i.test(t) && !/^(n\/a|nada|null|none)$/i.test(t));
 }
 
 /** A IA falhou (chave, crédito, fora do ar, resposta ilegível) antes de existir uma arte aprovada ou de reserva (D9). */
@@ -352,7 +356,7 @@ export class VacancyGeneratorService {
   /** Leitura às cegas da foto da IA (reduzida a 1024 px): só interessa a lista de textos visíveis. */
   private async readPhoto(ws: string, photo: Uint8Array): Promise<ArtRead> {
     const small = await this.images.shrink(photo, 1024);
-    return asRead(await this.ai.json(ws, { name: 'vacancy_art_read', prompt: readPrompt(), schema: READ_SCHEMA, images: [small] }));
+    return asRead(await this.ai.json(ws, { name: 'vacancy_art_read', prompt: photoReadPrompt(), schema: READ_SCHEMA, images: [small] }));
   }
 
   /** Sem logo na marca: recorta a logo do canto de cima da arte modelo (2%–38% da largura, 2%–17% da altura). Sem modelo, sem logo. */

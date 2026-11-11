@@ -161,6 +161,7 @@ function cardsOf(f: VacancyFields): Card[] {
   return cards;
 }
 
+/** Topo dos cartões quando o título tem uma linha; com a função em duas linhas eles começam logo abaixo da pílula. */
 const CARDS_TOP = 742;
 const CARDS_BOTTOM = 1478;
 const FOOT_TOP = 1500;
@@ -224,7 +225,10 @@ export async function composeBaseArt(
   brush(cv, 70, 392, vagaW + 110, 122, INK, pv[0], pv[1], deg);
   text(cv, fTitle, 'VAGA', vagaSize, 70 + 55, 392 + 100, WHITE, { rot: pv });
 
-  const role = fitWrapped(fTitle, f.funcao.toUpperCase(), 760, { start: 92, floor: 52, maxLines: 2 });
+  // Função: numa linha enquanto couber com letra grande; senão em duas, um pouco menores (e os cartões descem junto).
+  const roleText = f.funcao.toUpperCase();
+  const oneLine = fitWrapped(fTitle, roleText, 860, { start: 92, floor: 64, maxLines: 1 });
+  const role = oneLine.size >= 64 ? oneLine : fitWrapped(fTitle, roleText, 820, { start: 76, floor: 46, maxLines: 2 });
   const roleLine = role.size * 1.04;
   const roleW = Math.max(...role.lines.map((l) => fTitle.getAdvanceWidth(l, role.size)));
   const roleH = Math.round(role.lines.length * roleLine + 26);
@@ -270,14 +274,15 @@ export async function composeBaseArt(
     });
     return { rows, total: rows.reduce((a, r) => a + r.h, 0) + GAP * (rows.length - 1) };
   };
-  const room = CARDS_BOTTOM - CARDS_TOP;
+  const cardsTop = Math.max(CARDS_TOP, pillTop + pillH + 40);
+  const room = CARDS_BOTTOM - cardsTop;
   let k = 1.3;
   let L = layout(k);
   while (L.total > room && k > 0.5) {
     k *= 0.97;
     L = layout(k);
   }
-  let y = CARDS_TOP + Math.max(0, Math.round((room - L.total) / 2));
+  let y = cardsTop + Math.max(0, Math.round((room - L.total) / 2));
   for (const r of L.rows) {
     const { c, h } = r;
     const rad = Math.min(26, h / 2);
