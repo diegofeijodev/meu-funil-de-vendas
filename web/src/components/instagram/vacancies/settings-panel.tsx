@@ -48,7 +48,7 @@ const LEADS = [
 
 const VENDORS = [
   { value: "openai", label: "OpenAI (recomendado): erra menos letras e números" },
-  { value: "gemini", label: "Gemini: já sai no tamanho exato do story" },
+  { value: "gemini", label: "Gemini (Google)" },
 ] as const;
 
 type Edits = VacancySettingsPatch;

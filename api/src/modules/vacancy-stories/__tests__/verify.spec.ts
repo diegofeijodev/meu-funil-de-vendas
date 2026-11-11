@@ -75,6 +75,11 @@ describe('conferência da arte', () => {
     const p = artPrompt({ ...F, estabelecimento: null }, null);
     expect(p).toContain('GARÇOM'); expect(p).toContain('R$ 150'); expect(p).toContain('Sáb, 31/10'); expect(p).not.toContain('Coco Bambu');
     expect(p).toMatch(/sem fachada/i); expect(p).toMatch(/Endereço/); expect(p).toMatch(/faixa de baixo/i);
+    // cartões iguais aos da arte modelo, um por informação; sem estabelecimento são 5
+    for (const c of ['Função: Garçom', 'Data: Sáb, 31/10', 'Horário: 18h às 23h', 'Cidade: Campinas', 'Valor para o freela: R$ 150']) expect(p).toContain(c);
+    expect(p).toContain('exatamente 5 cartões'); expect(p).not.toContain('Estabelecimento:');
+    const withEst = artPrompt(F, null);
+    expect(withEst).toContain('exatamente 6 cartões'); expect(withEst).toContain(`(1) Estabelecimento: ${F.estabelecimento}`);
   });
 
   const withText = (t: string, f = F, tpl = TEMPLATE, o?: { forbiddenOnly?: boolean }) =>

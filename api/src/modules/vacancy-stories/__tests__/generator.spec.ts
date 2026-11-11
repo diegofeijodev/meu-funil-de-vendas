@@ -121,10 +121,10 @@ describe('VacancyGeneratorService.generateDue', () => {
     expect(t.settings()).toMatchObject({ ai_error: null, ai_error_at: null });
     expect(after).toHaveBeenCalledWith(WS_A, post.id);
 
-    // Geração: modelo como referência, 9:16, fornecedor da configuração, sem cair no gateway.
+    // Geração: modelo como referência, 4:5, fornecedor da configuração, sem cair no gateway.
     expect(t.imageCalls()).toHaveLength(1);
     const img = t.imageCalls()[0];
-    expect(img).toMatchObject({ aspectRatio: '9:16', vendor: 'openai', strict: true });
+    expect(img).toMatchObject({ aspectRatio: '4:5', vendor: 'openai', strict: true });
     expect(img.referenceImages).toHaveLength(1);
     expect(img.referenceImages[0].mime).toBe('image/jpeg');
     expect(img.prompt).toContain('GARÇOM');

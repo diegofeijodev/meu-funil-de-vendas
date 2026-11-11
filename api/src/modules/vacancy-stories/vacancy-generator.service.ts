@@ -13,7 +13,7 @@ import { composeFallback, composeStoryFrame, cropForCheck, loadBadges } from './
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
-import { artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
+import { ART_ASPECT, artPrompt, photoPrompt, readPrompt } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import { forcedTriage, triage } from './vacancy-triage';
 import type { ArtCheck, ArtRead, AttemptLog, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
@@ -317,7 +317,7 @@ export class VacancyGeneratorService {
       await onStep?.('art', n);
       let frame: Uint8Array;
       try {
-        const art = await this.ai.image(ws, { prompt: artPrompt(f, hint), aspectRatio: '9:16', referenceImages: [template], vendor, strict: true });
+        const art = await this.ai.image(ws, { prompt: artPrompt(f, hint), aspectRatio: ART_ASPECT, referenceImages: [template], vendor, strict: true });
         frame = await composeStoryFrame(this.images, { art: art.bytes, bg, font, badges });
       } catch (e) {
         throw aiFailure(n, e);

@@ -58,6 +58,9 @@ export function cleanEstablishment(name: string | null): string | null {
   const s = (name ?? '').replace(/\s+/g, ' ').trim();
   if (!s) return null;
   if (/\d{11}|\d{14}/.test(s.replace(/[.\-/\s]/g, ''))) return null;
+  // Nome de pessoa com documento: MEI ("66.699.088 Fulano de Tal" = raiz do CNPJ + nome), CPF mascarado ("Fulana ***52562***") ou
+  // qualquer sequência de 5+ dígitos. Nome de bar não leva isso; na dúvida o story sai sem estabelecimento.
+  if (/\*/.test(s) || /\d{5,}/.test(s.replace(/[.\-/]/g, ''))) return null;
   if (/(^|\s)(LTDA|ME|EPP|EIRELI|S\.?A\.?|S\/A)\.?\s*$/i.test(s)) return null;
   if (isTestText(s)) return null;
   if (s !== s.toUpperCase()) return s;

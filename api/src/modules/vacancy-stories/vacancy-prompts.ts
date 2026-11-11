@@ -1,18 +1,34 @@
 import type { VacancyFields } from './vacancy-types';
 
-/** Texto estilo "ESTILO e LAYOUT da referência": só campos limpos entram (nada de endereço, link, nome do dono). */
+/** Proporção pedida à IA para a arte: 4:5 ocupa quase toda a largura da área livre do story (1080 × 1100). */
+export const ART_ASPECT = '4:5';
+
+/**
+ * Arte com os MESMOS cartões da arte modelo (um cartão por informação, com o ícone e o rótulo), só com os campos limpos da vaga.
+ * Endereço, região, descrição e link continuam fora: a vitrine pública do Freela não os envia.
+ */
 export function artPrompt(f: VacancyFields, hint: string | null): string {
-  const estab = f.estabelecimento ? ` / Estabelecimento: ${f.estabelecimento}` : '';
+  const cards = [
+    ...(f.estabelecimento ? [`Estabelecimento: ${f.estabelecimento}`] : []),
+    `Função: ${f.funcao}`,
+    `Data: ${f.data}`,
+    `Horário: ${f.horario}`,
+    `Cidade: ${f.cidade}`,
+    `Valor para o freela: ${f.valor}`,
+  ];
   const base =
-    'Crie um story vertical seguindo o ESTILO e o LAYOUT da imagem de referência (cores, letras, faixas, cartões com ícones). ' +
-    'Troque TODOS os textos pelos abaixo, escritos exatamente assim: ' +
-    `VAGA FREELA / ${f.funcao.toUpperCase()} / Valor para o freela: ${f.valor} / Quando: ${f.data} · ${f.horario} / Onde: ${f.cidade}${estab}. ` +
-    'Não escreva nenhum outro texto. ' +
-    'PROIBIDO: cartões de Endereço, Região, Bairro ou Descrição; qualquer link, site ou QR; selos do Google Play ou da App Store; ' +
+    'Crie um story vertical seguindo fielmente o ESTILO e o LAYOUT da imagem de referência: mesmas cores, mesmas letras, o título em faixas ' +
+    'e os cartões empilhados, cada um com o seu ícone redondo, o rótulo pequeno em cima e o valor grande embaixo. ' +
+    `No título escreva: VAGA / ${f.funcao.toUpperCase()} / FREELANCER. ` +
+    `Faça exatamente ${cards.length} cartões, nesta ordem, com estes textos escritos exatamente assim: ` +
+    `${cards.map((c, i) => `(${i + 1}) ${c}`).join(' ')}. ` +
+    'Os cartões devem ser grandes e fáceis de ler no celular, ocupando a largura da arte. ' +
+    'Troque TODOS os textos da referência pelos acima. Não escreva nenhum outro texto. ' +
+    'PROIBIDO: cartões de Endereço, Região, Bairro, Descrição ou "Ver vaga"; qualquer link, site ou QR; selos do Google Play ou da App Store; ' +
     'nomes ou logos de empresas na cena. ' +
     `A foto mostra uma pessoa fazendo o trabalho de ${f.funcao} num bar ou restaurante, sem fachada, sem nome e sem logo de empresa. ` +
-    'Mantenha a logo do Freela da referência. ' +
-    'Deixe a faixa de baixo da arte lisa, sem texto (o rodapé é colocado depois).';
+    'Mantenha a logo do Freela da referência uma única vez, no topo. ' +
+    'Não desenhe o rodapé preto da referência: deixe a faixa de baixo da arte lisa, sem texto (o rodapé é colocado depois).';
   return hint ? `${base}\n${hint}` : base;
 }
 

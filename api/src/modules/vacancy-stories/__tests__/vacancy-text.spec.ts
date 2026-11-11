@@ -41,6 +41,11 @@ describe('vacancy-text', () => {
     expect(cleanEstablishment('Padaria S/A')).toBeNull();
     expect(cleanEstablishment('Enzo teste fernandes')).toBeNull();
     expect(cleanEstablishment(null)).toBeNull();
+    // pessoa física: MEI (raiz do CNPJ + nome) e CPF mascarado nunca vão para a arte
+    expect(cleanEstablishment('66.699.088 Denner Bismarck de Lucena Franca')).toBeNull();
+    expect(cleanEstablishment('Paloma de Araujo Gonzaga ***52562***')).toBeNull();
+    expect(cleanEstablishment('Bar 54')).toBe('Bar 54');
+    expect(cleanEstablishment('Boteco 1929')).toBe('Boteco 1929');
     expect(cleanEstablishment('COCO BAMBU CAMPINAS SHOPPING')).toBe('Coco Bambu Campinas Shopping');
     expect(cleanEstablishment('BAR DO ZE BBQ')).toBe('Bar do Ze BBQ');
   });
