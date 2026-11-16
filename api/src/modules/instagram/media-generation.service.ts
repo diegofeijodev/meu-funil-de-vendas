@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import { buildVisualPrompt, providerPrompt, threadOf, VisualThread, withVisualThread } from '../creative/art-director';
-import { MIN_SCORE, scoreCreative } from '../creative/critic';
+import { compareScores, passes, rebuildNote, scoreCreative } from '../creative/critic';
 import { composeCreative } from '../creative/compose';
 import { choiceForProvider, GenerationRequest, GenerationResult, ProviderChoice, ServerCreativeProvider } from '../creative/creative.types';
 import { directVideo, resolveAudio, stillPrompt, VIDEO_PROMPT_MAX_CHARS, VIDEO_SECONDS, VideoAudio, VideoDirection } from '../creative/video-director';
@@ -320,14 +320,19 @@ export class MediaGenerationService {
     return { ok: true, items: media.length, provider: provider.id };
   }
 
-  /** Carrossel: nota do crítico no slide; abaixo de MIN_SCORE refaz 1× com o motivo e fica a de maior nota. Crítico fora do ar não bloqueia. */
+  /**
+   * Carrossel: nota do crítico no slide; reprovado (total baixo OU defeito físico) refaz 1× com o motivo e os problemas vistos, e fica
+   * o melhor dos dois (aprovado antes de reprovado, depois menos defeitos, depois o total). Crítico fora do ar não bloqueia.
+   */
   private async criticSlide(post: PostRow, provider: ChainedProvider, first: GenerationResult, i: number, total: number, qa: SlideQa, lease?: PostLease) {
     const bytesOf = async (r: GenerationResult) => (r.bytes ? new Uint8Array(r.bytes) : (await this.assets.download(r.assetUrl!)).bytes);
     const score = async (r: GenerationResult): Promise<AiScore | null> => {
       try {
-        return await scoreCreative(this.ai, this.images, {
+        const s = await scoreCreative(this.ai, this.images, {
           workspaceId: post.workspace_id, image: await bytesOf(r), refs: qa.refs, palette: qa.palette, aspectRatio: ASPECT.feed_carousel, subject: qa.ads[i]?.subject ?? post.theme ?? 'post',
         });
+        if (!s) this.logger.warn(`[instagram] crítico do slide ${i + 1} sem nota (resposta sem números, 2 tentativas): segue sem inspeção`);
+        return s;
       } catch (e) {
         this.logger.warn(`[instagram] crítico do slide ${i + 1} falhou: ${errText(e)}`);
         return null;
@@ -336,11 +341,10 @@ export class MediaGenerationService {
     let best: { result: GenerationResult; score: AiScore | null; prompt: string | null } = { result: first, score: await score(first), prompt: null };
     let cost = 0;
     let retried = false;
-    const firstTotal = best.score?.total ?? null;
-    if (best.score && firstTotal !== null && firstTotal < MIN_SCORE) {
+    if (best.score && !passes(best.score)) {
       try {
         await lease?.renew();
-        const ad = await qa.rebuild(i, best.score.motivo);
+        const ad = await qa.rebuild(i, rebuildNote(best.score));
         qa.ads[i] = ad;
         const finalPrompt = `${providerPrompt(ad)} (imagem ${i + 1} de ${total} do carrossel)`;
         const again = await provider.generateImage({ finalPrompt, aspectRatio: ASPECT.feed_carousel, kind: 'image', ...qa.extra });
@@ -348,7 +352,7 @@ export class MediaGenerationService {
           retried = true;
           cost += again.cost;
           const s2 = await score(again);
-          if ((s2?.total ?? -1) > firstTotal) best = { result: again, score: s2, prompt: finalPrompt };
+          if (s2 && compareScores(s2, best.score) < 0) best = { result: again, score: s2, prompt: finalPrompt };
         }
       } catch (e) {
         if (e instanceof PublishClaimLost) throw e;

@@ -28,7 +28,7 @@ const withStatus = (c: Check): DiagnosticCheck => ({ ...c, status: c.status ?? (
 
 type EnvSlice = Pick<
   Env,
-  'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY' | 'AI_MODEL_IMAGE_OPENAI' | 'AI_MODEL_IMAGE_OPENAI_FALLBACK' | 'AI_MODEL_IMAGE_GEMINI' | 'AI_MODEL_VIDEO' | 'AI_BYO_OPENAI_TEXT_MODEL' | 'AI_BYO_GEMINI_TEXT_MODEL'
+  'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY' | 'AI_MODEL_IMAGE_OPENAI' | 'AI_MODEL_IMAGE_OPENAI_FALLBACK' | 'AI_MODEL_IMAGE_GEMINI' | 'AI_MODEL_IMAGE_GEMINI_FALLBACK' | 'AI_MODEL_VIDEO' | 'AI_BYO_OPENAI_TEXT_MODEL' | 'AI_BYO_GEMINI_TEXT_MODEL'
 >;
 
 const HIGGSFIELD_TOOLS = ['generate_image', 'generate_video', 'job_status'];
@@ -123,12 +123,16 @@ export class AiDiagnosticsService {
         if (!r.ok) throw new Error(`Gemini respondeu ${r.status}: ${(await r.text()).slice(0, 150)}`);
         const names = ((await r.json()) as { models?: { name: string }[] }).models?.map((m) => m.name.replace('models/', '')) ?? [];
         if (geminiHas(names, this.env.AI_BYO_GEMINI_TEXT_MODEL)) validKey = true;
+        // Imagem: basta o principal OU a reserva (a geração tenta os dois, nessa ordem).
+        const imgFallback = this.env.AI_MODEL_IMAGE_GEMINI_FALLBACK?.trim();
+        const image = [this.env.AI_MODEL_IMAGE_GEMINI, imgFallback].find((m) => m && geminiHas(names, m)) ?? this.env.AI_MODEL_IMAGE_GEMINI;
+        const imageLabel = !geminiHas(names, image) && imgFallback && imgFallback !== image ? `${image} (nem ${imgFallback})` : image;
         const want: [string, string][] = [
-          [this.env.AI_MODEL_IMAGE_GEMINI, 'imagem'],
+          [image, 'imagem'],
           [this.env.AI_MODEL_VIDEO, 'vídeo Veo'],
           [this.env.AI_BYO_GEMINI_TEXT_MODEL, 'texto/visão/áudio'],
         ];
-        const missing = want.filter(([m]) => !geminiHas(names, m)).map(([m, d]) => `${m} (${d})`);
+        const missing = want.filter(([m]) => !geminiHas(names, m)).map(([m, d]) => `${m === image ? imageLabel : m} (${d})`);
         return {
           name: 'Chave Gemini',
           ok: missing.length < want.length,

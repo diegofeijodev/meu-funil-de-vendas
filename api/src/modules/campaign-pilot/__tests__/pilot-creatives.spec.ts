@@ -32,7 +32,7 @@ async function world(opt: Partial<PilotOptions> = {}) {
         creativeId = cr.id;
         db.t.creative_generation_jobs.rows.find((j: any) => j.id === job.id)!.creative_id = cr.id;
       }
-      return { jobId: job.id, creativeId, status: o.status, error: o.status === 'failed' ? (o.error ?? 'provedor caiu') : null, variations: o.score ? [{ winner: false, score: { total: 20 } }, { winner: true, score: { total: o.score } }] : [] };
+      return { jobId: job.id, creativeId, status: o.status, error: o.status === 'failed' ? (o.error ?? 'provedor caiu') : null, variations: o.score ? [{ winner: false, score: { total: 20 } }, { winner: true, score: { total: o.score, ...(o.defeitos !== undefined ? { defeitos: o.defeitos } : {}) } }] : [] };
     }),
   };
   const step = new CreativesStep(db.prisma, strategist as any, creative as any);
@@ -62,6 +62,25 @@ describe('etapa creatives', () => {
     expect(dto).toMatchObject({ workspaceId: WS_A, campaignId: w.campaign.id, brandId: 'brand-1', type: 'static_image', aspectRatio: '4:5', angle: 'Falta de gente', variations: 3, provider: 'auto', title: 'Jundiaí · Falta de gente' });
     expect([actor, via]).toEqual([OWNER, { runId: w.run.id, slot: 1 }]);
     expect(slotsOf(w)[0]).toMatchObject({ status: 'done', score: 41 });
+  });
+
+  it('vencedora que o crítico reprovou por defeito físico fica marcada (score_ok false) na vaga e no criativo; a que passou não ganha marca nenhuma', async () => {
+    const w = await world();
+    await w.tick(); // a 1ª rodada só monta as vagas
+    w.outcome.next = () => ({ status: 'ready', score: 46, defeitos: 6 });
+    await w.tick();
+    expect(slotsOf(w)[0]).toMatchObject({ status: 'done', score: 46, score_ok: false });
+    const flawed = w.db.t.creatives.rows.find((c: any) => c.id === slotsOf(w)[0].creative_id)!;
+    expect(flawed.extras.pilot).toEqual({ run_id: w.run.id, slot: 1, score: 46, score_ok: false });
+    w.outcome.next = () => ({ status: 'ready', score: 39, defeitos: 9 });
+    await w.tick();
+    expect(slotsOf(w)[1]).toMatchObject({ status: 'done', score: 39 });
+    expect('score_ok' in slotsOf(w)[1]).toBe(false);
+    // Nota baixa sem defeito físico não ganha a marca: quem barra é a nota (G1 exige 28).
+    w.outcome.next = () => ({ status: 'ready', score: 20, defeitos: 9 });
+    await w.tick();
+    expect(slotsOf(w)[2]).toMatchObject({ status: 'done', score: 20 });
+    expect('score_ok' in slotsOf(w)[2]).toBe(false);
   });
 
   it('teto: para em COST_CAP antes de gastar a peça que estoura', async () => {

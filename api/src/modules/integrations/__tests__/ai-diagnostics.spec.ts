@@ -147,4 +147,15 @@ describe('AiDiagnosticsService — chaves nunca vazam', () => {
     expect(d).not.toContain('sk-other');
     expect(d).toContain('••••');
   });
+
+  it('Gemini: imagem vale com o principal OU com a reserva (a geração tenta os dois); sem nenhum, a linha cita os dois', async () => {
+    const env = { ...ENV, AI_MODEL_IMAGE_GEMINI: 'gemini-nano-banana-2.1', AI_MODEL_IMAGE_GEMINI_FALLBACK: 'gemini-2.5-flash-image' };
+    const by = (r: any, name: string) => r.checks.find((c: any) => c.name === name);
+    const onlyOld = await setup({ env, gemini: 'AIza', geminiModels: ['gemini-2.5-flash-image', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest'] }).diagnose(OWNER, WS_A, false);
+    expect(by(onlyOld, 'Chave Gemini')).toMatchObject({ ok: true, detail: 'Válida, com imagem, vídeo Veo e texto.' });
+    const onlyNew = await setup({ env, gemini: 'AIza', geminiModels: ['gemini-nano-banana-2.1', 'veo-3.0-fast-generate-preview', 'gemini-flash-latest'] }).diagnose(OWNER, WS_A, false);
+    expect(by(onlyNew, 'Chave Gemini').detail).toBe('Válida, com imagem, vídeo Veo e texto.');
+    const none = await setup({ env, gemini: 'AIza', geminiModels: ['veo-3.0-fast-generate-preview', 'gemini-flash-latest'] }).diagnose(OWNER, WS_A, false);
+    expect(by(none, 'Chave Gemini').detail).toBe('Válida. Indisponíveis nesta chave: gemini-nano-banana-2.1 (nem gemini-2.5-flash-image) (imagem).');
+  });
 });

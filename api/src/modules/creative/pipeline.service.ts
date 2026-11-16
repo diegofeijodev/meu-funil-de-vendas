@@ -1,6 +1,6 @@
 /**
  * Pipeline de direção de arte para imagens: variações → Biblioteca → crítico visual → melhor escolhida
- * (1 nova tentativa se < 28/50) → composição com logo e textos (jimp + opentype.js; nunca gerados pela IA).
+ * (1 nova tentativa se reprovar: total < 28/50 ou defeito físico) → composição com logo e textos (jimp + opentype.js; nunca gerados pela IA).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -13,7 +13,7 @@ import { ImageService } from '../media/image.service';
 import { UserError } from '../media/user-error';
 import { providerPrompt } from './art-director';
 import { composeCreative } from './compose';
-import { MIN_SCORE, scoreCreative } from './critic';
+import { compareScores, passes, rebuildNote, scoreCreative } from './critic';
 import { GenerationResult, ServerCreativeProvider } from './creative.types';
 import { BrandRef, RefsService } from './refs.service';
 import { AiScore, ArtDirection, listField, resolveLogoPosition, TextLayout, Variation, VisualStyle } from './visual-style';
@@ -127,6 +127,7 @@ export class PipelineService {
             score = await scoreCreative(this.ai, this.images, {
               workspaceId: inp.workspaceId, image: bytes, refs: inp.refs, palette, aspectRatio: inp.aspectRatio, subject: ad.subject,
             });
+            if (!score) this.logger.warn(`[critic] sem nota (resposta sem números, 2 tentativas): a arte ${asset.id} segue sem inspeção`);
           } catch (e) {
             this.logger.warn(`[critic] falhou: ${e instanceof Error ? e.message : e}`);
           }
@@ -143,11 +144,12 @@ export class PipelineService {
     if (pending) return { pending, ad };
     await inp.onStage?.();
 
-    const best = () => [...pool].sort((a, b) => (b.score?.total ?? -1) - (a.score?.total ?? -1))[0]!;
+    // Melhor = aprovada (total E sem defeito físico) antes de reprovada; depois menos defeitos; depois o total.
+    const best = () => [...pool].sort((a, b) => compareScores(a.score, b.score))[0]!;
     const top = best();
-    if (inp.rebuild && top.score && top.score.total < MIN_SCORE) {
+    if (inp.rebuild && top.score && !passes(top.score)) {
       try {
-        ad = await inp.rebuild(top.score.motivo);
+        ad = await inp.rebuild(rebuildNote(top.score));
         await round(1);
       } catch (e) {
         this.logger.warn(`[pipeline] nova tentativa falhou: ${e instanceof Error ? e.message : e}`);

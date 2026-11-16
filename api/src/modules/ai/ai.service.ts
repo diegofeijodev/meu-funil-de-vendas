@@ -428,20 +428,53 @@ export class AiService {
     }
   }
 
+  /** Modelos de imagem do Gemini em ordem de preferência (principal, reserva), sem repetidos nem vazios. */
+  geminiImageModels(): string[] {
+    return [...new Set([this.env.AI_MODEL_IMAGE_GEMINI, this.env.AI_MODEL_IMAGE_GEMINI_FALLBACK].map((m) => m?.trim()).filter((m): m is string => !!m))];
+  }
+
   private async geminiDirectImage(key: string, req: AiImageRequest) {
-    const res = await this.http(`${GEMINI}/models/${this.env.AI_MODEL_IMAGE_GEMINI}:generateContent`, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [...(req.referenceImages ?? []).slice(0, 4).map((r) => ({ inlineData: { mimeType: r.mime, data: b64(r.bytes) } })), { text: `${req.prompt}\nProporção da imagem: ${req.aspectRatio}.` }] }],
-        generationConfig: { responseModalities: ['IMAGE', 'TEXT'], imageConfig: { aspectRatio: req.aspectRatio } },
-      }),
-      signal: AbortSignal.timeout(180_000),
+    const body = JSON.stringify({
+      contents: [{ parts: [...(req.referenceImages ?? []).slice(0, 4).map((r) => ({ inlineData: { mimeType: r.mime, data: b64(r.bytes) } })), { text: `${req.prompt}\nProporção da imagem: ${req.aspectRatio}.` }] }],
+      generationConfig: { responseModalities: ['IMAGE', 'TEXT'], imageConfig: { aspectRatio: req.aspectRatio } },
     });
-    if (!res.ok) throw await this.vendorError('gemini', res, this.env.AI_MODEL_IMAGE_GEMINI);
-    const j = (await res.json()) as any;
-    const part = (j.candidates?.[0]?.content?.parts ?? []).find((p: any) => p.inlineData?.data);
-    if (!part) throw new AiError('O Gemini não devolveu imagem (possível recusa de conteúdo).');
+    // Principal e, se ele falhar por motivo do modelo, a reserva (`AI_MODEL_IMAGE_GEMINI_FALLBACK`): mesma regra da OpenAI.
+    // Resposta 200 sem imagem (o modelo novo respondendo em outro formato, ou recusa) também tenta a reserva antes de desistir.
+    const models = this.geminiImageModels();
+    let part: { inlineData: { data: string; mimeType?: string } } | undefined;
+    for (let i = 0; ; i++) {
+      const model = models[i]!;
+      const more = i + 1 < models.length;
+      const res = await this.http(`${GEMINI}/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(180_000),
+      });
+      if (!res.ok) {
+        const text = await res.clone().text().catch(() => '');
+        const err = await this.vendorError('gemini', res, model);
+        if (more && canTryOtherImageModel(res.status, text)) {
+          this.logger.warn(`imagem Gemini: ${model} falhou (${res.status}); tentando ${models[i + 1]}`);
+          continue;
+        }
+        throw err;
+      }
+      const j = (await res.json()) as any;
+      part = (j.candidates?.[0]?.content?.parts ?? []).find((p: any) => p.inlineData?.data);
+      // O sistema só abre PNG e JPEG (jimp): outro formato no principal vai para a reserva; sem reserva, entrega o que veio.
+      const mimeGot = String(part?.inlineData.mimeType ?? 'image/png');
+      if (part && more && !/^image\/(png|jpe?g)$/i.test(mimeGot)) {
+        this.logger.warn(`imagem Gemini: ${model} devolveu ${mimeGot}; tentando ${models[i + 1]}`);
+        part = undefined;
+        continue;
+      }
+      if (part) break;
+      // Recusa de conteúdo vale para qualquer modelo: não gasta a reserva.
+      const blocked = !!j.promptFeedback?.blockReason || /SAFETY|PROHIBITED|BLOCKLIST|RECITATION|SPII/i.test(String(j.candidates?.[0]?.finishReason ?? ''));
+      if (!more || blocked) throw new AiError('O Gemini não devolveu imagem (possível recusa de conteúdo).');
+      this.logger.warn(`imagem Gemini: ${model} respondeu sem imagem; tentando ${models[i + 1]}`);
+    }
     const mime: string = part.inlineData.mimeType ?? 'image/png';
     return { bytes: Buffer.from(part.inlineData.data, 'base64'), mime, ext: mime.includes('jpeg') ? 'jpg' : 'png' };
   }

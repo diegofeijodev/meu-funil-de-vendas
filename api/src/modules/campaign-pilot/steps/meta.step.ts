@@ -12,7 +12,7 @@ const MIN_ART_SCORE = 28;
 const VIDEO_TYPES = new Set(['video', 'ugc', 'reels', 'story']);
 
 type Cr = { id: string; status: string; type: string | null; extras: unknown };
-type Extras = { pilot?: { run_id?: string; slot?: number; score?: number | null; auto_approved_at?: string }; excluded_from_ads_at?: string };
+type Extras = { pilot?: { run_id?: string; slot?: number; score?: number | null; score_ok?: boolean; auto_approved_at?: string }; excluded_from_ads_at?: string };
 const pilotOf = (c: Cr) => (c.extras as Extras | null) ?? {};
 
 /**
@@ -67,7 +67,8 @@ export class MetaStep implements PilotStep {
       const pass = crs.filter((x) => {
         const p = pilotOf(x).pilot;
         if (p?.run_id !== run.id || x.status !== 'ready') return false;
-        return VIDEO_TYPES.has(x.type ?? '') || (p.score ?? 0) >= MIN_ART_SCORE;
+        // Nota suficiente E sem defeito físico visto pelo crítico (`score_ok: false`); arte antiga, sem a marca, vale pela nota.
+        return VIDEO_TYPES.has(x.type ?? '') || ((p.score ?? 0) >= MIN_ART_SCORE && p.score_ok !== false);
       });
       if (pass.length) {
         // Aprovado pela revisão automática (não por uma pessoa): fica marcado em cada arte e na trilha de auditoria.

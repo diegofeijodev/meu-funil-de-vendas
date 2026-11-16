@@ -42,6 +42,15 @@ describe('etapa meta (G1: o piloto escolhe as artes que passaram; tudo PAUSADO)'
     expect(w.publisher.publishPaused).toHaveBeenCalledWith(WS_A, w.campaign.id, { runId: w.run.id });
   });
 
+  it('arte com nota boa mas reprovada na inspeção física (score_ok false) não entra sozinha no anúncio; arte antiga, sem a marca, continua valendo', async () => {
+    const w = await world();
+    const flawed = await w.mine(1, { extras: { pilot: { run_id: w.run.id, slot: 1, score: 46, score_ok: false } } });
+    const old = await w.mine(2, { extras: { pilot: { run_id: w.run.id, slot: 2, score: 40 } } });
+    expect((await w.step.run(w.run)).kind).toBe('done');
+    const st = (id: string) => w.db.t.creatives.rows.find((c: any) => c.id === id)!.status;
+    expect([st(flawed.id), st(old.id)]).toEqual(['ready', 'approved']);
+  });
+
   it('nenhuma arte passou e nenhuma aprovada à mão = NO_CREATIVE_PASSED; aprovada à mão conta', async () => {
     const w = await world();
     await w.mine(1, { extras: { pilot: { run_id: w.run.id, slot: 1, score: 10 } } });

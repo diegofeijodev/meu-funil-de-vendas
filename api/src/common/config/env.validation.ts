@@ -106,7 +106,13 @@ const envSchema = z
     AI_MODEL_IMAGE_OPENAI: z.string().default('gpt-image-2.5-sunburst'),
     /** Tentado quando o principal falha por motivo do MODELO (indisponível, sem acesso, cota do dia); igual ao principal = sem alternativa. */
     AI_MODEL_IMAGE_OPENAI_FALLBACK: z.string().default('gpt-image-2.5-flare'),
-    AI_MODEL_IMAGE_GEMINI: z.string().default('gemini-2.5-flash-image'),
+    /**
+     * Imagem pelo Gemini com chave própria. O gemini-2.5-flash-image é o modelo LEGADO da série (o Google desliga em 15/03/2027);
+     * o principal passa a ser o Nano Banana 2.1 e o legado fica de reserva (mesmo formato de chamada: generateContent + imageConfig).
+     */
+    AI_MODEL_IMAGE_GEMINI: z.string().default('gemini-nano-banana-2.1'),
+    /** Tentado quando o principal falha por motivo do MODELO (não existe para a chave, fora do ar, cota do dia); igual ao principal = sem reserva. */
+    AI_MODEL_IMAGE_GEMINI_FALLBACK: z.string().default('gemini-2.5-flash-image'),
     AI_MODEL_VIDEO: z.string().default('veo-3.1-fast-generate-preview'),
     AI_MODEL_GEMINI_FLASH: z.string().default('gemini-2.5-flash'),
     AI_MODEL_GEMINI_PRO: z.string().default('gemini-2.5-pro'),

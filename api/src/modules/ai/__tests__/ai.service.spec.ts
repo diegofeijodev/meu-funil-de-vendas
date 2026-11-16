@@ -291,6 +291,67 @@ describe('AiService.image / video / text', () => {
     expect(r.bytes.toString()).toBe('JPG');
   });
 
+  it('imagem Gemini: padrão gemini-nano-banana-2.1 (o 2.5-flash-image é legado e some em 15/03/2027); modelo indisponível cai para a reserva', async () => {
+    const ok = () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: Buffer.from('OLD').toString('base64') } }] } }] });
+    const f = fakeFetch([
+      ['models/gemini-nano-banana-2.1:generateContent', () => json({ error: { code: 404, message: 'models/gemini-nano-banana-2.1 is not found for API version v1beta', status: 'NOT_FOUND' } }, 404)],
+      ['models/gemini-2.5-flash-image:generateContent', ok],
+    ]);
+    const ai = setup(baseEnv, { gemini: 'gk' }, f.fn);
+    expect(ai.geminiImageModels()).toEqual(['gemini-nano-banana-2.1', 'gemini-2.5-flash-image']);
+    expect((await ai.image(WS, { prompt: 'p', aspectRatio: '4:5', vendor: 'gemini', strict: true })).bytes.toString()).toBe('OLD');
+    expect(f.calls.map((c) => /models\/([^:]+):/.exec(c.url)![1])).toEqual(['gemini-nano-banana-2.1', 'gemini-2.5-flash-image']);
+    // O pedido não muda de formato entre os modelos: proporção em generationConfig.imageConfig.
+    expect(JSON.parse(String(f.calls[1]!.init!.body)).generationConfig).toEqual({ responseModalities: ['IMAGE', 'TEXT'], imageConfig: { aspectRatio: '4:5' } });
+  });
+
+  it('imagem Gemini: o principal respondendo, a reserva nem é chamada; chave recusada NÃO tenta a reserva; reserva igual ao principal = uma chamada', async () => {
+    const ok = () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: Buffer.from('NEW').toString('base64') } }] } }] });
+    const f = fakeFetch([['generativelanguage', ok]]);
+    expect((await setup(baseEnv, { gemini: 'gk' }, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).bytes.toString()).toBe('NEW');
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0]!.url).toContain('models/gemini-nano-banana-2.1:generateContent');
+
+    const refused = fakeFetch([['generativelanguage', () => json({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } }, 400)]]);
+    await expect(setup(baseEnv, { gemini: 'gk' }, refused.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).rejects.toBeTruthy();
+    expect(refused.calls).toHaveLength(1);
+
+    const same = fakeFetch([['generativelanguage', () => json({ error: { code: 404, message: 'model not found', status: 'NOT_FOUND' } }, 404)]]);
+    await expect(setup({ ...baseEnv, AI_MODEL_IMAGE_GEMINI_FALLBACK: 'gemini-nano-banana-2.1' }, { gemini: 'gk' }, same.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).rejects.toBeTruthy();
+    expect(same.calls).toHaveLength(1);
+  });
+
+  it('imagem Gemini: o principal responde 200 SEM imagem (formato diferente ou recusa) → tenta a reserva; a reserva também sem imagem → erro claro', async () => {
+    const noImage = () => json({ candidates: [{ content: { parts: [{ text: 'não posso gerar' }] } }] });
+    const ok = () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: Buffer.from('OLD').toString('base64') } }] } }] });
+    const f = fakeFetch([['models/gemini-nano-banana-2.1:generateContent', noImage], ['models/gemini-2.5-flash-image:generateContent', ok]]);
+    expect((await setup(baseEnv, { gemini: 'gk' }, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).bytes.toString()).toBe('OLD');
+    expect(f.calls).toHaveLength(2);
+    const none = fakeFetch([['generativelanguage', noImage]]);
+    await expect(setup(baseEnv, { gemini: 'gk' }, none.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).rejects.toThrow('O Gemini não devolveu imagem');
+    expect(none.calls).toHaveLength(2);
+  });
+
+  it('imagem Gemini: recusa de conteúdo (200 com bloqueio de segurança) NÃO tenta a reserva: uma chamada só', async () => {
+    for (const body of [{ promptFeedback: { blockReason: 'SAFETY' } }, { candidates: [{ finishReason: 'IMAGE_SAFETY', content: { parts: [] } }] }, { candidates: [{ finishReason: 'PROHIBITED_CONTENT' }] }]) {
+      const f = fakeFetch([['generativelanguage', () => json(body)]]);
+      await expect(setup(baseEnv, { gemini: 'gk' }, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true })).rejects.toThrow('O Gemini não devolveu imagem');
+      expect(f.calls).toHaveLength(1);
+    }
+  });
+
+  it('imagem Gemini: formato que o sistema não abre (WEBP) no principal → usa a reserva; sem reserva, entrega o que veio', async () => {
+    const img = (mimeType: string, data: string) => () => json({ candidates: [{ content: { parts: [{ inlineData: { mimeType, data: Buffer.from(data).toString('base64') } }] } }] });
+    const f = fakeFetch([['models/gemini-nano-banana-2.1:generateContent', img('image/webp', 'WEBP')], ['models/gemini-2.5-flash-image:generateContent', img('image/png', 'PNG')]]);
+    const r = await setup(baseEnv, { gemini: 'gk' }, f.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true });
+    expect([r.bytes.toString(), r.mime, r.ext]).toEqual(['PNG', 'image/png', 'png']);
+    expect(f.calls).toHaveLength(2);
+    const solo = fakeFetch([['generativelanguage', img('image/webp', 'WEBP')]]);
+    const one = await setup({ ...baseEnv, AI_MODEL_IMAGE_GEMINI_FALLBACK: 'gemini-nano-banana-2.1' }, { gemini: 'gk' }, solo.fn).image(WS, { prompt: 'p', aspectRatio: '1:1', vendor: 'gemini', strict: true });
+    expect(one.bytes.toString()).toBe('WEBP');
+    expect(solo.calls).toHaveLength(1);
+  });
+
   it('vídeo pelo gateway: cria job, consulta e baixa', async () => {
     let polls = 0;
     const f = fakeFetch([

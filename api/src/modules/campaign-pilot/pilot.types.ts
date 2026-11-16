@@ -14,6 +14,8 @@ export type Slot = {
   job_id?: string | null;
   creative_id?: string | null;
   score?: number | null;
+  /** Só existe (false) quando a vencedora tem nota boa mas o crítico viu defeito físico: não entra sozinha no anúncio. */
+  score_ok?: false;
   error?: string | null;
 };
 

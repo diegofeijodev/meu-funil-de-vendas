@@ -37,7 +37,15 @@ export const ART_SCHEMA = {
 };
 
 export const BASE_NEGATIVE =
-  "anatomia deformada, dedos ou mãos extras, rostos distorcidos, texto ilegível, letras sem sentido, marca-d'água, logotipos de terceiros, baixa resolução, desfoque, saturação excessiva, aparência artificial";
+  "anatomia deformada, dedos ou mãos extras, rostos distorcidos, texto ilegível, letras sem sentido, marca-d'água, logotipos de terceiros, baixa resolução, desfoque, saturação excessiva, aparência artificial, " +
+  'objetos flutuando, mãos segurando mais de um objeto, pegada impossível, membros fundidos, pele de plástico, aparência de banco de imagem';
+
+/**
+ * Regra de física em frase AFIRMATIVA, sempre no texto que vai ao gerador (o "Evite:" sozinho não segurava: em 16/11/2026 saiu um
+ * garçom com três pratos nas mãos e tampas flutuando). Vale para foto, ilustração e vídeo: não fala de estilo.
+ */
+export const PHYSICS_RULE =
+  'Cena fisicamente plausível: cada mão segura no máximo um objeto, todo objeto está apoiado ou firme na mão, nada flutua, anatomia e proporções naturais.';
 
 const COMPOSITION: Record<string, string> = {
   '1:1': 'assunto centralizado, composição quadrada equilibrada',
@@ -99,6 +107,9 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
     'REGRAS:',
     '- Descreva APENAS o que se vê. Nunca coloque tom de voz, público, objetivo, dores ou jargão de marketing no prompt.',
     '- O produto é sempre o protagonista; se for comida/bebida, em ângulo apetitoso (close, textura, frescor).',
+    '- Marca de serviço (sem produto físico): o protagonista é a pessoa trabalhando ou sendo atendida, em situação real do dia a dia do cliente da marca.',
+    '- Com pessoas na cena: descreva UMA ação simples e fisicamente possível. Cada mão segura no máximo um objeto; prato, bandeja, tampa e copo ficam apoiados ou firmes na mão; nada flutua. No máximo duas pessoas em destaque.',
+    '- Quando o guia visual não pedir outro estilo, a imagem deve parecer fotografia real feita por um fotógrafo: luz do próprio ambiente, pele com textura natural, pequenas imperfeições; sem brilho de render, sem saturação exagerada, sem cena de banco de imagem.',
     "- Nunca peça texto na imagem: todo título, preço e logotipo é aplicado depois pelo aplicativo. Preencha text_in_image com 'none' (valor técnico do formato JSON).",
     `- negative deve incluir sempre: ${BASE_NEGATIVE}, mais os elementos proibidos da marca.`,
     `- Composição para ${aspect}: ${COMPOSITION[aspect]}.`,
@@ -163,8 +174,8 @@ export async function buildVisualPrompt(ai: AiService, b: ArtBrief): Promise<Art
   };
 }
 
-/** Texto enviado ao modelo: prompt + o que evitar. */
+/** Texto enviado ao modelo: prompt + regra de texto + regra de física + o que evitar. */
 export function providerPrompt(ad: Pick<ArtDirection, 'prompt_final' | 'negative' | 'text_in_image'>): string {
   const noText = !ad.text_in_image || ad.text_in_image === 'none' ? ' Não inclua texto, letras nem logotipos na imagem.' : ` O único texto permitido é "${ad.text_in_image}".`;
-  return `${ad.prompt_final}${noText} Evite: ${ad.negative}.`;
+  return `${ad.prompt_final}${noText} ${PHYSICS_RULE} Evite: ${ad.negative}.`;
 }

@@ -65,6 +65,25 @@ describe('generate — imagem dirigida', () => {
     w.cleanup();
   });
 
+  it('total alto com defeito físico (problema visto pelo crítico) → nova rodada com os problemas no ajuste; vence a que passou na inspeção, mesmo com total menor', async () => {
+    const w = await creativeWorld();
+    await seed(w);
+    const flaw = { produto: 10, fidelidade: 10, composicao: 10, defeitos: 9, paleta: 10, motivo: 'bonita', problemas: ['tampas flutuando', 'três pratos numa mão'] };
+    const clean = { produto: 7, fidelidade: 7, composicao: 7, defeitos: 8, paleta: 6, motivo: 'ok', problemas: [] };
+    const scores = [flaw, flaw, clean];
+    w.ai.vision.mockImplementation(async () => scores.shift() ?? clean);
+    const r = await w.svc.generate(OWNER, dto());
+    expect(r.variations).toHaveLength(3);
+    // As duas primeiras somam 46 (defeitos seguro em 6) e reprovam; a terceira soma 35 e vence.
+    expect(r.variations.filter((v) => !v.winner).map((v) => v.score!.total)).toEqual([46, 46]);
+    expect(r.variations.find((v) => v.winner)!.score).toMatchObject({ defeitos: 8, total: 35 });
+    const artCalls = w.ai.json.mock.calls.filter((c) => c[1].name === 'art_direction');
+    expect(artCalls).toHaveLength(2);
+    expect(artCalls[1]![1].prompt).toContain('Corrija este problema apontado pelo crítico: bonita Problemas vistos na imagem: tampas flutuando; três pratos numa mão.');
+    expect(w.provider.image).toHaveBeenCalledTimes(3);
+    w.cleanup();
+  });
+
   it('layout com texto: gera a versão final composta como filha da vencedora; logo da marca entra no canto', async () => {
     const w = await creativeWorld();
     const { brand } = await seed(w);

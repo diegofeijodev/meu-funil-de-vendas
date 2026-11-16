@@ -63,6 +63,8 @@ export type AiScore = {
   paleta: number;
   total: number;
   motivo: string;
+  /** Erros que o crítico VIU na inspeção física (mão com objeto demais, coisa flutuando…). Notas antigas não têm a lista. */
+  problemas?: string[];
 };
 
 export type Variation = {

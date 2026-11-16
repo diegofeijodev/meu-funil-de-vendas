@@ -75,6 +75,18 @@ async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {
   return { gen, clock, assets, template, story, settings, row, posts, mediaRows, imageCalls, readCalls };
 }
 
+describe('pedido da foto da vaga', () => {
+  it('pede ação simples e possível, aparência de foto real, e termina proibindo texto', () => {
+    const p = photoPrompt('Garçom');
+    expect(p).toContain('trabalhando como Garçom num bar ou restaurante brasileiro');
+    expect(p).toContain('cada mão segura no máximo um objeto');
+    expect(p).toContain('nada flutua');
+    expect(p).toContain('pele com textura natural');
+    expect(p.endsWith('Sem nenhum texto, letra, número, placa, fachada, nome ou logo.')).toBe(true);
+    expect(p).not.toMatch(/cardápio|letreiro|garrafa|rótulo/i); // nada que convide escrita para dentro da foto
+  });
+});
+
 describe('VacancyGeneratorService.generateDue', () => {
   it('aprovada de primeira, modo "aprovar": post pending_approval de vaga, mídia 1080×1920, linha entregue', async () => {
     const t = await setup({ settings: { ai_error: 'Sua conta OpenAI está sem créditos.', ai_error_at: new Date('2026-10-29T12:00:00Z') } });

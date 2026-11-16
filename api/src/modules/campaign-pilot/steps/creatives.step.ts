@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CreativeService } from '../../creative/creative.service';
+import { MIN_DEFECTS, MIN_SCORE } from '../../creative/critic';
 import { StrategistService } from '../../strategist/strategist.service';
 import { slotCost } from '../pilot-estimate';
 import type { PilotStep, StepResult } from '../pilot-runner.service';
@@ -87,7 +88,10 @@ export class CreativesStep implements PilotStep {
       );
       next.job_id = out.jobId;
       if (out.status === 'ready' && out.creativeId) {
-        Object.assign(next, { status: 'done', creative_id: out.creativeId, score: out.variations.find((v) => v.winner)?.score?.total ?? null });
+        const win = out.variations.find((v) => v.winner)?.score ?? null;
+        // Nota boa mas com defeito físico visto pelo crítico: marca a vaga para o G1 não aprovar sozinho (nota baixa já é barrada pela nota).
+        const flawed = !!win && typeof win.defeitos === 'number' && win.total >= MIN_SCORE && win.defeitos < MIN_DEFECTS;
+        Object.assign(next, { status: 'done', creative_id: out.creativeId, score: win?.total ?? null, ...(flawed ? { score_ok: false as const } : {}) });
         await this.mark(run, next);
       } else if (out.status === 'generating') {
         Object.assign(next, { status: 'waiting', creative_id: out.creativeId ?? null });
@@ -144,7 +148,7 @@ export class CreativesStep implements PilotStep {
   private async mark(run: PilotRunRow, s: Slot) {
     const cr = await this.prisma.creatives.findFirst({ where: { id: s.creative_id!, workspace_id: run.workspace_id }, select: { extras: true } });
     if (!cr) return;
-    const extras = { ...((cr.extras as Record<string, unknown> | null) ?? {}), pilot: { run_id: run.id, slot: s.slot, score: s.score ?? null } };
+    const extras = { ...((cr.extras as Record<string, unknown> | null) ?? {}), pilot: { run_id: run.id, slot: s.slot, score: s.score ?? null, ...(s.score_ok === false ? { score_ok: false } : {}) } };
     await this.prisma.creatives.updateMany({ where: { id: s.creative_id!, workspace_id: run.workspace_id }, data: { extras: extras as Prisma.InputJsonObject } });
   }
 }

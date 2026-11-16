@@ -34,7 +34,9 @@ export function artPrompt(f: VacancyFields, hint: string | null): string {
 
 export function photoPrompt(funcao: string): string {
   return (
-    `Foto realista, vertical, de uma pessoa trabalhando como ${funcao} num bar ou restaurante brasileiro. ` +
+    `Foto realista, vertical, de uma pessoa trabalhando como ${funcao} num bar ou restaurante brasileiro, numa ação simples e possível: ` +
+    'cada mão segura no máximo um objeto, tudo está apoiado ou firme na mão, nada flutua. ' +
+    'Luz do próprio ambiente, pele com textura natural, sem cara de banco de imagem. ' +
     'Sem nenhum texto, letra, número, placa, fachada, nome ou logo.'
   );
 }
