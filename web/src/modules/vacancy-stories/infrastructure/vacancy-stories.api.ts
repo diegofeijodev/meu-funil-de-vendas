@@ -61,6 +61,9 @@ const settings = z
     window_end: z.string(),
     min_lead_minutes: num,
     vendor: z.enum(["openai", "gemini"]),
+    style_refs_enabled: z.boolean().default(false),
+    style_brand: z.object({ id: z.string(), name: z.string() }).nullable().default(null),
+    style_refs_in_use: z.number().default(0),
     last_poll_at: str,
     last_poll_ok_at: str,
     last_poll_error: str,
@@ -148,6 +151,7 @@ export type VacancySettingsPatch = Partial<{
   window_end: string;
   min_lead_minutes: 60 | 120 | 240 | 360;
   vendor: "openai" | "gemini";
+  style_refs_enabled: boolean;
 }>;
 
 const ok = z.object({ ok: z.literal(true) }).passthrough();

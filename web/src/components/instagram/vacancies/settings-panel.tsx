@@ -25,8 +25,10 @@ import {
   sameCities,
   weeklyFallbackWarning,
   windowError,
+  photoStyleTexts,
   windowHint,
 } from "@/lib/vacancy-stories";
+import { Link } from "@/lib/router";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   patchVacancySettings,
@@ -52,7 +54,7 @@ const VENDORS = [
 ] as const;
 
 type Edits = VacancySettingsPatch;
-const FIELDS: (keyof Edits)[] = ["cities", "daily_cap", "window_start", "window_end", "min_lead_minutes", "vendor"];
+const FIELDS: (keyof Edits)[] = ["cities", "daily_cap", "window_start", "window_end", "min_lead_minutes", "vendor", "style_refs_enabled"];
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -120,6 +122,7 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const end = value("window_end");
   const cap = value("daily_cap");
   const winErr = windowError(start, end);
+  const style = photoStyleTexts(s);
   const dirty = FIELDS.some((f) => f in edits);
 
   const save = useMutation({
@@ -268,6 +271,23 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
                 {v.label}
               </Option>
             ))}
+          </Field>
+
+          <Field title={style.title} hint={style.noBrand ?? style.help}>
+            {style.option && (
+              <Option type="checkbox" checked={value("style_refs_enabled")} disabled={disabled}
+                onChange={() => set("style_refs_enabled", !value("style_refs_enabled"))}>
+                {style.option}
+              </Option>
+            )}
+            {style.warning && style.brandId && (
+              <p className="text-xs text-muted-foreground">
+                {style.warning}{" "}
+                <Link to="/brands/$id" params={{ id: style.brandId }} search={{ tab: "guia" }} className="text-primary underline">
+                  {style.cta}
+                </Link>
+              </p>
+            )}
           </Field>
 
           <Field title="Antes de ir ao ar" hint={canManage ? "Vale na hora, sem precisar salvar." : "Só o dono ou um administrador muda isso."}>

@@ -1607,6 +1607,8 @@ try {
   const depois = (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body;
   check('vagas: "Ajustes salvos." e o máximo por dia subiu 1', depois?.daily_cap === capAntes + 1, `${capAntes} → ${depois?.daily_cap}`);
 
+  check('vagas: Ajustes mostram "Estilo da foto"', (await corpoAjustes.getByText('Estilo da foto', { exact: true }).count()) > 0);
+
   // "Postar sozinho" pede confirmação; "Continuar aprovando" fecha sem mudar nada.
   await corpoAjustes.getByRole('radio', { name: 'Postar sozinho' }).click();
   await page.getByText('Postar sem sua aprovação?').waitFor({ timeout: 15000 });

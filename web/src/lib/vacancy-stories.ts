@@ -601,3 +601,40 @@ export function dontPostKeepaliveRequest(apiUrl: string, ws: string, id: string,
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return [`${apiUrl}/v1/workspaces/${ws}/vacancy-stories/stories/${id}/dont-post`, { method: 'POST', keepalive: true, headers, body: '{}' }];
 }
+
+/** Textos do "Estilo da foto" nos Ajustes (ui.md §4). Sem marca: só o aviso; com marca sem referências em uso: aviso + "Pôr referências". */
+export function photoStyleTexts(s: { style_brand: { id: string; name: string } | null; style_refs_in_use: number }): {
+  title: string;
+  option: string | null;
+  help: string;
+  warning: string | null;
+  noBrand: string | null;
+  cta: string | null;
+  brandId: string | null;
+} {
+  const title = 'Estilo da foto';
+  const help =
+    'Muda só as cores, a luz e o clima da foto. Textos, arte modelo e selos continuam iguais. Se a foto sair com letras, o sistema refaz sem as referências. Gere uma prévia para ver.';
+  const brand = s.style_brand;
+  if (!brand) {
+    return {
+      title,
+      option: null,
+      help,
+      warning: null,
+      noBrand: 'As vagas ainda não estão ligadas a uma marca. Envie a arte modelo e a marca entra sozinha.',
+      cta: null,
+      brandId: null,
+    };
+  }
+  const empty = s.style_refs_in_use <= 0;
+  return {
+    title,
+    option: `Seguir as referências da marca ${brand.name}`,
+    help,
+    warning: empty ? `A marca ${brand.name} ainda não tem referências em uso; ligar agora não muda nada.` : null,
+    noBrand: null,
+    cta: empty ? 'Pôr referências' : null,
+    brandId: brand.id,
+  };
+}

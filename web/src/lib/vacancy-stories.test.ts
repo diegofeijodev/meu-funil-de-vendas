@@ -10,6 +10,7 @@ import {
   capWarning,
   previewProgress,
   sampleLine,
+  photoStyleTexts,
   templateFileError,
   weeklyFallbackWarning,
   windowError,
@@ -536,5 +537,14 @@ describe('arte escrita pelo sistema (a IA só faz a foto)', () => {
     expect(fallbackLine({ attempts: [...fora, { n: 3, kind: 'fallback_plain', ok: true, wrong: [], forbidden: [] }], fallback_kind: 'plain' })).toBe(
       'Sem foto: a IA estava fora do ar ou sem créditos, então a arte saiu só com os cartões. Os textos são escritos pelo sistema e estão certos.',
     );
+  });
+});
+
+describe('Estilo da foto nos Ajustes', () => {
+  it('Estilo da foto nos Ajustes', () => {
+    const t = photoStyleTexts({ style_brand: { id: 'b1', name: 'Freela' }, style_refs_in_use: 0 });
+    expect(t).toMatchObject({ title: 'Estilo da foto', option: 'Seguir as referências da marca Freela', warning: 'A marca Freela ainda não tem referências em uso; ligar agora não muda nada.', cta: 'Pôr referências', brandId: 'b1', noBrand: null });
+    expect(photoStyleTexts({ style_brand: { id: 'b1', name: 'Freela' }, style_refs_in_use: 2 }).warning).toBeNull();
+    expect(photoStyleTexts({ style_brand: null, style_refs_in_use: 0 })).toMatchObject({ option: null, noBrand: 'As vagas ainda não estão ligadas a uma marca. Envie a arte modelo e a marca entra sozinha.' });
   });
 });
