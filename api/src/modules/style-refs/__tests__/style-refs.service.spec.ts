@@ -184,6 +184,20 @@ describe('StyleRefsService — Pinterest', () => {
     expect(l.limits).toMatchObject({ in_brand: 3, brand: 30, campaign: 8 });
   });
 
+  it('Correção 1: mais de 38 referências — refs_count e in_brand reais, e sem campaign_id todas aparecem', async () => {
+    const { t, svc } = await setup();
+    await t.style_ref_sources.create({ data: { id: 'src-1', workspace_id: WS, brand_id: BRAND, url: 'u', rss_url: 'r' } });
+    for (let i = 0; i < 30; i++) await t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, source_id: 'src-1', source: 'pinterest', created_at: new Date(2026, 0, 1, 0, i) } });
+    for (let i = 0; i < 10; i++) await t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id: CAMP, source: 'upload', created_at: new Date(2026, 5, 1, 0, i) } });
+    const all = await svc.list(VIEWER, WS, BRAND);
+    expect(all.refs).toHaveLength(40);
+    expect(all.sources[0]!.refs_count).toBe(30);
+    expect(all.limits.in_brand).toBe(40);
+    const camp = await svc.list(VIEWER, WS, BRAND, CAMP);
+    expect(camp.refs).toHaveLength(38);
+    expect(camp.sources[0]!.refs_count).toBe(30);
+  });
+
   it('RSS fora do ar: a fonte guarda o erro e as referências antigas continuam; Pinterest desligado → 404', async () => {
     const { t, svc, routes, image } = await setup();
     routes.set('https://www.pinterest.com/foodnetwork/5-star-recipes.rss', () => new Response(RSS, { status: 200 }));

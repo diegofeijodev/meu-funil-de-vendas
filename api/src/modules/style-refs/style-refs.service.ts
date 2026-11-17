@@ -25,6 +25,7 @@ const MAX_PAGE_BYTES = 2 * 1024 * 1024;
 const MAX_SIDE = 1024;
 export const BRAND_CAP = 30;
 export const CAMPAIGN_CAP = 8;
+const LIST_ALL_CAP = 200;
 const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
@@ -140,12 +141,14 @@ export class StyleRefsService {
     const rows = (await this.prisma.style_references.findMany({
       where: campaignId ? { workspace_id: ws, brand_id: brandId, OR: [{ campaign_id: campaignId }, { campaign_id: null }] } : { workspace_id: ws, brand_id: brandId },
       orderBy: { created_at: 'desc' },
-      take: BRAND_CAP + CAMPAIGN_CAP,
+      // Com campanha: as dela + as da marca (38). Sem campanha: a marca e todas as campanhas (teto de segurança 200).
+      take: campaignId ? BRAND_CAP + CAMPAIGN_CAP : LIST_ALL_CAP,
     })) as RefRow[];
     const sources = await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, brand_id: brandId }, orderBy: { created_at: 'asc' } });
     const names: ViewNames = { campaigns: await this.campaignNames(ws, rows), sources: new Map(sources.map((s) => [s.id, s.title])) };
+    // Contagem real no banco (no máx. 5 pastas), não pelas linhas lidas.
     const perSource = new Map<string, number>();
-    for (const r of rows) if (r.source_id) perSource.set(r.source_id, (perSource.get(r.source_id) ?? 0) + 1);
+    for (const s of sources) perSource.set(s.id, await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, source_id: s.id } }));
     const inBrand = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId } });
     return {
       refs: rows.map((r) => this.view(r, names)),
@@ -329,7 +332,7 @@ export class StyleRefsService {
     const ids = [...new Set(rows.map((r) => r.campaign_id).filter((x): x is string => !!x))];
     if (!ids.length) return new Map();
     const cs = await this.prisma.campaigns.findMany({ where: { workspace_id: ws, id: { in: ids } }, select: { id: true, name: true } });
-    return new Map(cs.map((c) => [c.id, c.name as string]));
+    return new Map(cs.map((c) => [c.id, c.name]));
   }
 
   private async namesFor(ws: string, rows: RefRow[]): Promise<ViewNames> {
