@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronDown } from "lucide-react";
@@ -20,6 +20,7 @@ export function StyleLibrary({ workspaceId, brandId, canEdit }: { workspaceId: s
   const features = useFeatures(workspaceId);
   const on = features.data?.style_library === true;
   const key = ["style-library", workspaceId, brandId];
+  const questionId = useId();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const { data } = useQuery({
@@ -89,13 +90,12 @@ export function StyleLibrary({ workspaceId, brandId, canEdit }: { workspaceId: s
 
       {!resolved && (
         <div className="space-y-2">
-          <p className="text-sm">{unrecognizedLine(data.brand_segment)}</p>
-          {(
-            <RadioGroup
+          <p id={questionId} className="text-sm">{unrecognizedLine(data.brand_segment)}</p>
+          <RadioGroup
               value={radioValue}
               onValueChange={(v) => void patch({ style_library_segment: v })}
               disabled={disabled}
-              aria-label={LIBRARY_TEXT.toggle}
+              aria-labelledby={questionId}
               className="gap-0"
             >
               {data.options.map((o) => (
@@ -113,7 +113,6 @@ export function StyleLibrary({ workspaceId, brandId, canEdit }: { workspaceId: s
                 </Label>
               </div>
             </RadioGroup>
-          )}
         </div>
       )}
     </div>
