@@ -620,6 +620,16 @@ try {
   await page.getByText('Nenhum aprendizado registrado ainda.').waitFor({ timeout: 10000 });
   ok('aprendizados: estado vazio');
 
+  // Estilo das artes (Task 5): painel na aba Guia visual (?tab=guia abre direto); marca nova = vazio
+  await page.goto(`${brandUrl}?tab=guia`);
+  await page.getByText('Estilo das artes').first().waitFor({ timeout: 15000 });
+  await page.getByText('Nenhuma referência ainda. Cole o link de uma pasta do Pinterest com o estilo que você quer.').waitFor({ timeout: 15000 });
+  const txtEstilo = await corpo();
+  check('guia visual: painel "Estilo das artes"', tem(txtEstilo, 'Estilo das artes'));
+  check('guia visual: estado vazio do painel', tem(txtEstilo, 'Nenhuma referência ainda. Cole o link de uma pasta do Pinterest com o estilo que você quer.'));
+  check('guia visual: contador da marca', tem(txtEstilo, '0 de 30 referências nesta marca.'));
+  check('guia visual: botão Enviar imagem', tem(txtEstilo, 'Enviar imagem'));
+
   // lista: cartão com segmento, contagens e exclusão pelo diálogo
   await page.goto(`${BASE}/brands`);
   const cartao = page.locator('a[href^="/brands/"]', { hasText: marca });
@@ -888,6 +898,7 @@ try {
   check('anúncios: descrição sem sincronização', tem(await corpo(), 'Aparece depois que a campanha veicular na Meta. Atualiza sozinho a cada 3 horas.'));
   await page.getByRole('tab', { name: 'Briefing' }).click();
   const txtBr = await corpo();
+  check('briefing: painel "Estilo das artes" sem "(opcional)"', tem(txtBr, 'Estilo das artes') && !tem(txtBr, 'Estilo das artes (opcional)'));
   for (const t of ['Briefing original', 'Produto / oferta', 'Chopp artesanal · R$', '12,50', 'Promessa', 'O melhor chopp da cidade', 'https://exemplo.com.br', 'Meta de leads', 'Ticket médio', 'CAC máximo', 'Formatos', 'Imagem estática, Vídeo / Reels', 'persona: Casais que saem à noite', 'tipo: B2B']) check(`briefing mostra "${t}"`, tem(txtBr, t));
 
   // solicitar aprovação

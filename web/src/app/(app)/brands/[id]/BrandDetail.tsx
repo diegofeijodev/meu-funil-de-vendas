@@ -1,6 +1,6 @@
 "use client";
 
-import { Link, useParams } from "@/lib/router";
+import { Link, useParams, useSearch } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -25,6 +25,8 @@ import {
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section } from "@/components/ui-bits";
+import { StyleRefsPanel } from "@/components/style-refs-panel";
+import { PANEL_TEXT } from "@/lib/style-refs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,8 +52,12 @@ const FIELDS: { key: string; label: string; long?: boolean; placeholder?: string
   { key: "past_campaigns", label: "Exemplos de campanhas anteriores", long: true },
 ];
 
+const BRAND_TABS = ["dna", "identidade", "guia", "produtos", "personas", "aprendizados"];
+
 export function BrandDetail() {
   const { id } = useParams<{ id: string }>();
+  const { tab: tabParam } = useSearch<{ tab?: string }>();
+  const initialTab = tabParam && BRAND_TABS.includes(tabParam) ? tabParam : "dna";
   const { workspaceId, canEdit } = useWorkspace();
   const qc = useQueryClient();
   const [form, setForm] = useState<BrandForm>({});
@@ -202,7 +208,7 @@ export function BrandDetail() {
         }
       />
 
-      <Tabs defaultValue="dna">
+      <Tabs defaultValue={initialTab}>
         <TabsList className="mb-6">
           <TabsTrigger value="dna">DNA</TabsTrigger>
           <TabsTrigger value="identidade">Identidade visual</TabsTrigger>
@@ -358,6 +364,11 @@ export function BrandDetail() {
         </TabsContent>
 
         <TabsContent value="guia" className="space-y-6">
+          {workspaceId && (
+            <Section title={PANEL_TEXT.title} description={PANEL_TEXT.description}>
+              <StyleRefsPanel workspaceId={workspaceId} brandId={id} campaignId={null} canEdit={canEdit} />
+            </Section>
+          )}
           <VisualGuide
             brandId={id}
             brand={brand}

@@ -38,6 +38,7 @@ import { parseMoneyInput } from "@/lib/money-input";
 import { campaignPeriod } from "@/lib/campaign-period";
 import { RegionPicker, splitCityUf } from "@/components/region-picker";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
+import { PANEL_TEXT } from "@/lib/style-refs";
 import { PilotPanel } from "@/components/pilot/pilot-panel";
 import { GoLiveDialog } from "@/components/pilot/go-live-dialog";
 import { useFeatures } from "@/modules/features/infrastructure/features.api";
@@ -1091,7 +1092,7 @@ export function CampaignDetail() {
 
         <TabsContent value="briefing">
           {workspaceId && c.brand_id && (
-            <Section title="Estilo das artes (opcional)">
+            <Section title={PANEL_TEXT.title} description={PANEL_TEXT.description}>
               <StyleRefsPanel workspaceId={workspaceId} brandId={c.brand_id} campaignId={id} canEdit={canEdit} started={c.status !== "draft"} />
             </Section>
           )}

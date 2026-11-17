@@ -13,12 +13,15 @@ const refSchema = z.object({
   image_url: z.string().nullable(),
   campaign_id: z.string().nullable(),
   from_source: z.boolean(),
+  campaign_name: z.string().nullable().default(null),
+  source_title: z.string().nullable().default(null),
+  attempts: z.number().default(0),
   created_at: z.string(),
 });
 const listSchema = z.object({
   refs: z.array(refSchema),
-  sources: z.array(z.object({ id: z.string(), url: z.string(), title: z.string().nullable(), last_synced_at: z.string().nullable(), last_error: z.string().nullable() })),
-  limits: z.object({ campaign: z.number(), brand: z.number(), in_campaign: z.number(), pinterest: z.boolean() }),
+  sources: z.array(z.object({ id: z.string(), url: z.string(), title: z.string().nullable(), last_synced_at: z.string().nullable(), last_error: z.string().nullable(), refs_count: z.number().default(0) })),
+  limits: z.object({ campaign: z.number(), brand: z.number(), in_campaign: z.number(), in_brand: z.number().default(0), pinterest: z.boolean() }),
 });
 export type StyleRef = z.infer<typeof refSchema>;
 export type StyleRefsList = z.infer<typeof listSchema>;

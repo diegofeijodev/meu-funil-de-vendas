@@ -1,12 +1,36 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { AlertTriangle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fullDate } from "@/lib/format";
+import {
+  PANEL_TEXT,
+  brandCounter,
+  liveAnnouncement,
+  refOrigin,
+  refScope,
+  refStateText,
+  removeLabel,
+  removedToast,
+  seeAllLabel,
+  stopSourceQuestion,
+  visibleRefs,
+} from "@/lib/style-refs";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   addPinterestRef,
@@ -14,15 +38,19 @@ import {
   removeStyleRef,
   removeStyleSource,
   uploadStyleRef,
+  type StyleRef,
 } from "@/modules/style-refs/infrastructure/style-refs.api";
 
 type Props = { workspaceId: string; brandId: string; campaignId: string | null; canEdit: boolean; started?: boolean };
 
-/** "Estilo das artes" (ux §E): fotos ou Pins com o clima desejado → o estrategista descreve o estilo em palavras; nada é copiado nem publicado. */
+/**
+ * Corpo do "Estilo das artes" (ui.md §2). O título e a descrição ficam na `Section` de quem chama (PANEL_TEXT.title/description).
+ * Fotos ou Pins com o clima desejado → o Meu Funil descreve o estilo em palavras; nada é copiado nem publicado.
+ */
 export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, started }: Props) {
   const qc = useQueryClient();
   const key = ["style-refs", workspaceId, brandId, campaignId];
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: key,
     queryFn: () => listStyleRefs(workspaceId, brandId, campaignId),
     // Enquanto alguma está "Lendo o estilo…", confere de novo a cada 5 s.
@@ -30,10 +58,26 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
   });
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [stopping, setStopping] = useState<{ id: string; refs_count: number } | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const prevRefs = useRef<{ id: string; status: string }[] | undefined>(undefined);
   const fileRef = useRef<HTMLInputElement>(null);
+  const fieldId = useId();
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   const pinterest = !!data?.limits.pinterest;
   const inCampaign = data?.limits.in_campaign ?? 0;
+  const refs: StyleRef[] = data?.refs ?? [];
+  const sources = data?.sources ?? [];
+
+  // Região viva única: compara a lista anterior com a nova (a 1ª carga não anuncia).
+  useEffect(() => {
+    if (!data) return;
+    const next = data.refs.map((r) => ({ id: r.id, status: r.status }));
+    const msg = liveAnnouncement(prevRefs.current, next);
+    prevRefs.current = next;
+    if (msg) setAnnouncement(msg);
+  }, [data]);
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -74,11 +118,11 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
     }
   };
 
-  const remove = async (id: string) => {
+  const remove = async (r: StyleRef) => {
     try {
-      await removeStyleRef(workspaceId, brandId, id);
+      await removeStyleRef(workspaceId, brandId, r.id);
       await refresh();
-      toast.success("Referência removida.");
+      toast.success(removedToast(r));
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível remover."));
     }
@@ -94,65 +138,86 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
     }
   };
 
+  const shown = visibleRefs(refs, expanded);
+
   return (
     <div className="space-y-4">
-      <div className="space-y-1">
-        <p className="text-sm text-muted-foreground">
-          Mostre fotos com o clima que você quer. O estrategista descreve o estilo em palavras e cria artes novas: não copia a imagem, as
-          pessoas, as marcas nem os textos, e a referência nunca é publicada.
-        </p>
-        {started && <p className="text-xs text-muted-foreground">Vale para as artes que ainda vão ser feitas.</p>}
-      </div>
+      <p aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
+      {started && <p className="text-xs text-muted-foreground">Vale para as artes que ainda vão ser feitas.</p>}
+      {campaignId && <p className="text-sm text-muted-foreground">{PANEL_TEXT.campaignOnly}</p>}
 
       {canEdit && (
         <div className="space-y-3">
           {pinterest ? (
             <div className="space-y-1.5">
-              <Label htmlFor="pin-link">Link do Pinterest (Pin, pasta ou perfil)</Label>
+              <Label htmlFor={fieldId}>{PANEL_TEXT.field}</Label>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Input
-                  id="pin-link"
+                  id={fieldId}
                   inputMode="url"
-                  placeholder="https://pin.it/… ou https://br.pinterest.com/…"
+                  className="h-11"
                   value={link}
                   onChange={(e) => setLink(e.target.value)}
                 />
-                <Button className="h-11 sm:h-9" onClick={() => void addFromPinterest()} disabled={busy === "pin" || !link.trim()}>
-                  {busy === "pin" ? "Buscando…" : "Usar"}
+                <Button className="h-11" onClick={() => void addFromPinterest()} disabled={busy === "pin" || !link.trim()}>
+                  {busy === "pin" ? PANEL_TEXT.adding : PANEL_TEXT.add}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Uma pasta ou perfil público vira fonte: os Pins novos entram sozinhos todo dia (até 8 por vez).
-              </p>
+              <p className="text-sm text-muted-foreground">{PANEL_TEXT.help}</p>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">Achou no Pinterest? Salve a imagem no celular e envie aqui.</p>
+            <p className="text-sm text-muted-foreground">Achou no Pinterest? Salve a imagem no celular e envie aqui.</p>
           )}
           <div>
             <input ref={fileRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
-            <Button variant="outline" className="h-11 sm:h-9" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
-              {busy === "upload" ? "Enviando…" : "Enviar imagem"}
+            <Button variant="outline" className="h-11" onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
+              {busy === "upload" ? PANEL_TEXT.uploading : PANEL_TEXT.upload}
             </Button>
           </div>
         </div>
       )}
 
-      {!!data?.sources.length && (
+      {campaignId ? (
+        <p className="text-sm text-muted-foreground">{inCampaign} de {data?.limits.campaign ?? 8} referências nesta campanha.</p>
+      ) : (
+        !!data && <p className="text-sm text-muted-foreground">{brandCounter(data.limits.in_brand)}</p>
+      )}
+
+      {isLoading && <p className="text-sm text-muted-foreground">{PANEL_TEXT.loading}</p>}
+      {isError && (
         <div className="space-y-2">
-          <p className="text-sm font-medium">Pastas acompanhadas</p>
+          <p className="text-sm text-destructive">{PANEL_TEXT.loadError}</p>
+          <Button variant="outline" className="h-11" onClick={() => void refetch()}>
+            {PANEL_TEXT.retry}
+          </Button>
+        </div>
+      )}
+      {!!data && !refs.length && !sources.length && <p className="text-sm text-muted-foreground">{PANEL_TEXT.empty}</p>}
+
+      {!!sources.length && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">{PANEL_TEXT.sources}</p>
           <ul className="space-y-2">
-            {data.sources.map((s) => (
+            {sources.map((s) => (
               <li key={s.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <div>
+                <div className="min-w-0 space-y-1">
                   <a href={s.url} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">
-                    {s.title ?? s.url}
+                    {s.title ?? "Pasta do Pinterest"}
                   </a>
                   <p className="text-xs text-muted-foreground">
-                    {s.last_error ?? (s.last_synced_at ? `Atualizada em ${fullDate(s.last_synced_at)}` : "Aguardando a primeira leitura")}
+                    {s.last_synced_at ? `Atualizada em ${fullDate(s.last_synced_at)}` : "Aguardando a primeira leitura"}
                   </p>
+                  {s.last_error && (
+                    <p className="flex items-start gap-1.5 text-sm text-destructive">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      <span>{s.last_error}</span>
+                    </p>
+                  )}
                 </div>
                 {canEdit && (
-                  <Button variant="ghost" size="sm" className="h-11 sm:h-8" onClick={() => void stopSource(s.id)}>
+                  <Button variant="ghost" size="sm" className="h-11 sm:h-8" onClick={() => setStopping({ id: s.id, refs_count: s.refs_count })}>
                     Parar
                   </Button>
                 )}
@@ -162,35 +227,59 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
         </div>
       )}
 
-      {isLoading && <div className="h-20 animate-pulse rounded-lg bg-muted" aria-hidden="true" />}
-      {!!data?.refs.length && (
-        <ul className="space-y-3">
-          {data.refs.map((r) => (
-            <li key={r.id} className="flex gap-3 rounded-lg border border-border p-3">
-              {r.image_url ? (
-                <img src={r.image_url} alt="" className="size-16 shrink-0 rounded-md object-cover" loading="lazy" />
-              ) : (
-                <div className="size-16 shrink-0 rounded-md bg-muted" />
-              )}
-              <div className="min-w-0 flex-1 space-y-1 text-sm">
-                <p className="text-xs text-muted-foreground">
-                  {r.source === "pinterest" ? (r.from_source ? "Pinterest · pasta" : "Pinterest") : "Enviada"}
-                  {r.campaign_id ? " · desta campanha" : " · da marca"}
-                </p>
-                {r.status === "processing" && <p role="status">Lendo o estilo…</p>}
-                {r.status === "ready" && <p>O que eu peguei: {r.summary ?? "estilo lido."}</p>}
-                {r.status === "failed" && <p className="text-destructive">{r.error}</p>}
-              </div>
-              {canEdit && (
-                <Button variant="ghost" size="sm" className="h-11 self-start sm:h-8" onClick={() => void remove(r.id)}>
-                  Remover
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
+      {!!refs.length && (
+        <>
+          <ul className="space-y-3">
+            {shown.map((r) => (
+              <li key={r.id} className="rounded-lg border border-border p-3">
+                <div className="flex gap-3">
+                  {r.image_url ? (
+                    <img src={r.image_url} alt="" className="size-16 shrink-0 rounded-md object-cover" loading="lazy" />
+                  ) : (
+                    <div className="size-16 shrink-0 rounded-md bg-muted" />
+                  )}
+                  <div className="min-w-0 flex-1 space-y-1 text-sm">
+                    <p className="text-xs text-muted-foreground">
+                      {refOrigin(r)} · {refScope(r)}
+                    </p>
+                    <p className={r.status === "failed" ? "text-destructive" : undefined}>{refStateText(r)}</p>
+                  </div>
+                </div>
+                {canEdit && (
+                  <Button variant="ghost" size="sm" className="mt-2 h-11" aria-label={removeLabel(r)} onClick={() => void remove(r)}>
+                    Remover
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!expanded && refs.length > shown.length && (
+            <Button variant="outline" className="h-11" onClick={() => setExpanded(true)}>
+              {seeAllLabel(refs.length)}
+            </Button>
+          )}
+        </>
       )}
-      {campaignId && <p className="text-xs text-muted-foreground">{inCampaign} de {data?.limits.campaign ?? 8} referências nesta campanha.</p>}
+
+      <AlertDialog open={!!stopping} onOpenChange={(o) => !o && setStopping(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{PANEL_TEXT.stopConfirm}</AlertDialogTitle>
+            <AlertDialogDescription>{stopping ? stopSourceQuestion(stopping.refs_count) : ""}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{PANEL_TEXT.stopCancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (stopping) void stopSource(stopping.id);
+                setStopping(null);
+              }}
+            >
+              {PANEL_TEXT.stopConfirm}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
