@@ -2,9 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
+import { useWorkspace } from "@/lib/workspace";
+import { useFeatures } from "@/modules/features/infrastructure/features.api";
 import { INVITE_CTA, styleInvite, type StyleRecordLike } from "@/lib/style-refs";
 
-/** Linha "Estilo: …" onde a arte é vista (ui.md §5). Sem registro (peça antiga ou prompt à mão), não mostra nada. */
+/** Linha "Estilo: …" onde a arte é vista (ui.md §5). Só com `features.style_library` (P27); sem registro (peça antiga ou prompt à mão), não mostra nada. */
 export function StyleInvite({
   record,
   invite: given,
@@ -15,6 +17,9 @@ export function StyleInvite({
   invite?: ReturnType<typeof styleInvite>;
   className?: string;
 }) {
+  const { workspaceId } = useWorkspace();
+  const features = useFeatures(workspaceId);
+  if (features.data?.style_library !== true) return null;
   const invite = given !== undefined ? given : styleInvite(record);
   if (!invite) return null;
   return (

@@ -20,8 +20,11 @@ import { Label } from "@/components/ui/label";
 import { fullDate } from "@/lib/format";
 import {
   PANEL_TEXT,
+  SELECTION_TEXT,
   brandCounter,
   liveAnnouncement,
+  promotedToast,
+  selectionAnnouncement,
   refOrigin,
   refScope,
   refStateText,
@@ -42,13 +45,26 @@ import {
   type StyleRef,
 } from "@/modules/style-refs/infrastructure/style-refs.api";
 
-type Props = { workspaceId: string; brandId: string; campaignId: string | null; canEdit: boolean; started?: boolean };
+type Props = {
+  workspaceId: string;
+  brandId: string;
+  campaignId: string | null;
+  canEdit: boolean;
+  started?: boolean;
+  /**
+   * Onde a Seleção do Meu Funil aparece (ui.md §3.7/§3.8). `below` (Marca): os itens dela NÃO entram aqui, o bloco da Seleção os mostra.
+   * `inline` (campanha, padrão): vão no fim da lista, sem "Parar". `none`: não aparecem.
+   */
+  selection?: "none" | "below" | "inline";
+  /** Quando passada (Marca), a frase da região viva vai para quem chama e o painel não renderiza a própria região `aria-live`. */
+  announce?: (msg: string) => void;
+};
 
 /**
  * Corpo do "Estilo das artes" (ui.md §2). O título e a descrição ficam na `Section` de quem chama (PANEL_TEXT.title/description).
  * Fotos ou Pins com o clima desejado → o Meu Funil descreve o estilo em palavras; nada é copiado nem publicado.
  */
-export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, started }: Props) {
+export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, started, selection = "inline", announce }: Props) {
   const qc = useQueryClient();
   const key = ["style-refs", workspaceId, brandId, campaignId];
   const { data, isLoading, isError, refetch } = useQuery({
@@ -63,27 +79,45 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
   const [stopping, setStopping] = useState<{ id: string; refs_count: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const prevRefs = useRef<{ id: string; status: string }[] | undefined>(undefined);
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
+  const prevSel = useRef<{ id: string; status: string }[] | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const fieldId = useId();
   const refresh = () => qc.invalidateQueries({ queryKey: key });
   const pinterest = !!data?.limits.pinterest;
   const inCampaign = data?.limits.in_campaign ?? 0;
-  const refs: StyleRef[] = data?.refs ?? [];
-  const sources = data?.sources ?? [];
+  const allRefs: StyleRef[] = data?.refs ?? [];
+  const allSources = data?.sources ?? [];
+  // Lista de cima = só as próprias (ui.md §3.7). A Seleção só entra aqui no modo "inline".
+  const refs = allRefs.filter((r) => r.origin !== "selection");
+  const sources = allSources.filter((s) => s.origin !== "selection");
+  const selRefs = allRefs.filter((r) => r.origin === "selection");
+  const selSources = allSources.filter((s) => s.origin === "selection");
+  const hasSelection = selRefs.length + selSources.length > 0;
+  const inlineSelection = selection === "inline";
+  // Seleção em pausa (estado 6): 4 ou mais próprias da marca toda, lendo ou prontas.
+  const paused = allRefs.filter((r) => r.origin !== "selection" && !r.campaign_id && r.status !== "failed").length >= 4;
 
   // Região viva única: compara a lista anterior com a nova (a 1ª carga não anuncia).
   useEffect(() => {
     if (!data) return;
-    const next = data.refs.map((r) => ({ id: r.id, status: r.status }));
-    const msg = liveAnnouncement(prevRefs.current, next);
+    const next = data.refs.filter((r) => r.origin !== "selection").map((r) => ({ id: r.id, status: r.status }));
+    const nextSel = data.refs.filter((r) => r.origin === "selection").map((r) => ({ id: r.id, status: r.status }));
+    // As frases da §2 têm prioridade; a da Seleção só entra quando nenhuma delas vale (no máximo uma por conferência).
+    const msg = liveAnnouncement(prevRefs.current, next) ?? selectionAnnouncement(prevSel.current, nextSel);
     prevRefs.current = next;
-    if (msg) {
-      // Limpa antes: a mesma frase duas vezes seguidas precisa mudar o DOM para ser anunciada de novo.
-      setAnnouncement("");
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setAnnouncement(msg), 100);
+    prevSel.current = nextSel;
+    if (!msg) return;
+    if (announceRef.current) {
+      announceRef.current(msg);
+      return;
     }
+    // Limpa antes: a mesma frase duas vezes seguidas precisa mudar o DOM para ser anunciada de novo.
+    setAnnouncement("");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setAnnouncement(msg), 100);
   }, [data]);
 
   useEffect(() => () => {
@@ -116,11 +150,13 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
       setLink("");
       await refresh();
       toast.success(
-        r.kind === "pin"
-          ? "Pin adicionado. Lendo o estilo…"
-          : r.added
-            ? `Pasta acompanhada: ${r.added} Pin(s) novos. Ela é atualizada sozinha todo dia.`
-            : "Pasta acompanhada. Ela é atualizada sozinha todo dia.",
+        r.promoted
+          ? promotedToast(r.kind)
+          : r.kind === "pin"
+            ? "Pin adicionado. Lendo o estilo…"
+            : r.added
+              ? `Pasta acompanhada: ${r.added} Pin(s) novos. Ela é atualizada sozinha todo dia.`
+              : "Pasta acompanhada. Ela é atualizada sozinha todo dia.",
       );
     } catch (e) {
       toast.error(apiErrorMessage(e, "Não foi possível usar esse link."));
@@ -153,9 +189,11 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
 
   return (
     <div className="space-y-4">
-      <p aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
+      {!announce && (
+        <p aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
+      )}
       {started && <p className="text-sm text-muted-foreground">Vale para as artes que ainda vão ser feitas.</p>}
       {campaignId && <p className="text-sm text-muted-foreground">{PANEL_TEXT.campaignOnly}</p>}
 
@@ -205,7 +243,9 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
           </Button>
         </div>
       )}
-      {!!data && !refs.length && !sources.length && <p className="text-sm text-muted-foreground">{PANEL_TEXT.empty}</p>}
+      {!!data && !refs.length && !sources.length && (
+        <p className="text-sm text-muted-foreground">{selection !== "none" && hasSelection ? SELECTION_TEXT.emptyWithSelection : PANEL_TEXT.empty}</p>
+      )}
 
       {!!sources.length && (
         <div className="space-y-2">
@@ -240,6 +280,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
 
       {!!refs.length && (
         <>
+          {selection !== "none" && hasSelection && <p className="text-sm font-medium">{SELECTION_TEXT.ownRefs}</p>}
           <ul className="space-y-3">
             {shown.map((r) => (
               <li key={r.id} className="rounded-lg border border-border p-3">
@@ -270,6 +311,59 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
             </Button>
           )}
         </>
+      )}
+
+      {inlineSelection && hasSelection && (
+        <div className="space-y-3">
+          {!!selSources.length && (
+            <ul className="space-y-2">
+              {selSources.map((s) => (
+                <li key={s.id} className="space-y-1 rounded-lg border border-border p-3 text-sm">
+                  <a href={s.url} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">
+                    {s.title ?? SELECTION_TEXT.folderFallbackTitle}
+                  </a>
+                  <p className="text-sm text-muted-foreground">{SELECTION_TEXT.folderLabel}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {s.last_synced_at ? `Atualizada em ${fullDate(s.last_synced_at)}` : "Aguardando a primeira leitura"}
+                  </p>
+                  {s.last_error && (
+                    <p className="flex items-start gap-1.5 text-sm text-destructive">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                      <span>{SELECTION_TEXT.folderError}</span>
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {!!selRefs.length && (
+            <ul className="space-y-3">
+              {selRefs.map((r) => (
+                <li key={r.id} className="rounded-lg border border-border p-3">
+                  <div className="flex gap-3">
+                    {r.image_url ? (
+                      <img src={r.image_url} alt="" className="size-16 shrink-0 rounded-md object-cover" loading="lazy" />
+                    ) : (
+                      <div className="size-16 shrink-0 rounded-md bg-muted" />
+                    )}
+                    <div className="min-w-0 flex-1 space-y-1 text-sm">
+                      <p className="text-sm text-muted-foreground">
+                        {refOrigin(r)} · {refScope(r)}
+                      </p>
+                      <p className={r.status === "failed" ? "text-destructive" : undefined}>{refStateText(r, { selection: true, paused })}</p>
+                    </div>
+                  </div>
+                  {canEdit && (
+                    <Button variant="ghost" size="sm" className="mt-2 h-11" aria-label={removeLabel(r)} onClick={() => void remove(r)}>
+                      Remover
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-sm text-muted-foreground">{SELECTION_TEXT.campaignHelp}</p>
+        </div>
       )}
 
       <AlertDialog open={!!stopping} onOpenChange={(o) => !o && setStopping(null)}>
