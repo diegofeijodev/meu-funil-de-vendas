@@ -542,27 +542,29 @@ try {
   writeFileSync(path.join(tmp, 'logo.png'), png);
   writeFileSync(path.join(tmp, 'ref.png'), png);
   writeFileSync(path.join(tmp, 'Marca.ttf'), Buffer.concat([Buffer.from([0, 1, 0, 0]), Buffer.from('fontbytes')]));
-  const logoInput = page.locator('label', { hasText: /^\s*Logo\s*$/ }).locator('input[type=file]');
+  // UploadButton = botão + <input type=file> irmão (não é mais <label>): acha o input pelo botão. Sem logo = "Enviar logo".
+  const inputDoBotao = (nome) => page.getByRole('button', { name: nome }).first().locator('xpath=following-sibling::input[@type="file"][1]');
+  const logoInput = inputDoBotao(/^(Enviar|Trocar) logo$/);
   await logoInput.setInputFiles(path.join(tmp, 'logo.png'));
   await page.getByText('Arquivo enviado.').first().waitFor({ timeout: 20000 });
   const imgLogo = page.locator('img[alt="logo.png"]');
   await imgLogo.waitFor({ timeout: 15000 });
   check('logo enviado aparece e a imagem carrega (URL assinada da API)', await imgLogo.evaluate((i) => i.complete && i.naturalWidth > 0));
-  const fontInput = page.locator('label', { hasText: 'Fonte (.ttf/.otf)' }).locator('input[type=file]');
+  const fontInput = inputDoBotao('Fonte (.ttf/.otf)');
   await fontInput.setInputFiles(path.join(tmp, 'Marca.ttf'));
   await page.getByText('Aa · Marca.ttf').waitFor({ timeout: 20000 });
   ok('fonte .ttf enviada (cartão "Aa · Marca.ttf")');
-  check('rótulos dos arquivos (Logo / Fonte)', (await corpo()).includes('Logo') && (await corpo()).includes('Fonte (.ttf/.otf)'));
+  check('rótulos dos arquivos (Trocar logo / Fonte)', (await corpo()).includes('Trocar logo') && (await corpo()).includes('Fonte (.ttf/.otf)'));
   // Tarefa 6: bloco "Logo e fotos da sua marca" com o aviso do Pinterest, rótulo e aviso de envio da foto própria
   check('identidade: título "Logo e fotos da sua marca"', tem(await corpo(), 'Logo e fotos da sua marca'));
   check('identidade: aviso para o Pinterest ir em Estilo das artes', tem(await corpo(), 'Só envie aqui fotos que são suas. Imagem do Pinterest ou de outra empresa vai em Estilo das artes, na aba Guia visual.'));
   check('identidade: seletor "Tipo da foto da sua marca" com "Foto de: Produto"', (await page.getByLabel('Tipo da foto da sua marca').locator('option', { hasText: 'Foto de: Produto' }).count()) === 1);
-  await page.locator('label', { hasText: 'Foto da sua marca' }).locator('input[type=file]').setInputFiles(path.join(tmp, 'ref.png'));
+  await inputDoBotao(/^Foto da sua marca$/).setInputFiles(path.join(tmp, 'ref.png'));
   await page.getByText('Foto enviada. Ela pode aparecer nas artes.').waitFor({ timeout: 20000 });
   check('identidade: foto própria listada como "Foto de: Produto"', tem(await corpo(), 'Foto de: Produto'));
   // arquivo inválido: o próprio navegador avisa antes de enviar
   writeFileSync(path.join(tmp, 'x.txt'), 'texto');
-  await page.locator('label', { hasText: 'Identidade visual' }).last().locator('input[type=file]').setInputFiles(path.join(tmp, 'x.txt'));
+  await inputDoBotao(/^Identidade visual$/).setInputFiles(path.join(tmp, 'x.txt'));
   await page.getByText('x.txt: envie uma imagem (JPG, PNG, SVG, WEBP) ou PDF.').waitFor({ timeout: 10000 });
   ok('arquivo .txt é recusado com a mensagem do protótipo');
   // remover os três
@@ -900,8 +902,8 @@ try {
 
   // abas restantes
   await page.getByRole('tab', { name: 'Criativos' }).click();
-  await page.getByText('Nenhum criativo gerado para esta campanha.').waitFor({ timeout: 10000 });
-  check('criativos: estado vazio + link do Creative Studio', await page.getByRole('link', { name: 'Abrir Creative Studio' }).count() === 1);
+  await page.getByText('Nenhum criativo desta campanha ainda. Crie no Creative Studio.').waitFor({ timeout: 10000 });
+  check('criativos: estado vazio + links do Creative Studio (cabeçalho e "Criar criativo")', (await page.getByRole('link', { name: 'Abrir Creative Studio' }).count()) === 1 && (await page.getByRole('link', { name: 'Criar criativo' }).count()) === 1);
   await page.getByRole('tab', { name: 'Anúncios e regras' }).click();
   await page.getByText('Ainda sem resultados da Meta.').waitFor({ timeout: 10000 });
   check('anúncios: descrição sem sincronização', tem(await corpo(), 'Aparece depois que a campanha veicular na Meta. Atualiza sozinho a cada 3 horas.'));
