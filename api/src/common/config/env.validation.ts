@@ -5,7 +5,6 @@ import { parseVacancyWorkspaces, parseWorkspaceList } from './vacancy-workspaces
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
 const opt = () => z.string().optional();
 
-
 const bool = (def: 'true' | 'false') =>
   z
     .enum(['true', 'false'])

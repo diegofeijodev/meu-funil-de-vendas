@@ -7,7 +7,6 @@ import { CHANNEL_CREATE_LEASE_MS } from '../campaigns/campaign-labels';
 export const ERR_ONLY_OWNER_DELETES = 'Só o dono da empresa pode apagá-la.';
 export const ERR_NAME_MISMATCH = 'O nome digitado não confere com o nome da empresa.';
 
-
 export type BlockerCode = 'CAMPAIGN_BEING_CREATED' | 'LIVE_META_CAMPAIGNS' | 'LIVE_OTHER_AD_CAMPAIGNS' | 'LAST_WORKSPACE';
 export type BlockerItem = { id: string; name: string };
 export type DeletionBlocker = { code: BlockerCode; message: string; items?: BlockerItem[] };
@@ -70,7 +69,7 @@ const CHANNEL_NAME: Record<LiveCampaign['channel'], string> = { meta: 'na Meta',
  * - Anúncio publicado e não pausado: apagar a empresa apaga os ids e as credenciais do canal — ninguém mais conseguiria pausar pelo app.
  * - Última empresa: o app não tem tela para "nenhuma empresa".
  */
-export function deletionBlockers(input: { live: LiveCampaign[]; memberships: number}): DeletionBlocker[] {
+export function deletionBlockers(input: { live: LiveCampaign[]; memberships: number }): DeletionBlocker[] {
   const out: DeletionBlocker[] = [];
   const creating = input.live.filter((c) => c.state === 'creating');
   if (creating.length) {

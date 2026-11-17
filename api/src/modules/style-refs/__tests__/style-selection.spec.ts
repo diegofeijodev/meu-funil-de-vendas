@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { todaySp } from '../../../common/time/dates';
 import { SELECTION_OPTIONS } from '../selection-catalog';
 import { BRAND, OWNER, setup, status, VIEWER, WS } from './style-world';
@@ -72,6 +73,21 @@ describe('Seleção do Meu Funil (por empresa)', () => {
       expect([...pick.used.library].sort()).toEqual([...sel].sort());
     });
 
+    it('falha ao rereler a marca: segue só com as próprias e registra o aviso', async () => {
+      const { svc, t, mine } = await world();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const orig = t.brands.findFirst.bind(t.brands);
+      t.brands.findFirst = async () => { throw new Error('banco caiu'); };
+      try {
+        expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain('banco caiu');
+      } finally {
+        t.brands.findFirst = orig;
+        warn.mockRestore();
+      }
+    });
+
     it('referência da Seleção de campanha nunca entra como Seleção', async () => {
       const { svc, t } = await world(undefined, 1, 0);
       await refs(t, WS, BRAND, 'selection', 2, { campaign_id: '55555555-5555-4555-8555-555555555555' });
@@ -103,7 +119,8 @@ describe('Seleção do Meu Funil (por empresa)', () => {
       expect(seen.length).toBeGreaterThan(6);
       for (const s of seen) expect([s.table, s.fn, s.ws]).toEqual([s.table, s.fn, WS]);
       // `findFirst`/`findMany`/`count` de style_references, style_ref_sources e brands estão todos cobertos pelo espião
-      expect(new Set(seen.map((s) => `${s.table}.${s.fn}`))).toEqual(expect.objectContaining(new Set(['style_references.findMany', 'brands.findFirst', 'style_references.count', 'style_ref_sources.count'])));
+      const calls = new Set(seen.map((s) => `${s.table}.${s.fn}`));
+      for (const c of ['style_references.findMany', 'brands.findFirst', 'style_references.count', 'style_ref_sources.count']) expect(calls.has(c)).toBe(true);
       expect([...pick.used.library, ...pick.used.own].sort()).toEqual([...sel, ...mine].sort());
       for (const id of [...theirs, ...theirsOwn]) expect([...pick.used.library, ...pick.used.own]).not.toContain(id);
       expect(view).toMatchObject({ sources_count: 1, count: 3, own_ready: 1 });
