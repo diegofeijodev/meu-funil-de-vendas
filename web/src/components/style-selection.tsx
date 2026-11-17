@@ -80,7 +80,7 @@ export function StyleArtsBody({ workspaceId, brandId, canEdit }: { workspaceId: 
 function StateLine({ tone, id, children }: { tone: "muted" | "error" | "warning"; id: string; children: ReactNode }) {
   if (tone === "muted") {
     return (
-      <p id={id} className="whitespace-pre-line text-sm text-muted-foreground">
+      <p id={id} tabIndex={-1} className="whitespace-pre-line text-sm text-muted-foreground outline-none">
         {children}
       </p>
     );
@@ -89,7 +89,7 @@ function StateLine({ tone, id, children }: { tone: "muted" | "error" | "warning"
   return (
     <div className={cn("flex items-start gap-2 rounded-lg border p-3 text-sm", tone === "error" ? "border-destructive/40 bg-destructive/10" : "border-warning/40 bg-warning/10")}>
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <p id={id} className="flex-1 whitespace-pre-line">
+      <p id={id} tabIndex={-1} className="flex-1 whitespace-pre-line outline-none">
         {children}
       </p>
     </div>
@@ -116,7 +116,7 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
   const pollStart = useRef<number | null>(null);
   const markChanged = () => {
     justRef.current = true;
-    pollStart.current = null;
+    pollStart.current = Date.now();
     setJustChanged(true);
   };
   const [pending, setPending] = useState<boolean | null>(null);
@@ -129,6 +129,8 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
   const pickerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const failedRef = useRef(false);
+  const [focusState, setFocusState] = useState(false);
+  const panelId = useId();
   const prevSig = useRef<string | null>(null);
 
   // Mesma consulta e mesma chave do painel das próprias: a lista é buscada uma vez só.
@@ -136,7 +138,6 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
   const selSources = (list.data?.sources ?? []).filter((s) => s.origin === "selection" && !hidden.has(s.id));
   const selRefs = (list.data?.refs ?? []).filter((r) => r.origin === "selection" && !hidden.has(r.id));
   const allFailed = allSelectionSourcesFailed(selSources);
-  failedRef.current = allFailed;
 
   const view = useQuery({
     queryKey: viewKey,
@@ -150,11 +151,10 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
       const ctx = { loading: false, error: false, canEdit, isAdmin, justChanged: justRef.current, allSourcesFailed: failedRef.current };
       const st = selectionState(v, ctx);
       if (selectionPollInterval(st.id, v.reading, 0) === false) {
-        pollStart.current = null;
         return false;
       }
-      pollStart.current ??= Date.now();
-      return selectionPollInterval(st.id, v.reading, Date.now() - pollStart.current);
+      // O relógio dos 10 min é armado no efeito abaixo; aqui só se lê.
+      return selectionPollInterval(st.id, v.reading, pollStart.current === null ? 0 : Date.now() - pollStart.current);
     },
   });
   const v = view.data;
@@ -170,7 +170,7 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
 
   const state = selectionState(v, {
     loading: view.isLoading,
-    error: view.isError,
+    error: view.isError && !view.data,
     canEdit,
     isAdmin,
     justChanged,
@@ -186,9 +186,35 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
   const paused = (v?.own_ready ?? 0) >= 4;
 
   // Foco: ao abrir pelo botão, na opção marcada; ao fechar, de volta no botão.
+  useEffect(() => {
+    failedRef.current = allFailed;
+  }, [allFailed]);
+  // Relógio da conferência: arma quando o estado pede conferência, zera quando deixa de pedir.
+  const pollWanted = selectionPollInterval(state.id, v?.reading ?? 0, 0) !== false;
+  useEffect(() => {
+    if (!pollWanted) pollStart.current = null;
+    else pollStart.current ??= Date.now();
+  }, [pollWanted]);
+  // Esconder na hora vale até a lista refeita chegar sem aquelas ids.
+  useEffect(() => {
+    if (hidden.size === 0 || !list.data) return;
+    const present = new Set([...list.data.refs.map((r) => r.id), ...list.data.sources.map((x) => x.id)]);
+    if (![...hidden].some((id) => present.has(id))) setHidden(new Set());
+  }, [list.data, hidden]);
+  // Depois da primeira escolha a lista some: o foco vai para a linha de estado em vez de se perder.
+  useEffect(() => {
+    if (focusState && !showPicker) {
+      document.getElementById(stateId)?.focus();
+      setFocusState(false);
+    }
+  }, [focusState, showPicker, stateId]);
+
   const wasOpen = useRef(false);
   useEffect(() => {
-    if (pickerOpen && !wasOpen.current) pickerRef.current?.querySelector<HTMLElement>('[role="radio"][data-state="checked"]')?.focus();
+    if (pickerOpen && !wasOpen.current) {
+      const box = pickerRef.current;
+      (box?.querySelector<HTMLElement>('[role="radio"][data-state="checked"]') ?? box?.querySelector<HTMLElement>('[role="radio"]'))?.focus();
+    }
     if (!pickerOpen && wasOpen.current) triggerRef.current?.focus();
     wasOpen.current = pickerOpen;
   }, [pickerOpen]);
@@ -252,6 +278,7 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
       toast.success(branchToast({ picked, pickedLabel: labelOf(picked), first: firstChoice, hadRefs }));
       setPickerOpen(false);
       setPicked(null);
+      if (firstChoice) setFocusState(true);
       await refreshAll();
     } catch {
       // A lista continua aberta, com a opção marcada.
@@ -327,8 +354,8 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
           <Link to="/integrations">{SELECTION_TEXT.openIntegrations}</Link>
         </Button>
       )}
-      {state.action === "choose" && !pickerOpen && (
-        <Button ref={triggerRef} variant="outline" className={actionBtn} aria-expanded={false} onClick={openPicker}>
+      {state.action === "choose" && (
+        <Button ref={triggerRef} variant="outline" className={actionBtn} aria-expanded={pickerOpen} aria-controls={panelId} onClick={pickerOpen ? closePicker : openPicker}>
           {SELECTION_TEXT.chooseBranch}
         </Button>
       )}
@@ -336,8 +363,8 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
       {showBranchLine && v && (
         <div className="space-y-3">
           <p className="text-sm">{v.segment_source === "chosen" ? SELECTION_TEXT.branchChosen(v.segment_label ?? "") : SELECTION_TEXT.branchAuto(v.segment_label ?? "")}</p>
-          {canEdit && !pickerOpen && (
-            <Button ref={triggerRef} variant="outline" className={actionBtn} aria-expanded={false} onClick={openPicker}>
+          {canEdit && (
+            <Button ref={triggerRef} variant="outline" className={actionBtn} aria-expanded={pickerOpen} aria-controls={panelId} onClick={pickerOpen ? closePicker : openPicker}>
               {SELECTION_TEXT.changeBranch}
             </Button>
           )}
@@ -346,7 +373,7 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
       )}
 
       {showPicker && (
-        <div ref={pickerRef} className="space-y-3 rounded-lg border border-border p-3">
+        <div ref={pickerRef} id={panelId} className="space-y-3 rounded-lg border border-border p-3">
           {pickerOpen && !firstChoice && (
             <p id={pickId} className="text-sm font-medium">
               {SELECTION_TEXT.pickQuestion}
