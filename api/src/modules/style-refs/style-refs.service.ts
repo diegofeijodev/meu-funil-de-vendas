@@ -424,7 +424,7 @@ export class StyleRefsService implements OnModuleDestroy {
       if (!src) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Pasta não encontrada.' });
       if (src.origin === 'selection') throw new BadRequestException({ code: 'SELECTION_SOURCE', message: MSG_SELECTION_SOURCE });
       const refs = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: sourceId } })) as RefRow[];
-      for (const r of refs) await this.drop(r);
+      for (const r of refs) await this.drop(r, { sourceId });
       await this.prisma.style_ref_sources.deleteMany({ where: { id: sourceId, workspace_id: ws } });
       return { ok: true, removed: refs.length };
     });
@@ -496,7 +496,7 @@ export class StyleRefsService implements OnModuleDestroy {
     let removed = 0;
     for (const s of all.filter((x) => x.origin === 'selection' && !target.has(x.rss_url))) {
       const refs = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: s.id } })) as RefRow[];
-      for (const r of refs) await this.drop(r);
+      for (const r of refs) await this.drop(r, { sourceId: s.id, origin: 'selection' });
       await this.prisma.style_ref_sources.deleteMany({ where: { id: s.id, workspace_id: ws } });
       removed++;
     }
@@ -708,9 +708,15 @@ export class StyleRefsService implements OnModuleDestroy {
     }
   }
 
-  private async drop(r: RefRow) {
+  /**
+   * Apaga a referência (linha + arquivo). `fromSource`: o apagar vem da pasta — só apaga se a linha AINDA é daquela pasta (e, na reconciliação,
+   * ainda da Seleção); se um Pin foi promovido no meio (própria, `source_id` nulo), nada some, nem o arquivo.
+   */
+  private async drop(r: RefRow, fromSource?: { sourceId: string; origin?: 'selection' }) {
     // `deleteMany` com a empresa: nada é apagado só pelo id.
-    await this.prisma.style_references.deleteMany({ where: { id: r.id, workspace_id: r.workspace_id } });
+    const where = { id: r.id, workspace_id: r.workspace_id, ...(fromSource ? { source_id: fromSource.sourceId, ...(fromSource.origin ? { origin: fromSource.origin } : {}) } : {}) };
+    const { count } = await this.prisma.style_references.deleteMany({ where });
+    if (fromSource && count !== 1) return;
     if (r.storage_path) await this.files.delete(BUCKET, r.storage_path).catch(() => undefined);
   }
 

@@ -638,4 +638,38 @@ describe('Seleção — rodada 1 de correção (18a)', () => {
     release();
     await busy;
   });
+
+  /** Corrida: o Pin é promovido (mesmo updateMany da promoção) logo depois de a pasta ler as referências dela. */
+  function promoteAfterRead(w: Awaited<ReturnType<typeof world>>, pinRef: string) {
+    const orig = w.t.style_references.findMany.bind(w.t.style_references);
+    let done = false;
+    w.t.style_references.findMany = async (a: any) => {
+      const rows = await orig(a);
+      if (!done && a?.where?.source_id) {
+        done = true;
+        await w.t.style_references.updateMany({ where: { id: pinRef, workspace_id: WS, origin: 'selection' }, data: { origin: 'own', source_id: null } });
+      }
+      return rows;
+    };
+  }
+
+  it('reconciliação × promoção do Pin no meio: o Pin promovido e o arquivo dele ficam', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src, ids } = await folder(w, ACAI[0]!, 'selection', 2);
+    promoteAfterRead(w, ids[0]!);
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
+    await w.svc.reconcileSelection(WS, BRAND);
+    expect(w.t.style_references.rows.map((r) => r.id)).toEqual([ids[0]]);
+    expect([...w.files.keys()]).toEqual([`style-refs/${WS}/${BRAND}/${src.id}-0.jpg`]);
+  });
+
+  it('removeSource × promoção do Pin no meio: o Pin promovido e o arquivo dele ficam', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src, ids } = await folder(w, ACAI[0]!, 'own', 2);
+    await w.t.style_references.updateMany({ where: { id: ids[0] }, data: { origin: 'selection' } }); // o Pin veio da Seleção, a pasta é própria
+    promoteAfterRead(w, ids[0]!);
+    await w.svc.removeSource(OWNER, WS, BRAND, src.id);
+    expect(w.t.style_references.rows.map((r) => r.id)).toEqual([ids[0]]);
+    expect(w.files.has(`style-refs/${WS}/${BRAND}/${src.id}-0.jpg`)).toBe(true);
+  });
 });
