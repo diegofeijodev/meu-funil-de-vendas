@@ -24,6 +24,7 @@ export async function setup(opts: { pinterest?: boolean; env?: Record<string, un
   const t = {
     brands: new FakeTable(() => ({ segment: null, style_library_enabled: true, style_library_segment: null, style_library_checked_at: null, style_selection_day: null, style_selection_reads: 0 })),
     campaigns: new FakeTable(),
+    workspaces: new FakeTable(() => ({ ai_inherit_from: null })),
     style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image', origin: 'own' })),
     style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [], origin: 'own' })),
     workspace_members: {

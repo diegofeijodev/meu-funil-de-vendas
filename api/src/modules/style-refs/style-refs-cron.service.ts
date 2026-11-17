@@ -3,7 +3,7 @@ import { JOB_SCHEDULES } from '../scheduler/job-schedules';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { StyleRefsService } from './style-refs.service';
 
-/** Job `style-refs-15min`: lê o estilo das referências pendentes e renova as pastas do Pinterest com mais de 24 h. */
+/** Job `style-refs-15min`: ajusta a Seleção das marcas vencidas, renova as pastas do Pinterest com mais de 24 h e lê o estilo das pendentes. */
 @Injectable()
 export class StyleRefsCronService implements OnModuleInit {
   constructor(
@@ -12,9 +12,10 @@ export class StyleRefsCronService implements OnModuleInit {
   ) {}
 
   async tick() {
+    const reconciled = await this.refs.reconcileDueBrands(10);
     const refreshed = await this.refs.refreshDueSources(3);
     const processed = await this.refs.processPending(10);
-    return { refreshed, processed };
+    return { reconciled, refreshed, processed };
   }
 
   onModuleInit() {

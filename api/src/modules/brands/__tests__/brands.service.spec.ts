@@ -13,9 +13,9 @@ const WS_A = randomUUID();
 const WS_B = randomUUID();
 const USER = randomUUID();
 
-function setup() {
+function setup(reconcileSoon: (ws: string, brandId: string) => void = () => undefined) {
   const t = {
-    brands: new FakeTable(() => ({ description: null, logo_url: null, visual_style: {}, segment: null })),
+    brands: new FakeTable(() => ({ description: null, logo_url: null, visual_style: {}, segment: null, style_library_checked_at: null })),
     products: new FakeTable(),
     personas: new FakeTable(),
     brand_assets: new FakeTable(),
@@ -36,8 +36,9 @@ function setup() {
   const logs: any[] = [];
   const activity: any = { log: async (...args: any[]) => logs.push(args) };
   const files = new FilesService({ UPLOADS_DIR: dir, JWT_SECRET: 'segredo-de-teste-16+', PUBLIC_URL: 'http://api.test', FILES_SIGNING_SECRET: undefined } as any);
-  const svc = new BrandsService(prisma, activity, files);
-  return { svc, t, logs, files };
+  const styleRefs = { reconcileSoon: jest.fn(reconcileSoon) };
+  const svc = new BrandsService(prisma, activity, files, styleRefs as any);
+  return { svc, t, logs, files, styleRefs };
 }
 
 const status = async (p: Promise<unknown>) => {
@@ -88,6 +89,51 @@ describe('BrandsService — marcas', () => {
     expect(logs).toHaveLength(0);
     expect(await status(svc.update(USER, WS_A, b.id, { visual_style: { x: 'a'.repeat(60_000) } }))).toBe('400:Guia visual grande demais.');
     expect(await status(svc.update(USER, WS_A, b.id, { name: ' ' }))).toBe('400:Informe o nome da marca.');
+  });
+
+  describe('Seleção do Meu Funil (P20′)', () => {
+    it.each([
+      ['segment', { segment: 'Açaiteria' }],
+      ['style_library_enabled', { style_library_enabled: false }],
+      ['style_library_segment', { style_library_segment: 'bebida_bar' }],
+      ['style_library_segment null (volta ao automático)', { style_library_segment: null }],
+    ])('PATCH com %s grava style_library_checked_at: null no mesmo update e põe a Seleção para reconciliar', async (_n, body) => {
+      const { svc, t, styleRefs } = setup();
+      const b = await svc.create(USER, WS_A, { name: 'M' });
+      await t.brands.update({ where: { id: b.id }, data: { style_library_checked_at: new Date() } });
+      const spy = jest.spyOn(t.brands, 'update');
+      await svc.update(USER, WS_A, b.id, body as any);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![0].data).toMatchObject({ style_library_checked_at: null });
+      expect(t.brands.rows[0]!.style_library_checked_at).toBeNull();
+      expect(styleRefs.reconcileSoon).toHaveBeenCalledTimes(1);
+      expect(styleRefs.reconcileSoon).toHaveBeenCalledWith(WS_A, b.id);
+    });
+
+    it('PATCH só com name (e campos não enviados como undefined) não chama nem zera o checked_at', async () => {
+      const { svc, t, styleRefs } = setup();
+      const b = await svc.create(USER, WS_A, { name: 'M' });
+      const stamp = new Date();
+      await t.brands.update({ where: { id: b.id }, data: { style_library_checked_at: stamp } });
+      await svc.update(USER, WS_A, b.id, { name: 'Novo', segment: undefined, style_library_enabled: undefined, style_library_segment: undefined } as any);
+      expect(styleRefs.reconcileSoon).not.toHaveBeenCalled();
+      expect(t.brands.rows[0]!.style_library_checked_at).toEqual(stamp);
+    });
+
+    it('reconcileSoon que lança não derruba o update (a marca foi gravada)', async () => {
+      const { svc, t } = setup(() => { throw new Error('fila quebrou'); });
+      const b = await svc.create(USER, WS_A, { name: 'M' });
+      const up = await svc.update(USER, WS_A, b.id, { segment: 'Bar' });
+      expect(up.segment).toBe('Bar');
+      expect(t.brands.rows[0]!.segment).toBe('Bar');
+    });
+
+    it('marca de outro workspace: 404 e nada é reconciliado', async () => {
+      const { svc, styleRefs } = setup();
+      const b = await svc.create(USER, WS_A, { name: 'M' });
+      expect(await status(svc.update(USER, WS_B, b.id, { segment: 'Bar' }))).toBe('404:Marca não encontrada.');
+      expect(styleRefs.reconcileSoon).not.toHaveBeenCalled();
+    });
   });
 
   it('exclui e registra brand.deleted com o nome', async () => {

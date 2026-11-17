@@ -21,7 +21,8 @@ import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
 import { normalizeText, STYLE_CATEGORY_LABEL } from './categories';
-import { SELECTION_OPTIONS, selectionLabel } from './selection-catalog';
+import { KeyedQueue } from './keyed-queue';
+import { SELECTION_CATALOG, SELECTION_OPTIONS, selectionLabel } from './selection-catalog';
 import { chooseNotes, PickedNote, PickRow, resolveSelectionBranch } from './style-pick';
 import { MAX_NOTES, normalizeStyleNotes, notesSummary, PhotoStyle, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, StyleRefsUsed, styleNotesText } from './style-notes';
 
@@ -34,7 +35,10 @@ export const CAMPAIGN_CAP = 8;
 const LIST_ALL_CAP = 200;
 /** Cota diária de leitura da Seleção por marca (P21′): `daily_left` da vista = 12 menos as de hoje. */
 const SELECTION_DAILY_NEW = 12;
+/** Pastas PRÓPRIAS acompanhadas por marca (as da Seleção não contam). */
 const SOURCE_CAP = 5;
+/** A Seleção de uma marca é conferida de novo depois de 6 h (ou antes, quando um gatilho zera o `style_library_checked_at`). */
+const RECONCILE_EVERY_MS = 6 * 3600_000;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
 /** Leituras que falharam de forma transitória: 3 no total; a espera até a próxima depende de quantas já falharam (P1). */
@@ -49,6 +53,8 @@ const MSG_NOT_PINTEREST = 'Esse link não é de um Pin nem de uma pasta do Pinte
 const MSG_PIN_IMAGE = 'Não conseguimos pegar a imagem desse Pin. Salve a imagem no celular e envie aqui.';
 const MSG_READ_FAILED = 'Não conseguimos ler o estilo desta referência. Remova e tente outra.';
 const MSG_RSS_DOWN = 'O Pinterest não respondeu agora. Tentamos de novo amanhã.';
+const MSG_SELECTION_SOURCE = 'Esta pasta é da Seleção do Meu Funil e não dá para parar por aqui. Para tirar, desligue a seleção ou troque o ramo na marca, aba Guia visual.';
+const MSG_SOURCE_CAP = 'Você já acompanha 5 pastas nesta marca. Pare uma para pôr outra.';
 
 class FetchFailed extends Error {}
 /** Falha da leitura que repetir não resolve (nota vazia, imagem sumida): vira `failed` na hora. */
@@ -97,7 +103,7 @@ type RefRow = {
 export type StyleRefView = {
   id: string; source: string; source_url: string | null; title: string | null; status: string; summary: string | null; error: string | null;
   image_url: string | null; campaign_id: string | null; campaign_name: string | null; from_source: boolean; source_title: string | null;
-  attempts: number; created_at: Date;
+  attempts: number; created_at: Date; origin: 'own' | 'selection';
 };
 
 /** Seleção do Meu Funil vista pela empresa (contrato §28, P34): só números e rótulos — nada que leve a uma referência. */
@@ -106,6 +112,8 @@ export type StyleSelectionView = {
   options: { id: string; label: string }[]; enabled: boolean; needs_ai_key: boolean; ai_credit: 'no_credit' | 'daily_limit' | null;
   daily_left: number; sources_count: number; count: number; reading: number; own_ready: number; in_use: boolean;
 };
+
+type SourceRow = { id: string; workspace_id: string; brand_id: string; url: string; rss_url: string; created_by?: string | null; seen_pin_ids?: string[]; origin?: string };
 
 type ViewNames = { campaigns: Map<string, string>; sources: Map<string, string | null> };
 
@@ -137,6 +145,10 @@ export class StyleRefsService {
   autoProcess = true;
   private readonly pinterestOn: boolean;
   private readonly libraryOn: boolean;
+  /** Fila por marca (chave `ws:brand`): reconciliação, `sync` das pastas e `removeSource` da mesma marca rodam um de cada vez. */
+  private readonly queue = new KeyedQueue();
+  /** Trabalhos em segundo plano em andamento (`reconcileSoon` e o chute depois de criar pastas): só para `whenIdle` (testes e desligamento). */
+  private readonly inflight = new Set<Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -167,26 +179,32 @@ export class StyleRefsService {
   async list(userId: string, ws: string, brandId: string, campaignId?: string | null) {
     await this.access.require(userId, ws, 'read');
     await this.brand(ws, brandId);
+    // Seleção desligada = inerte (P18/P22′): a lista esconde as pastas e as referências dela.
+    const selOn = this.selectionOn();
+    const only = selOn ? {} : { origin: 'own' };
     const rows = (await this.prisma.style_references.findMany({
-      where: campaignId ? { workspace_id: ws, brand_id: brandId, OR: [{ campaign_id: campaignId }, { campaign_id: null }] } : { workspace_id: ws, brand_id: brandId },
+      where: campaignId ? { workspace_id: ws, brand_id: brandId, ...only, OR: [{ campaign_id: campaignId }, { campaign_id: null }] } : { workspace_id: ws, brand_id: brandId, ...only },
       orderBy: { created_at: 'desc' },
       // Com campanha: as dela + as da marca (38). Sem campanha: a marca e todas as campanhas (teto de segurança 200).
       take: campaignId ? BRAND_CAP + CAMPAIGN_CAP : LIST_ALL_CAP,
     })) as RefRow[];
-    const sources = await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, brand_id: brandId }, orderBy: { created_at: 'asc' } });
+    const sources = await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, brand_id: brandId, ...only }, orderBy: { created_at: 'asc' } });
     const names: ViewNames = { campaigns: await this.campaignNames(ws, rows), sources: new Map(sources.map((s) => [s.id, s.title])) };
     // Contagem real no banco (no máx. 5 pastas), não pelas linhas lidas.
     const perSource = new Map<string, number>();
     for (const s of sources) perSource.set(s.id, await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, source_id: s.id } }));
-    const inBrand = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId } });
+    // `in_brand` = só as próprias (o teto de 30 da tela é delas); `in_selection` = as da Seleção na marca (0 com a Seleção desligada).
+    const inBrand = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, origin: 'own' } });
+    const inSelection = selOn ? await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, origin: 'selection' } }) : 0;
     return {
       refs: rows.map((r) => this.view(r, names)),
-      sources: sources.map((s) => ({ id: s.id, url: s.url, title: s.title, last_synced_at: s.last_synced_at, last_error: s.last_error, refs_count: perSource.get(s.id) ?? 0 })),
+      sources: sources.map((s) => ({ id: s.id, url: s.url, title: s.title, last_synced_at: s.last_synced_at, last_error: s.last_error, refs_count: perSource.get(s.id) ?? 0, origin: (s.origin === 'selection' ? 'selection' : 'own') as 'own' | 'selection' })),
       limits: {
         campaign: CAMPAIGN_CAP,
         brand: BRAND_CAP,
         in_campaign: campaignId ? rows.filter((r) => r.campaign_id === campaignId).length : 0,
         in_brand: inBrand,
+        in_selection: inSelection,
         pinterest: this.pinterestOn,
       },
     };
@@ -331,35 +349,59 @@ export class StyleRefsService {
     if (link?.kind === 'shortlink') link = await this.resolveShortlink(link.url);
     if (!link) throw bad(MSG_NOT_PINTEREST);
 
+    const key = this.queueKey(ws, brandId);
+
     if (link.kind === 'pin') {
-      const dup = await this.prisma.style_references.findFirst({ where: { workspace_id: ws, brand_id: brandId, pin_id: link.pinId } });
-      if (dup) throw bad('Esse Pin já está nas referências.');
+      const pinId = link.pinId;
+      // Pin que a Seleção já trouxe (P26′): promove a própria e devolve (sem "já está"). Pela fila da marca: a reconciliação não o apaga no meio.
+      const taken = await this.queue.run(key, async () => {
+        const dup = (await this.prisma.style_references.findFirst({ where: { workspace_id: ws, brand_id: brandId, pin_id: pinId } })) as RefRow | null;
+        if (!dup) return null;
+        if (dup.origin !== 'selection') throw bad('Esse Pin já está nas referências.');
+        // `source_id` nulo: senão o cascade da FK o apagaria junto com a pasta da Seleção.
+        await this.prisma.style_references.updateMany({ where: { id: dup.id, workspace_id: ws }, data: { origin: 'own', source_id: null } });
+        return { ...dup, origin: 'own' as const, source_id: null };
+      });
+      if (taken) return { kind: 'pin' as const, added: 0, refs: [this.view(taken, await this.namesFor(ws, [taken]))], promoted: true as const };
       const imageUrl = await this.pinImage(link.url);
       const jpeg = await this.download(imageUrl).then((b) => shrink(this.images, b)).catch(() => {
         throw bad(MSG_PIN_IMAGE);
       });
       await this.makeRoom(ws, brandId, campaignId ?? null, 1, true);
-      const row = await this.store(ws, brandId, { campaignId: campaignId ?? null, source: 'pinterest', sourceUrl: link.url, pinId: link.pinId, createdBy: userId }, jpeg);
+      const row = await this.store(ws, brandId, { campaignId: campaignId ?? null, source: 'pinterest', sourceUrl: link.url, pinId, createdBy: userId }, jpeg);
       this.kick();
       return { kind: 'pin' as const, added: 1, refs: [this.view(row, await this.namesFor(ws, [row]))] };
     }
 
-    let source = await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: link.rssUrl } });
-    if (!source) {
-      const count = await this.prisma.style_ref_sources.count({ where: { workspace_id: ws, brand_id: brandId } });
-      if (count >= SOURCE_CAP) throw bad('Você já acompanha 5 pastas nesta marca. Pare uma para pôr outra.');
-      try {
-        source = await this.prisma.style_ref_sources.create({ data: { workspace_id: ws, brand_id: brandId, url: link.url, rss_url: link.rssUrl, created_by: userId } });
-      } catch (e) {
-        if (!isUniqueViolation(e)) throw e;
-        source = await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: link.rssUrl } });
-        if (!source) throw e;
+    const kind = link.kind;
+    const rssUrl = link.rssUrl;
+    const boardUrl = link.url;
+    // Pasta: tudo (achar/criar/promover e o primeiro `sync`) pela fila da marca, uma de cada vez com a reconciliação.
+    return this.queue.run(key, async () => {
+      let source = (await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: rssUrl } })) as SourceRow | null;
+      let promoted = false;
+      if (source?.origin === 'selection') {
+        // P26′: colar a pasta da Seleção a promove (e as referências dela) a própria; confere o teto de 5 próprias como numa pasta nova.
+        if ((await this.ownSourceCount(ws, brandId)) >= SOURCE_CAP) throw bad(MSG_SOURCE_CAP);
+        await this.prisma.style_ref_sources.updateMany({ where: { id: source.id, workspace_id: ws }, data: { origin: 'own', created_by: userId } });
+        await this.prisma.style_references.updateMany({ where: { workspace_id: ws, brand_id: brandId, source_id: source.id }, data: { origin: 'own' } });
+        source = { ...source, origin: 'own', created_by: userId };
+        promoted = true;
+      } else if (!source) {
+        if ((await this.ownSourceCount(ws, brandId)) >= SOURCE_CAP) throw bad(MSG_SOURCE_CAP);
+        try {
+          source = (await this.prisma.style_ref_sources.create({ data: { workspace_id: ws, brand_id: brandId, url: boardUrl, rss_url: rssUrl, created_by: userId } })) as SourceRow;
+        } catch (e) {
+          if (!isUniqueViolation(e)) throw e;
+          source = (await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: rssUrl } })) as SourceRow | null;
+          if (!source) throw e;
+        }
       }
-    }
-    const added = await this.sync(source);
-    if (added === null) throw bad('Não conseguimos ler essa pasta do Pinterest agora. Confira se ela é pública e tente de novo.');
-    this.kick();
-    return { kind: link.kind, added };
+      const added = await this.sync(source);
+      if (added === null) throw bad('Não conseguimos ler essa pasta do Pinterest agora. Confira se ela é pública e tente de novo.');
+      this.kick();
+      return promoted ? { kind, added, promoted: true as const } : { kind, added };
+    });
   }
 
   // ── remover ────────────────────────────────────────────────────────────
@@ -372,15 +414,105 @@ export class StyleRefsService {
     return { ok: true };
   }
 
-  /** Parar de acompanhar a pasta: ela e as referências que vieram dela saem. */
+  /** Parar de acompanhar a pasta: ela e as referências que vieram dela saem. Pasta da Seleção não para por aqui (a reconciliação a recriaria). */
   async removeSource(userId: string, ws: string, brandId: string, sourceId: string) {
     await this.access.require(userId, ws, 'write');
-    const src = await this.prisma.style_ref_sources.findFirst({ where: { id: sourceId, workspace_id: ws, brand_id: brandId } });
-    if (!src) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Pasta não encontrada.' });
-    const refs = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: sourceId } })) as RefRow[];
-    for (const r of refs) await this.drop(r);
-    await this.prisma.style_ref_sources.delete({ where: { id: sourceId } });
-    return { ok: true, removed: refs.length };
+    return this.queue.run(this.queueKey(ws, brandId), async () => {
+      const src = await this.prisma.style_ref_sources.findFirst({ where: { id: sourceId, workspace_id: ws, brand_id: brandId } });
+      if (!src) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Pasta não encontrada.' });
+      if (src.origin === 'selection') throw new BadRequestException({ code: 'SELECTION_SOURCE', message: MSG_SELECTION_SOURCE });
+      const refs = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: sourceId } })) as RefRow[];
+      for (const r of refs) await this.drop(r);
+      await this.prisma.style_ref_sources.deleteMany({ where: { id: sourceId, workspace_id: ws } });
+      return { ok: true, removed: refs.length };
+    });
+  }
+
+  // ── Seleção do Meu Funil: reconciliação ────────────────────────────────
+
+  /**
+   * Ajusta as pastas da Seleção da marca ao ramo (P20/P20′), idempotente, SEMPRE pela fila da marca. Sem a Seleção ligada não faz nada
+   * (nem apaga). Alvo = pastas do ramo resolvido quando o interruptor da marca está ligado, senão nenhuma: as pastas `origin='selection'`
+   * fora do alvo saem com as referências (com ou sem chave); as do alvo que não existem em NENHUMA origem são criadas, só se a empresa tem
+   * chave de IA. Uma pasta própria igual à do catálogo fica como está. Grava `style_library_checked_at`.
+   */
+  reconcileSelection(ws: string, brandId: string): Promise<{ created: number; removed: number }> {
+    return this.queue.run(this.queueKey(ws, brandId), () => this.reconcileNow(ws, brandId));
+  }
+
+  /** Ajuste em segundo plano: devolve na hora; erro vai para o log (nunca rejeição solta). */
+  reconcileSoon(ws: string, brandId: string): void {
+    this.track(this.reconcileSelection(ws, brandId).catch((e) => this.logger.warn(`Seleção da marca ${brandId}: ${(e as Error).message}`)));
+  }
+
+  /** Job: reconcilia até `limit` marcas com `style_library_checked_at` nulo (primeiro) ou com mais de 6 h. Devolve quantas. */
+  async reconcileDueBrands(limit = 10): Promise<number> {
+    if (!this.selectionOn()) return 0;
+    // Única consulta sem empresa: é a busca das marcas vencidas; daí em diante cada marca usa o `workspace_id` da própria linha.
+    const due = (await this.prisma.brands.findMany({
+      where: { OR: [{ style_library_checked_at: null }, { style_library_checked_at: { lt: new Date(Date.now() - RECONCILE_EVERY_MS) } }] },
+      orderBy: { style_library_checked_at: { sort: 'asc', nulls: 'first' } },
+      take: limit,
+      select: { id: true, workspace_id: true },
+    })) as { id: string; workspace_id: string }[];
+    for (const b of due) await this.reconcileSelection(b.workspace_id, b.id).catch((e) => this.logger.warn(`Seleção da marca ${b.id}: ${(e as Error).message}`));
+    return due.length;
+  }
+
+  /** Chave de IA nova (P37): põe as marcas da empresa e das que herdam dela na frente da fila do job. Só banco. */
+  async markSelectionDue(ws: string): Promise<void> {
+    const heirs = (await this.prisma.workspaces.findMany({ where: { ai_inherit_from: ws }, select: { id: true } })) as { id: string }[];
+    await this.prisma.brands.updateMany({ where: { workspace_id: { in: [ws, ...heirs.map((h) => h.id)] } }, data: { style_library_checked_at: null } });
+  }
+
+  /** Espera os trabalhos em segundo plano em andamento (testes e desligamento). */
+  async whenIdle(): Promise<void> {
+    while (this.inflight.size) await Promise.allSettled([...this.inflight]);
+  }
+
+  private async reconcileNow(ws: string, brandId: string): Promise<{ created: number; removed: number }> {
+    const none = { created: 0, removed: 0 };
+    if (!this.selectionOn()) return none;
+    const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
+    if (!brand) return none;
+    const branch = resolveSelectionBranch(brand).segment;
+    const target = new Map<string, string>(); // rss_url → url
+    if (brand.style_library_enabled && branch) {
+      for (const url of SELECTION_CATALOG[branch] ?? []) {
+        const link = parsePinterestLink(url);
+        if (link?.kind === 'board') target.set(link.rssUrl, link.url);
+      }
+    }
+    // Todas as pastas da marca, de qualquer origem, de uma vez.
+    const all = (await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, brand_id: brandId } })) as SourceRow[];
+    let removed = 0;
+    for (const s of all.filter((x) => x.origin === 'selection' && !target.has(x.rss_url))) {
+      const refs = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: s.id } })) as RefRow[];
+      for (const r of refs) await this.drop(r);
+      await this.prisma.style_ref_sources.deleteMany({ where: { id: s.id, workspace_id: ws } });
+      removed++;
+    }
+    const have = new Set(all.map((x) => x.rss_url));
+    const missing = [...target].filter(([rss]) => !have.has(rss));
+    const made: SourceRow[] = [];
+    // O cofre só é consultado quando há o que criar.
+    if (missing.length && (await this.hasAiKey(ws))) {
+      for (const [rssUrl, url] of missing) {
+        try {
+          made.push((await this.prisma.style_ref_sources.create({ data: { workspace_id: ws, brand_id: brandId, url, rss_url: rssUrl, origin: 'selection', created_by: null } })) as SourceRow);
+        } catch (e) {
+          if (!isUniqueViolation(e)) throw e; // a pasta já existe (corrida): segue
+        }
+      }
+    }
+    await this.prisma.brands.updateMany({ where: { id: brandId, workspace_id: ws }, data: { style_library_checked_at: new Date() } });
+    if (made.length) this.kickSelection(ws, brandId, made);
+    return { created: made.length, removed };
+  }
+
+  /** Chave de IA da empresa (a herdada da agência conta: é a mesma que a leitura usa). */
+  private async hasAiKey(ws: string): Promise<boolean> {
+    return !!(await this.aiKeys.get(ws, 'openai')) || !!(await this.aiKeys.get(ws, 'gemini'));
   }
 
   // ── job ────────────────────────────────────────────────────────────────
@@ -434,19 +566,53 @@ export class StyleRefsService {
     return done;
   }
 
-  /** Renova as pastas acompanhadas há mais de 24 h. Devolve quantas tentou. */
+  /**
+   * Renova as pastas acompanhadas há mais de 24 h (P22): o vencimento vai no `where` (nulas primeiro); pastas da Seleção só entram com a
+   * Seleção ligada. Cada `sync` roda pela fila da marca. Devolve quantas tentou.
+   */
   async refreshDueSources(limit = 3): Promise<number> {
     if (!this.pinterestOn) return 0;
-    const cutoff = Date.now() - RESYNC_MS;
-    const due = (await this.prisma.style_ref_sources.findMany({ orderBy: { created_at: 'asc' }, take: 200 }))
-      .filter((s) => !s.last_synced_at || new Date(s.last_synced_at).getTime() < cutoff)
-      .slice(0, limit);
+    const cutoff = new Date(Date.now() - RESYNC_MS);
+    const due = (await this.prisma.style_ref_sources.findMany({
+      where: { OR: [{ last_synced_at: null }, { last_synced_at: { lt: cutoff } }], ...(this.selectionOn() ? {} : { origin: 'own' }) },
+      orderBy: { last_synced_at: { sort: 'asc', nulls: 'first' } },
+      take: limit,
+    })) as SourceRow[];
     // Uma fonte com erro (ex.: empresa apagada no meio) não impede as outras.
-    for (const s of due) await this.sync(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
+    for (const s of due) await this.queue.run(this.queueKey(s.workspace_id, s.brand_id), () => this.sync(s)).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
     return due.length;
   }
 
   // ── internos ───────────────────────────────────────────────────────────
+
+  private queueKey(ws: string, brandId: string): string {
+    return `${ws}:${brandId}`;
+  }
+
+  private track(p: Promise<unknown>): void {
+    const done = p.catch(() => undefined).finally(() => this.inflight.delete(done));
+    this.inflight.add(done);
+  }
+
+  private ownSourceCount(ws: string, brandId: string): Promise<number> {
+    return this.prisma.style_ref_sources.count({ where: { workspace_id: ws, brand_id: brandId, origin: 'own' } });
+  }
+
+  /**
+   * Depois de criar pastas da Seleção: em segundo plano (pela fila da marca, depois da reconciliação que o chamou) sincroniza as novas e lê
+   * as pendentes. Os testes desligam com `autoProcess = false`.
+   */
+  private kickSelection(ws: string, brandId: string, sources: SourceRow[]) {
+    if (!this.autoProcess) return;
+    this.track(
+      this.queue
+        .run(this.queueKey(ws, brandId), async () => {
+          for (const s of sources) await this.sync(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
+        })
+        .then(() => this.processPending(PINS_PER_SYNC))
+        .catch((e) => this.logger.warn(`Seleção da marca ${brandId}: ${(e as Error).message}`)),
+    );
+  }
 
   private kick() {
     if (!this.autoProcess) return;
@@ -484,6 +650,7 @@ export class StyleRefsService {
       source_title: r.source_id ? names.sources.get(r.source_id) ?? null : null,
       attempts: r.attempts ?? 0,
       created_at: r.created_at,
+      origin: r.origin === 'selection' ? 'selection' : 'own',
     };
   }
 
@@ -522,7 +689,8 @@ export class StyleRefsService {
   }
 
   private async drop(r: RefRow) {
-    await this.prisma.style_references.delete({ where: { id: r.id } });
+    // `deleteMany` com a empresa: nada é apagado só pelo id.
+    await this.prisma.style_references.deleteMany({ where: { id: r.id, workspace_id: r.workspace_id } });
     if (r.storage_path) await this.files.delete(BUCKET, r.storage_path).catch(() => undefined);
   }
 

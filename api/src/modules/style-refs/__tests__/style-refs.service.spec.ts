@@ -178,7 +178,7 @@ describe('StyleRefsService — Pinterest', () => {
   });
 
   it('origem: envio e Pin colado gravam own; pasta da Seleção faz o sync gravar as referências com selection', async () => {
-    const { t, svc, routes, image } = await setup();
+    const { t, svc, routes, image } = await setup({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true } });
     routes.set(`https://www.pinterest.com/oembed.json?url=${encodeURIComponent('https://www.pinterest.com/pin/424605071146230977/')}`, () => Response.json({ thumbnail_url: 'https://i.pinimg.com/236x/9a/95/x.jpg' }));
     routes.set('https://i.pinimg.com/736x/9a/95/x.jpg', image);
     await svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/424605071146230977/');
@@ -191,6 +191,18 @@ describe('StyleRefsService — Pinterest', () => {
     const fromFolder = t.style_references.rows.filter((r) => r.source_id);
     expect(fromFolder).toHaveLength(1);
     expect(fromFolder.every((r) => r.origin === 'selection')).toBe(true);
+  });
+
+  it('Seleção desligada: o job não renova a pasta da Seleção (inerte), só as próprias; o vencimento vai no where (nulas primeiro)', async () => {
+    const { t, svc, routes, image } = await setup();
+    routes.set('https://www.pinterest.com/foodnetwork/5-star-recipes.rss', () => new Response(RSS, { status: 200 }));
+    routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', image);
+    const mk = (n: string, origin: string, last: Date | null) => t.style_ref_sources.create({ data: { workspace_id: WS, brand_id: BRAND, url: `https://www.pinterest.com/u/${n}/`, rss_url: n === 'a' ? 'https://www.pinterest.com/foodnetwork/5-star-recipes.rss' : `https://www.pinterest.com/u/${n}.rss`, origin, last_synced_at: last } });
+    await mk('sel', 'selection', null);
+    await mk('a', 'own', new Date(Date.now() - 30 * 3600_000));
+    await mk('fresca', 'own', new Date());
+    expect(await svc.refreshDueSources(5)).toBe(1);
+    expect(t.style_ref_sources.rows.find((r) => r.url.endsWith('/sel/'))!.last_synced_at).toBeNull();
   });
 
   it('RSS fora do ar: a fonte guarda o erro e as referências antigas continuam; Pinterest desligado → 404', async () => {

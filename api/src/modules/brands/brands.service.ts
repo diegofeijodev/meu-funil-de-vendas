@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { isUuid } from '../../common/ids/uuid';
 import { ActivityService } from '../activity/activity.service';
 import { FilesService } from '../files/files.service';
+import { StyleRefsService } from '../style-refs/style-refs.service';
 import {
   CreateBrandAssetDto, CreateBrandDto, CreatePersonaDto, CreateProductDto, UpdateBrandDto, UpdatePersonaDto, UpdateProductDto,
 } from './dto/brands.dto';
@@ -23,7 +24,11 @@ export class BrandsService {
     private readonly prisma: PrismaService,
     private readonly activity: ActivityService,
     private readonly files: FilesService,
+    // `StyleRefsModule` é @Global; o serviço dele não depende deste módulo (sem ciclo).
+    private readonly styleRefs: StyleRefsService,
   ) {}
+
+  private readonly logger = new Logger(BrandsService.name);
 
   // ------------------------------------------------------------------ marcas
 
@@ -58,10 +63,24 @@ export class BrandsService {
       throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Guia visual grande demais.' });
     }
     const { visual_style, ...rest } = dto;
+    // Seleção do Meu Funil (P20′): mudar o segmento, o interruptor ou o ramo põe a marca na frente da fila da reconciliação (no MESMO update).
+    const touchesSelection = dto.segment !== undefined || dto.style_library_enabled !== undefined || dto.style_library_segment !== undefined;
     const brand = await this.prisma.brands.update({
       where: { id: brandId },
-      data: { ...rest, ...(visual_style !== undefined ? { visual_style: visual_style as Prisma.InputJsonObject } : {}) },
+      data: {
+        ...rest,
+        ...(touchesSelection ? { style_library_checked_at: null } : {}),
+        ...(visual_style !== undefined ? { visual_style: visual_style as Prisma.InputJsonObject } : {}),
+      },
     });
+    // Em segundo plano: o PATCH nunca espera nem falha por causa da Seleção (erro vai para o log).
+    if (touchesSelection) {
+      try {
+        this.styleRefs.reconcileSoon(workspaceId, brandId);
+      } catch (e) {
+        this.logger.warn(`Seleção da marca ${brandId}: ${(e as Error).message}`);
+      }
+    }
     // O "Salvar guia visual" (só `visual_style`) não gravava atividade no protótipo.
     // (a instância do DTO traz as chaves não enviadas como `undefined`: conta só o que veio)
     if (Object.values(rest).some((v) => v !== undefined)) await this.activity.log(workspaceId, userId, 'brand.updated', 'brand', { brand_id: brandId });

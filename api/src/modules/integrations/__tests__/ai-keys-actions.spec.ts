@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { WorkspaceAccessService } from '../../access/access.service';
 import { AiKeysService, aiKeySlot } from '../../ai/ai-keys.service';
 import { ADMIN, MARKETING, OWNER, STRANGER, VIEWER, WS_A, WS_B, memMembers, status } from '../../media/__tests__/mem';
@@ -19,7 +20,7 @@ const GOOD = 'sk-test-0123456789abcdefghij-WXYZ';
 const NO_QUOTA = '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}';
 const MODELS = { AI_BYO_OPENAI_TEXT_MODEL: 'gpt-4o-mini', AI_BYO_GEMINI_TEXT_MODEL: 'gemini-flash-latest' };
 
-function setup(opts: { inherit?: Record<string, string>; providerStatus?: number; providerBody?: string; env?: Record<string, unknown> } = {}) {
+function setup(opts: { inherit?: Record<string, string>; providerStatus?: number; providerBody?: string; env?: Record<string, unknown>; markDue?: (ws: string) => Promise<void> } = {}) {
   const store = new MemStore();
   const vault = new VaultService(store, { CREDENTIALS_ENCRYPTION_KEY: 'k'.repeat(40), NODE_ENV: 'test' });
   const calls: { url: string; headers: Record<string, string>; method?: string; body: any }[] = [];
@@ -37,8 +38,10 @@ function setup(opts: { inherit?: Record<string, string>; providerStatus?: number
     noteTest: async (owner: string, v: string, key: string, r: any) => void alerts.push(`teste:${owner}:${v}:${key === GOOD ? 'chave' : '?'}:${r.ok ? 'ok' : r.kind ?? 'sem-kind'}`),
     clear: async (owner: string, v: string) => void alerts.push(`limpa:${owner}:${v}`),
   } as any;
-  const svc = new AiKeysActionsService(new WorkspaceAccessService({ workspace_members: memMembers } as any), keys, alertSvc);
-  return { svc, store, calls, keys, alerts };
+  // Seleção do Meu Funil (P37): só registra o que o serviço pediu (o `markSelectionDue` tem teste próprio).
+  const styleRefs = { markSelectionDue: jest.fn(opts.markDue ?? (async () => undefined)) };
+  const svc = new AiKeysActionsService(new WorkspaceAccessService({ workspace_members: memMembers } as any), keys, alertSvc, styleRefs as any);
+  return { svc, store, calls, keys, alerts, styleRefs };
 }
 
 describe('AiKeysActionsService — autorização', () => {
@@ -176,5 +179,30 @@ describe('AiKeysService.baseUrl — provedor falso só fora de produção', () =
     // lista de permissão: NODE_ENV ausente/desconhecido também ignora o override
     expect(setup({ env: { NODE_ENV: undefined, AI_OPENAI_BASE_URL: 'http://x/v1' } }).keys.baseUrl('openai')).toBe('https://api.openai.com/v1');
     expect(setup({ env: { NODE_ENV: 'staging', AI_GEMINI_BASE_URL: 'http://x/v1beta' } }).keys.baseUrl('gemini')).toBe('https://generativelanguage.googleapis.com/v1beta');
+  });
+});
+
+describe('AiKeysActionsService — chave nova põe a Seleção na frente da fila (P37)', () => {
+  it('gravar a chave chama markSelectionDue da empresa; recusa do provedor e viewer não chamam', async () => {
+    const { svc, styleRefs } = setup();
+    expect(await svc.save(OWNER, WS_A, 'openai', GOOD)).toEqual({ ok: true, error: null });
+    expect(styleRefs.markSelectionDue).toHaveBeenCalledTimes(1);
+    expect(styleRefs.markSelectionDue).toHaveBeenCalledWith(WS_A);
+    expect(await svc.save(OWNER, WS_A, 'openai', 'sk-ruim-0123456789abcdefghij')).toMatchObject({ ok: false });
+    expect(await status(svc.save(VIEWER, WS_A, 'openai', GOOD))).toBe(`403:${ERR_NOT_MANAGER}`);
+    expect(styleRefs.markSelectionDue).toHaveBeenCalledTimes(1);
+  });
+
+  it('erro no markSelectionDue só vai para o log: a resposta continua { ok: true } e a chave fica gravada', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { svc, store } = setup({ markDue: async () => { throw new Error('banco caiu'); } });
+      expect(await svc.save(OWNER, WS_A, 'openai', GOOD)).toEqual({ ok: true, error: null });
+      expect(store.rows.get(`*|${aiKeySlot('openai', WS_A)}`)).toBeDefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain('banco caiu');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

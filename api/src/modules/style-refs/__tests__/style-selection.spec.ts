@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import { todaySp } from '../../../common/time/dates';
-import { SELECTION_OPTIONS } from '../selection-catalog';
+import { parsePinterestLink } from '../pinterest';
+import { SELECTION_CATALOG, SELECTION_OPTIONS } from '../selection-catalog';
+import { RSS } from './fixtures';
 import { BRAND, OWNER, setup, status, VIEWER, WS } from './style-world';
 
 const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -222,5 +224,355 @@ describe('Seleção do Meu Funil (por empresa)', () => {
       expect(await status(svc.library('99999999-9999-4999-8999-999999999999', WS, BRAND))).toMatch(/^403:/);
       expect(await status(svc.library(OWNER, WS, '77777777-7777-4777-8777-777777777777'))).toBe('404:Marca não encontrada.');
     });
+  });
+});
+
+// ── Task 18a: a Seleção se ajusta sozinha em cada marca ─────────────────────────────────────────────────────────────────────────────
+const KEY = { env: ON, aiKey: 'sk-teste' };
+const rssOf = (url: string) => parsePinterestLink(url)!.kind === 'board' ? (parsePinterestLink(url) as { rssUrl: string }).rssUrl : '';
+const ACAI = SELECTION_CATALOG.acai_sorvete!;
+const BAR = SELECTION_CATALOG.bebida_bar!;
+const hours = (h: number) => new Date(Date.now() - h * 3600_000);
+
+/** Pasta da Seleção (ou própria) na marca, com `n` referências saídas dela (com arquivo guardado). */
+async function folder(w: Awaited<ReturnType<typeof world>>, url: string, origin: 'own' | 'selection', n = 0, over: Record<string, unknown> = {}) {
+  const src = await w.t.style_ref_sources.create({ data: { workspace_id: WS, brand_id: BRAND, url, rss_url: rssOf(url), origin, created_by: origin === 'own' ? OWNER : null, ...over } });
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const path = `${WS}/${BRAND}/${src.id}-${i}.jpg`;
+    w.files.set(`style-refs/${path}`, new Uint8Array([1]));
+    ids.push((await w.t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, source_id: src.id, status: 'ready', origin, storage_path: path, source: 'pinterest', style_notes: note('acai_sorvete', `da pasta ${i}`) } })).id);
+  }
+  return { src, ids };
+}
+
+describe('Seleção — reconciliação (reconcileSelection)', () => {
+  it('ramo resolvido + chave: cria as pastas do catálogo do ramo com origin=selection e grava o checked_at', async () => {
+    const w = await world(KEY, 0, 0);
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 2, removed: 0 });
+    const rows = w.t.style_ref_sources.rows;
+    expect(rows.map((r) => r.url).sort()).toEqual([...ACAI].sort());
+    for (const r of rows) expect(r).toMatchObject({ workspace_id: WS, brand_id: BRAND, origin: 'selection', created_by: null, last_synced_at: null, rss_url: rssOf(r.url) });
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeInstanceOf(Date);
+    // idempotente
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 0, removed: 0 });
+    expect(w.t.style_ref_sources.rows).toHaveLength(2);
+  });
+
+  it('sem chave de IA não cria nada e consulta o cofre nas duas chaves; com tudo já criado, nem consulta o cofre', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 0, removed: 0 });
+    expect(w.t.style_ref_sources.rows).toEqual([]);
+    expect(w.keys.get).toHaveBeenCalledWith(WS, 'openai');
+    expect(w.keys.get).toHaveBeenCalledWith(WS, 'gemini');
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeInstanceOf(Date);
+    const full = await world({ env: ON }, 0, 0);
+    for (const u of ACAI) await folder(full, u, 'selection');
+    await full.svc.reconcileSelection(WS, BRAND);
+    expect(full.keys.get).not.toHaveBeenCalled();
+  });
+
+  it('chave só do Gemini também vale', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    w.keys.get.mockImplementation(async (_w: string, v: string) => (v === 'gemini' ? 'g-x' : null));
+    expect((await w.svc.reconcileSelection(WS, BRAND)).created).toBe(2);
+  });
+
+  it.each([
+    ['interruptor da marca desligado', { style_library_enabled: false }],
+    ['"Nenhum desses"', { style_library_segment: 'none' }],
+  ])('%s: saem as pastas da Seleção e as referências delas (linhas e arquivos), sem precisar de chave', async (_n, patch) => {
+    const w = await world({ env: ON }, 1, 0);
+    const a = await folder(w, ACAI[0]!, 'selection', 2);
+    await folder(w, ACAI[1]!, 'selection', 1);
+    await w.t.brands.update({ where: { id: BRAND }, data: patch });
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 0, removed: 2 });
+    expect(w.t.style_ref_sources.rows).toEqual([]);
+    expect(w.t.style_references.rows.map((r) => r.origin)).toEqual(['own']);
+    expect([...w.files.keys()]).toEqual([]);
+    expect(a.ids.length).toBe(2);
+  });
+
+  it('trocar de ramo: saem as do ramo velho (com as referências) e entram as do novo', async () => {
+    const w = await world(KEY, 0, 0);
+    await w.svc.reconcileSelection(WS, BRAND);
+    const old = w.t.style_ref_sources.rows[0]!;
+    await w.t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, source_id: old.id, status: 'ready', origin: 'selection', style_notes: note('acai_sorvete', 'x') } });
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'bebida_bar' } });
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 3, removed: 2 });
+    expect(w.t.style_ref_sources.rows.map((r) => r.url).sort()).toEqual([...BAR].sort());
+    expect(w.t.style_references.rows).toEqual([]);
+  });
+
+  it.each([
+    ['STYLE_LIBRARY_ENABLED desligada', { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: false }],
+    ['STYLE_REFS_PINTEREST_ENABLED desligada', { STYLE_REFS_PINTEREST_ENABLED: false, STYLE_LIBRARY_ENABLED: true }],
+  ])('%s: não faz nada (nem apaga, nem consulta)', async (_n, env) => {
+    const w = await world({ env, pinterest: env.STYLE_REFS_PINTEREST_ENABLED, aiKey: 'sk' }, 0, 0);
+    await folder(w, BAR[0]!, 'selection', 1); // sobra de quando estava ligada: fica quieta
+    const seen = spy(w.t);
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 0, removed: 0 });
+    expect(seen).toEqual([]);
+    expect(w.t.style_ref_sources.rows).toHaveLength(1);
+    expect(w.t.style_references.rows).toHaveLength(1);
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeNull();
+  });
+
+  it('marca que não existe na empresa: {0,0}', async () => {
+    const w = await world(KEY, 0, 0);
+    expect(await w.svc.reconcileSelection(OTHER_WS, BRAND)).toEqual({ created: 0, removed: 0 });
+    expect(await w.svc.reconcileSelection(WS, OTHER_BRAND)).toEqual({ created: 0, removed: 0 });
+    expect(w.t.style_ref_sources.rows).toEqual([]);
+  });
+
+  it('pasta própria com a mesma rss_url do catálogo: não cria a da Seleção e a própria fica intacta', async () => {
+    const w = await world(KEY, 0, 0);
+    const mine = await folder(w, ACAI[0]!, 'own', 2);
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 1, removed: 0 });
+    expect(w.t.style_ref_sources.rows.filter((r) => r.rss_url === rssOf(ACAI[0]!))).toEqual([expect.objectContaining({ id: mine.src.id, origin: 'own', created_by: OWNER })]);
+    expect(w.t.style_references.rows.filter((r) => r.source_id === mine.src.id)).toHaveLength(2);
+  });
+
+  it('violação do índice único ao criar (P2002) = a pasta já existe: segue, sem erro e sem contar', async () => {
+    const w = await world(KEY, 0, 0);
+    const orig = w.t.style_ref_sources.create.bind(w.t.style_ref_sources);
+    let first = true;
+    w.t.style_ref_sources.create = async (a: any) => {
+      if (first) { first = false; throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }); }
+      return orig(a);
+    };
+    expect(await w.svc.reconcileSelection(WS, BRAND)).toEqual({ created: 1, removed: 0 });
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeInstanceOf(Date);
+    // outro erro do banco não é engolido
+    w.t.style_ref_sources.create = async () => { throw new Error('banco caiu'); };
+    await w.t.style_ref_sources.deleteMany({});
+    await expect(w.svc.reconcileSelection(WS, BRAND)).rejects.toThrow('banco caiu');
+  });
+
+  it('duas reconciliações ao mesmo tempo da mesma marca rodam uma de cada vez (sem pasta duplicada)', async () => {
+    const w = await world(KEY, 0, 0);
+    const [a, b] = await Promise.all([w.svc.reconcileSelection(WS, BRAND), w.svc.reconcileSelection(WS, BRAND)]);
+    expect([a.created, b.created].sort()).toEqual([0, 2]);
+    expect(w.t.style_ref_sources.rows).toHaveLength(2);
+  });
+
+  it('depois de criar pastas, com autoProcess o chute sincroniza as novas pela fila e lê as pendentes', async () => {
+    const w = await world(KEY, 0, 0);
+    w.svc.autoProcess = true;
+    for (const u of ACAI) w.routes.set(rssOf(u), () => new Response(RSS, { status: 200 }));
+    w.routes.set('https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg', w.image);
+    w.routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', w.image);
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.svc.whenIdle();
+    expect(w.fetched.filter((u) => u.endsWith('.rss')).sort()).toEqual(ACAI.map(rssOf).sort());
+    expect(w.t.style_ref_sources.rows.every((s) => s.last_synced_at instanceof Date)).toBe(true);
+    expect(w.t.style_references.rows.length).toBeGreaterThan(0);
+    expect(w.t.style_references.rows.every((r) => r.origin === 'selection')).toBe(true);
+    expect(w.ai.json).toHaveBeenCalled(); // processPending leu as pendentes
+  });
+
+  it('sem nada criado, o chute não roda (nenhuma ida ao Pinterest)', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    w.svc.autoProcess = true;
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.svc.whenIdle();
+    expect(w.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('Seleção — gatilhos (reconcileSoon, reconcileDueBrands, markSelectionDue)', () => {
+  it('reconcileSoon devolve na hora (void) e a reconciliação roda pela fila', async () => {
+    const w = await world(KEY, 0, 0);
+    expect(w.svc.reconcileSoon(WS, BRAND)).toBeUndefined();
+    await w.svc.whenIdle();
+    expect(w.t.style_ref_sources.rows).toHaveLength(2);
+  });
+
+  it('reconcileSoon: erro vai para o logger.warn e nunca vira rejeição solta', async () => {
+    const w = await world(KEY, 0, 0);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    w.t.brands.findFirst = async () => { throw new Error('banco caiu'); };
+    try {
+      w.svc.reconcileSoon(WS, BRAND);
+      await w.svc.whenIdle();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain('banco caiu');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reconcileDueBrands: pega a marca com checked_at nulo, não repete antes de 6 h e pega de novo depois de 6 h', async () => {
+    const w = await world(KEY, 0, 0);
+    expect(await w.svc.reconcileDueBrands()).toBe(1);
+    expect(w.t.style_ref_sources.rows).toHaveLength(2);
+    expect(await w.svc.reconcileDueBrands()).toBe(0);
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_checked_at: hours(5) } });
+    expect(await w.svc.reconcileDueBrands()).toBe(0);
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_checked_at: hours(7) } });
+    expect(await w.svc.reconcileDueBrands()).toBe(1);
+  });
+
+  it('reconcileDueBrands: nulas primeiro, depois as mais antigas; respeita o limite e cada marca usa o workspace_id da própria linha', async () => {
+    const w = await world(KEY, 0, 0);
+    await w.t.brands.create({ data: { id: OTHER_BRAND, workspace_id: OTHER_WS, name: 'B', segment: 'Bar e boteco', style_library_checked_at: hours(10) } });
+    const third = await w.t.brands.create({ data: { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', workspace_id: WS, name: 'C', segment: 'Bar', style_library_checked_at: hours(20) } });
+    expect(await w.svc.reconcileDueBrands(1)).toBe(1);
+    expect(w.t.brands.rows.find((b) => b.id === BRAND)!.style_library_checked_at).toBeInstanceOf(Date); // a nula foi a 1ª
+    expect(w.t.brands.rows.find((b) => b.id === third.id)!.style_library_checked_at).toEqual(third.style_library_checked_at);
+    expect(await w.svc.reconcileDueBrands(10)).toBe(2);
+    // a marca da empresa B também foi reconciliada, com o workspace_id da própria linha (a chave falsa vale para todas)
+    expect(w.t.style_ref_sources.rows.filter((s) => s.workspace_id === OTHER_WS).length).toBeGreaterThan(0);
+    expect(w.t.style_ref_sources.rows.filter((s) => s.workspace_id === OTHER_WS).every((s) => s.brand_id === OTHER_BRAND)).toBe(true);
+  });
+
+  it('reconcileDueBrands sem Seleção: 0 e nada muda', async () => {
+    const w = await world({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: false }, aiKey: 'sk' }, 0, 0);
+    expect(await w.svc.reconcileDueBrands()).toBe(0);
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeNull();
+  });
+
+  it('markSelectionDue zera o checked_at das marcas da empresa e das que herdam dela, e não das outras', async () => {
+    const w = await world(KEY, 0, 0);
+    const INH = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const stamp = hours(1);
+    await w.t.workspaces.create({ data: { id: INH, ai_inherit_from: WS } });
+    await w.t.workspaces.create({ data: { id: OTHER_WS, ai_inherit_from: null } });
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_checked_at: stamp } });
+    await w.t.brands.create({ data: { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', workspace_id: INH, name: 'Filha', style_library_checked_at: stamp } });
+    await w.t.brands.create({ data: { id: OTHER_BRAND, workspace_id: OTHER_WS, name: 'Outra', style_library_checked_at: stamp } });
+    await w.svc.markSelectionDue(WS);
+    const by = (ws: string) => w.t.brands.rows.find((b) => b.workspace_id === ws)!.style_library_checked_at;
+    expect(by(WS)).toBeNull();
+    expect(by(INH)).toBeNull();
+    expect(by(OTHER_WS)).toEqual(stamp);
+  });
+});
+
+describe('Seleção — colisões e lista', () => {
+  it('removeSource numa pasta da Seleção: 400 SELECTION_SOURCE com a frase exata, e nada some', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src } = await folder(w, ACAI[0]!, 'selection', 1);
+    let err: any;
+    try { await w.svc.removeSource(OWNER, WS, BRAND, src.id); } catch (e) { err = e; }
+    expect(err.getStatus()).toBe(400);
+    expect(err.getResponse()).toEqual({
+      code: 'SELECTION_SOURCE',
+      message: 'Esta pasta é da Seleção do Meu Funil e não dá para parar por aqui. Para tirar, desligue a seleção ou troque o ramo na marca, aba Guia visual.',
+    });
+    expect(w.t.style_ref_sources.rows).toHaveLength(1);
+    expect(w.t.style_references.rows).toHaveLength(1);
+  });
+
+  it('removeSource numa pasta própria continua apagando a pasta e as referências dela (pela fila)', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src } = await folder(w, ACAI[0]!, 'own', 2);
+    expect(await w.svc.removeSource(OWNER, WS, BRAND, src.id)).toEqual({ ok: true, removed: 2 });
+    expect(w.t.style_ref_sources.rows).toEqual([]);
+    expect([...w.files.keys()]).toEqual([]);
+  });
+
+  it('colar o Pin que a Seleção trouxe: promoted, vira própria sem pasta e sobrevive à reconciliação que tira a pasta', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src, ids } = await folder(w, ACAI[0]!, 'selection', 2);
+    await w.t.style_references.update({ where: { id: ids[0] }, data: { pin_id: '123456' } });
+    const out: any = await w.svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/123456/');
+    expect(out).toMatchObject({ kind: 'pin', added: 0, promoted: true });
+    expect(out.refs).toHaveLength(1);
+    expect(out.refs[0]).toMatchObject({ id: ids[0], origin: 'own', from_source: false });
+    expect(w.t.style_references.rows.find((r) => r.id === ids[0])).toMatchObject({ origin: 'own', source_id: null });
+    expect(w.fetch).not.toHaveBeenCalled(); // não baixou nada
+    // a Seleção sai da marca: a promovida fica, a outra vai embora
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
+    await w.svc.reconcileSelection(WS, BRAND);
+    expect(w.t.style_ref_sources.rows.find((s) => s.id === src.id)).toBeUndefined();
+    expect(w.t.style_references.rows.map((r) => r.id)).toEqual([ids[0]]);
+    expect([...w.files.keys()]).toEqual([`style-refs/${WS}/${BRAND}/${src.id}-0.jpg`]);
+  });
+
+  it('colar um Pin próprio repetido continua dando "Esse Pin já está nas referências." (sem promoted)', async () => {
+    const w = await world(KEY, 0, 0);
+    await w.t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, status: 'ready', origin: 'own', pin_id: '777', source: 'pinterest' } });
+    expect(await status(w.svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/777/'))).toBe('400:Esse Pin já está nas referências.');
+  });
+
+  function feed(w: Awaited<ReturnType<typeof world>>, url: string) {
+    w.routes.set(rssOf(url), () => new Response(RSS, { status: 200 }));
+    w.routes.set('https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg', w.image);
+    w.routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', w.image);
+  }
+
+  it('colar a pasta da Seleção: promoted, a pasta e as referências dela viram próprias e a resposta traz kind e added', async () => {
+    const w = await world(KEY, 0, 0);
+    const { src, ids } = await folder(w, ACAI[0]!, 'selection', 2);
+    feed(w, ACAI[0]!);
+    const out: any = await w.svc.addPinterest(OWNER, WS, BRAND, ACAI[0]!);
+    expect(out).toMatchObject({ kind: 'board', promoted: true });
+    expect(out.added).toBe(2);
+    expect(w.t.style_ref_sources.rows).toHaveLength(1);
+    expect(w.t.style_ref_sources.rows[0]).toMatchObject({ id: src.id, origin: 'own', created_by: OWNER });
+    expect(w.t.style_references.rows.filter((r) => ids.includes(r.id)).map((r) => r.origin)).toEqual(['own', 'own']);
+    // as novas que o sync trouxe também são próprias
+    expect(w.t.style_references.rows.every((r) => r.origin === 'own')).toBe(true);
+    // e a reconciliação não mexe mais nela (nem a recria como da Seleção)
+    await w.svc.reconcileSelection(WS, BRAND);
+    expect(w.t.style_ref_sources.rows.filter((s) => s.rss_url === rssOf(ACAI[0]!))).toEqual([expect.objectContaining({ origin: 'own' })]);
+  });
+
+  it('colar a pasta da Seleção com 5 pastas próprias: 400 de hoje e a pasta continua da Seleção', async () => {
+    const w = await world(KEY, 0, 0);
+    for (let i = 0; i < 5; i++) await folder(w, `https://www.pinterest.com/user${i}/pasta${i}/`, 'own');
+    const sel = await folder(w, ACAI[0]!, 'selection');
+    expect(await status(w.svc.addPinterest(OWNER, WS, BRAND, ACAI[0]!))).toBe('400:Você já acompanha 5 pastas nesta marca. Pare uma para pôr outra.');
+    expect(w.t.style_ref_sources.rows.find((s) => s.id === sel.src.id)!.origin).toBe('selection');
+  });
+
+  it('o teto de 5 pastas conta só as próprias: com 3 da Seleção a 5ª própria entra e a 6ª não', async () => {
+    const w = await world(KEY, 0, 0);
+    for (const u of [...BAR]) await folder(w, u, 'selection');
+    for (let i = 0; i < 4; i++) await folder(w, `https://www.pinterest.com/user${i}/pasta${i}/`, 'own');
+    w.routes.set(rssOf('https://www.pinterest.com/novo5/pasta5/'), () => new Response(RSS, { status: 200 }));
+    w.routes.set(rssOf('https://www.pinterest.com/novo6/pasta6/'), () => new Response(RSS, { status: 200 }));
+    expect(await status(w.svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/novo5/pasta5/'))).toBe('ok');
+    expect(await status(w.svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/novo6/pasta6/'))).toBe('400:Você já acompanha 5 pastas nesta marca. Pare uma para pôr outra.');
+  });
+
+  it('list: origin nos itens, in_brand só das próprias e in_selection das da Seleção', async () => {
+    const w = await world(KEY, 2, 0);
+    await folder(w, ACAI[0]!, 'selection', 3);
+    await folder(w, 'https://www.pinterest.com/meu/minha/', 'own', 1);
+    const l = await w.svc.list(OWNER, WS, BRAND);
+    expect(l.limits).toMatchObject({ in_brand: 3, in_selection: 3, brand: 30 });
+    expect(l.refs.filter((r) => r.origin === 'selection')).toHaveLength(3);
+    expect(l.refs.filter((r) => r.origin === 'own')).toHaveLength(3);
+    expect(l.sources.map((s) => s.origin).sort()).toEqual(['own', 'selection']);
+    expect(l.sources.find((s) => s.origin === 'selection')!.refs_count).toBe(3);
+  });
+
+  it('list com a Seleção desligada: esconde pastas e referências da Seleção, in_selection = 0, in_brand só próprias', async () => {
+    const w = await world({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: false } }, 2, 0);
+    await folder(w, ACAI[0]!, 'selection', 3);
+    await folder(w, 'https://www.pinterest.com/meu/minha/', 'own', 1);
+    const l = await w.svc.list(OWNER, WS, BRAND);
+    expect(l.refs.every((r) => r.origin === 'own')).toBe(true);
+    expect(l.refs).toHaveLength(3);
+    expect(l.sources.map((s) => s.origin)).toEqual(['own']);
+    expect(l.limits).toMatchObject({ in_brand: 3, in_selection: 0 });
+  });
+
+  it('isolamento: reconcileSelection e list só consultam com o workspace_id da empresa (as outras empresas ficam intactas)', async () => {
+    const w = await world(KEY, 1, 1);
+    await w.t.brands.create({ data: { id: OTHER_BRAND, workspace_id: OTHER_WS, name: 'B', segment: 'Açaiteria' } });
+    await w.t.style_ref_sources.create({ data: { workspace_id: OTHER_WS, brand_id: OTHER_BRAND, url: BAR[0], rss_url: rssOf(BAR[0]!), origin: 'selection' } });
+    const theirs = await refs(w.t, OTHER_WS, OTHER_BRAND, 'selection', 2);
+    await folder(w, BAR[1]!, 'selection', 1); // sobra do ramo velho: sai
+    const seen = spy(w.t);
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.svc.list(OWNER, WS, BRAND);
+    expect(seen.length).toBeGreaterThan(8);
+    for (const s of seen) expect([s.table, s.fn, s.ws]).toEqual([s.table, s.fn, WS]);
+    expect(w.t.style_ref_sources.rows.filter((s) => s.workspace_id === OTHER_WS)).toHaveLength(1);
+    expect(w.t.style_references.rows.filter((r) => theirs.includes(r.id))).toHaveLength(2);
+    expect(w.t.brands.rows.find((b) => b.id === OTHER_BRAND)!.style_library_checked_at).toBeNull();
   });
 });

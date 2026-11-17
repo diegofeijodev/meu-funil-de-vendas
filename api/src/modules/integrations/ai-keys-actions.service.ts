@@ -1,10 +1,11 @@
-import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
 import { AiKeysService } from '../ai/ai-keys.service';
 import { AiVendor } from '../ai/ai.types';
 import { WorkspaceAccessService } from '../access/access.service';
+import { StyleRefsService } from '../style-refs/style-refs.service';
 
 export const ERR_NOT_MEMBER = 'Você não tem acesso a esta área de trabalho.';
 export const ERR_NOT_MANAGER = 'Só o dono ou um administrador altera as chaves de IA.';
@@ -23,8 +24,12 @@ export class AiKeysActionsService {
     private readonly access: WorkspaceAccessService,
     private readonly keys: AiKeysService,
     private readonly alerts: AiCreditAlertsService,
+    // Global (`StyleRefsModule`): chave nova põe a Seleção das marcas na frente da fila (P37).
+    private readonly styleRefs: StyleRefsService,
     @Optional() @Inject(ENV) private readonly env?: Pick<Env, 'AI_GATEWAY_URL' | 'AI_GATEWAY_API_KEY'>,
   ) {}
+
+  private readonly logger = new Logger(AiKeysActionsService.name);
 
   /** `requireMember` do protótipo (mensagens próprias): membro lê; `manage` exige owner|admin. */
   private async requireMember(userId: string, workspaceId: string, manage = false): Promise<void> {
@@ -54,6 +59,12 @@ export class AiKeysActionsService {
     if (!t.ok) return { ok: false, error: t.error || 'Chave recusada.' };
     await this.keys.set(workspaceId, vendor, apiKey);
     await this.alerts.clear(workspaceId, vendor);
+    // Só banco; erro aqui não muda a resposta da gravação da chave.
+    try {
+      await this.styleRefs.markSelectionDue(workspaceId);
+    } catch (e) {
+      this.logger.warn(`Seleção das marcas da empresa ${workspaceId}: ${(e as Error).message}`);
+    }
     return { ok: true, error: null as string | null };
   }
 
