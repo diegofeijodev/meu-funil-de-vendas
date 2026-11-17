@@ -27,10 +27,10 @@ const NOTES = { paleta: ['laranja', 'creme'], composicao: 'prato ao centro', luz
 
 async function setup(opts: { pinterest?: boolean; env?: Record<string, unknown> } = {}) {
   const t = {
-    brands: new FakeTable(() => ({ segment: null, style_library_enabled: true, style_library_segment: null })),
+    brands: new FakeTable(() => ({ segment: null, style_library_enabled: true, style_library_segment: null, style_library_checked_at: null, style_selection_day: null, style_selection_reads: 0 })),
     campaigns: new FakeTable(),
-    style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image' })),
-    style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [] })),
+    style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image', origin: 'own' })),
+    style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [], origin: 'own' })),
     workspace_members: {
       findUnique: async ({ where }: any) => {
         const k = where.workspace_id_user_id;
@@ -233,6 +233,22 @@ describe('StyleRefsService — Pinterest', () => {
     const camp = await svc.list(VIEWER, WS, BRAND, CAMP);
     expect(camp.refs).toHaveLength(38);
     expect(camp.sources[0]!.refs_count).toBe(30);
+  });
+
+  it('origem: envio e Pin colado gravam own; pasta da Seleção faz o sync gravar as referências com selection', async () => {
+    const { t, svc, routes, image } = await setup();
+    routes.set(`https://www.pinterest.com/oembed.json?url=${encodeURIComponent('https://www.pinterest.com/pin/424605071146230977/')}`, () => Response.json({ thumbnail_url: 'https://i.pinimg.com/236x/9a/95/x.jpg' }));
+    routes.set('https://i.pinimg.com/736x/9a/95/x.jpg', image);
+    await svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/424605071146230977/');
+    expect(t.style_references.rows[0]).toMatchObject({ source: 'pinterest', origin: 'own' });
+    routes.set('https://www.pinterest.com/foodnetwork/5-star-recipes.rss', () => new Response(RSS, { status: 200 }));
+    routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', image);
+    routes.set('https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg', image);
+    await t.style_ref_sources.create({ data: { workspace_id: WS, brand_id: BRAND, url: 'https://www.pinterest.com/foodnetwork/5-star-recipes/', rss_url: 'https://www.pinterest.com/foodnetwork/5-star-recipes.rss', origin: 'selection' } });
+    expect(await svc.refreshDueSources(5)).toBe(1);
+    const fromFolder = t.style_references.rows.filter((r) => r.source_id);
+    expect(fromFolder.length).toBeGreaterThan(0);
+    expect(fromFolder.every((r) => r.origin === 'selection')).toBe(true);
   });
 
   it('RSS fora do ar: a fonte guarda o erro e as referências antigas continuam; Pinterest desligado → 404', async () => {

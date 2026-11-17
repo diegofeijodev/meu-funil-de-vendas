@@ -520,7 +520,7 @@ export class StyleRefsService {
   private async store(
     ws: string,
     brandId: string,
-    o: { campaignId: string | null; source: 'upload' | 'pinterest'; sourceUrl?: string; pinId?: string; title?: string | null; sourceId?: string; createdBy?: string | null },
+    o: { campaignId: string | null; source: 'upload' | 'pinterest'; sourceUrl?: string; pinId?: string; title?: string | null; sourceId?: string; createdBy?: string | null; origin?: 'own' | 'selection' },
     jpeg: Uint8Array,
   ): Promise<RefRow> {
     const key = `${ws}/${brandId}/${randomUUID()}.jpg`;
@@ -530,7 +530,7 @@ export class StyleRefsService {
         data: {
           workspace_id: ws, brand_id: brandId, campaign_id: o.campaignId, source_id: o.sourceId ?? null, source: o.source,
           source_url: o.sourceUrl ?? null, pin_id: o.pinId ?? null, title: o.title ?? null, kind: 'image', storage_path: key,
-          status: 'processing', created_by: o.createdBy ?? null,
+          status: 'processing', created_by: o.createdBy ?? null, origin: o.origin ?? 'own',
         },
       })) as RefRow;
     } catch (e) {
@@ -634,7 +634,7 @@ export class StyleRefsService {
   }
 
   /** Lê o RSS da fonte e adiciona até 8 Pins novos. Devolve quantos entraram, ou null se o Pinterest não respondeu. */
-  private async sync(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; created_by?: string | null; seen_pin_ids?: string[] }): Promise<number | null> {
+  private async sync(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; created_by?: string | null; seen_pin_ids?: string[]; origin?: string }): Promise<number | null> {
     let xml: string;
     try {
       xml = Buffer.from((await this.get(source.rss_url, isPinterestHost, MAX_PAGE_BYTES)).bytes).toString('utf8');
@@ -657,7 +657,7 @@ export class StyleRefsService {
     for (const p of fresh.slice(0, room)) {
       try {
         const jpeg = await shrink(this.images, await this.download(p.imageUrl));
-        await this.store(source.workspace_id, source.brand_id, { campaignId: null, source: 'pinterest', sourceUrl: p.link, pinId: p.pinId, title: p.title || null, sourceId: source.id, createdBy: source.created_by ?? null }, jpeg);
+        await this.store(source.workspace_id, source.brand_id, { campaignId: null, source: 'pinterest', sourceUrl: p.link, pinId: p.pinId, title: p.title || null, sourceId: source.id, createdBy: source.created_by ?? null, origin: source.origin === 'selection' ? 'selection' : 'own' }, jpeg);
         added++;
       } catch (e) {
         this.logger.warn(`Pin ${p.pinId}: ${(e as Error).message}`);
