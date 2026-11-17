@@ -1153,12 +1153,12 @@ da P12. As Tasks 10–12 já construídas (empresa central) são **desfeitas** n
     (sem rede). Até 4 por pasta em cada `sync`.
   - **Útil** = a marca tem menos de 4 próprias (prontas **ou** `processing`) sem campanha. **Sem gasto com a chave em apuros:** não traz Pin
     novo se `AiCreditAlertsService.status(ws)` não é nulo (sem saldo ou limite do dia) ou se alguma referência da Seleção da marca está
-    `processing`.
+    `processing` **esperando nova tentativa** (`attempts > 0`; leitura nova não freia — Ruling R11 de 17/11, senão a marca nova enchia 1 pasta por dia).
   - **Cota por dia de Brasília:** colunas `brands.style_selection_day date` e `brands.style_selection_reads int NOT NULL DEFAULT 0`. Dia ≠
     `todaySp()` → zera. Máximo 12 novas por marca por dia, gravadas por `updateMany` condicionado aos valores lidos (sem `increment`). Ligar,
     desligar e trocar de ramo não zeram a cota.
   - **Falha da leitura:** `failed` transitória esgotada (`attempts = 3`) da Seleção **volta para a fila** (`processing`, `attempts 0`,
-    `claimed_at null`, `error null`) no `sync` da pasta quando não há aviso de crédito nem referência da Seleção em `processing`. Só a
+    `claimed_at null`, `error null`) no `sync` da pasta quando não há aviso de crédito nem referência da Seleção esperando nova tentativa. Só a
     `failed` definitiva (`attempts < 3`) sai, e o Pin fica em `seen_pin_ids`.
   - Ao pôr uma própria, `makeRoom` tira primeiro as da Seleção (mais antigas), depois as próprias vindas de pasta, como hoje. `SOURCE_CAP` (5)
     conta só as próprias.
