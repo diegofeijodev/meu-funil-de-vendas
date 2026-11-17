@@ -58,7 +58,7 @@ const seedTemplate = () => {
   const row = settingsRow();
   if (row) Object.assign(row, tpl);
   else v.t['vacancy_story_settings']!.rows.push({
-    ...{ enabled: false, enabled_at: null, enabled_by: null, cities: [], daily_cap: 10, window_start: '08:00', window_end: '21:00', min_lead_minutes: 120, vendor: 'openai', auto_publish: false, last_poll_at: null, last_poll_ok_at: null, last_poll_error: null, recent_cities: [], preview: {}, ai_error: null, ai_error_at: null },
+    ...{ enabled: false, enabled_at: null, enabled_by: null, cities: [], daily_cap: 10, window_start: '08:00', window_end: '21:00', min_lead_minutes: 120, vendor: 'openai', auto_publish: false, last_poll_at: null, last_poll_ok_at: null, last_poll_error: null, recent_cities: [], preview: {}, ai_error: null, ai_error_at: null, style_refs_enabled: false },
     ...tpl, workspace_id: WS_A, created_at: new Date(), updated_at: new Date(),
   });
   return asset;
@@ -168,6 +168,56 @@ describe('ajustes', () => {
     const view = await v.settings.update(MARKETING, WS_A, { daily_cap: 15, window_start: '09:00', window_end: '20:30', min_lead_minutes: 240, vendor: 'gemini', cities: [' Campinas ', 'campinas', '', 'Jundiaí'] });
     expect(view).toMatchObject({ daily_cap: 15, window_start: '09:00', window_end: '20:30', min_lead_minutes: 240, vendor: 'gemini', cities: ['Campinas', 'Jundiaí'], today: { cap: 15 } });
     expect(settingsRow()).toMatchObject({ daily_cap: 15, vendor: 'gemini', cities: ['Campinas', 'Jundiaí'] });
+  });
+});
+
+describe('estilo das referências nas vagas (Fatia 5)', () => {
+  const dtoErrors = async (body: Record<string, unknown>) => (await validate(plainToInstance(UpdateVacancySettingsDto, body), { whitelist: true, forbidNonWhitelisted: true })).map((e) => e.property);
+
+  it('PATCH style_refs_enabled grava; o padrão é desligado', async () => {
+    expect((await v.settings.view(WS_A)).style_refs_enabled).toBe(false);
+    expect(await dtoErrors({ style_refs_enabled: 'sim' })).toEqual(['style_refs_enabled']);
+    expect(await dtoErrors({ style_refs_enabled: true })).toEqual([]);
+    const on = await v.settings.update(MARKETING, WS_A, { style_refs_enabled: true });
+    expect(on.style_refs_enabled).toBe(true);
+    expect(settingsRow()).toMatchObject({ style_refs_enabled: true });
+    // campo ausente não muda
+    expect((await v.settings.update(MARKETING, WS_A, { daily_cap: 12 })).style_refs_enabled).toBe(true);
+    expect((await v.settings.update(MARKETING, WS_A, { style_refs_enabled: false })).style_refs_enabled).toBe(false);
+    expect(await status(v.settings.update(VIEWER, WS_A, { style_refs_enabled: true }))).toBe(FORBIDDEN);
+  });
+
+  it('view: style_brand com o nome e style_refs_in_use pela escolha', async () => {
+    const notesInUse = jest.fn(async (..._a: unknown[]) => 3);
+    v.cleanup();
+    v = vacancyWorld({ styleRefs: { notesInUse } });
+    const asset = seedTemplate();
+    const view = await v.settings.view(WS_A);
+    expect(view.style_brand).toEqual({ id: asset.brand_id, name: 'Freela Serviços' });
+    expect(view.style_refs_in_use).toBe(3);
+    expect(notesInUse).toHaveBeenCalledWith(WS_A, asset.brand_id);
+  });
+
+  it('marca de outra empresa não vale; erro da seleção vira 0', async () => {
+    v.cleanup();
+    v = vacancyWorld({ styleRefs: { notesInUse: async () => { throw new Error('banco fora'); } } });
+    seedTemplate();
+    const row = settingsRow() as Record<string, unknown>;
+    expect((await v.settings.view(WS_A)).style_refs_in_use).toBe(0);
+    row['brand_id'] = uuid();
+    const other = await v.settings.view(WS_A);
+    expect(other.style_brand).toBeNull();
+  });
+
+  it('sem marca → style_brand null e 0', async () => {
+    const view = await v.settings.view(WS_A);
+    expect(view.style_brand).toBeNull();
+    expect(view.style_refs_in_use).toBe(0);
+  });
+
+  it('sem StyleRefsService injetado → 0', async () => {
+    seedTemplate();
+    expect((await v.settings.view(WS_A)).style_refs_in_use).toBe(0);
   });
 });
 

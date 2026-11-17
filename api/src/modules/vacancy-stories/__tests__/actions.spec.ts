@@ -2,8 +2,9 @@ jest.setTimeout(60_000);
 
 import { igServices, seedPost, uuid } from '../../instagram/__tests__/harness';
 import { OWNER, STRANGER, VIEWER, WS_A, WS_B, status } from '../../media/__tests__/mem';
+import { RefsService } from '../../creative/refs.service';
 import { VacancyActionsService } from '../vacancy-actions.service';
-import { ArtAiError, type ArtResult, type VacancyGeneratorService } from '../vacancy-generator.service';
+import { ArtAiError, VacancyGeneratorService, type ArtResult } from '../vacancy-generator.service';
 import { WAIT_CAP } from '../vacancy-reasons';
 import { VacancyPreviewService } from '../vacancy-preview.service';
 import { VacancySchedulerService } from '../vacancy-scheduler.service';
@@ -36,17 +37,23 @@ const art = (over: Partial<ArtResult> = {}): ArtResult => ({
   usedFallback: false,
   vendorLabel: 'ChatGPT (OpenAI)',
   origin: { source: 'chatgpt', provider: 'chatgpt' },
+  styleRefs: null,
   ...over,
 });
 
 let w: VacancyWorld;
 afterEach(() => w?.cleanup());
 
-async function setup(o: { settings?: Record<string, unknown>; ig?: boolean; list?: string } = {}) {
+async function setup(o: { settings?: Record<string, unknown>; ig?: boolean; list?: string; styleRefs?: unknown } = {}) {
   w = vacancyWorld({ list: o.list });
   const s = igServices(w, { guards: w.guard });
   const makeArt = jest.fn(async (..._a: Parameters<VacancyGeneratorService['makeArt']>): Promise<ArtResult> => art());
-  const generator = { hooks: {}, makeArt } as unknown as VacancyGeneratorService;
+  // Com `styleRefs`, a prévia usa o gerador de verdade (o falso de `makeArt` não olharia o interruptor).
+  const refs = new RefsService(w.prisma, w.files, s.assets as never, w.images, o.styleRefs as never);
+  const generator = (o.styleRefs
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? new VacancyGeneratorService(w.prisma, w.ai as any, w.images, w.files, s.assets as never, refs, w.store, w.feedClient, w.gate)
+    : { hooks: {}, makeArt }) as unknown as VacancyGeneratorService;
   const sched = new VacancySchedulerService(w.prisma, w.store, s.publishing, w.guard, generator, w.gate);
   const clock = { t: NOW.getTime() };
   sched.now = () => clock.t;
@@ -339,6 +346,25 @@ describe('VacancyActionsService — lista, detalhe e isolamento', () => {
 describe('VacancyPreviewService', () => {
   /** Estado da prévia gravado nos ajustes. */
   const previewOf = () => w.t['vacancy_story_settings']!.rows.find((r) => r.workspace_id === WS_A)!.preview;
+
+  it('a prévia segue o interruptor da empresa', async () => {
+    const styleRefs = { loadPhotoStyle: jest.fn(async (..._a: unknown[]) => ({ style: { paleta: ['laranja queimado'], luz: [] as string[], clima: [] as string[] }, used: { own: ['r1'], library: [] as string[] } })) };
+    const t = await setup({ styleRefs, settings: { style_refs_enabled: true } });
+    t.settingsRow().brand_id = w.brand().id; // sem marca não há referências a consultar
+    await w.programArt({ reads: [{ textos: [], funcao: null, estabelecimento: null, data: null, inicio: null, fim: null, valor: null, cidade: null }] });
+    await t.preview.start(OWNER, WS_A);
+    await t.preview.wait(WS_A);
+    expect(styleRefs.loadPhotoStyle).toHaveBeenCalled();
+    expect((w.ai.image.mock.calls[0]![1] as { prompt: string }).prompt).toContain('Cores da cena');
+
+    t.settingsRow().style_refs_enabled = false;
+    styleRefs.loadPhotoStyle.mockClear();
+    w.ai.image.mockClear();
+    await t.preview.start(OWNER, WS_A);
+    await t.preview.wait(WS_A);
+    expect(styleRefs.loadPhotoStyle).not.toHaveBeenCalled();
+    expect((w.ai.image.mock.calls[0]![1] as { prompt: string }).prompt).not.toContain('Cores da cena');
+  });
 
   it('sem vaga na vitrine usa o exemplo (sábado 18h–23h), mostra as etapas (reserva = "fallback", tentativa 3), vai para a Biblioteca e não cria post', async () => {
     const t = await setup({ ig: false });

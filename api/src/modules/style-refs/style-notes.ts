@@ -21,6 +21,8 @@ export type StyleNotes = {
 /** Quais referências entraram no bloco de uma peça (ids de `style_references`). */
 export type StyleRefsUsed = { own: string[]; library: string[] };
 export type StylePick = { text: string; used: StyleRefsUsed };
+/** Itens de estilo para a foto das vagas (Fatia 5): só paleta, luz e clima, ainda sem o filtro da P14. */
+export type PhotoStyle = { paleta: string[]; luz: string[]; clima: string[] };
 /** Registro gravado na peça (`creatives.style_refs` / `ig_posts.style_refs`). */
 export type StyleRefsRecord = StyleRefsUsed & { brand_id: string | null };
 

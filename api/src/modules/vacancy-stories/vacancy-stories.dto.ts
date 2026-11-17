@@ -13,6 +13,7 @@ export class UpdateVacancySettingsDto {
   @IsOptional() @IsString() @Matches(HHMM, { message: HHMM_MSG }) window_end?: string;
   @IsOptional() @IsIn(LEAD_OPTIONS) min_lead_minutes?: (typeof LEAD_OPTIONS)[number];
   @IsOptional() @IsIn(VENDORS) vendor?: (typeof VENDORS)[number];
+  @IsOptional() @IsBoolean() style_refs_enabled?: boolean;
 }
 
 /** `POST …/vacancy-stories/auto-publish`. */

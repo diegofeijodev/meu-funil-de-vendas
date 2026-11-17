@@ -100,6 +100,26 @@ describe('StyleRefsService — envio e leitura do estilo', () => {
     expect(pick.used).toEqual({ own: [t.style_references.rows[0].id], library: [] });
   });
 
+  it('loadPhotoStyle (vagas): nota completa dá paleta, luz e clima; reduzida só paleta e luz; sem repetição; notesInUse conta a escolha', async () => {
+    const { t, svc } = await setup();
+    expect(await svc.loadPhotoStyle(WS, BRAND, 'Vaga de Garçom')).toBeNull();
+    expect(await svc.loadPhotoStyle(WS, null, 'Vaga de Garçom')).toBeNull();
+    expect(await svc.notesInUse(WS, BRAND)).toBe(0);
+    const mk = (categorias: string[], over: Record<string, unknown> = {}) =>
+      t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id: null, source: 'upload', status: 'ready', style_notes: { ...NOTES, categorias, ...over } } }) as Promise<{ id: string }>;
+    const full = await mk(['pessoas_trabalhando'], { paleta: ['laranja', 'creme'], luz: 'de fim de tarde', clima: 'aconchegante' });
+    const reduced = await mk(['beleza'], { paleta: ['Creme', 'verde'], luz: 'suave', clima: 'sofisticado' });
+    const r = (await svc.loadPhotoStyle(WS, BRAND, 'Vaga de Garçom'))!;
+    expect(r.style.paleta).toEqual(expect.arrayContaining(['laranja', 'creme', 'verde']));
+    expect(r.style.paleta.filter((x) => x.toLowerCase() === 'creme')).toHaveLength(1);
+    expect(r.style.luz).toEqual(expect.arrayContaining(['de fim de tarde', 'suave']));
+    expect(r.used.own).toEqual(expect.arrayContaining([full.id, reduced.id]));
+    expect(r.used.library).toEqual([]);
+    expect(await svc.notesInUse(WS, BRAND)).toBe(2);
+    // empresa errada não lê
+    expect(await svc.loadPhotoStyle('99999999-9999-4999-8999-999999999999', BRAND, 'Vaga de Garçom')).toBeNull();
+  });
+
   it('texto rotulado e nota reduzida', async () => {
     const { t, svc } = await setup();
     const mk = (campaign_id: string | null, categorias: string[], assunto: string) =>

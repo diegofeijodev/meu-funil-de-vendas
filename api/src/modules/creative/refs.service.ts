@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { StyleRefsService } from '../style-refs/style-refs.service';
-import type { StylePick } from '../style-refs/style-notes';
+import type { PhotoStyle, StylePick, StyleRefsUsed } from '../style-refs/style-notes';
 import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { PrismaService } from '../../common/database/prisma.service';
@@ -62,6 +62,15 @@ export class RefsService {
     if (!this.styleRefs || !brandId) return null;
     return this.styleRefs.loadStyleNotes(workspaceId, brandId, campaignId ?? null, subject ?? null).catch((e) => {
       this.logger.warn(`notas de estilo (${workspaceId}/${brandId}): ${(e as Error).message}`);
+      return null;
+    });
+  }
+
+  /** Estilo (paleta, luz, clima) para a foto das vagas (Fatia 5): só texto; qualquer erro = sem estilo, e a foto sai como sempre. */
+  async loadPhotoStyle(workspaceId: string, brandId: string | null | undefined, subject: string): Promise<{ style: PhotoStyle; used: StyleRefsUsed } | null> {
+    if (!this.styleRefs || !brandId) return null;
+    return this.styleRefs.loadPhotoStyle(workspaceId, brandId, subject).catch((e) => {
+      this.logger.warn(`estilo da foto das vagas (${workspaceId}/${brandId}): ${(e as Error).message}`);
       return null;
     });
   }

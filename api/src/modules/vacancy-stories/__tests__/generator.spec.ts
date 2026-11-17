@@ -6,7 +6,7 @@ import { uuid } from '../../instagram/__tests__/harness';
 import { AssetsService } from '../../media/assets.service';
 import { WS_A } from '../../media/__tests__/mem';
 import { VacancyGeneratorService, photoTexts } from '../vacancy-generator.service';
-import { photoPrompt, photoReadPrompt } from '../vacancy-prompts';
+import { photoPrompt, photoReadPrompt, photoStyleLines } from '../vacancy-prompts';
 import { DISABLED_REASON, WAIT_CAP } from '../vacancy-reasons';
 import { SKIP } from '../vacancy-triage';
 import { fingerprint, vacancyFields } from '../vacancy-text';
@@ -38,10 +38,10 @@ const SIGN = 'Estrada Joaquim Bueno Neto, 9999';
 let w: VacancyWorld;
 afterEach(() => w?.cleanup());
 
-async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {}) {
+async function setup(o: { settings?: Record<string, unknown>; ig?: boolean; styleRefs?: unknown } = {}) {
   w = vacancyWorld();
   const assets = new AssetsService(w.prisma, w.files, w.images, jest.fn() as never, w.env);
-  const refs = new RefsService(w.prisma, w.files, assets, w.images);
+  const refs = new RefsService(w.prisma, w.files, assets, w.images, o.styleRefs as never);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const gen = new VacancyGeneratorService(w.prisma, w.ai as any, w.images, w.files, assets, refs, w.store, w.feedClient, w.gate);
   /** Relógio dos leases (a IA falsa pode avançá-lo no meio da geração). */
@@ -72,7 +72,7 @@ async function setup(o: { settings?: Record<string, unknown>; ig?: boolean } = {
   const mediaRows = () => w.t['media_assets']!.rows;
   const imageCalls = () => w.ai.image.mock.calls.map((c) => c[1]);
   const readCalls = () => w.ai.json.mock.calls.map((c) => c[1]).filter((r) => r.name === 'vacancy_art_read');
-  return { gen, clock, assets, template, story, settings, row, posts, mediaRows, imageCalls, readCalls };
+  return { gen, brand, clock, assets, template, story, settings, row, posts, mediaRows, imageCalls, readCalls };
 }
 
 describe('pedido da foto da vaga', () => {
@@ -84,6 +84,83 @@ describe('pedido da foto da vaga', () => {
     expect(p).toContain('pele com textura natural');
     expect(p.endsWith('Sem nenhum texto, letra, número, placa, fachada, nome ou logo.')).toBe(true);
     expect(p).not.toMatch(/cardápio|letreiro|garrafa|rótulo/i); // nada que convide escrita para dentro da foto
+  });
+});
+
+describe('pedido da foto da vaga: estilo das referências (Fatia 5)', () => {
+  it('com estilo: frases afirmativas antes do "Sem nenhum texto…", que fica por último', () => {
+    const p = photoPrompt('Garçom', photoStyleLines({ paleta: ['laranja queimado', 'creme'], luz: ['de fim de tarde'], clima: ['aconchegante'] }));
+    expect(p).toContain('Cores da cena: laranja queimado, creme. Luz de fim de tarde. Clima aconchegante. Sem nenhum texto, letra, número, placa, fachada, nome ou logo.');
+    expect(p.endsWith('Sem nenhum texto, letra, número, placa, fachada, nome ou logo.')).toBe(true);
+    expect(photoPrompt('Garçom', [])).toBe(photoPrompt('Garçom'));
+  });
+  it('Review Focus #5: negação e objeto com escrita saem (com e sem acento, plural e derivados)', () => {
+    const l = photoStyleLines({
+      paleta: ['laranja', 'rosa neon'],
+      luz: ['sem sombras duras', 'nao ha sombra', 'quente de fim de tarde'],
+      clima: ['bar com letreiros luminosos', 'garrafas âmbar ao fundo', 'rotulos coloridos', 'fachada iluminada', 'cartazes na parede', 'aconchegante'],
+    });
+    expect(l).toEqual(['Cores da cena: laranja.', 'Luz quente de fim de tarde.', 'Clima aconchegante.']);
+    expect(photoPrompt('Garçom', l)).not.toMatch(/cardápio|letreiro|garrafa|rótulo|rotulo|neon|sombra|cartaz|iluminada/i);
+    expect(photoStyleLines({ paleta: ['neon'], luz: ['nada de sombra'], clima: [] })).toEqual([]);
+  });
+  it('corte 4/2/2 depois do filtro e total ≤ 300', () => {
+    const l = photoStyleLines({ paleta: ['a1', 'b2', 'c3', 'd4', 'e5'], luz: ['l1', 'l2', 'l3'], clima: ['k1', 'k2', 'k3'] });
+    expect(l).toEqual(['Cores da cena: a1, b2, c3, d4.', 'Luz l1; l2.', 'Clima k1; k2.']);
+    const big = photoStyleLines({ paleta: Array(4).fill('x'.repeat(90)), luz: ['y'.repeat(90), 'z'.repeat(90)], clima: ['w'.repeat(90)] });
+    expect(big.join(' ').length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('VacancyGeneratorService.makeArt com estilo das referências', () => {
+  const styled = () => ({
+    loadPhotoStyle: jest.fn(async (..._a: unknown[]) => ({ style: { paleta: ['laranja queimado'], luz: [] as string[], clima: [] as string[] }, used: { own: ['r1'], library: [] as string[] } })),
+  });
+
+  it('interruptor desligado (padrão): nenhuma consulta e o pedido de hoje', async () => {
+    const sr = styled();
+    const t = await setup({ styleRefs: sr });
+    const v = vac();
+    await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    await t.gen.generateDue(NOW);
+    expect(sr.loadPhotoStyle).not.toHaveBeenCalled();
+    expect(t.imageCalls()[0].prompt).toBe(photoPrompt('Garçom'));
+    expect(t.posts()[0].style_refs ?? null).toBeNull();
+  });
+
+  it('ligado: 1ª foto com estilo; com letras, a 2ª vai sem notas e o registro fica vazio', async () => {
+    const sr = styled();
+    const t = await setup({ styleRefs: sr, settings: { style_refs_enabled: true } });
+    const v = vac();
+    await w.programArt({ reads: [readFor(v, ['BAR DO ZÉ']), readFor(v)] });
+    const s = t.settings();
+    const art = await t.gen.makeArt(WS_A, s, vacancyFields(v));
+    expect(sr.loadPhotoStyle).toHaveBeenCalledWith(WS_A, t.brand.id, 'Vaga de Garçom');
+    expect(t.imageCalls()[0].prompt).toContain('Cores da cena: laranja queimado.');
+    expect(t.imageCalls()[1].prompt).toBe(photoPrompt('Garçom'));
+    expect(art.styleRefs).toBeNull();
+  });
+
+  it('ligado e aceita de primeira: o post de vaga guarda style_refs', async () => {
+    const sr = styled();
+    const t = await setup({ styleRefs: sr, settings: { style_refs_enabled: true } });
+    const v = vac();
+    await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    await t.gen.generateDue(NOW);
+    expect(t.posts()[0].style_refs).toEqual({ own: ['r1'], library: [], brand_id: t.brand.id });
+  });
+
+  it('ligado sem linha de estilo (ou erro na leitura): pedido de hoje, registro vazio mas o interruptor segue ligado', async () => {
+    const sr = { loadPhotoStyle: jest.fn(async () => null) };
+    const t = await setup({ styleRefs: sr, settings: { style_refs_enabled: true } });
+    const v = vac();
+    await t.story(v);
+    await w.programArt({ reads: [readFor(v)] });
+    await t.gen.generateDue(NOW);
+    expect(t.imageCalls()[0].prompt).toBe(photoPrompt('Garçom'));
+    expect(t.posts()[0].style_refs).toEqual({ own: [], library: [], brand_id: t.brand.id });
   });
 });
 

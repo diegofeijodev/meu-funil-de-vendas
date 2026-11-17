@@ -17,9 +17,9 @@ import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { isStyleCategory, STYLE_CATEGORY_IDS, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
+import { isStyleCategory, normalizeText, STYLE_CATEGORY_IDS, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
 import { chooseNotes, PickedNote, PickRow, resolveLibrarySegment } from './style-pick';
-import { MAX_NOTES, normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
+import { MAX_NOTES, normalizeStyleNotes, notesSummary, PhotoStyle, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, StyleRefsUsed, styleNotesText } from './style-notes';
 
 const BUCKET = 'style-refs';
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -277,6 +277,42 @@ export class StyleRefsService {
       take: LIBRARY_ROWS_CAP,
     })) as RefRow[];
     return { available, resolved, rows: ready.map(toPickRow).filter((x): x is PickRow => !!x), brandIds: ids };
+  }
+
+  /**
+   * Estilo para a foto das vagas (Fatia 5, P14): mesma escolha de notas (`pickNotes`, próprias + Seleção) com o assunto do chamador. Nota
+   * completa dá paleta, luz e clima; reduzida dá paleta e luz. Itens sem repetição, até 8 por lista (o filtro e o corte 4/2/2 são do
+   * `photoStyleLines`). `used` = as notas que deram algum item; nenhuma → null.
+   */
+  async loadPhotoStyle(ws: string, brandId: string | null | undefined, subject: string): Promise<{ style: PhotoStyle; used: StyleRefsUsed } | null> {
+    if (!brandId) return null;
+    const picked = await this.pickNotes(ws, brandId, null, subject);
+    const style: PhotoStyle = { paleta: [], luz: [], clima: [] };
+    const seen = { paleta: new Set<string>(), luz: new Set<string>(), clima: new Set<string>() };
+    const add = (key: keyof PhotoStyle, v: string | null | undefined): boolean => {
+      const item = (v ?? '').replace(/\s+/g, ' ').trim();
+      const k = normalizeText(item);
+      if (!k || seen[key].has(k) || style[key].length >= 8) return false;
+      seen[key].add(k);
+      style[key].push(item);
+      return true;
+    };
+    const own: string[] = [];
+    const library: string[] = [];
+    for (const p of picked) {
+      const n = p.row.notes;
+      let gave = false;
+      for (const c of n.paleta) gave = add('paleta', c) || gave;
+      gave = add('luz', n.luz) || gave;
+      if (p.full) gave = add('clima', n.clima) || gave;
+      if (gave) (p.library ? library : own).push(p.row.id);
+    }
+    return own.length || library.length ? { style, used: { own, library } } : null;
+  }
+
+  /** Quantas referências a escolha usaria agora, sem assunto (próprias + Seleção, até 4): o "em uso" dos Ajustes das vagas. */
+  async notesInUse(ws: string, brandId: string): Promise<number> {
+    return (await this.pickNotes(ws, brandId, null, null)).length;
   }
 
   /** Bloco para o diretor de arte/vídeo: até 4 prontas escolhidas pelo assunto, com rótulos + quais entraram, ou null. */

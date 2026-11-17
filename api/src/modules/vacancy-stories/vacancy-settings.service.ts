@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -7,6 +7,7 @@ import { AiService } from '../ai/ai.service';
 import { FilesService } from '../files/files.service';
 import { IgStore } from '../instagram/ig-store.service';
 import { imageHeaderSize, ImageService } from '../media/image.service';
+import { StyleRefsService } from '../style-refs/style-refs.service';
 import { bad } from '../media/user-error';
 import { holdForApproval } from './vacancy-approval';
 import { edgeColor } from './vacancy-art';
@@ -114,6 +115,9 @@ export type VacancySettingsView = {
   preview: unknown;
   recent_outcomes: { n: number; first_try: number; redone: number; fallback: number; not_posted: number };
   week: { total: number; fallback: number };
+  style_refs_enabled: boolean;
+  style_brand: { id: string; name: string } | null;
+  style_refs_in_use: number;
 };
 
 /**
@@ -134,7 +138,14 @@ export class VacancySettingsService {
     private readonly store: IgStore,
     private readonly gate: VacancyGate,
     private readonly feed: VacancyFeedClient,
+    @Optional() private readonly styleRefs?: StyleRefsService,
   ) {}
+
+  /** Na subida: confirma no log que o "em uso" dos Ajustes enxerga as referências (o @Optional não pode falhar calado). */
+  onModuleInit() {
+    if (this.styleRefs) this.logger.log('estilo das referências nas vagas: StyleRefsService injetado');
+    else this.logger.warn('estilo das referências nas vagas: StyleRefsService NÃO foi injetado ("em uso" fica 0)');
+  }
 
   /** Configuração da empresa; cria com os padrões do banco na 1ª leitura (upsert: duas leituras ao mesmo tempo não colidem). */
   async get(workspaceId: string): Promise<SettingsRow> {
@@ -156,6 +167,7 @@ export class VacancySettingsService {
       this.recentOutcomes(workspaceId),
       this.week(workspaceId, now),
     ]);
+    const { brand: styleBrand, inUse } = await this.styleView(workspaceId, s);
     return {
       enabled: s.enabled,
       enabled_at: s.enabled_at,
@@ -181,7 +193,22 @@ export class VacancySettingsService {
       preview: previewForView(s.preview, now),
       recent_outcomes: recent,
       week,
+      style_refs_enabled: s.style_refs_enabled,
+      style_brand: styleBrand,
+      style_refs_in_use: inUse,
     };
+  }
+
+  /** A marca das vagas (lida com `workspace_id`) e quantas referências a escolha usaria agora; qualquer erro da escolha = 0. */
+  private async styleView(workspaceId: string, s: SettingsRow): Promise<{ brand: { id: string; name: string } | null; inUse: number }> {
+    if (!s.brand_id) return { brand: null, inUse: 0 };
+    const brand = await this.prisma.brands.findFirst({ where: { id: s.brand_id, workspace_id: workspaceId }, select: { id: true, name: true } });
+    if (!brand) return { brand: null, inUse: 0 };
+    const inUse = await this.styleRefs?.notesInUse(workspaceId, brand.id).catch((e) => {
+      this.logger.warn(`[vagas] ${workspaceId}: referências em uso não lidas: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    });
+    return { brand: { id: brand.id, name: brand.name }, inUse: inUse ?? 0 };
   }
 
   async update(userId: string, workspaceId: string, dto: UpdateVacancySettingsDto): Promise<VacancySettingsView> {
@@ -205,6 +232,7 @@ export class VacancySettingsService {
         ...(dto.daily_cap !== undefined ? { daily_cap: dto.daily_cap } : {}),
         ...(dto.min_lead_minutes !== undefined ? { min_lead_minutes: dto.min_lead_minutes } : {}),
         ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
+        ...(dto.style_refs_enabled !== undefined ? { style_refs_enabled: dto.style_refs_enabled } : {}),
       },
     });
     return this.view(workspaceId);

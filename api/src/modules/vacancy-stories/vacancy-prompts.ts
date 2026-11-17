@@ -1,3 +1,5 @@
+import { normalizeText } from '../style-refs/categories';
+import type { PhotoStyle } from '../style-refs/style-notes';
 import type { VacancyFields } from './vacancy-types';
 
 /** Proporção pedida à IA para a arte: 4:5 ocupa quase toda a largura da área livre do story (1080 × 1100). */
@@ -32,11 +34,47 @@ export function artPrompt(f: VacancyFields, hint: string | null): string {
   return hint ? `${base}\n${hint}` : base;
 }
 
-export function photoPrompt(funcao: string): string {
+/** Palavras inteiras de negação (P14): "sem sombras duras" diria à IA o que não fazer e ela costuma fazer. */
+const NEGATION = new Set(['sem', 'nao', 'nada', 'nenhum', 'nenhuma', 'nunca', 'evite', 'evitar', 'exceto']);
+/** Radicais de objeto com escrita (P14): pegam plural e derivados ("garrafas", "letreiros", "rotulos", "cartazes"). */
+const WRITING = [
+  'cardapi', 'letreir', 'placa', 'garraf', 'rotul', 'texto', 'letra', 'logo', 'marca', 'neon', 'menu', 'quadro', 'lousa', 'embalag', 'etiquet',
+  'palavra', 'numero', 'fachad', 'cartaz',
+];
+/** O item só chega ao gerador se não tiver negação nem objeto com escrita (compara depois de `normalizeText`). */
+function safeStyleItem(item: string): boolean {
+  const words = normalizeText(item).split(' ').filter(Boolean);
+  return words.length > 0 && !words.some((w) => NEGATION.has(w) || WRITING.some((r) => w.startsWith(r)));
+}
+const STYLE_LINES_MAX = 300;
+
+/**
+ * Até 3 frases afirmativas com o estilo das referências (Fatia 5, P14): "Cores da cena: a, b.", "Luz x; y." e "Clima z; w.". FILTRA primeiro
+ * (negação e objeto com escrita saem) e só então corta em 4 cores, 2 luzes e 2 climas; frase sem item não entra e, passando de 300 letras
+ * no total, saem as últimas frases. Nada sobrando = lista vazia (a foto sai sem estilo).
+ */
+export function photoStyleLines(style: PhotoStyle): string[] {
+  const keep = (list: string[], n: number) =>
+    list.map((x) => String(x ?? '').replace(/\s+/g, ' ').trim().replace(/[.;,\s]+$/, '')).filter((x) => x && safeStyleItem(x)).slice(0, n);
+  const cores = keep(style.paleta ?? [], 4);
+  const luz = keep(style.luz ?? [], 2);
+  const clima = keep(style.clima ?? [], 2);
+  const lines = [
+    cores.length ? `Cores da cena: ${cores.join(', ')}.` : '',
+    luz.length ? `Luz ${luz.join('; ')}.` : '',
+    clima.length ? `Clima ${clima.join('; ')}.` : '',
+  ].filter(Boolean);
+  while (lines.length && lines.join(' ').length > STYLE_LINES_MAX) lines.pop();
+  return lines;
+}
+
+/** Pedido da foto. Com `styleLines` (já filtradas por `photoStyleLines`) elas entram antes da frase final, que continua por último. */
+export function photoPrompt(funcao: string, styleLines: string[] = []): string {
   return (
     `Foto realista, vertical, de uma pessoa trabalhando como ${funcao} num bar ou restaurante brasileiro, numa ação simples e possível: ` +
     'cada mão segura no máximo um objeto, tudo está apoiado ou firme na mão, nada flutua. ' +
     'Luz do próprio ambiente, pele com textura natural, sem cara de banco de imagem. ' +
+    (styleLines.length ? `${styleLines.join(' ')} ` : '') +
     'Sem nenhum texto, letra, número, placa, fachada, nome ou logo.'
   );
 }

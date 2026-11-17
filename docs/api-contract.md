@@ -767,9 +767,18 @@ antecedência 120 min, OpenAI):
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
   ai_error: string | null, ai_error_at: string | null, preview: PreviewState | {} /* {} = nunca gerou; ver abaixo */,
   recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
-  week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */
+  week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */,
+  style_refs_enabled: boolean /* Fatia 5 do Pinterest automático; padrão false (desligado) */,
+  style_brand: { id: string, name: string } | null /* a marca das vagas (a mesma da arte modelo), lida com workspace_id */,
+  style_refs_in_use: number /* quantas referências a escolha usaria agora: próprias + Seleção, até 4 (0 sem marca) */
 }
 ```
+
+Estilo nas vagas (Fatia 5): com `style_refs_enabled` ligado, a 1ª foto do story leva só paleta, luz e clima, em frases afirmativas, das
+referências da marca (assunto "Vaga de {função}"; nada de negação nem objeto com escrita — palavras de negação e radicais como letreiro,
+garrafa, rótulo, neon, fachada, cartaz saem antes de chegar ao gerador). A 2ª tentativa vai sem essas frases. Vale para a prévia. O post de
+vaga grava `ig_posts.style_refs { own, library, brand_id }` quando o interruptor está ligado (vazio se a foto aceita não seguiu referências, ou
+foi a 2ª) e `null` com ele desligado; trocar a mídia por arte própria (envio ou Biblioteca) zera o registro.
 
 Erros do envio da arte modelo (400): "Esse arquivo não serve. Envie uma imagem PNG ou JPG." (tipo pelo conteúdo; WEBP fora — R19) · "A imagem tem
 {x} MB e o máximo é 10 MB. Envie uma menor." · "A imagem é pequena demais. Envie uma arte com pelo menos 600 pixels de largura e de altura." (lado menor) · "Cadastre uma
@@ -778,7 +787,7 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | Rota | Nível | Corpo | Resposta |
 |---|---|---|---|
 | `GET settings` | read | — | `VacancySettingsView` (Task 7) |
-| `PATCH settings` | write | `{ cities?: string[]≤50, daily_cap?: 1..20, window_start?: "HH:MM", window_end?: "HH:MM", min_lead_minutes?: 60\|120\|240\|360, vendor?: "openai"\|"gemini" }` | view; 400 "O início precisa ser antes do fim." · formato errado → 400 "Use um horário como 08:00." |
+| `PATCH settings` | write | `{ cities?: string[]≤50, daily_cap?: 1..20, window_start?: "HH:MM", window_end?: "HH:MM", min_lead_minutes?: 60\|120\|240\|360, vendor?: "openai"\|"gemini", style_refs_enabled?: boolean }` | view; 400 "O início precisa ser antes do fim." · formato errado → 400 "Use um horário como 08:00." |
 | `POST enable` | manage | — | view; 400 "Envie a arte modelo para poder ligar." |
 | `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
 | `POST auto-publish` | manage | `{ auto_publish: boolean }` | view + `moved_to_approval: number` — voltar para "Eu aprovo" (`false`), na mesma transação: stories de vaga `ready\|approved\|scheduled` sem `approved_at` (ninguém aprovou) → `pending_approval` + `creative_brief.vacancy.requires_approval: true` + `scheduled_at: null`, jobs pendentes cancelados; `moved_to_approval` = quantos voltaram (0 ao ligar). Aprovados por alguém e `publishing` ficam |

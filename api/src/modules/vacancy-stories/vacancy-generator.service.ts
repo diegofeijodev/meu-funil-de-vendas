@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { AiService } from '../ai/ai.service';
 import type { AiImageInput, AiVendor } from '../ai/ai.types';
 import { RefsService } from '../creative/refs.service';
+import type { StyleRefsUsed } from '../style-refs/style-notes';
 import { FilesService } from '../files/files.service';
 import { IgStore, leaseFree } from '../instagram/ig-store.service';
 import { AssetsService, MEDIA_BUCKET, type MediaAsset } from '../media/assets.service';
@@ -14,7 +15,7 @@ import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
-import { photoPrompt, photoReadPrompt } from './vacancy-prompts';
+import { photoPrompt, photoReadPrompt, photoStyleLines } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import { forcedTriage, triage } from './vacancy-triage';
 import type { ArtCheck, ArtRead, AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
@@ -44,7 +45,10 @@ const RETRY_REASON = 'Não conseguimos criar a arte agora. Vamos tentar de novo 
 
 export type ArtOrigin = { source: 'chatgpt' | 'gemini' | 'other'; provider: string };
 /** Arte pronta (quadro 1080×1920 JPEG), a conferência da tentativa aceita, todas as tentativas e de onde a imagem veio. */
-export type ArtResult = { bytes: Uint8Array; check: ArtCheck; attempts: AttemptLog[]; usedFallback: boolean; vendorLabel: string; origin: ArtOrigin };
+/** `styleRefs` = referências que a foto aceita seguiu (só quando foi a 1ª tentativa e houve frase de estilo); `null` nos demais casos. */
+export type ArtResult = {
+  bytes: Uint8Array; check: ArtCheck; attempts: AttemptLog[]; usedFallback: boolean; vendorLabel: string; origin: ArtOrigin; styleRefs: StyleRefsUsed | null;
+};
 
 const VENDORS: Record<AiVendor, { label: string; origin: ArtOrigin }> = {
   openai: { label: 'ChatGPT (OpenAI)', origin: { source: 'chatgpt', provider: 'chatgpt' } },
@@ -322,12 +326,15 @@ export class VacancyGeneratorService {
       attempts.push({ n, at: new Date().toISOString(), kind, ok, wrong: [], forbidden: forbidden.map((x) => x.slice(0, 120)), ...(error ? { error } : {}) });
     // Os textos são escritos pelo sistema a partir da vaga: todos os campos estão certos por construção.
     const fields = systemFields(f);
+    // Fatia 5: só com o interruptor da empresa ligado; a 1ª tentativa leva as frases de estilo, a 2ª vai como sempre (sem notas).
+    const style = s.style_refs_enabled ? await this.refs.loadPhotoStyle(ws, s.brand_id, `Vaga de ${f.funcao}`) : null;
+    const lines = style ? photoStyleLines(style.style) : [];
 
     for (let n = 1; n <= AI_TRIES; n++) {
       await onStep?.('art', n);
       let photo: Uint8Array;
       try {
-        photo = (await this.ai.image(ws, { prompt: photoPrompt(f.funcao), aspectRatio: '1:1', vendor, strict: true })).bytes;
+        photo = (await this.ai.image(ws, { prompt: n === 1 ? photoPrompt(f.funcao, lines) : photoPrompt(f.funcao), aspectRatio: '1:1', vendor, strict: true })).bytes;
       } catch (e) {
         log(n, 'ai', false, [], this.aiMessage(ws, e));
         break; // IA fora (chave, crédito, queda): não insiste; a arte sai sem foto
@@ -344,13 +351,16 @@ export class VacancyGeneratorService {
       if (found.length === 0) {
         const bytes = await composeBaseArt(this.images, { fields: f, photo, logo, badges, fonts });
         const check: ArtCheck = { ok: true, fields, forbidden: [], hint: null };
-        return { bytes, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin };
+        return {
+          bytes, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin,
+          styleRefs: n === 1 && lines.length > 0 && style ? style.used : null,
+        };
       }
     }
 
     const bytes = await composeBaseArt(this.images, { fields: f, photo: null, logo, badges, fonts });
     log(AI_TRIES + 1, 'fallback_plain', true, []);
-    return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin };
+    return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin, styleRefs: null };
   }
 
   /** Leitura às cegas da foto da IA (reduzida a 1024 px): só interessa a lista de textos visíveis. */
@@ -445,6 +455,8 @@ export class VacancyGeneratorService {
           data: {
             workspace_id: ws, format: 'story_image', source: 'vacancy', status: auto ? 'ready' : 'pending_approval', theme, caption: null,
             hashtags: [], creative_brief: json({ compose: false, vacancy }), media: json(media), ai_provider: art.origin.provider,
+            // Fatia 5: com o interruptor ligado, o registro (vazio se a foto aceita não seguiu referências); desligado = coluna nula.
+            ...(s.style_refs_enabled ? { style_refs: json({ ...(art.styleRefs ?? { own: [], library: [] }), brand_id: s.brand_id }) } : {}),
             ai_generation_log: json(shortLog), automation: null, plan_id: null, run_id: null,
           },
           select: { id: true },
