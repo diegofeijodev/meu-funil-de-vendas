@@ -111,3 +111,28 @@ export const photoLabel = (tagLabel: string | null): string =>
 
 export const brandPhotosToast = (n: number): string =>
   n === 1 ? "Foto enviada. Ela pode aparecer nas artes." : `${n} fotos enviadas. Elas podem aparecer nas artes.`;
+
+/** Convite "Estilo: …" onde a arte é vista (ui.md §5; P6, P12, P13). `null` = peça antiga ou prompt à mão: não mostra a linha. */
+export type StyleRecordLike = { own: string[]; library: string[]; brand_id: string | null };
+
+export const INVITE_CTA = "Mostrar o estilo que eu quero";
+
+export function styleInvite(
+  rec: StyleRecordLike | null | undefined,
+): { text: string; cta: boolean; brandId: string | null } | null {
+  if (!rec) return null;
+  const n = rec.own.length;
+  if (n === 0) return { text: "Estilo: sem referências.", cta: true, brandId: rec.brand_id };
+  return {
+    text: n === 1 ? "Estilo: seguiu 1 referência sua." : `Estilo: seguiu ${n} referências suas.`,
+    cta: false,
+    brandId: rec.brand_id,
+  };
+}
+
+/** Pacote do piloto: uma linha só, com o maior `own` entre as peças que têm registro (P13). */
+export function packageInvite(recs: (StyleRecordLike | null | undefined)[]): ReturnType<typeof styleInvite> {
+  let best: StyleRecordLike | null = null;
+  for (const r of recs) if (r && (!best || r.own.length > best.own.length)) best = r;
+  return styleInvite(best);
+}

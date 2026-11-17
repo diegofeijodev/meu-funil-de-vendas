@@ -24,6 +24,7 @@ import { aiKeysHealth } from "@/lib/ai-keys.functions";
 import { LayoutSelect, VariationsGrid } from "@/components/creative/art-direction-panel";
 import type { TextLayout, Variation } from "@/lib/creative/visual-style";
 import { HowTo } from "@/components/how-to";
+import { StyleInvite } from "@/components/style-invite";
 import { GUIDES } from "@/lib/guides";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 
@@ -471,6 +472,7 @@ export function Studio() {
                     {FORMATS[c.type] ?? c.type} · v{c.version} · {c.campaigns?.name ?? "sem campanha"}
                     {(c as { angle?: string | null }).angle ? ` · ângulo: ${(c as { angle?: string | null }).angle}` : ""}
                   </p>
+                  <StyleInvite record={c.style_refs} />
                   <div className="flex items-center justify-between">
                     <StatusPill status={c.status} label={CREATIVE_STATUS[c.status] ?? c.status} />
                     <span className="text-xs text-muted-foreground">{brl(c.real_cost)}</span>

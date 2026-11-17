@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { styleRefsRecordSchema } from "@/modules/style-refs/infrastructure/style-refs.api";
 import { api } from "@/modules/shared/infrastructure/http";
 import type { FullStrategy } from "@/lib/ai/strategy-types";
 import type { CopyContent } from "@/lib/ai/agents";
@@ -18,6 +19,7 @@ const creativeRow = z
     real_cost: num.nullish(),
     angle: z.string().nullish(),
     extras: z.unknown().optional(),
+    style_refs: styleRefsRecordSchema.nullish(),
     campaigns: z.object({ name: z.string() }).nullable(),
   })
   .passthrough();

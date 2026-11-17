@@ -18,6 +18,8 @@ import {
 import { apiErrorCode, apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { clickDestination } from "./go-live-dialog";
 import { PilotAdjust } from "./pilot-adjust";
+import { StyleInvite } from "@/components/style-invite";
+import { packageInvite, type StyleRecordLike } from "@/lib/style-refs";
 
 /** Fatia 4: o piloto monta o anúncio PAUSADO na Meta; ligar é na conferência ("Pronto para ligar"). */
 const PILOT_META_READY = true;
@@ -40,7 +42,7 @@ type Props = {
   onFix: (code: string) => void;
   strategy: unknown;
   strategyVersion: number | null;
-  creatives: { id: string; title: string; preview_url?: string | null }[];
+  creatives: { id: string; title: string; preview_url?: string | null; style_refs?: StyleRecordLike | null }[];
   canEdit: boolean;
   canManage: boolean;
   onChanged: () => void;
@@ -428,6 +430,10 @@ function ProgressView({
                       );
                     })}
                   </ul>
+                  <StyleInvite
+                    className="mt-2"
+                    invite={packageInvite(slots.filter((x) => x.status === "done").map((x) => (x.creative_id ? thumb.get(x.creative_id)?.style_refs : null)))}
+                  />
                   {s.status === "running" && pending > 0 && (
                     <p className="mt-1 text-sm text-muted-foreground">Fazemos uma peça a cada 5 minutos: as {pending} que faltam levam uns {pending * 5} minutos. Pode fechar a tela.</p>
                   )}

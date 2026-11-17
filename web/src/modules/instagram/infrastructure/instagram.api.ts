@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { styleRefsRecordSchema } from "@/modules/style-refs/infrastructure/style-refs.api";
 import { api } from "@/modules/shared/infrastructure/http";
 
 const str = z.string().nullish().transform((v) => v ?? null);
@@ -55,6 +56,7 @@ const post = z
     review_score: nullNum,
     review_attempts: nullNum,
     failure_kind: str,
+    style_refs: styleRefsRecordSchema.nullish(),
   })
   .passthrough();
 

@@ -9,6 +9,7 @@ import { approvePost, rejectPost } from "@/lib/instagram/instagram.functions";
 import { EmptyState, StatusPill } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { StyleInvite } from "@/components/style-invite";
 import { FORMATS, MediaThumb, fmtDateTime, useIgPosts } from "./shared";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { awaitsHuman } from "@/lib/instagram/production";
@@ -225,6 +226,7 @@ export function IgApprovalList({
               </Button>
             </div>
           )}
+          <StyleInvite record={p.style_refs} className="basis-full" />
         </div>
         );
       })}

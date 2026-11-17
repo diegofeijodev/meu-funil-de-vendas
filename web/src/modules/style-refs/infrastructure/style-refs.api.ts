@@ -26,6 +26,13 @@ const listSchema = z.object({
 export type StyleRef = z.infer<typeof refSchema>;
 export type StyleRefsList = z.infer<typeof listSchema>;
 
+/** Registro por peça (P6): `creatives.style_refs` / `ig_posts.style_refs`. `null` = peça antiga ou prompt à mão. */
+export const styleRefsRecordSchema = z.object({
+  own: z.array(z.string()).default([]),
+  library: z.array(z.string()).default([]),
+  brand_id: z.string().nullable().default(null),
+});
+
 const base = (ws: string, brandId: string) => `/v1/workspaces/${ws}/brands/${brandId}/style-refs`;
 
 export async function listStyleRefs(ws: string, brandId: string, campaignId: string | null): Promise<StyleRefsList> {

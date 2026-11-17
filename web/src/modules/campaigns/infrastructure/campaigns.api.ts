@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { styleRefsRecordSchema } from "@/modules/style-refs/infrastructure/style-refs.api";
 import { api } from "@/modules/shared/infrastructure/http";
 import type { PerformanceRow } from "@/lib/metrics";
 
@@ -91,6 +92,7 @@ const creative = z
     status: z.string(),
     preview_url: str,
     angle: str,
+    style_refs: styleRefsRecordSchema.nullish(),
   })
   .passthrough();
 export type CampaignCreative = z.infer<typeof creative>;

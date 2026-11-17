@@ -4,6 +4,9 @@ import {
   brandCounter,
   brandPhotosToast,
   liveAnnouncement,
+  packageInvite,
+  styleInvite,
+  INVITE_CTA,
   photoLabel,
   refOrigin,
   refScope,
@@ -67,5 +70,15 @@ describe('style-refs', () => {
     expect(brandPhotosToast(1)).toBe('Foto enviada. Ela pode aparecer nas artes.');
     expect(brandPhotosToast(3)).toBe('3 fotos enviadas. Elas podem aparecer nas artes.');
     expect(BRAND_PHOTOS_TEXT.option('Ambiente')).toBe('Foto de: Ambiente');
+  });
+  it('convite onde a arte é vista', () => {
+    expect(styleInvite(null)).toBeNull(); // peça antiga / prompt escrito à mão
+    expect(styleInvite(undefined)).toBeNull();
+    expect(styleInvite({ own: [], library: [], brand_id: 'b1' })).toEqual({ text: 'Estilo: sem referências.', cta: true, brandId: 'b1' });
+    expect(styleInvite({ own: ['a'], library: [], brand_id: 'b1' })).toEqual({ text: 'Estilo: seguiu 1 referência sua.', cta: false, brandId: 'b1' });
+    expect(styleInvite({ own: ['a', 'b', 'c'], library: [], brand_id: null })?.text).toBe('Estilo: seguiu 3 referências suas.');
+    expect(packageInvite([null, { own: ['a'], library: [], brand_id: 'b' }, { own: ['a', 'b'], library: [], brand_id: 'b' }])?.text).toBe('Estilo: seguiu 2 referências suas.');
+    expect(packageInvite([undefined, null])).toBeNull();
+    expect(INVITE_CTA).toBe('Mostrar o estilo que eu quero');
   });
 });
