@@ -364,8 +364,7 @@ describe('Seleção — reconciliação (reconcileSelection)', () => {
     w.routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', w.image);
     await w.svc.reconcileSelection(WS, BRAND);
     await w.svc.whenIdle();
-    // 18b: a 1ª pasta traz as dela (ficam lendo) e a 2ª, sem vaga enquanto há leitura em curso, só grava o carimbo (sem rede)
-    expect(w.fetched.filter((u) => u.endsWith('.rss'))).toEqual([rssOf(ACAI[0]!)]);
+    expect(w.fetched.filter((u) => u.endsWith('.rss')).sort()).toEqual(ACAI.map(rssOf).sort());
     expect(w.t.style_ref_sources.rows.every((s) => s.last_synced_at instanceof Date)).toBe(true);
     expect(w.t.style_references.rows.length).toBeGreaterThan(0);
     expect(w.t.style_references.rows.every((r) => r.origin === 'selection')).toBe(true);
@@ -579,7 +578,7 @@ describe('Seleção — colisões e lista', () => {
 });
 
 describe('Seleção — rodada 1 de correção (18a)', () => {
-  it('reconcileSelection → refreshDueSources → whenIdle: o RSS é buscado UMA vez (a 2ª pasta espera as leituras) e o seen_pin_ids guarda os Pins que entraram', async () => {
+  it('reconcileSelection → refreshDueSources → whenIdle: cada RSS é buscado UMA vez e o seen_pin_ids guarda os Pins que entraram', async () => {
     const w = await world(KEY, 0, 0);
     w.svc.autoProcess = true;
     for (const u of ACAI) w.routes.set(rssOf(u), () => new Response(RSS, { status: 200 }));
@@ -588,9 +587,9 @@ describe('Seleção — rodada 1 de correção (18a)', () => {
     await w.svc.reconcileSelection(WS, BRAND);
     await w.svc.refreshDueSources(5);
     await w.svc.whenIdle();
-    // 18b: só a 1ª pasta busca o RSS; a 2ª espera (há leitura da Seleção em curso)
-    expect(w.fetched.filter((u) => u.endsWith('.rss'))).toEqual([rssOf(ACAI[0]!)]);
-    // a 1ª precisa ter guardado os Pins dela
+    const rss = w.fetched.filter((u) => u.endsWith('.rss'));
+    expect(rss.sort()).toEqual(ACAI.map(rssOf).sort());
+    // (as duas pastas do teste têm o mesmo RSS: a 2ª não tem Pin novo; a 1ª precisa ter guardado os dela)
     expect(w.t.style_ref_sources.rows.some((s) => s.seen_pin_ids.length > 0)).toBe(true);
   });
 
@@ -741,6 +740,26 @@ describe('Seleção — sincronização da pasta (18b)', () => {
     expect(w.t.style_ref_sources.rows.find((s) => s.id === d.src.id)!.last_synced_at).toBeInstanceOf(Date);
   });
 
+  it('R11: marca nova com 3 pastas → 12 no mesmo ciclo (4 por pasta) com as leituras ainda processing (attempts 0)', async () => {
+    const w = await world(KEY, 1, 0);
+    for (const tag of ['a', 'b', 'c']) await folder(w, feed(w, tag), 'selection');
+    expect(await w.svc.refreshDueSources(5)).toBe(3);
+    const sel = w.t.style_references.rows.filter((r) => r.origin === 'selection');
+    expect(sel).toHaveLength(12);
+    expect(sel.every((r) => r.status === 'processing' && r.attempts === 0)).toBe(true);
+    expect(rssCalls(w)).toHaveLength(3);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(12);
+  });
+
+  it('R11: com UMA da Seleção processing e attempts 1 nenhuma pasta busca o RSS', async () => {
+    const w = await world(KEY, 1, 0);
+    await refs(w.t, WS, BRAND, 'selection', 1, { status: 'processing', attempts: 1 });
+    for (const tag of ['a', 'b']) await folder(w, feed(w, tag), 'selection');
+    await w.svc.refreshDueSources(5);
+    expect(rssCalls(w)).toEqual([]);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(1);
+  });
+
   it('cota: com 10 leituras hoje só entram 2; em outro dia volta a 12 (4 por pasta); ligar/desligar a marca não zera', async () => {
     const w = await world(KEY, 1, 0);
     const a = await folder(w, feed(w, 'a'), 'selection');
@@ -798,11 +817,11 @@ describe('Seleção — sincronização da pasta (18b)', () => {
     }
   });
 
-  it('não busca o RSS sem chave, com alerta de crédito ou com uma da Seleção lendo (só grava last_synced_at)', async () => {
+  it('não busca o RSS sem chave, com alerta de crédito ou com uma da Seleção esperando nova tentativa (só grava last_synced_at)', async () => {
     const semChave = await world({ env: ON }, 1, 0);
     const comAlerta = await world({ env: ON, aiKey: 'sk', aiCredit: 'no_credit' }, 1, 0);
     const lendo = await world(KEY, 1, 0);
-    await refs(lendo.t, WS, BRAND, 'selection', 1, { status: 'processing' });
+    await refs(lendo.t, WS, BRAND, 'selection', 1, { status: 'processing', attempts: 1 });
     for (const w of [semChave, comAlerta, lendo]) {
       const a = await folder(w, feed(w, 'a'), 'selection');
       await w.svc.refreshDueSources(5);

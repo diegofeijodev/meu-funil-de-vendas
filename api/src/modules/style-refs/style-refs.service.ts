@@ -891,7 +891,8 @@ export class StyleRefsService implements OnModuleDestroy {
       if (r.attempts < READ_MAX_ATTEMPTS) await this.drop(r, { sourceId: source.id, origin: 'selection' });
       else exhausted.push(r);
     }
-    let reading = await this.prisma.style_references.count({ where: { ...fromSelection, status: 'processing' } });
+    // R11: só freia a que espera NOVA tentativa (`attempts > 0`, sinal de chave em apuros); leitura nova (attempts 0) não freia.
+    let reading = await this.prisma.style_references.count({ where: { ...fromSelection, status: 'processing', attempts: { gt: 0 } } });
     if (exhausted.length && !credit && reading === 0) {
       for (const r of exhausted) {
         const back = await this.prisma.style_references.updateMany({
