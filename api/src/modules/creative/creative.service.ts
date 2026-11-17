@@ -19,6 +19,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { ArtBrief, buildVisualPrompt, providerPrompt } from './art-director';
 import { choiceForProvider, CreativeKind, GenerationRequest, GenerationResult, ProviderChoice, ServerCreativeProvider, VIDEO_TYPES } from './creative.types';
 import { GenerateCreativeDto } from './creative.dto';
+import { styleSubject } from '../style-refs/categories';
 import { asStyleRefsRecord, StyleRefsRecord, styleRecord } from '../style-refs/style-notes';
 import { PipelineService } from './pipeline.service';
 import { ChainedProvider, ProviderResolverService, providerLog } from './provider-resolver.service';
@@ -127,7 +128,9 @@ export class CreativeService {
     // A estratégia aprovada da campanha (big idea, ângulo, direção visual) orienta o diretor de arte.
     const strategy = strategyBrief(await this.strategist.currentStrategy(input.workspaceId, input.campaign?.id), input.angle);
     // Estilo das referências (Pinterest/envio) em texto — nunca o pixel.
-    const pick = await this.refs.loadStyleNotes(input.workspaceId, brandId, input.campaign?.id ?? null);
+    const pick = await this.refs.loadStyleNotes(
+      input.workspaceId, brandId, input.campaign?.id ?? null, styleSubject(input.title, input.prompt, input.campaign?.offer_product, input.angle),
+    );
     const styleNotes = pick?.text ?? null;
     const brief: ArtBrief = {
       workspaceId: input.workspaceId, brand: input.brand, campaign: input.campaign, strategy, products, styleNotes,

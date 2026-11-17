@@ -425,6 +425,20 @@ describe('generateAsSystem (piloto)', () => {
   });
 });
 
+describe('assunto do pedido (Fatia 3)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('o assunto do pedido vai à escolha das referências (título + pedido + oferta + ângulo)', async () => {
+    const spy = jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(null);
+    const w = await creativeWorld();
+    const { brand, campaign } = await seed(w);
+    await w.t['campaigns']!.update({ where: { id: campaign.id }, data: { offer_product: 'Combo smash' } });
+    await w.svc.generate(OWNER, dto({ brandId: brand.id, campaignId: campaign.id, title: 'Burger da casa', prompt: 'close no hambúrguer', angle: 'preço' }));
+    expect(spy).toHaveBeenCalledWith(WS_A, brand.id, campaign.id, 'Burger da casa close no hambúrguer Combo smash preço');
+    w.cleanup();
+  });
+});
+
 describe('registro do estilo (Fatia 1)', () => {
   afterEach(() => jest.restoreAllMocks());
   const pick = { text: 'INSPIRAÇÃO…', used: { own: ['r1', 'r2'], library: [] as string[] } };

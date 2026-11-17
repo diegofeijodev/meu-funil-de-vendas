@@ -712,6 +712,22 @@ describe('revisão final — I1: refação assíncrona que dá erro mantém o pr
   });
 });
 
+describe('assunto do pedido (Fatia 3)', () => {
+  it('post e vídeo mandam tema + gancho + pedido + produto', async () => {
+    for (const format of ['feed_image', 'reel']) {
+      const { w, s, gen } = setup();
+      const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé', visual_style: {} };
+      w.t['brands']!.rows.push(brand);
+      const p = plan(w, { brand_id: brand.id });
+      const prod = { id: uuid(), workspace_id: WS_A, brand_id: brand.id, name: 'Smash duplo', description: null, price: '20' };
+      w.t['products']!.rows.push(prod);
+      const post = idea(w, { plan_id: p.id, format, product_id: prod.id, theme: 'Smash da semana', hook: 'Chegou o smash', creative_brief: { prompt: 'close no smash' } });
+      await gen.generatePostAssets(WS_A, post.id);
+      expect(s.refs.loadStyleNotes).toHaveBeenCalledWith(WS_A, brand.id, null, 'Smash da semana Chegou o smash close no smash Smash duplo');
+    }
+  });
+});
+
 describe('registro do estilo (Fatia 1)', () => {
   const pick = { text: 'INSPIRAÇÃO…', used: { own: ['r1'], library: [] as string[] } };
   const withBrand = () => {

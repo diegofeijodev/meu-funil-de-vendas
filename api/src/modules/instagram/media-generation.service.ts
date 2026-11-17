@@ -17,6 +17,7 @@ import { VideoConformService } from '../media/video-conform.service';
 import { targetForIgFormat } from '../media/formats';
 import { ImageService } from '../media/image.service';
 import { UserError } from '../media/user-error';
+import { styleSubject } from '../style-refs/categories';
 import { StylePick, StyleRefsRecord, styleRecord } from '../style-refs/style-notes';
 import { ContentService } from './content.service';
 import { ASPECT, IgFormat, isVideoFormat, PostRow } from './ig-types';
@@ -402,7 +403,10 @@ export class MediaGenerationService {
     let pick: StylePick | null = null;
     if (override) prompt = override;
     else {
-      pick = await this.refs.loadStyleNotes(ws, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null);
+      pick = await this.refs.loadStyleNotes(
+        ws, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null,
+        styleSubject(post.theme, post.hook, brief.prompt as string | undefined, ctx.product?.name),
+      );
       const r = await directVideo(this.ai, {
         workspaceId: ws, brand, context: ctx, format: post.format === 'story_video' ? 'story_video' : 'reel',
         theme: post.theme ?? null, hook: post.hook ?? null, cta: post.cta ?? null, userPrompt: (brief.prompt as string | undefined) ?? null,
@@ -551,7 +555,10 @@ export class MediaGenerationService {
         : orderRefsForProduct(await this.refs.loadBrandRefs(workspaceId, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined }), ctx.product?.name ?? null);
       const base = brief.prompt || post.theme || 'Post de Instagram';
       // Estilo das referências (Pinterest/envio) em texto — nunca o pixel. Campanha do post quando o briefing a traz.
-      const pick = await this.refs.loadStyleNotes(workspaceId, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null);
+      const pick = await this.refs.loadStyleNotes(
+        workspaceId, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null,
+        styleSubject(post.theme, post.hook, brief.prompt, ctx.product?.name),
+      );
       const styleNotes = pick?.text ?? null;
       const briefs: string[] = format === 'feed_carousel' ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
       const artBrief = (userPrompt: string, i: number) => ({
