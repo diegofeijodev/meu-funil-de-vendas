@@ -138,8 +138,11 @@ export class CreativeService {
       aspectRatio: input.aspectRatio, kind: input.kind, provider: providerId, hasProductRef: productRefs > 0,
     };
     if (input.visualPrompt && input.artDirection && !input.adjust) {
-      // Direção editada reaproveitada: o diretor não rodou, então a peça não diz que seguiu referências.
-      return { ad: { ...(input.artDirection as unknown as ArtDirection), prompt_final: input.visualPrompt }, brief, styleRefs: null };
+      // Direção reaproveitada: o diretor não rodou. Sem edição do prompt a peça segue o registro das referências;
+      // prompt escrito/editado à mão não diz que seguiu referências (null).
+      const generated = String((input.artDirection as { prompt_final?: unknown }).prompt_final ?? '').trim();
+      const edited = input.visualPrompt.trim() !== generated;
+      return { ad: { ...(input.artDirection as unknown as ArtDirection), prompt_final: input.visualPrompt }, brief, styleRefs: edited ? null : styleRecord(pick, brandId) };
     }
     const ad = await buildVisualPrompt(this.ai, { ...brief, adjust: input.adjust ?? null, previousPrompt: input.visualPrompt ?? null });
     return { ad, brief, styleRefs: styleRecord(pick, brandId) };

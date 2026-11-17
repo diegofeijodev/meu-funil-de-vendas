@@ -286,8 +286,8 @@ export class LibraryService {
     // Story de vaga: a arte da biblioteca não passa pela conferência — o passo `library` marca isso (R35), como o `upload`.
     const log = Array.isArray(post.ai_generation_log) ? (post.ai_generation_log as Record<string, unknown>[]) : [];
     const data: Record<string, unknown> = { media };
-    // A arte da biblioteca não seguiu referências: o registro de estilo do story de vaga não vale mais.
-    if (post.source === 'vacancy') data['style_refs'] = Prisma.DbNull;
+    // A mídia da biblioteca não seguiu referências: o registro de estilo (qualquer post) não vale mais.
+    data['style_refs'] = Prisma.DbNull;
     if (post.source === 'vacancy') data['ai_generation_log'] = [...log, { at: new Date().toISOString(), step: 'library', asset_id: list[0]?.id ?? null }].slice(-50);
     await this.prisma.ig_posts.update({ where: { id: postId }, data });
     await this.prisma.media_assets.updateMany({ where: { workspace_id: workspaceId, id: { in: list.map((a) => a.id) } }, data: { ig_post_id: postId } });

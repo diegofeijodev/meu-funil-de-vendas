@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { Prisma } from '@prisma/client';
 jest.setTimeout(120_000);
 
 import { LibraryService, MAX_UPLOAD_BYTES } from '../library.service';
@@ -188,6 +189,14 @@ describe('LibraryService — envio, reformatação e usos', () => {
     expect(vlog.map((l) => l.step)).toEqual(['vacancy_art', 'library']);
     expect(vlog[1]!.asset_id).toBe(img.id);
     expect(w.t['ig_posts']!.rows.find((x) => x.id === feed.id)!.ai_generation_log ?? []).toEqual([]);
+    // P6/§22.1: a mídia da biblioteca zera o registro de estilo em QUALQUER post (comum e de vaga).
+    const reg = { own: ['r1'], library: [], brand_id: null };
+    const comum = await w.t['ig_posts']!.create({ data: { workspace_id: WS_A, format: 'feed_image', style_refs: reg } });
+    const vac2 = await w.t['ig_posts']!.create({ data: { workspace_id: WS_A, format: 'story_image', source: 'vacancy', style_refs: reg } });
+    await lib.attachToPost(OWNER, WS_A, comum.id, [img.id]);
+    await lib.attachToPost(OWNER, WS_A, vac2.id, [img.id]);
+    expect(w.t['ig_posts']!.rows.find((x) => x.id === comum.id)!.style_refs).toBe(Prisma.DbNull); // a tabela falsa guarda o sentinela (no banco vira NULL)
+    expect(w.t['ig_posts']!.rows.find((x) => x.id === vac2.id)!.style_refs).toBe(Prisma.DbNull); // a tabela falsa guarda o sentinela (no banco vira NULL)
     w.cleanup();
   });
 
