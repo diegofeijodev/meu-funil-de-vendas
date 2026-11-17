@@ -1288,7 +1288,9 @@ check "limpeza Task 6: sem tokens de cron, heartbeats nem states pendentes" "0,0
 echo "── Seleção do Meu Funil (Pinterest automático; depende de STYLE_LIBRARY_ENABLED + STYLE_REFS_PINTEREST_ENABLED) ──"
 # A empresa do smoke ainda não tem chave de IA própria aqui (as chaves só são salvas na seção seguinte e removidas no fim dela), então a
 # Seleção NUNCA cria pasta nem lê nada: sem Pinterest falso na pilha, esta seção não pode ir à rede.
-SELB=$API/v1/workspaces/$WID/brands/$BID
+# $BID já foi excluída lá em cima: a seção cria a própria marca (segmento que casa com um ramo do catálogo) e a apaga no fim.
+SELBID=$(curl -s -X POST $API/v1/workspaces/$WID/brands -H "$H" -H "$J" -d '{"name":"Açaiteria Smoke","segment":"Açaiteria"}' | jq -r .id)
+SELB=$API/v1/workspaces/$WID/brands/$SELBID
 SLIB=$(curl -s $API/v1/workspaces/$WID/features -H "$H" | jq -r .style_library)
 if [ "$SLIB" = "true" ]; then
   LIB=$(curl -s $SELB/style-refs/library -H "$H")
@@ -1304,6 +1306,7 @@ if [ "$SLIB" = "true" ]; then
 else
   check "seleção desligada: GET /features diz style_library false e library → 404" "false,404" "$SLIB,$(curl -s -o /dev/null -w '%{http_code}' $SELB/style-refs/library -H "$H")"
 fi
+check "seleção: marca do smoke excluída (204)" "204" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $SELB -H "$H")"
 
 echo "── Task 9a: Integrações (chaves de IA, diagnóstico, histórico de publicações) ──"
 AK=$API/v1/ai-keys
