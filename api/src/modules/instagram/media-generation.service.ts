@@ -604,10 +604,8 @@ export class MediaGenerationService {
         visual_prompt: ads[0]!.prompt_final,
         ...(thread ? { visual_thread: thread } : {}),
       };
-      // Direção escrita à mão (override DIFERENTE do prompt gerado + art_direction guardada) não passa pelo diretor: sem registro (P6).
-      // Override igual (após trim) ao prompt gerado = reaproveitado sem edição: mantém o registro.
-      const edited = !!(override && brief.art_direction) && String(brief.visual_prompt_override).trim() !== String(brief.visual_prompt ?? '').trim();
-      const usedDirector = !edited;
+      // Direção escrita à mão (override + art_direction guardada) não passa pelo diretor: sem registro (P6).
+      const usedDirector = !(override && brief.art_direction);
       await this.store.patchPost(postId, { creative_brief: post.creative_brief, style_refs: styleColumn(usedDirector ? styleRecord(pick, brand?.id) : null) });
       await lease.renew();
 

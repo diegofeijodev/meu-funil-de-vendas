@@ -767,13 +767,6 @@ describe('registro do estilo (Fatia 1)', () => {
     expect(post.style_refs).toBeNull();
   });
 
-  it('override igual (após trim) ao visual_prompt gerado = reaproveitado sem edição: style_refs com o registro', async () => {
-    const { w, gen, brand, p } = withBrand();
-    const post = idea(w, { plan_id: p.id, creative_brief: { prompt: 'x', art_direction: { ...ART }, visual_prompt: ART.prompt_final, visual_prompt_override: `${ART.prompt_final}  ` } });
-    await gen.generatePostAssets(WS_A, post.id);
-    expect(post.style_refs).toEqual({ own: ['r1'], library: [], brand_id: brand.id });
-  });
-
   it('reels com visual_prompt_override: style_refs null', async () => {
     const { w, gen, p } = withBrand();
     const post = idea(w, { plan_id: p.id, format: 'reel', creative_brief: { prompt: 'x', visual_prompt_override: 'MEU PROMPT DE VÍDEO' } });

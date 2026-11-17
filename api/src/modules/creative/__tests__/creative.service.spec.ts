@@ -463,16 +463,6 @@ describe('registro do estilo (Fatia 1)', () => {
     w.cleanup();
   });
 
-  it('direção reaproveitada SEM edição (mesmo prompt, após trim) → style_refs com o registro', async () => {
-    jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(pick);
-    const w = await creativeWorld();
-    const { brand } = await seed(w);
-    const r = await w.svc.generate(OWNER, dto({ brandId: brand.id, visualPrompt: `  ${ART.prompt_final}  `, artDirection: { ...ART } }));
-    expect(r.status).toBe('ready');
-    expect(w.t['creatives']!.rows[0]!.style_refs).toEqual({ own: ['r1', 'r2'], library: [], brand_id: brand.id });
-    w.cleanup();
-  });
-
   it('vídeo assíncrono: o registro vai no options do job e o poller grava no criativo', async () => {
     jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(pick);
     const w = await creativeWorld();
