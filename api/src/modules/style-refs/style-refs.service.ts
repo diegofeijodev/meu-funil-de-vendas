@@ -30,6 +30,8 @@ export const CAMPAIGN_CAP = 8;
 const LIST_ALL_CAP = 200;
 const LIBRARY_BRANDS_CAP = 200;
 const LIBRARY_ROWS_CAP = 100;
+/** Resumos devolvidos por `library()` (as prontas mais recentes do ramo); `count` é a contagem real no banco. */
+export const LIBRARY_DESCRIPTIONS_CAP = 20;
 const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
@@ -193,21 +195,25 @@ export class StyleRefsService {
     if (!this.libraryActiveFor(ws)) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Não encontrado.' });
     const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
     if (!brand) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Marca não encontrada.' });
-    const { available, resolved, rows } = await this.libraryFor(ws, brand);
-    const ownReady = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, status: 'ready', campaign_id: null } });
-    const descriptions = rows.map((r) => notesSummary(r.notes)).filter((d): d is string => !!d);
+    const { available, resolved, rows, brandIds } = await this.libraryFor(ws, brand);
     const segment = resolved.segment;
+    const ownReady = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, status: 'ready', campaign_id: null } });
+    // `rows` vem com teto de 100 (escolha das notas): a contagem da tela é a real no banco; os resumos, as 20 mais recentes.
+    const count = segment && brandIds.length
+      ? await this.prisma.style_references.count({ where: { workspace_id: this.libraryWs, brand_id: { in: brandIds }, status: 'ready', campaign_id: null } })
+      : 0;
+    const descriptions = rows.slice(0, LIBRARY_DESCRIPTIONS_CAP).map((r) => notesSummary(r.notes)).filter((d): d is string => !!d);
     return {
       segment,
       segment_label: segment ? STYLE_CATEGORY_LABEL[segment] : null,
       segment_source: resolved.source,
       brand_segment: brand.segment ?? null,
       options: STYLE_CATEGORY_IDS.filter((id) => available.has(id)).map((id) => ({ id, label: STYLE_CATEGORY_LABEL[id] })),
-      count: rows.length,
+      count,
       descriptions,
       enabled: brand.style_library_enabled === true,
       own_ready: ownReady,
-      in_use: brand.style_library_enabled === true && !!segment && rows.length > 0 && ownReady < MAX_NOTES,
+      in_use: brand.style_library_enabled === true && !!segment && count > 0 && ownReady < MAX_NOTES,
     };
   }
 
@@ -245,8 +251,8 @@ export class StyleRefsService {
   private async libraryFor(
     ws: string,
     brand: { segment: string | null; style_library_enabled: boolean; style_library_segment: string | null },
-  ): Promise<{ available: Set<StyleCategoryId>; resolved: { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }; rows: PickRow[] }> {
-    if (!this.libraryActiveFor(ws)) return { available: new Set(), resolved: { segment: null, source: 'none' }, rows: [] };
+  ): Promise<{ available: Set<StyleCategoryId>; resolved: { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }; rows: PickRow[]; brandIds: string[] }> {
+    if (!this.libraryActiveFor(ws)) return { available: new Set(), resolved: { segment: null, source: 'none' }, rows: [], brandIds: [] };
     const lib = this.libraryWs;
     const brands = ((await this.prisma.brands.findMany({
       where: { workspace_id: lib, style_library_segment: { not: null } },
@@ -263,14 +269,14 @@ export class StyleRefsService {
     const available = new Set<StyleCategoryId>();
     for (const r of withReady) { const seg = segmentOf.get(r.brand_id); if (seg) available.add(seg); }
     const resolved = resolveLibrarySegment(brand, available);
-    if (!resolved.segment) return { available, resolved, rows: [] };
+    if (!resolved.segment) return { available, resolved, rows: [], brandIds: [] };
     const ids = withReady.map((r) => r.brand_id).filter((id) => segmentOf.get(id) === resolved.segment);
     const ready = (await this.prisma.style_references.findMany({
       where: { workspace_id: lib, brand_id: { in: ids }, status: 'ready', campaign_id: null },
       orderBy: { created_at: 'desc' },
       take: LIBRARY_ROWS_CAP,
     })) as RefRow[];
-    return { available, resolved, rows: ready.map(toPickRow).filter((x): x is PickRow => !!x) };
+    return { available, resolved, rows: ready.map(toPickRow).filter((x): x is PickRow => !!x), brandIds: ids };
   }
 
   /** Bloco para o diretor de arte/vídeo: até 4 prontas escolhidas pelo assunto, com rótulos + quais entraram, ou null. */

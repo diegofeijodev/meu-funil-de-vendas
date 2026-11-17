@@ -586,4 +586,22 @@ describe('StyleRefsService — GET library (Tarefa 11)', () => {
     const ownLib = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: WS });
     expect(await status(ownLib.svc.library(OWNER, WS, BRAND))).toBe('404:Não encontrado.');
   });
+
+  it('ramo com mais de 100 prontas: count real e descriptions só com as 20 mais recentes', async () => {
+    const { svc, t } = await world();
+    const extra = await t.brands.create({ data: { workspace_id: LIB, name: 'Açaí 2', style_library_segment: 'acai_sorvete' } });
+    await ready(t, LIB, extra.id, 'acai_sorvete', 117);
+    const view = await svc.library(OWNER, WS, BRAND);
+    expect(view.count).toBe(120);
+    expect(view.descriptions).toHaveLength(20);
+    expect(view.in_use).toBe(true);
+  });
+
+  it('segment_source chosen (ramo escolhido) e none ("Nenhum desses")', async () => {
+    const { svc, t } = await world();
+    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'bebida_bar' } });
+    expect(await svc.library(OWNER, WS, BRAND)).toMatchObject({ segment: 'bebida_bar', segment_label: 'bebida e bar', segment_source: 'chosen', count: 2, in_use: true });
+    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
+    expect(await svc.library(OWNER, WS, BRAND)).toMatchObject({ segment: null, segment_label: null, segment_source: 'none', count: 0, in_use: false });
+  });
 });
