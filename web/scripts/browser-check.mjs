@@ -576,11 +576,11 @@ try {
   await page.getByText('Nenhum arquivo enviado ainda.').waitFor({ timeout: 10000 });
   ok('arquivos removidos');
 
-  // Guia visual: sem foto de referência a IA devolve a mensagem do protótipo (HTTP 400 esperado)
+  // Guia visual: sem foto da marca a IA devolve a mensagem do protótipo (HTTP 400 esperado)
   await page.getByRole('tab', { name: 'Guia visual' }).click();
   await page.getByPlaceholder('fotografia gastronômica realista, close, fundo de bar de madeira').fill('estilo do check');
   await page.getByRole('button', { name: 'Gerar guia com IA' }).click();
-  await page.getByText('Envie ao menos uma foto de referência (produto, ambiente ou equipe).').waitFor({ timeout: 15000 });
+  await page.getByText('Envie ao menos uma foto da sua marca (produto, ambiente ou equipe).').waitFor({ timeout: 15000 });
   ok('"Gerar guia com IA" sem referência mostra a mensagem do protótipo');
   esperado(/generate-brand-guide|400 \(Bad Request\)/);
   await page.getByRole('button', { name: 'Salvar guia visual' }).click();

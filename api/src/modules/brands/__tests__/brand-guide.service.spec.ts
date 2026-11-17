@@ -55,7 +55,7 @@ describe('BrandGuideService.generate', () => {
   it('sem foto de referência → 400 com a mensagem do protótipo', async () => {
     const { svc, brands } = setup('owner');
     const brand = await brands.create({ data: { workspace_id: WS, name: 'M', segment: null } });
-    expect(await status(svc.generate(USER, brand.id))).toBe('400:Envie ao menos uma foto de referência (produto, ambiente ou equipe).');
+    expect(await status(svc.generate(USER, brand.id))).toBe('400:Envie ao menos uma foto da sua marca (produto, ambiente ou equipe).');
   });
 
   it('usa as referências (produto primeiro, sem PDF/SVG/fonte), manda as imagens à IA e devolve guide + ids', async () => {
@@ -89,6 +89,6 @@ describe('BrandGuideService.generate', () => {
     const brand = await brands.create({ data: { workspace_id: WS, name: 'M', segment: null } });
     await brand_assets.create({ data: { workspace_id: WS, brand_id: brand.id, kind: 'reference', name: 'x.png', storage_path: files.newUploadKey('brands', WS, 'png') } });
     await brand_assets.create({ data: { workspace_id: WS, brand_id: brand.id, kind: 'reference', name: 'y.png', storage_path: files.newUploadKey('brands', OTHER_WS, 'png') } });
-    expect(await status(svc.generate(USER, brand.id))).toBe('400:Envie ao menos uma foto de referência (produto, ambiente ou equipe).');
+    expect(await status(svc.generate(USER, brand.id))).toBe('400:Envie ao menos uma foto da sua marca (produto, ambiente ou equipe).');
   });
 });

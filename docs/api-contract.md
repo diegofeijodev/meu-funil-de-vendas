@@ -261,7 +261,7 @@ Telas `/brands` e `/brands/$id`. GET = `read`; POST/PATCH/DELETE = `write` (view
 Corpo `{ brandId }` → `200 { guide, referencias: string[] }`. A IA (`AiService.vision`, schema estrito `brand_guide`) olha até 6 fotos de referência da marca
 (`kind` `reference`|`photo`, sem PDF/SVG, produto primeiro, lidas do disco pela `storage_path`) e sugere `estilo_fotografico, iluminacao, paleta_hex[], ambientes[],
 elementos_obrigatorios[], elementos_proibidos[], fonte_titulo, fonte_corpo`. Acesso: precisa de `write` no workspace da marca (gasta crédito de IA; a tela esconde o botão do viewer);
-marca inexistente **ou de workspace do qual o usuário não é membro** → `404 "Marca não encontrada."`; sem foto → `400 "Envie ao menos uma foto de referência (produto, ambiente ou equipe)."`;
+marca inexistente **ou de workspace do qual o usuário não é membro** → `404 "Marca não encontrada."`; sem foto → `400 "Envie ao menos uma foto da sua marca (produto, ambiente ou equipe)."`;
 IA não configurada/falha → `502 AI_NOT_CONFIGURED`/`AI_ERROR`. Diferença: as fotos vão como estão (≤ 8 MB cada; o protótipo reduzia para 1024 px com Jimp).
 
 ## 11. Visão geral — `GET /v1/workspaces/:workspaceId/overview` (read)

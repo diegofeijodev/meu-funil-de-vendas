@@ -55,7 +55,7 @@ export class BrandGuideService {
 
     const refs = await this.loadRefs(brand.workspace_id, brand.id);
     if (!refs.length) {
-      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Envie ao menos uma foto de referência (produto, ambiente ou equipe).' });
+      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'Envie ao menos uma foto da sua marca (produto, ambiente ou equipe).' });
     }
     const prompt = [
       `Você é diretor de arte. Estas são fotos reais da marca "${brand.name}" (${brand.segment ?? 'segmento não informado'}).`,
