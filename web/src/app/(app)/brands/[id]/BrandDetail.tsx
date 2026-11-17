@@ -25,8 +25,7 @@ import {
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section } from "@/components/ui-bits";
-import { StyleLibrary } from "@/components/style-library";
-import { StyleRefsPanel } from "@/components/style-refs-panel";
+import { StyleArtsBody } from "@/components/style-selection";
 import { BRAND_PHOTOS_TEXT, PANEL_TEXT, brandPhotosToast, photoLabel } from "@/lib/style-refs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -373,8 +372,7 @@ export function BrandDetail() {
         <TabsContent value="guia" className="space-y-6">
           {workspaceId && (
             <Section title={PANEL_TEXT.title} description={PANEL_TEXT.description}>
-              <StyleRefsPanel workspaceId={workspaceId} brandId={id} campaignId={null} canEdit={canEdit} />
-              <StyleLibrary workspaceId={workspaceId} brandId={id} canEdit={canEdit} />
+              <StyleArtsBody workspaceId={workspaceId} brandId={id} canEdit={canEdit} />
             </Section>
           )}
           <VisualGuide

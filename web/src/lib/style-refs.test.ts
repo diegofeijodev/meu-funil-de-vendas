@@ -10,6 +10,12 @@ import {
   SELECTION_TEXT,
   promotedToast,
   refsPollInterval,
+  allSelectionSourcesFailed,
+  branchConsequence,
+  branchToast,
+  branchSubmitLabel,
+  selectionPollInterval,
+  selectionSignature,
   selectionAnnouncement,
   selectionState,
   type SelectionCtx,
@@ -343,5 +349,61 @@ describe('refsPollInterval', () => {
     expect(refsPollInterval([r('processing', 0)])).toBe(5000);
     expect(refsPollInterval([r('processing', 2), r('processing', 0)])).toBe(5000);
     expect(refsPollInterval([r('processing', 2), r('ready', 0)])).toBe(60000);
+  });
+});
+
+describe('conferência da vista da Seleção (ui.md §3.7)', () => {
+  it('10 s nos estados 10b, 11 e 12 com leitura; para depois de 10 min', () => {
+    expect(selectionPollInterval('10b', 0, 0)).toBe(10000);
+    expect(selectionPollInterval('11', 2, 5000)).toBe(10000);
+    expect(selectionPollInterval('12', 1, 599999)).toBe(10000);
+    expect(selectionPollInterval('12', 0, 0)).toBe(false);
+    expect(selectionPollInterval('10c', 0, 0)).toBe(false);
+    expect(selectionPollInterval('3', 0, 0)).toBe(false);
+    expect(selectionPollInterval('10b', 0, 600000)).toBe(false);
+    expect(selectionPollInterval('11', 3, 700000)).toBe(false);
+  });
+  it('a assinatura só muda com count, reading ou sources_count', () => {
+    const a = { count: 1, reading: 2, sources_count: 3 };
+    expect(selectionSignature(a)).toBe(selectionSignature({ ...a }));
+    expect(selectionSignature(a)).not.toBe(selectionSignature({ ...a, count: 2 }));
+    expect(selectionSignature(a)).not.toBe(selectionSignature({ ...a, reading: 0 }));
+    expect(selectionSignature(a)).not.toBe(selectionSignature({ ...a, sources_count: 2 }));
+  });
+  it('estado 9: todas as pastas com erro (e só com pastas)', () => {
+    expect(allSelectionSourcesFailed([])).toBe(false);
+    expect(allSelectionSourcesFailed([{ last_error: 'x' }, { last_error: null }])).toBe(false);
+    expect(allSelectionSourcesFailed([{ last_error: 'x' }, { last_error: 'y' }])).toBe(true);
+  });
+});
+
+describe('troca de ramo (ui.md §3.4)', () => {
+  it('consequência só com opção diferente da atual e referências na marca', () => {
+    expect(branchConsequence({ picked: 'bebida_bar', current: 'acai_sorvete', pickedLabel: 'Bar e bebidas', count: 3 })).toBe(
+      'As 3 referências da seleção de agora saem desta marca. Entram as do ramo Bar e bebidas, lidas com a chave de IA da empresa.',
+    );
+    expect(branchConsequence({ picked: 'bebida_bar', current: 'acai_sorvete', pickedLabel: 'Bar e bebidas', count: 1 })).toBe(
+      'A referência da seleção de agora sai desta marca. Entram as do ramo Bar e bebidas, lidas com a chave de IA da empresa.',
+    );
+    expect(branchConsequence({ picked: 'none', current: 'acai_sorvete', pickedLabel: 'Nenhum desses', count: 2 })).toBe(
+      'As 2 referências da seleção saem desta marca e nada entra no lugar.',
+    );
+    expect(branchConsequence({ picked: 'none', current: 'acai_sorvete', pickedLabel: 'Nenhum desses', count: 1 })).toBe(
+      'A referência da seleção sai desta marca e nada entra no lugar.',
+    );
+    expect(branchConsequence({ picked: 'acai_sorvete', current: 'acai_sorvete', pickedLabel: 'Açaí e sorvete', count: 3 })).toBeNull();
+    expect(branchConsequence({ picked: 'bebida_bar', current: 'acai_sorvete', pickedLabel: 'Bar e bebidas', count: 0 })).toBeNull();
+    expect(branchConsequence({ picked: 'bebida_bar', current: null, pickedLabel: 'Bar e bebidas', count: 5 })).toBeNull();
+  });
+  it('toast e rótulo do botão', () => {
+    expect(branchToast({ picked: 'acai_sorvete', pickedLabel: 'Açaí e sorvete', first: true, hadRefs: false })).toBe('Ramo escolhido: Açaí e sorvete.');
+    expect(branchToast({ picked: 'bebida_bar', pickedLabel: 'Bar e bebidas', first: false, hadRefs: false })).toBe('Ramo trocado para Bar e bebidas.');
+    expect(branchToast({ picked: 'bebida_bar', pickedLabel: 'Bar e bebidas', first: false, hadRefs: true })).toBe(
+      'Ramo trocado para Bar e bebidas. As referências da seleção anterior saíram.',
+    );
+    expect(branchToast({ picked: 'none', pickedLabel: 'Nenhum desses', first: false, hadRefs: true })).toBe('Pronto. A seleção não traz referências para esta marca.');
+    expect(branchToast({ picked: 'none', pickedLabel: 'Nenhum desses', first: true, hadRefs: false })).toBe('Pronto. A seleção não traz referências para esta marca.');
+    expect(branchSubmitLabel('none')).toBe('Ficar sem seleção');
+    expect(branchSubmitLabel('acai_sorvete')).toBe('Usar este ramo');
   });
 });

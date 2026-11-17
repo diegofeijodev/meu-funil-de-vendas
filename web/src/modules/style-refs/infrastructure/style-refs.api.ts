@@ -84,13 +84,13 @@ export async function uploadStyleRef(ws: string, brandId: string, file: File, ca
   await api.post(`${base(ws, brandId)}/upload`, form, { params: campaignId ? { campaign_id: campaignId } : {} });
 }
 
-/** `promoted` (P36): a pasta ou o Pin colado já vinha da Seleção e virou da própria marca. Colar um Pin devolve também o item. */
+/** `promoted` (P36): a pasta ou o Pin colado já vinha da Seleção e virou da própria marca. Colar um Pin devolve também o Pin em `refs`. */
 const pinterestAddedSchema = z
   .object({
     kind: z.string(),
     added: z.number().default(0),
     promoted: z.boolean().default(false),
-    item: refSchema.nullish().catch(null),
+    refs: z.array(refSchema).catch([]).default([]),
   })
   .passthrough();
 export type PinterestAdded = z.infer<typeof pinterestAddedSchema>;

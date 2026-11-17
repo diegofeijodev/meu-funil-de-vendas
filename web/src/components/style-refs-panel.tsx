@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { StyleRefRow } from "@/components/style-ref-row";
 import { fullDate } from "@/lib/format";
 import {
   PANEL_TEXT,
@@ -25,10 +26,6 @@ import {
   liveAnnouncement,
   promotedToast,
   selectionAnnouncement,
-  refOrigin,
-  refScope,
-  refStateText,
-  removeLabel,
   removedToast,
   seeAllLabel,
   stopSourceQuestion,
@@ -283,26 +280,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
           {selection !== "none" && hasSelection && <p className="text-sm font-medium">{SELECTION_TEXT.ownRefs}</p>}
           <ul className="space-y-3">
             {shown.map((r) => (
-              <li key={r.id} className="rounded-lg border border-border p-3">
-                <div className="flex gap-3">
-                  {r.image_url ? (
-                    <img src={r.image_url} alt="" className="size-16 shrink-0 rounded-md object-cover" loading="lazy" />
-                  ) : (
-                    <div className="size-16 shrink-0 rounded-md bg-muted" />
-                  )}
-                  <div className="min-w-0 flex-1 space-y-1 text-sm">
-                    <p className="text-sm text-muted-foreground">
-                      {refOrigin(r)} · {refScope(r)}
-                    </p>
-                    <p className={r.status === "failed" ? "text-destructive" : undefined}>{refStateText(r)}</p>
-                  </div>
-                </div>
-                {canEdit && (
-                  <Button variant="ghost" size="sm" className="mt-2 h-11" aria-label={removeLabel(r)} onClick={() => void remove(r)}>
-                    Remover
-                  </Button>
-                )}
-              </li>
+              <StyleRefRow key={r.id} item={r} canEdit={canEdit} onRemove={(x) => void remove(x)} />
             ))}
           </ul>
           {!expanded && refs.length > shown.length && (
@@ -339,26 +317,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
           {!!selRefs.length && (
             <ul className="space-y-3">
               {selRefs.map((r) => (
-                <li key={r.id} className="rounded-lg border border-border p-3">
-                  <div className="flex gap-3">
-                    {r.image_url ? (
-                      <img src={r.image_url} alt="" className="size-16 shrink-0 rounded-md object-cover" loading="lazy" />
-                    ) : (
-                      <div className="size-16 shrink-0 rounded-md bg-muted" />
-                    )}
-                    <div className="min-w-0 flex-1 space-y-1 text-sm">
-                      <p className="text-sm text-muted-foreground">
-                        {refOrigin(r)} · {refScope(r)}
-                      </p>
-                      <p className={r.status === "failed" ? "text-destructive" : undefined}>{refStateText(r, { selection: true, paused })}</p>
-                    </div>
-                  </div>
-                  {canEdit && (
-                    <Button variant="ghost" size="sm" className="mt-2 h-11" aria-label={removeLabel(r)} onClick={() => void remove(r)}>
-                      Remover
-                    </Button>
-                  )}
-                </li>
+                <StyleRefRow key={r.id} item={r} canEdit={canEdit} onRemove={(x) => void remove(x)} selection paused={paused} />
               ))}
             </ul>
           )}

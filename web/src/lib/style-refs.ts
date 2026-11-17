@@ -369,3 +369,33 @@ export function selectionState(view: SelectionViewLike | null | undefined, ctx: 
   const base = "Em uso. As suas referências vêm sempre primeiro; a seleção completa o estilo enquanto você tiver menos de 4 para a marca toda.";
   return st("12", view.reading > 0 ? `${base} Lendo o estilo de mais ${view.reading} ${plural(view.reading, "referência", "referências")}…` : base);
 }
+
+/** Conferência da vista da Seleção (ui.md §3.7): 10 s nos estados 10b, 11 e 12 com leitura, por até 10 min. */
+export const SELECTION_POLL_MS = 10_000;
+export const SELECTION_POLL_MAX_MS = 10 * 60_000;
+
+export function selectionPollInterval(stateId: string, reading: number, elapsedMs: number): number | false {
+  if (elapsedMs >= SELECTION_POLL_MAX_MS) return false;
+  if (stateId === "10b") return SELECTION_POLL_MS;
+  if ((stateId === "11" || stateId === "12") && reading > 0) return SELECTION_POLL_MS;
+  return false;
+}
+
+/** A lista só é refeita quando isto muda (refazer renova as URLs assinadas das miniaturas). */
+export const selectionSignature = (v: { count: number; reading: number; sources_count: number }): string => `${v.count}|${v.reading}|${v.sources_count}`;
+
+/** Estado 9: há pastas da seleção e todas estão com erro. */
+export const allSelectionSourcesFailed = (sources: { last_error: string | null }[]): boolean => sources.length > 0 && sources.every((s) => !!s.last_error);
+
+/** Troca de ramo (ui.md §3.4): a consequência só aparece com opção diferente da atual e referências da seleção na marca. */
+export function branchConsequence(a: { picked: string; current: string | null; pickedLabel: string; count: number }): string | null {
+  if (a.current === null || a.picked === a.current || a.count <= 0) return null;
+  return a.picked === "none" ? SELECTION_TEXT.branchNoneConsequence(a.count) : SELECTION_TEXT.branchChangeConsequence(a.count, a.pickedLabel);
+}
+
+export function branchToast(a: { picked: string; pickedLabel: string; first: boolean; hadRefs: boolean }): string {
+  if (a.picked === "none") return SELECTION_TEXT.branchNoneToast;
+  return a.first ? SELECTION_TEXT.branchChosenToast(a.pickedLabel) : SELECTION_TEXT.branchChangedToast(a.pickedLabel, a.hadRefs);
+}
+
+export const branchSubmitLabel = (picked: string): string => (picked === "none" ? SELECTION_TEXT.stayWithout : SELECTION_TEXT.useBranch);
