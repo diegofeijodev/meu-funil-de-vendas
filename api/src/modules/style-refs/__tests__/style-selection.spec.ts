@@ -943,4 +943,83 @@ describe('Seleção — sincronização da pasta (18b)', () => {
     expect(await w.svc.refreshDueSources(5)).toBe(2);
     expect(rssCalls(w)).toEqual([nova.src.rss_url, old.src.rss_url]);
   });
+
+  it('Rodada 1: Pin promovido no meio de uma pasta apagada fica (linha e arquivo); o resto some', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    const orig = w.t.style_ref_sources.updateMany.bind(w.t.style_ref_sources);
+    w.t.style_ref_sources.updateMany = async (args: any) => {
+      if (args?.data?.seen_pin_ids) {
+        await w.t.style_ref_sources.deleteMany({ where: { id: a.src.id } });
+        const first = w.t.style_references.rows.find((r) => r.source_id === a.src.id)!;
+        Object.assign(first, { origin: 'own', source_id: null }); // promovido no meio
+      }
+      return orig(args);
+    };
+    expect(await (w.svc as any).sync(a.src)).toBe(0);
+    const left = w.t.style_references.rows.filter((r) => r.pin_id);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ origin: 'own', source_id: null });
+    expect([...w.files.keys()]).toEqual([`style-refs/${left[0]!.storage_path}`]);
+  });
+
+  it('Rodada 1: cascata simulada (as linhas já sumiram com a pasta): os arquivos criados na rodada são apagados, sem órfão', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    const orig = w.t.style_ref_sources.updateMany.bind(w.t.style_ref_sources);
+    w.t.style_ref_sources.updateMany = async (args: any) => {
+      if (args?.data?.seen_pin_ids) {
+        await w.t.style_ref_sources.deleteMany({ where: { id: a.src.id } });
+        await w.t.style_references.deleteMany({ where: { source_id: a.src.id } });
+      }
+      return orig(args);
+    };
+    expect(await (w.svc as any).sync(a.src)).toBe(0);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toEqual([]);
+    expect([...w.files.keys()]).toEqual([]);
+  });
+
+  it('Rodada 1: própria e Seleção da mesma marca no mesmo ciclo — teto 30 e a própria nunca sai', async () => {
+    const w = await world(KEY, 0, 0);
+    const own = await refs(w.t, WS, BRAND, 'own', 28, { campaign_id: CAMP });
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    await cycle(w, a.src.id);
+    expect(w.t.style_references.rows).toHaveLength(30);
+    await w.svc.upload(OWNER, WS, BRAND, { bytes: w.img, mime: 'image/png' });
+    const rows = w.t.style_references.rows;
+    expect(rows).toHaveLength(30);
+    expect(rows.filter((r) => r.origin === 'selection')).toHaveLength(1);
+    for (const id of own) expect(rows.map((r) => r.id)).toContain(id);
+  });
+
+  it('Rodada 1: renovação com a Seleção desligada só pega pasta própria', async () => {
+    const w = await world({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: false }, aiKey: 'sk' }, 1, 0);
+    const sel = await folder(w, feed(w, 'a'), 'selection');
+    const own = await folder(w, feed(w, 'o'), 'own');
+    expect(await w.svc.refreshDueSources(5)).toBe(1);
+    expect(rssCalls(w)).toEqual([own.src.rss_url]);
+    expect(w.t.style_ref_sources.rows.find((r) => r.id === sel.src.id)!.last_synced_at).toBeNull();
+  });
+
+  it('Rodada 1: a falha esgotada NÃO volta para a fila se outra da Seleção espera nova tentativa, ou sem chave', async () => {
+    for (const modo of ['espera', 'semChave']) {
+      const w = await world(modo === 'semChave' ? { env: ON } : KEY, 1, 0);
+      const a = await folder(w, feed(w, 'a'), 'selection', 1);
+      await w.t.style_references.updateMany({ where: { id: a.ids[0] }, data: { status: 'failed', attempts: 3 } });
+      if (modo === 'espera') await refs(w.t, WS, BRAND, 'selection', 1, { status: 'processing', attempts: 1 });
+      await (w.svc as any).sync(a.src);
+      expect(w.t.style_references.rows.find((r) => r.id === a.ids[0])).toMatchObject({ status: 'failed', attempts: 3 });
+      expect(rssCalls(w)).toEqual([]);
+    }
+  });
+
+  it('Rodada 1: a pasta que devolveu falha para a fila não traz Pin novo no mesmo sync', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection', 1);
+    await w.t.style_references.updateMany({ where: { id: a.ids[0] }, data: { status: 'failed', attempts: 3 } });
+    await (w.svc as any).sync(a.src);
+    expect(w.t.style_references.rows.find((r) => r.id === a.ids[0])).toMatchObject({ status: 'processing', attempts: 0 });
+    expect(rssCalls(w)).toEqual([]);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(1);
+  });
 });
