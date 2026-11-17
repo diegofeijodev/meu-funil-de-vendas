@@ -58,9 +58,9 @@ export class RefsService {
    * Notas de estilo das referências (Fatias 5/6) para o diretor de arte e o de vídeo — só TEXTO. As imagens de referência de
    * terceiros (Pinterest, envio) nunca passam por `loadBrandRefs`: ficam em `style_references`, fora do que vira pixel.
    */
-  async loadStyleNotes(workspaceId: string, brandId: string | null | undefined, campaignId?: string | null): Promise<StylePick | null> {
+  async loadStyleNotes(workspaceId: string, brandId: string | null | undefined, campaignId?: string | null, subject?: string | null): Promise<StylePick | null> {
     if (!this.styleRefs || !brandId) return null;
-    return this.styleRefs.loadStyleNotes(workspaceId, brandId, campaignId ?? null).catch((e) => {
+    return this.styleRefs.loadStyleNotes(workspaceId, brandId, campaignId ?? null, subject ?? null).catch((e) => {
       this.logger.warn(`notas de estilo (${workspaceId}/${brandId}): ${(e as Error).message}`);
       return null;
     });

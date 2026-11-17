@@ -42,6 +42,23 @@ describe('notas de estilo v2', () => {
     expect(r.ids).toEqual(['r1', 'r2', 'r3']);
     expect(r.text).not.toContain(' 4) ');
   });
+  it('nota reduzida sem paleta nem luz é pulada e a seguinte vira o número certo', () => {
+    const vazia: StyleNotes = { ...FULL, paleta: [], luz: '' };
+    const ok: StyleNotes = { ...FULL, paleta: ['rosa'], luz: '' };
+    const r = styleNotesText([{ id: 'a', notes: vazia, full: false }, { id: 'b', notes: ok, full: false }])!;
+    expect(r.ids).toEqual(['b']);
+    expect(r.text).toBe(`${STYLE_NOTES_HEADER} 1) «paleta rosa»`);
+  });
+  it('P4: a parte que não cabe é pulada e uma menor depois dela ainda entra', () => {
+    // prefixo "1) «" (4) + assunto 50 + paleta 85 + luz 70 + acabamento 300 = ~500; clima (80) não cabe; evitar curto cabe
+    const n: StyleNotes = { ...FULL, paleta: ['a'.repeat(20), 'b'.repeat(20), 'c'.repeat(20), 'd'.repeat(20)], clima: cap(80), enquadramento: cap(80), composicao: cap(80), evitar: ['ok'], acabamento: cap(300) };
+    const l = noteLine(1, n);
+    expect(l.length).toBeLessThanOrEqual(600);
+    expect(l).not.toContain('clima');
+    expect(l).not.toContain('enquadramento');
+    expect(l).not.toContain('composição');
+    expect(l).toContain('evitar ok');
+  });
   it('registro: styleRecord e asStyleRefsRecord', () => {
     expect(styleRecord(null, 'b1')).toEqual({ own: [], library: [], brand_id: 'b1' });
     expect(asStyleRefsRecord({ own: ['a'], library: [], brand_id: null })).toEqual({ own: ['a'], library: [], brand_id: null });

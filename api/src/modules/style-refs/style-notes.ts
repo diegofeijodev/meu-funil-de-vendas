@@ -96,15 +96,9 @@ export function notesSummary(n: StyleNotes | null): string | null {
   return parts.length ? parts.join('; ') : null;
 }
 
-/**
- * Linha de uma nota (P4): `"{i}) [{rótulos}] «{partes}»"`. Partes em ordem de prioridade; a que não cabe nos 600 é pulada e as seguintes
- * ainda são tentadas. Nota reduzida (`full: false`) = só paleta e luz.
- */
-export function noteLine(index: number, n: StyleNotes, opts: { full?: boolean; labels?: string[] } = {}): string {
-  const full = opts.full !== false;
-  const labels = (opts.labels ?? []).slice(0, 2);
-  const prefix = `${index}) ${labels.length ? `[${labels.join(', ')}] ` : ''}«`;
-  const candidates: string[] = [
+/** Partes candidatas de uma nota, em ordem de prioridade (nota reduzida = só paleta e luz). */
+function noteParts(n: StyleNotes, full: boolean): string[] {
+  return [
     full && n.assunto ? `assunto ${n.assunto}` : '',
     n.paleta.length ? `paleta ${n.paleta.join(', ')}` : '',
     n.luz ? `luz ${n.luz}` : '',
@@ -114,8 +108,17 @@ export function noteLine(index: number, n: StyleNotes, opts: { full?: boolean; l
     full && n.composicao ? `composição ${n.composicao}` : '',
     full && n.evitar.length ? `evitar ${n.evitar.join(', ')}` : '',
   ].filter(Boolean);
+}
+
+/**
+ * Linha de uma nota (P4): `"{i}) [{rótulos}] «{partes}»"`. Partes em ordem de prioridade; a que não cabe nos 600 é pulada e as seguintes
+ * ainda são tentadas. Nota reduzida (`full: false`) = só paleta e luz.
+ */
+export function noteLine(index: number, n: StyleNotes, opts: { full?: boolean; labels?: string[] } = {}): string {
+  const labels = (opts.labels ?? []).slice(0, 2);
+  const prefix = `${index}) ${labels.length ? `[${labels.join(', ')}] ` : ''}«`;
   const parts: string[] = [];
-  for (const c of candidates) {
+  for (const c of noteParts(n, opts.full !== false)) {
     const body = [...parts, c].join('; ');
     if (prefix.length + body.length + 1 <= NOTE_MAX) parts.push(c);
   }
@@ -129,8 +132,8 @@ export function styleNotesText(
   let text = STYLE_NOTES_HEADER;
   const ids: string[] = [];
   for (const it of items.slice(0, MAX_NOTES)) {
+    if (noteParts(it.notes, it.full !== false).length === 0) continue; // nota reduzida sem paleta nem luz: nada a dizer
     const line = noteLine(ids.length + 1, it.notes, { full: it.full, labels: it.labels });
-    if (line.endsWith('«»')) continue; // nota reduzida sem paleta nem luz: nada a dizer
     if (text.length + 1 + line.length > BLOCK_MAX) break;
     text += ` ${line}`;
     ids.push(it.id);

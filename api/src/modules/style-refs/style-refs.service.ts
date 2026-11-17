@@ -17,7 +17,9 @@ import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { MAX_NOTES, normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
+import { STYLE_CATEGORY_LABEL } from './categories';
+import { chooseNotes, PickedNote, PickRow } from './style-pick';
+import { normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
 
 const BUCKET = 'style-refs';
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -163,22 +165,32 @@ export class StyleRefsService {
     };
   }
 
-  /** Bloco para o diretor de arte/vídeo: até 4 prontas (as da campanha primeiro, depois as mais novas da marca) + quais entraram, ou null. */
-  async loadStyleNotes(ws: string, brandId: string | null | undefined, campaignId?: string | null): Promise<StylePick | null> {
-    if (!brandId) return null;
+  /**
+   * Carregador único da escolha (Fatia 3): lê as prontas da marca no workspace e escolhe até 4 pelo assunto do pedido (`chooseNotes`).
+   * `loadStyleNotes` e, adiante, a foto das vagas só chamam isto.
+   */
+  async pickNotes(ws: string, brandId: string, campaignId: string | null, subject: string | null): Promise<PickedNote[]> {
     const rows = (await this.prisma.style_references.findMany({
       where: { workspace_id: ws, brand_id: brandId, status: 'ready' },
       orderBy: { created_at: 'desc' },
       take: BRAND_CAP + CAMPAIGN_CAP,
     })) as RefRow[];
-    const usable = rows.filter((r) => !r.campaign_id || r.campaign_id === campaignId);
-    usable.sort((a, b) => Number(b.campaign_id === campaignId && !!campaignId) - Number(a.campaign_id === campaignId && !!campaignId));
-    const items = usable
-      .map((r) => ({ id: r.id, notes: normalizeStyleNotes(r.style_notes) }))
-      .filter((x): x is { id: string; notes: StyleNotes } => !!x.notes)
-      .slice(0, MAX_NOTES * 2);
-    const r = styleNotesText(items);
-    return r ? { text: r.text, used: { own: r.ids, library: [] } } : null;
+    const own = rows
+      .map((r) => ({ id: r.id, campaign_id: r.campaign_id, created_at: r.created_at, notes: normalizeStyleNotes(r.style_notes) }))
+      .filter((x): x is PickRow => !!x.notes);
+    return chooseNotes(own, campaignId ?? null, subject);
+  }
+
+  /** Bloco para o diretor de arte/vídeo: até 4 prontas escolhidas pelo assunto, com rótulos + quais entraram, ou null. */
+  async loadStyleNotes(ws: string, brandId: string | null | undefined, campaignId?: string | null, subject?: string | null): Promise<StylePick | null> {
+    if (!brandId) return null;
+    const picked = await this.pickNotes(ws, brandId, campaignId ?? null, subject ?? null);
+    const r = styleNotesText(
+      picked.map((p) => ({ id: p.row.id, notes: p.row.notes, full: p.full, labels: p.row.notes.categorias.slice(0, 2).map((c) => STYLE_CATEGORY_LABEL[c]) })),
+    );
+    if (!r) return null;
+    const lib = new Set(picked.filter((p) => p.library).map((p) => p.row.id));
+    return { text: r.text, used: { own: r.ids.filter((id) => !lib.has(id)), library: r.ids.filter((id) => lib.has(id)) } };
   }
 
   // ── adicionar ──────────────────────────────────────────────────────────

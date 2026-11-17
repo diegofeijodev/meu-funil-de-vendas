@@ -946,8 +946,10 @@ A referência (imagem enviada, Pin colado ou Pins de uma pasta/perfil público d
 `acabamento` (até 300 letras), gravadas com `v: 2`; nota sem `v` continua válida). Só esse texto vai ao diretor de arte e ao de vídeo
 (`ArtBrief.styleNotes`/`VideoBrief.styleNotes`, via `RefsService.loadStyleNotes`), no formato
 `"INSPIRAÇÃO DE ESTILO (referências da marca; não copie composição, pessoas, marcas nem textos; use cores, luz, clima e acabamento só das que combinam com o briefing): 1) «…» 2) «…»"`,
-com até 4 notas de até 600 letras cada, bloco ≤ 2500 contando o cabeçalho e corte na fronteira da nota. Ordem: as da campanha primeiro, depois as mais novas da
-marca. `loadStyleNotes` devolve `{ text, used: { own, library } }` (ou `null`). **O pixel de terceiro nunca vai ao gerador, à Biblioteca, à Meta ou ao Instagram**; a imagem (≤ 1024 px JPEG, bucket `style-refs`)
+com até 4 notas de até 600 letras cada, bloco ≤ 2500 contando o cabeçalho e corte na fronteira da nota. Cada nota leva até 2 rótulos de categoria:
+`"{i}) [rótulo, rótulo] «…»"`. Ordem (Fatia 3): até 2 da campanha, depois as da marca com categoria em comum com o pedido, desempate pelo `assunto`, depois as mais
+novas; vaga que sobra volta para a campanha. Nota sem categoria em comum entra só com paleta e luz; pedido sem categoria reconhecida usa as notas inteiras.
+`loadStyleNotes(ws, brandId, campaignId, subject)` (`subject` opcional) devolve `{ text, used: { own, library } }` (ou `null`). **O pixel de terceiro nunca vai ao gerador, à Biblioteca, à Meta ou ao Instagram**; a imagem (≤ 1024 px JPEG, bucket `style-refs`)
 existe só para a tela. Tetos: 8 por campanha (`400 "Chegou a 8 referências nesta campanha. Remova uma para pôr outra."`), 30 por marca (saem as mais
 antigas vindas de pastas; enviadas/Pins colados não saem sozinhos → `400 "Chegou a 30 referências nesta marca. Remova uma para pôr outra."`), 5 pastas.
 Pinterest só com `STYLE_REFS_PINTEREST_ENABLED=true` (fora: `404`); `GET /features` devolve `style_refs_pinterest`.

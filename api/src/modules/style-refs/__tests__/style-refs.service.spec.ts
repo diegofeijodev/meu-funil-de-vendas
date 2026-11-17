@@ -95,8 +95,24 @@ describe('StyleRefsService — envio e leitura do estilo', () => {
     await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' }, CAMP);
     await svc.processPending(5);
     const pick = (await svc.loadStyleNotes(WS, BRAND, CAMP))!;
-    expect(pick.text.startsWith(`${STYLE_NOTES_HEADER} 1) «assunto hambúrguer no balcão; paleta laranja, creme`)).toBe(true);
+    expect(pick.text.startsWith(`${STYLE_NOTES_HEADER} 1) [hambúrguer e lanches] «assunto hambúrguer no balcão; paleta laranja, creme`)).toBe(true);
     expect(pick.used).toEqual({ own: [t.style_references.rows[0].id], library: [] });
+  });
+
+  it('texto rotulado e nota reduzida', async () => {
+    const { t, svc } = await setup();
+    const mk = (campaign_id: string | null, categorias: string[], assunto: string) =>
+      t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id, source: 'upload', status: 'ready', style_notes: { ...NOTES, categorias, assunto } } }) as Promise<{ id: string }>;
+    const c2 = await mk(CAMP, ['comida_hamburguer'], 'hambúrguer');
+    const c3 = await mk(CAMP, ['comida_hamburguer'], 'hambúrguer artesanal');
+    const b1 = await mk(null, ['comida_hamburguer'], 'lanche');
+    const b2 = await mk(null, ['bebida_bar'], 'chope');
+    const b3 = await mk(null, [], 'x');
+    const pick = (await svc.loadStyleNotes(WS, BRAND, CAMP, 'Hambúrguer artesanal'))!;
+    expect(pick.text).toContain(' 1) [hambúrguer e lanches] «assunto hambúrguer artesanal; ');
+    expect(pick.text.endsWith(' 4) «paleta laranja, creme; luz de fim de tarde»')).toBe(true);
+    expect(pick.used.own).toEqual([c3.id, c2.id, b1.id, b3.id]);
+    expect(pick.used.own).not.toContain(b2.id);
   });
 
   it('processPending grava v: 2', async () => {
