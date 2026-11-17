@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+
+import { STYLE_CATEGORY_IDS } from '../../style-refs/categories';
 
 const LONG = 10_000;
 
@@ -26,6 +28,9 @@ export class UpdateBrandDto {
   @IsOptional() @IsString() @MaxLength(2000) logo_url?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(200, { each: true }) preferred_words?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(200, { each: true }) banned_words?: string[];
+  /** Seleção do Meu Funil (Fatia 4): sem default (o PATCH só grava o que vem). */
+  @IsOptional() @IsBoolean() style_library_enabled?: boolean;
+  @IsOptional() @IsIn([...STYLE_CATEGORY_IDS, 'none']) style_library_segment?: string;
   /** Guia visual (`VisualStyle`, jsonb). */
   @IsOptional() @IsObject() visual_style?: Record<string, unknown>;
 }

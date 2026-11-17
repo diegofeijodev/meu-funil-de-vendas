@@ -1,4 +1,5 @@
-import { chooseNotes, PickRow } from '../style-pick';
+import { chooseNotes, PickRow, resolveLibrarySegment } from '../style-pick';
+import { StyleCategoryId } from '../categories';
 import { StyleNotes } from '../style-notes';
 
 const CAMP = 'camp-1';
@@ -37,5 +38,33 @@ describe('chooseNotes', () => {
     const lib = [row('l1', null, 7, ['comida_hamburguer'])];
     const r = chooseNotes(rows.slice(3, 4), CAMP, 'hambúrguer', lib);
     expect(r.map((p) => [p.row.id, p.library])).toEqual([['b1', false], ['l1', true]]);
+  });
+});
+
+describe('resolveLibrarySegment', () => {
+  const avail = new Set<StyleCategoryId>(['acai_sorvete', 'bebida_bar']);
+  it('reconhece o ramo pelo texto de brands.segment', () => {
+    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: null }, avail)).toEqual({ segment: 'acai_sorvete', source: 'auto' });
+  });
+  it('o ramo escolhido vale mais que o texto', () => {
+    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: 'bebida_bar' }, avail)).toEqual({ segment: 'bebida_bar', source: 'chosen' });
+  });
+  it('"none" = nenhum desses', () => {
+    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: 'none' }, avail)).toEqual({ segment: null, source: 'none' });
+  });
+  it('texto reconhecido sem ramo disponível → nenhum, ainda "auto"', () => {
+    expect(resolveLibrarySegment({ segment: 'Pizzaria Bella', style_library_segment: null }, avail)).toEqual({ segment: null, source: 'auto' });
+  });
+  it('ramo escolhido que não está disponível (ou lixo) não vale', () => {
+    expect(resolveLibrarySegment({ segment: null, style_library_segment: 'beleza' }, avail)).toEqual({ segment: null, source: 'none' });
+    expect(resolveLibrarySegment({ segment: null, style_library_segment: 'xyz' }, avail)).toEqual({ segment: null, source: 'none' });
+  });
+});
+
+describe('chooseNotes com a seleção', () => {
+  it('1 própria + 3 da seleção: a própria primeiro, as 3 com library: true', () => {
+    const lib = [row('l1', null, 7, ['acai_sorvete']), row('l2', null, 8, ['acai_sorvete']), row('l3', null, 9, ['acai_sorvete']), row('l4', null, 10, ['acai_sorvete'])];
+    const r = chooseNotes([row('p1', null, 1, ['acai_sorvete'])], null, 'açaí', lib);
+    expect(r.map((p) => [p.row.id, p.library])).toEqual([['p1', false], ['l4', true], ['l3', true], ['l2', true]]);
   });
 });

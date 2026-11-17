@@ -17,9 +17,9 @@ import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { STYLE_CATEGORY_LABEL } from './categories';
-import { chooseNotes, PickedNote, PickRow } from './style-pick';
-import { normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
+import { isStyleCategory, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
+import { chooseNotes, PickedNote, PickRow, resolveLibrarySegment } from './style-pick';
+import { MAX_NOTES, normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
 
 const BUCKET = 'style-refs';
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -28,6 +28,7 @@ const MAX_SIDE = 1024;
 export const BRAND_CAP = 30;
 export const CAMPAIGN_CAP = 8;
 const LIST_ALL_CAP = 200;
+const LIBRARY_READ_CAP = 300;
 const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
@@ -77,6 +78,11 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
   return new Uint8Array(Buffer.concat(chunks));
 }
 
+function toPickRow(r: RefRow): PickRow | null {
+  const notes = normalizeStyleNotes(r.style_notes);
+  return notes ? { id: r.id, campaign_id: r.campaign_id, created_at: r.created_at, notes } : null;
+}
+
 type RefRow = {
   id: string; workspace_id: string; brand_id: string; campaign_id: string | null; source_id: string | null; source: string;
   source_url: string | null; pin_id: string | null; title: string | null; storage_path: string | null; style_notes: unknown;
@@ -118,6 +124,8 @@ export class StyleRefsService {
   /** Lê o estilo logo depois de adicionar (em segundo plano). Os testes desligam e chamam `processPending`. */
   autoProcess = true;
   private readonly pinterestOn: boolean;
+  private readonly libraryOn: boolean;
+  private readonly libraryWs: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -126,9 +134,16 @@ export class StyleRefsService {
     private readonly files: FilesService,
     private readonly images: ImageService,
     @Inject(EXTERNAL_FETCH) private readonly fetchExternal: ExternalFetch,
-    @Inject(ENV) env: Pick<Env, 'STYLE_REFS_PINTEREST_ENABLED'>,
+    @Inject(ENV) env: Pick<Env, 'STYLE_REFS_PINTEREST_ENABLED' | 'STYLE_LIBRARY_ENABLED' | 'STYLE_LIBRARY_WORKSPACE_ID'>,
   ) {
     this.pinterestOn = env.STYLE_REFS_PINTEREST_ENABLED === true;
+    this.libraryOn = env.STYLE_LIBRARY_ENABLED === true;
+    this.libraryWs = (env.STYLE_LIBRARY_WORKSPACE_ID ?? '').trim();
+  }
+
+  /** Seleção do Meu Funil ativa para esta empresa: chave ligada, id preenchido e a empresa não é a própria Biblioteca (ids em minúsculas). */
+  libraryActiveFor(ws: string): boolean {
+    return this.libraryOn && this.libraryWs !== '' && ws.toLowerCase() !== this.libraryWs.toLowerCase();
   }
 
   pinterestEnabled(): boolean {
@@ -170,15 +185,51 @@ export class StyleRefsService {
    * `loadStyleNotes` e, adiante, a foto das vagas só chamam isto.
    */
   async pickNotes(ws: string, brandId: string, campaignId: string | null, subject: string | null): Promise<PickedNote[]> {
+    // Só as da marca (sem campanha) e as da campanha pedida: nota de outra campanha seria descartada depois e ainda gastaria vaga no `take`.
     const rows = (await this.prisma.style_references.findMany({
-      where: { workspace_id: ws, brand_id: brandId, status: 'ready' },
+      where: { workspace_id: ws, brand_id: brandId, status: 'ready', ...(campaignId ? { OR: [{ campaign_id: null }, { campaign_id: campaignId }] } : { campaign_id: null }) },
       orderBy: { created_at: 'desc' },
       take: BRAND_CAP + CAMPAIGN_CAP,
     })) as RefRow[];
-    const own = rows
-      .map((r) => ({ id: r.id, campaign_id: r.campaign_id, created_at: r.created_at, notes: normalizeStyleNotes(r.style_notes) }))
-      .filter((x): x is PickRow => !!x.notes);
-    return chooseNotes(own, campaignId ?? null, subject);
+    const own = rows.map(toPickRow).filter((x): x is PickRow => !!x);
+    let library: PickRow[] = [];
+    if (own.length < MAX_NOTES && this.libraryActiveFor(ws)) {
+      try {
+        const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
+        if (brand) library = (await this.libraryFor(ws, brand)).rows;
+      } catch (e) {
+        this.logger.warn(`Seleção do Meu Funil indisponível; seguindo só com as referências da marca: ${(e as Error).message}`);
+      }
+    }
+    return chooseNotes(own, campaignId ?? null, subject, library);
+  }
+
+  /**
+   * Leitura única da Seleção do Meu Funil (P11): as prontas da empresa Biblioteca do ramo da marca. Toda consulta leva `workspace_id` da Biblioteca
+   * (nunca ids soltos). Inativa (chave, id ou a própria Biblioteca), marca com o interruptor desligado ou ramo "Nenhum desses" = sem linhas.
+   * Erro de leitura sobe ao chamador, que registra e segue só com as próprias.
+   */
+  async libraryFor(
+    ws: string,
+    brand: { segment: string | null; style_library_enabled: boolean; style_library_segment: string | null },
+  ): Promise<{ available: Set<StyleCategoryId>; resolved: { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }; rows: PickRow[] }> {
+    const none = { available: new Set<StyleCategoryId>(), resolved: { segment: null, source: 'none' as const }, rows: [] as PickRow[] };
+    if (!this.libraryActiveFor(ws) || !brand.style_library_enabled) return none;
+    const lib = this.libraryWs;
+    const brands = ((await this.prisma.brands.findMany({ where: { workspace_id: lib, style_library_segment: { not: null } }, select: { id: true, style_library_segment: true }, take: 200 })) as { id: string; style_library_segment: string | null }[]).filter(
+      (b) => !!b.style_library_segment && isStyleCategory(b.style_library_segment),
+    );
+    if (brands.length === 0) return none;
+    const ready = (await this.prisma.style_references.findMany({
+      where: { workspace_id: lib, brand_id: { in: brands.map((b) => b.id) }, status: 'ready', campaign_id: null },
+      orderBy: { created_at: 'desc' },
+      take: LIBRARY_READ_CAP,
+    })) as (RefRow & { brand_id: string })[];
+    const segmentOf = new Map(brands.map((b) => [b.id, b.style_library_segment as StyleCategoryId]));
+    const picked = ready.map((r) => ({ seg: segmentOf.get(r.brand_id), row: toPickRow(r) })).filter((x): x is { seg: StyleCategoryId; row: PickRow } => !!x.seg && !!x.row);
+    const available = new Set(picked.map((x) => x.seg));
+    const resolved = resolveLibrarySegment(brand, available);
+    return { available, resolved, rows: resolved.segment ? picked.filter((x) => x.seg === resolved.segment).map((x) => x.row) : [] };
   }
 
   /** Bloco para o diretor de arte/vídeo: até 4 prontas escolhidas pelo assunto, com rótulos + quais entraram, ou null. */

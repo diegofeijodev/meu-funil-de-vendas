@@ -16,6 +16,7 @@ datasource db {
 //  - crm_webhook_events_dedup_idx      UNIQUE crm_webhook_events(source, external_id) WHERE external_id IS NOT NULL
 //  - crm_leads_instagram_key           UNIQUE crm_leads(workspace_id, instagram_id) WHERE instagram_id IS NOT NULL
 //  - app_credentials_workspace_key     UNIQUE app_credentials(workspace_id, key) NULLS NOT DISTINCT (PG15+)
+//  - brands_style_library_segment_idx  brands(workspace_id, style_library_segment) WHERE style_library_segment IS NOT NULL
 
 enum workspace_role {
   owner
@@ -154,6 +155,8 @@ model brands {
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
   updated_at               DateTime                   @default(now()) @updatedAt @db.Timestamptz(6)
   visual_style             Json                       @default("{}") @db.JsonB
+  style_library_enabled    Boolean                    @default(true)
+  style_library_segment    String?
   workspace                workspaces                 @relation("brands_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   brand_assets             brand_assets[]             @relation("brand_assets_brand_id")
   products                 products[]                 @relation("products_brand_id")
@@ -360,8 +363,8 @@ model creatives {
   external_job_id          String?
   angle                    String?
   extras                   Json                       @default("{}") @db.JsonB
+  style_refs               Json?                      @db.JsonB
   workspace                workspaces                 @relation("creatives_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
-  style_refs  Json? @db.JsonB
   campaign                 campaigns?                 @relation("creatives_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
   brand                    brands?                    @relation("creatives_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
   creative_versions        creative_versions[]        @relation("creative_versions_creative_id")
@@ -612,7 +615,7 @@ model ig_posts {
   review_score        Decimal?              @db.Decimal
   review_attempts     Int                   @default(0)
   failure_kind        String?
-  style_refs  Json? @db.JsonB
+  style_refs          Json?                 @db.JsonB
   workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
   run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)

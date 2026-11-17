@@ -24,9 +24,9 @@ async function png(): Promise<Uint8Array> {
 
 const NOTES = { paleta: ['laranja', 'creme'], composicao: 'prato ao centro', luz: 'de fim de tarde', enquadramento: 'bem de perto', clima: 'aconchegante', evitar: ['fundo branco'], categorias: ['comida_hamburguer'], assunto: 'hambúrguer no balcão', acabamento: 'madeira escura, fundo desfocado' };
 
-async function setup(opts: { pinterest?: boolean } = {}) {
+async function setup(opts: { pinterest?: boolean; env?: Record<string, unknown> } = {}) {
   const t = {
-    brands: new FakeTable(),
+    brands: new FakeTable(() => ({ segment: null, style_library_enabled: true, style_library_segment: null })),
     campaigns: new FakeTable(),
     style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image' })),
     style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [] })),
@@ -57,7 +57,7 @@ async function setup(opts: { pinterest?: boolean } = {}) {
     signedUrl: (b: string, k: string) => `https://api.test/v1/files/${b}/${k}?sig=x`,
   };
   const ai = { json: jest.fn(async () => NOTES) };
-  const svc = new StyleRefsService(prisma, new WorkspaceAccessService(prisma), ai as any, filesSvc, new ImageService(), fetch as any, { STYLE_REFS_PINTEREST_ENABLED: opts.pinterest ?? true } as any);
+  const svc = new StyleRefsService(prisma, new WorkspaceAccessService(prisma), ai as any, filesSvc, new ImageService(), fetch as any, { STYLE_REFS_PINTEREST_ENABLED: opts.pinterest ?? true, STYLE_LIBRARY_ENABLED: false, STYLE_LIBRARY_WORKSPACE_ID: '', ...opts.env } as any);
   svc.autoProcess = false;
   const image = () => new Response(Buffer.from(img), { status: 200, headers: { 'content-type': 'image/png' } });
   return { t, svc, ai, fetch, fetched, routes, files, img, image };
@@ -366,5 +366,114 @@ describe('StyleRefsService — falha transitória da leitura (Fatia 0)', () => {
       await svc.processPending(5);
       expect(row).toMatchObject({ status: 'processing', attempts: 0, error: null, claimed_at: stolen });
     }
+  });
+});
+
+describe('StyleRefsService — Seleção do Meu Funil (Fatia 4)', () => {
+  const LIB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const ENVON = { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: LIB };
+  const note = (cat: string, assunto: string) => ({ paleta: ['laranja'], composicao: 'x', luz: 'suave', enquadramento: 'y', clima: 'z', evitar: [], categorias: [cat], assunto, acabamento: 'a' });
+
+  async function ready(t: any, ws: string, brand: string, cat: string, n: number, campaign: string | null = null) {
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = await t.style_references.create({ data: { workspace_id: ws, brand_id: brand, campaign_id: campaign, status: 'ready', style_notes: note(cat, `nota ${i}`) } });
+      out.push(r.id);
+    }
+    return out;
+  }
+
+  async function world(env: Record<string, unknown> = ENVON, own = 1) {
+    const w = await setup({ env });
+    const acai = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Açaí', style_library_segment: 'acai_sorvete' } });
+    const bar = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Bar', style_library_segment: 'bebida_bar' } });
+    await w.t.brands.update({ where: { id: BRAND }, data: { segment: 'Açaiteria Frutá' } });
+    const libAcai = await ready(w.t, LIB, acai.id, 'acai_sorvete', 3);
+    const libBar = await ready(w.t, LIB, bar.id, 'bebida_bar', 2);
+    const mine = await ready(w.t, WS, BRAND, 'acai_sorvete', own);
+    return { ...w, libAcai, libBar, mine, acai, bar };
+  }
+
+  it('1 própria + 3 da seleção; a própria vem primeiro', async () => {
+    const { svc, libAcai, mine } = await world();
+    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
+    expect(pick.used.own).toEqual(mine);
+    expect([...pick.used.library].sort()).toEqual([...libAcai].sort());
+  });
+  it('4 próprias → a seleção não entra', async () => {
+    const { svc } = await world(ENVON, 4);
+    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
+    expect(pick.used.own).toHaveLength(4);
+    expect(pick.used.library).toEqual([]);
+  });
+  it('interruptor da marca desligado → só as próprias', async () => {
+    const { svc, t, mine } = await world();
+    await t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
+    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
+  });
+  it('"Nenhum desses" → só as próprias', async () => {
+    const { svc, t, mine } = await world();
+    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
+    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
+  });
+  it('ramo escolhido vale mais que o texto', async () => {
+    const { svc, t, libBar } = await world();
+    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'bebida_bar' } });
+    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
+    expect([...pick.used.library].sort()).toEqual([...libBar].sort());
+  });
+  it('empresa A não lê notas de B', async () => {
+    const { svc, t, libAcai, libBar } = await world();
+    const otherBrand = await t.brands.create({ data: { workspace_id: OTHER_WS, name: 'Açaí do B', style_library_segment: 'acai_sorvete' } });
+    const theirs = await ready(t, OTHER_WS, otherBrand.id, 'acai_sorvete', 3);
+    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
+    const all = [...pick.used.own, ...pick.used.library];
+    for (const id of theirs) expect(all).not.toContain(id);
+    for (const id of libBar) expect(all).not.toContain(id);
+    expect([...pick.used.library].sort()).toEqual([...libAcai].sort());
+  });
+  it('flag desligada → nenhuma consulta à Biblioteca', async () => {
+    const { svc, t, mine } = await world({ ...ENVON, STYLE_LIBRARY_ENABLED: false });
+    const spy = jest.spyOn(t.style_references, 'findMany');
+    const spyB = jest.spyOn(t.brands, 'findMany');
+    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
+    expect(spy.mock.calls.some(([a]: any) => a?.where?.workspace_id === LIB)).toBe(false);
+    expect(spyB.mock.calls.some(([a]: any) => a?.where?.workspace_id === LIB)).toBe(false);
+  });
+  it('flag ligada sem id → inerte; id de empresa inexistente → só as próprias, sem erro', async () => {
+    const semId = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: '' });
+    expect(semId.svc.libraryActiveFor(WS)).toBe(false);
+    expect((await semId.svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: semId.mine, library: [] });
+    const ghost = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' });
+    expect((await ghost.svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: ghost.mine, library: [] });
+  });
+  it('a própria Biblioteca não se completa com ela mesma (ids comparados em minúsculas)', async () => {
+    const { svc, t } = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: LIB.toUpperCase() });
+    expect(svc.libraryActiveFor(LIB)).toBe(false);
+    expect(svc.libraryActiveFor(WS)).toBe(true);
+    const libBrand = t.brands.rows.find((b: any) => b.name === 'Açaí');
+    const pick = (await svc.loadStyleNotes(LIB, libBrand.id, null, 'açaí'))!;
+    expect(pick.used.library).toEqual([]);
+  });
+  it('erro ao ler a Biblioteca → segue só com as próprias', async () => {
+    const { svc, t, mine } = await world();
+    const orig = t.brands.findMany.bind(t.brands);
+    jest.spyOn(t.brands, 'findMany').mockImplementation(async (a: any) => { if (a?.where?.workspace_id === LIB) throw new Error('boom'); return orig(a); });
+    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
+  });
+});
+
+describe('StyleRefsService — pickNotes lê só as notas da marca e da campanha pedida', () => {
+  it('nota antiga da marca não fica de fora por causa de notas novas de outras campanhas', async () => {
+    const { t, svc } = await setup();
+    const note = { paleta: ['laranja'], composicao: 'x', luz: 'suave', enquadramento: 'y', clima: 'z', evitar: [], categorias: [], assunto: '', acabamento: 'a' };
+    const old = await t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id: null, status: 'ready', style_notes: note, created_at: new Date(2020, 0, 1) } });
+    const OTHER_CAMP = '66666666-6666-4666-8666-666666666666';
+    for (let i = 0; i < 40; i++) await t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id: OTHER_CAMP, status: 'ready', style_notes: note, created_at: new Date(2026, 0, 1 + (i % 28), i) } });
+    const picked = await svc.pickNotes(WS, BRAND, CAMP, null);
+    expect(picked.map((p) => p.row.id)).toEqual([old.id]);
+    const sem = await svc.pickNotes(WS, BRAND, null, null);
+    expect(sem.map((p) => p.row.id)).toEqual([old.id]);
   });
 });

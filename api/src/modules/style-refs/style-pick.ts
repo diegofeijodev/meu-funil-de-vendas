@@ -1,5 +1,5 @@
 /** Escolha das notas de estilo pelo assunto do pedido (Fatia 3; P8/P9). Função pura: o serviço lê as linhas e chama `chooseNotes`. */
-import { StyleCategoryId, subjectCategories, subjectWords } from './categories';
+import { isStyleCategory, StyleCategoryId, subjectCategories, subjectWords } from './categories';
 import { MAX_NOTES, StyleNotes } from './style-notes';
 
 export type PickRow = { id: string; campaign_id: string | null; created_at: Date; notes: StyleNotes };
@@ -29,4 +29,21 @@ export function chooseNotes(own: PickRow[], campaignId: string | null, subject: 
     picked.push({ row, full: full(row), library: true });
   }
   return picked;
+}
+
+/**
+ * Ramo da Seleção do Meu Funil para a marca (P11): o escolhido (`style_library_segment`) se a Biblioteca o tem; `'none'` = "Nenhum desses";
+ * sem escolha, o que `subjectCategories` reconhece em `brands.segment` e a Biblioteca tem. Escolha inválida ou sem prontas = sem ramo.
+ */
+export function resolveLibrarySegment(
+  brand: { segment: string | null; style_library_segment: string | null },
+  available: ReadonlySet<StyleCategoryId>,
+): { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' } {
+  const chosen = brand.style_library_segment;
+  if (chosen === 'none') return { segment: null, source: 'none' };
+  if (chosen) {
+    return isStyleCategory(chosen) && available.has(chosen) ? { segment: chosen, source: 'chosen' } : { segment: null, source: 'none' };
+  }
+  const found = subjectCategories(brand.segment).find((c) => available.has(c));
+  return { segment: found ?? null, source: 'auto' };
 }

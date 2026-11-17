@@ -52,6 +52,19 @@ describe('validateEnv — chaves do schema declaradas no compose e no .env.examp
   });
 });
 
+describe('validateEnv — Seleção do Meu Funil (Fatia 4)', () => {
+  it('padrão: desligada e id vazio', () => {
+    const env = validateEnv({ ...base, NODE_ENV: 'test' });
+    expect(env.STYLE_LIBRARY_ENABLED).toBe(false);
+    expect(env.STYLE_LIBRARY_WORKSPACE_ID).toBe('');
+  });
+  it('id que não é uuid derruba a subida citando a variável; uuid válido passa', () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_WORKSPACE_ID: 'abc' })).toThrow(/STYLE_LIBRARY_WORKSPACE_ID inválido: .{1,3}abc/);
+    const id = '9b1c3a5e-6f7d-4a2b-8c9d-0e1f2a3b4c5d';
+    expect(validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_ENABLED: 'true', STYLE_LIBRARY_WORKSPACE_ID: id }).STYLE_LIBRARY_WORKSPACE_ID).toBe(id);
+  });
+});
+
 describe('JwtAuthGuard — ver do access token', () => {
   const jwt = new JwtService({ secret: base.JWT_SECRET });
   const guard = (dbVersion: number) =>
