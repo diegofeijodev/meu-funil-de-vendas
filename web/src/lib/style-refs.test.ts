@@ -7,6 +7,10 @@ import {
   packageInvite,
   styleInvite,
   INVITE_CTA,
+  LIBRARY_TEXT,
+  libraryLine,
+  libraryState,
+  unrecognizedLine,
   photoLabel,
   refOrigin,
   refScope,
@@ -80,5 +84,16 @@ describe('style-refs', () => {
     expect(packageInvite([null, { own: ['a'], library: [], brand_id: 'b' }, { own: ['a', 'b'], library: [], brand_id: 'b' }])?.text).toBe('Estilo: seguiu 2 referências suas.');
     expect(packageInvite([undefined, null])).toBeNull();
     expect(INVITE_CTA).toBe('Mostrar o estilo que eu quero');
+  });
+  it('Seleção do Meu Funil', () => {
+    expect(libraryLine('açaí e sorvete', 12)).toBe('Seleção do Meu Funil para açaí e sorvete: 12 referências escolhidas pela nossa equipe. Outras empresas do mesmo ramo também usam.');
+    expect(libraryState({ enabled: true, in_use: true, own_ready: 1 })).toBe('on');
+    expect(libraryState({ enabled: true, in_use: false, own_ready: 4 })).toBe('idle');
+    expect(libraryState({ enabled: false, in_use: false, own_ready: 0 })).toBe('off');
+    expect(unrecognizedLine('Floricultura')).toBe('Ainda não temos seleção para "Floricultura". Escolha o ramo mais parecido:');
+    expect(unrecognizedLine(null)).toBe('Escolha o ramo mais parecido:');
+    expect(styleInvite({ own: [], library: ['x'], brand_id: 'b' })).toEqual({ text: 'Estilo: seguiu a Seleção do Meu Funil.', cta: true, brandId: 'b' });
+    expect(styleInvite({ own: [], library: [], brand_id: 'b' })?.text).toBe('Estilo: sem referências.');
+    expect(LIBRARY_TEXT.toggle).toBe('Usar a seleção do Meu Funil');
   });
 });

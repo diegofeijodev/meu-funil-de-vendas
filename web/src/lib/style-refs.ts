@@ -122,6 +122,7 @@ export function styleInvite(
 ): { text: string; cta: boolean; brandId: string | null } | null {
   if (!rec) return null;
   const n = rec.own.length;
+  if (n === 0 && rec.library.length > 0) return { text: "Estilo: seguiu a Seleção do Meu Funil.", cta: true, brandId: rec.brand_id };
   if (n === 0) return { text: "Estilo: sem referências.", cta: true, brandId: rec.brand_id };
   return {
     text: n === 1 ? "Estilo: seguiu 1 referência sua." : `Estilo: seguiu ${n} referências suas.`,
@@ -136,3 +137,25 @@ export function packageInvite(recs: (StyleRecordLike | null | undefined)[]): Ret
   for (const r of recs) if (r && (!best || r.own.length > best.own.length)) best = r;
   return styleInvite(best);
 }
+
+/** "Seleção do Meu Funil" no painel da Marca (ui.md §3; P11). */
+export const LIBRARY_TEXT = {
+  toggle: "Usar a seleção do Meu Funil",
+  toggleHint: "Vale na hora, sem precisar salvar.",
+  on: "Suas referências vêm primeiro; a seleção completa quando você tem menos de 4.",
+  idle: "Sem uso agora: você já tem 4 ou mais referências suas.",
+  off: "As artes seguem só as suas referências.",
+  seeDescriptions: "Ver as descrições",
+  none: "Nenhum desses",
+} as const;
+
+export const libraryLine = (label: string, n: number): string =>
+  `Seleção do Meu Funil para ${label}: ${n} ${n === 1 ? "referência escolhida" : "referências escolhidas"} pela nossa equipe. Outras empresas do mesmo ramo também usam.`;
+
+export function libraryState(v: { enabled: boolean; in_use: boolean; own_ready: number }): "on" | "idle" | "off" {
+  if (!v.enabled) return "off";
+  return v.in_use ? "on" : "idle";
+}
+
+export const unrecognizedLine = (brandSegment: string | null): string =>
+  brandSegment ? `Ainda não temos seleção para "${brandSegment}". Escolha o ramo mais parecido:` : "Escolha o ramo mais parecido:";

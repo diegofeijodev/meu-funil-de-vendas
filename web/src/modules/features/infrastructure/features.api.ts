@@ -8,10 +8,11 @@ const featuresSchema = z.object({
   campaign_pilot: z.boolean().default(false),
   style_refs_pinterest: z.boolean().default(false),
   vacancy_stories: z.boolean().default(false),
+  style_library: z.boolean().default(false),
 });
 export type WorkspaceFeatures = z.infer<typeof featuresSchema>;
 
-const ALL_OFF: WorkspaceFeatures = { campaign_intake: false, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: false };
+const ALL_OFF: WorkspaceFeatures = { campaign_intake: false, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: false, style_library: false };
 
 /** API antiga (sem a rota) ou erro: tudo desligado — a tela cai no caminho de hoje, sem mensagem de erro. */
 export async function getFeatures(ws: string): Promise<WorkspaceFeatures> {

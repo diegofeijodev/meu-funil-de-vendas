@@ -33,6 +33,21 @@ export const styleRefsRecordSchema = z.object({
   brand_id: z.string().nullable().default(null),
 });
 
+/** Seleção do Meu Funil (P11): 404 fora da chave; quem chama só consulta com `features.style_library`. */
+const libraryViewSchema = z.object({
+  segment: z.string().nullable(),
+  segment_label: z.string().nullable(),
+  segment_source: z.enum(["auto", "chosen", "none"]),
+  brand_segment: z.string().nullable(),
+  options: z.array(z.object({ id: z.string(), label: z.string() })).default([]),
+  count: z.number().default(0),
+  descriptions: z.array(z.string()).default([]),
+  enabled: z.boolean(),
+  own_ready: z.number().default(0),
+  in_use: z.boolean(),
+});
+export type StyleLibraryView = z.infer<typeof libraryViewSchema>;
+
 const base = (ws: string, brandId: string) => `/v1/workspaces/${ws}/brands/${brandId}/style-refs`;
 
 export async function listStyleRefs(ws: string, brandId: string, campaignId: string | null): Promise<StyleRefsList> {
@@ -57,4 +72,9 @@ export async function removeStyleRef(ws: string, brandId: string, id: string): P
 
 export async function removeStyleSource(ws: string, brandId: string, sourceId: string): Promise<void> {
   await api.delete(`${base(ws, brandId)}/sources/${sourceId}`);
+}
+
+export async function getStyleLibrary(ws: string, brandId: string): Promise<StyleLibraryView> {
+  const { data } = await api.get(`${base(ws, brandId)}/library`);
+  return libraryViewSchema.parse(data);
 }
