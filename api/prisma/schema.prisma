@@ -1492,6 +1492,7 @@ model style_references {
   status       String             @default("processing")
   error        String?
   claimed_at   DateTime?          @db.Timestamptz(6)
+  attempts     Int                @default(0)
   created_by   String?            @db.Uuid
   created_at   DateTime           @default(now()) @db.Timestamptz(6)
   workspace    workspaces         @relation("style_references_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)

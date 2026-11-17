@@ -11,6 +11,7 @@ import type { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { isUniqueViolation } from '../../common/database/next-version';
 import { WorkspaceAccessService } from '../access/access.service';
+import { AiKeysFailedError } from '../ai/ai-error';
 import { AiService } from '../ai/ai.service';
 import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
@@ -27,7 +28,9 @@ export const CAMPAIGN_CAP = 8;
 const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
-const STALE_CLAIM_MS = 10 * 60_000;
+/** Leituras que falharam de forma transitória: 3 no total; a espera até a próxima depende de quantas já falharam (P1). */
+export const READ_MAX_ATTEMPTS = 3;
+export const RETRY_AFTER_MS = [10 * 60_000, 30 * 60_000, 3 * 3600_000];
 const SEEN_CAP = 300;
 const VIEW_URL_TTL_S = 3600;
 const UA = 'Mozilla/5.0 (compatible; MeuFunil/1.0; +https://www.meufunildevendas.com.br)';
@@ -39,6 +42,14 @@ const MSG_READ_FAILED = 'Não conseguimos ler o estilo desta referência. Remova
 const MSG_RSS_DOWN = 'O Pinterest não respondeu agora. Tentamos de novo amanhã.';
 
 class FetchFailed extends Error {}
+/** Falha da leitura que repetir não resolve (nota vazia, imagem sumida): vira `failed` na hora. */
+class ReadDefinitive extends Error {}
+
+/** Falha transitória (vale tentar de novo depois)? Só é definitiva a que as chaves recusam todas por formato/recusa/outro. */
+export function isTransientReadError(e: unknown): boolean {
+  if (e instanceof AiKeysFailedError) return e.failures.some((f) => f.kind !== 'format' && f.kind !== 'rejected' && f.kind !== 'other');
+  return true;
+}
 
 /** Corpo lido em streaming e cortado ao passar do teto (resposta sem content-length não entra inteira na memória). */
 async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
@@ -66,7 +77,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
 type RefRow = {
   id: string; workspace_id: string; brand_id: string; campaign_id: string | null; source_id: string | null; source: string;
   source_url: string | null; pin_id: string | null; title: string | null; storage_path: string | null; style_notes: unknown;
-  status: string; error: string | null; claimed_at: Date | null; created_at: Date;
+  status: string; error: string | null; claimed_at: Date | null; attempts: number; created_at: Date;
 };
 
 export type StyleRefView = {
@@ -233,18 +244,27 @@ export class StyleRefsService {
 
   // ── job ────────────────────────────────────────────────────────────────
 
-  /** Lê o estilo das pendentes (com trava otimista; trava vencida em 10 min volta para a fila). Devolve quantas processou. */
+  /**
+   * Lê o estilo das pendentes (com trava otimista). Falha transitória volta para a fila com `attempts` + 1 e só é relida depois de
+   * 30 min / 3 h (a trava vencida com `attempts` 0 volta em 10 min); na 3ª vira `failed`. Definitiva vira `failed` na hora.
+   * O filtro de espera vai no `where` (12 linhas esperando a vez não escondem as novas atrás do `take`). Devolve quantas processou.
+   */
   async processPending(limit = 5): Promise<number> {
     const now = Date.now();
-    const rows = ((await this.prisma.style_references.findMany({ where: { status: 'processing' }, orderBy: { created_at: 'asc' }, take: limit * 4 })) as RefRow[])
-      .filter((r) => !r.claimed_at || now - new Date(r.claimed_at).getTime() > STALE_CLAIM_MS)
-      .slice(0, limit);
+    const rows = (await this.prisma.style_references.findMany({
+      where: {
+        status: 'processing',
+        OR: [{ claimed_at: null }, ...RETRY_AFTER_MS.map((ms, i) => ({ attempts: i, claimed_at: { lt: new Date(now - ms) } }))],
+      },
+      orderBy: { created_at: 'asc' },
+      take: limit,
+    })) as RefRow[];
     let done = 0;
     for (const r of rows) {
       const claim = await this.prisma.style_references.updateMany({ where: { id: r.id, status: 'processing', claimed_at: r.claimed_at }, data: { claimed_at: new Date() } });
       if (claim.count !== 1) continue;
       try {
-        const bytes = await this.files.read(BUCKET, r.storage_path!);
+        const bytes = await this.files.read(BUCKET, r.storage_path!).catch(() => { throw new ReadDefinitive('imagem sumida'); });
         const raw = await this.ai.json(r.workspace_id, {
           prompt: STYLE_NOTES_PROMPT,
           schema: STYLE_NOTES_SCHEMA as unknown as Record<string, unknown>,
@@ -252,12 +272,18 @@ export class StyleRefsService {
           images: [{ bytes: new Uint8Array(bytes), mime: 'image/jpeg' }],
         });
         const notes = normalizeStyleNotes(raw);
-        if (!notes) throw new Error('notas vazias');
+        if (!notes) throw new ReadDefinitive('notas vazias');
         // updateMany: referência apagada no meio da leitura (ou a empresa inteira) não derruba a rodada.
         await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
       } catch (e) {
         this.logger.warn(`estilo da referência ${r.id}: ${(e as Error).message}`);
-        await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'failed', error: MSG_READ_FAILED } });
+        const transient = !(e instanceof ReadDefinitive) && isTransientReadError(e);
+        if (transient && r.attempts + 1 < READ_MAX_ATTEMPTS) {
+          // Volta para a fila: a nova trava (claimed_at) é o relógio da espera. Sem `increment`: o FakeTable dos testes não o entende.
+          await this.prisma.style_references.updateMany({ where: { id: r.id, status: 'processing' }, data: { attempts: r.attempts + 1, claimed_at: new Date(), error: null } });
+        } else {
+          await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'failed', error: MSG_READ_FAILED, ...(transient ? { attempts: READ_MAX_ATTEMPTS } : {}) } });
+        }
       }
       done++;
     }

@@ -2,7 +2,9 @@ import { Jimp } from 'jimp';
 import { WorkspaceAccessService } from '../../access/access.service';
 import { FakeTable } from '../../brands/__tests__/fake-prisma';
 import { ImageService } from '../../media/image.service';
-import { StyleRefsService } from '../style-refs.service';
+import { AiError, AiKeysFailedError } from '../../ai/ai-error';
+import { NO_AI_MESSAGE } from '../../ai/ai.service';
+import { isTransientReadError, StyleRefsService } from '../style-refs.service';
 import { RSS } from './fixtures';
 
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -25,7 +27,7 @@ async function setup(opts: { pinterest?: boolean } = {}) {
   const t = {
     brands: new FakeTable(),
     campaigns: new FakeTable(),
-    style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, campaign_id: null, source_id: null, pin_id: null, kind: 'image' })),
+    style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image' })),
     style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [] })),
     workspace_members: {
       findUnique: async ({ where }: any) => {
@@ -78,7 +80,7 @@ describe('StyleRefsService — envio e leitura do estilo', () => {
   it('falha da visão: só aquela fica "failed" com a frase; arquivo que não é imagem → 400; viewer não envia', async () => {
     const { svc, ai, img } = await setup();
     await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
-    ai.json.mockRejectedValueOnce(new Error('caiu'));
+    ai.json.mockResolvedValueOnce({} as any);
     await svc.processPending(5);
     const list = await svc.list(OWNER, WS, BRAND);
     expect(list.refs[0]).toMatchObject({ status: 'failed', error: 'Não conseguimos ler o estilo desta referência. Remova e tente outra.' });
@@ -212,5 +214,68 @@ describe('StyleRefsService — revisão das Fatias 5/6', () => {
     expect(await status(svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/foodnetwork/5-star-recipes/'))).toBe(
       '400:Não conseguimos ler essa pasta do Pinterest agora. Confira se ela é pública e tente de novo.',
     );
+  });
+});
+
+
+describe('StyleRefsService — falha transitória da leitura (Fatia 0)', () => {
+  const noCredit = () => new AiKeysFailedError('Sua conta OpenAI está sem créditos…', [{ vendor: 'openai', kind: 'noCredit' }]);
+  const MSG = 'Não conseguimos ler o estilo desta referência. Remova e tente outra.';
+
+  it('sem crédito: volta para a fila (attempts 1, sem erro) e só relê depois de 30 min', async () => {
+    const { t, svc, ai, img } = await setup();
+    await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+    ai.json.mockRejectedValueOnce(noCredit());
+    await svc.processPending(5);
+    const row = t.style_references.rows[0];
+    expect(row).toMatchObject({ status: 'processing', attempts: 1, error: null });
+    expect(await svc.processPending(5)).toBe(0);
+    row.claimed_at = new Date(Date.now() - 31 * 60_000);
+    expect(await svc.processPending(5)).toBe(1);
+    expect(row).toMatchObject({ status: 'ready' });
+    expect(ai.json).toHaveBeenCalledTimes(2);
+  });
+
+  it('3 falhas transitórias espaçadas → failed com a frase e attempts 3', async () => {
+    const { t, svc, ai, img } = await setup();
+    await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+    ai.json.mockRejectedValue(noCredit());
+    const row = t.style_references.rows[0];
+    await svc.processPending(5);
+    expect(row).toMatchObject({ status: 'processing', attempts: 1 });
+    row.claimed_at = new Date(Date.now() - 31 * 60_000);
+    await svc.processPending(5);
+    expect(row).toMatchObject({ status: 'processing', attempts: 2 });
+    row.claimed_at = new Date(Date.now() - (3 * 3600_000 + 60_000));
+    await svc.processPending(5);
+    expect(row).toMatchObject({ status: 'failed', attempts: 3, error: MSG });
+  });
+
+  it('tempo esgotado e rede (erro que não é da IA) são transitórios; AI_NOT_CONFIGURED também', () => {
+    expect(isTransientReadError(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))).toBe(true);
+    expect(isTransientReadError(new TypeError('fetch failed'))).toBe(true);
+    expect(isTransientReadError(new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED'))).toBe(true);
+    expect(isTransientReadError(new AiKeysFailedError('x', [{ vendor: 'openai', kind: 'format' }, { vendor: 'gemini', kind: 'noCredit' }]))).toBe(true);
+    expect(isTransientReadError(new AiKeysFailedError('x', [{ vendor: 'openai', kind: 'format' }, { vendor: 'gemini', kind: 'rejected' }]))).toBe(false);
+  });
+
+  it('definitiva na hora: arquivo da imagem sumido → failed com attempts 0', async () => {
+    const { t, svc, files, ai, img } = await setup();
+    await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+    files.clear();
+    await svc.processPending(5);
+    expect(t.style_references.rows[0]).toMatchObject({ status: 'failed', attempts: 0, error: MSG });
+    expect(ai.json).not.toHaveBeenCalled();
+  });
+
+  it('Review Focus #2: 12 linhas esperando a vez não travam a nova', async () => {
+    const { t, svc, img } = await setup();
+    for (let i = 0; i < 12; i++) {
+      await t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, source: 'upload', storage_path: `x/${i}`, status: 'processing', attempts: 1, claimed_at: new Date(), created_at: new Date(Date.now() - 100_000 + i) } });
+    }
+    await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+    const newRow = t.style_references.rows[t.style_references.rows.length - 1];
+    expect(await svc.processPending(10)).toBe(1);
+    expect(newRow.status).toBe('ready');
   });
 });

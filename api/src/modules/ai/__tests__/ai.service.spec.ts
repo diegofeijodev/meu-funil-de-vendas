@@ -1,4 +1,5 @@
 import { validateEnv } from '../../../common/config/env.validation';
+import { AiKeysFailedError } from '../ai-error';
 import { AiKeysService } from '../ai-keys.service';
 import { AiService, parseJsonLoose, VEO_FALLBACK_MODEL } from '../ai.service';
 import { resolveModel } from '../model-map';
@@ -118,6 +119,29 @@ describe('AiService.json', () => {
     await expect(ai.jsonWithEngine(WS, { prompt: 'P', schema, name: 'n', engine: 'chatgpt' })).rejects.toMatchObject({
       response: { message: 'A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave nova em Integrações.' },
     });
+  });
+
+  it('sem gateway: a falha das chaves sai como AiKeysFailedError com o caso de cada uma (mensagem igual)', async () => {
+    const f = fakeFetch([
+      ['api.openai.com', () => new Response('no', { status: 401 })],
+      ['generativelanguage', () => new Response(NO_QUOTA, { status: 429 })],
+    ]);
+    const ai = setup(baseEnv, { openai: 'sk-cliente-0123456789', gemini: 'gk-cliente' }, f.fn);
+    const e: any = await ai.json(WS, { prompt: 'P', schema, name: 'n' }).catch((x) => x);
+    expect(e).toBeInstanceOf(AiKeysFailedError);
+    expect(e.failures).toEqual([{ vendor: 'openai', kind: 'refused' }, { vendor: 'gemini', kind: 'noCredit' }]);
+    expect(e.getResponse().message).toBe('Nenhuma IA funcionou: a chave do ChatGPT (OpenAI) foi recusada e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações.');
+  });
+
+  it('resposta fora do formato → kind format; fetch que lança (rede/tempo) → kind down', async () => {
+    const f = fakeFetch([
+      ['api.openai.com', () => chat('sem json')],
+      ['generativelanguage', () => { throw new TypeError('fetch failed'); }],
+    ]);
+    const ai = setup(baseEnv, { openai: 'sk-cliente-0123456789', gemini: 'gk-cliente' }, f.fn);
+    const e: any = await ai.json(WS, { prompt: 'P', schema, name: 'n' }).catch((x) => x);
+    expect(e).toBeInstanceOf(AiKeysFailedError);
+    expect(e.failures).toEqual([{ vendor: 'openai', kind: 'format' }, { vendor: 'gemini', kind: 'down' }]);
   });
 
   it('classificação do erro da chave própria: chave inválida (400), modelo indisponível (404/400), outro 4xx e 5xx', async () => {

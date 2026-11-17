@@ -153,7 +153,7 @@ O gateway é **opcional** (27/10/2026: em produção ele fica vazio e cada empre
 falham o erro final é o motivo real delas (`502 AI_ERROR`; uma falha = a frase completa do caso; as duas = uma frase só, ex.: "Nenhuma IA funcionou:
 a chave do ChatGPT (OpenAI) foi recusada e a conta do Gemini (Google) está sem créditos. Confira as chaves em Integrações."; o corpo cru do provedor só
 vai para o log, redigido); sem chave própria nenhuma → `502 AI_NOT_CONFIGURED "Nenhuma IA disponível: cadastre a chave do ChatGPT (OpenAI) ou do Gemini em Integrações."`.
-Vale para `text`, `json`/`vision`, `jsonWithEngine`, `image` e `video`. Frases da chave própria (qualquer rota que use a chave):
+Sem gateway, a falha das chaves próprias sai como `AiKeysFailedError` (subclasse de `AiError`, mesma mensagem) com `failures: [{ vendor, kind }]` — `kind` = caso do vendor-failure ou `format` (resposta fora do formato) ou `other` (outro erro da IA). Vale para `text`, `json`/`vision`, `jsonWithEngine`, `image` e `video`. Frases da chave própria (qualquer rota que use a chave):
 401/403 ou 400 de chave inválida (`API_KEY_INVALID`, "API key not valid", "Incorrect API key") → "A chave do ChatGPT (OpenAI) foi recusada. Cole uma chave
 nova em Integrações." · falta de saldo DEFINITIVA (todo **402**; ou 429/403/400 cujo corpo prova saldo — `isCreditExhausted` em `ai/vendor-failure.ts`:
 `insufficient_quota`, "prepayment credits are depleted", "credit", billing desligado; "billing" sozinho NÃO conta, porque o 429 por minuto do Google e o da
@@ -957,7 +957,7 @@ Pinterest só com `STYLE_REFS_PINTEREST_ENABLED=true` (fora: `404`); `GET /featu
 | `DELETE /style-refs/:id` | — | write. Apaga a referência e a imagem |
 | `DELETE /style-refs/sources/:sourceId` | — | write. Para de acompanhar a pasta; as referências que vieram dela saem também. `{ ok, removed }` |
 
-Job `style-refs-15min` (`*/15 * * * *`): renova até 3 pastas com mais de 24 h (Pinterest fora do ar → `last_error` "O Pinterest não respondeu agora. Tentamos de novo amanhã.", as referências antigas continuam) e lê o estilo de até 10 pendentes (trava otimista `claimed_at`, vencida em 10 min; falha → `failed` "Não conseguimos ler o estilo desta referência. Remova e tente outra.").
+Job `style-refs-15min` (`*/15 * * * *`): renova até 3 pastas com mais de 24 h (Pinterest fora do ar → `last_error` "O Pinterest não respondeu agora. Tentamos de novo amanhã.", as referências antigas continuam) e lê o estilo de até 10 pendentes (trava otimista `claimed_at`). Falha transitória (sem crédito, limite, pedidos demais, fora do ar, tempo esgotado, rede, chave recusada, modelo indisponível, sem IA configurada) volta para a fila com `attempts` + 1 e nova leitura depois de 30 min (`attempts` = 1) ou 3 h (`attempts` = 2); na 3ª vira `failed` (trava vencida com `attempts` = 0 volta em 10 min). Falha definitiva (resposta sem notas, formato/recusa em todas as chaves, imagem sumida) vira `failed` na hora. `failed` → `error` "Não conseguimos ler o estilo desta referência. Remova e tente outra."
 
 ## 29. Piloto do estrategista (Fatia 3, 30/10/2026) — `/v1/workspaces/:workspaceId/campaigns/:campaignId/pilot`
 

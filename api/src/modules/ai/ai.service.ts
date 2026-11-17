@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { assertExternalUrl } from '../media/external-fetch';
-import { AiDownloadBlockedError, AiError } from './ai-error';
+import { AiDownloadBlockedError, AiError, AiKeysFailedError, KeyFailureKind } from './ai-error';
 import { AiCreditAlertsService, AiKeyUse } from './ai-credit-alerts.service';
 import { AiKeysService } from './ai-keys.service';
 import { resolveModel } from './model-map';
@@ -43,6 +43,13 @@ export const NO_AI_MESSAGE = 'Nenhuma IA disponível: cadastre a chave do ChatGP
 type KeyFailure = { vendor: AiVendor; error: unknown };
 const withPeriod = (t: string) => (/[.!?…]$/.test(t) ? t : `${t}.`);
 const FORMAT_MSG = 'A IA não devolveu o formato esperado.';
+
+/** Caso da falha de uma chave própria (para `AiKeysFailedError.failures`). */
+function kindOf(e: unknown): KeyFailureKind {
+  if (e instanceof VendorKeyError) return e.kind;
+  if (e instanceof AiError) return e.message === FORMAT_MSG ? 'format' : 'other';
+  return 'down';
+}
 
 /** Por que a chave própria falhou (classificado pelo status HTTP e pelo corpo de erro do provedor, em `vendor-failure.ts`). */
 export { vendorMessage } from './vendor-failure';
@@ -193,14 +200,15 @@ export class AiService {
   private requireGatewayOr(fails: KeyFailure[], keys: (string | null | undefined)[]): void {
     if (this.hasGateway()) return;
     if (!fails.length) throw new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED');
+    const failures = fails.map((f) => ({ vendor: f.vendor, kind: kindOf(f.error) }));
     if (fails.length === 1) {
       // Uma falha só: a frase completa do caso (erro nosso vai como está; rede/timeout vira "não respondeu agora").
       const f = fails[0]!;
-      throw new AiError(withPeriod(f.error instanceof AiError ? this.redact(f.error.message, keys) : vendorMessage(f.vendor, 'down')));
+      throw new AiKeysFailedError(withPeriod(f.error instanceof AiError ? this.redact(f.error.message, keys) : vendorMessage(f.vendor, 'down')), failures);
     }
     // As duas: uma frase só ("Nenhuma IA funcionou: a chave do X foi recusada e a conta do Y está sem créditos. Confira…").
     const clauses = fails.map((f) => vendorClause(f, (t) => this.redact(t, keys)));
-    throw new AiError(`Nenhuma IA funcionou: ${clauses.slice(0, -1).join(', ')} e ${clauses[clauses.length - 1]}. Confira as chaves em Integrações.`);
+    throw new AiKeysFailedError(`Nenhuma IA funcionou: ${clauses.slice(0, -1).join(', ')} e ${clauses[clauses.length - 1]}. Confira as chaves em Integrações.`, failures);
   }
 
   /** A mensagem do provedor pode ecoar a chave: nada dela vai para a tela. */
