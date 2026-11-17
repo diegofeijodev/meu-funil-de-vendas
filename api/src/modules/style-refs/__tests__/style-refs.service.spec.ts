@@ -278,4 +278,20 @@ describe('StyleRefsService — falha transitória da leitura (Fatia 0)', () => {
     expect(await svc.processPending(10)).toBe(1);
     expect(newRow.status).toBe('ready');
   });
+
+  it('trava roubada no meio da leitura: a escrita do worker antigo não altera a linha (pronta, falha ou volta à fila)', async () => {
+    for (const outcome of ['ok', 'transitoria', 'definitiva'] as const) {
+      const { t, svc, ai, img } = await setup();
+      await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+      const row = t.style_references.rows[0];
+      const stolen = new Date(Date.now() + 5000);
+      ai.json.mockImplementationOnce(async () => {
+        row.claimed_at = stolen; // outro worker tomou a linha
+        if (outcome === 'transitoria') throw noCredit();
+        return outcome === 'ok' ? NOTES : ({} as any);
+      });
+      await svc.processPending(5);
+      expect(row).toMatchObject({ status: 'processing', attempts: 0, error: null, claimed_at: stolen });
+    }
+  });
 });

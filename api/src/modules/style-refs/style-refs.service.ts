@@ -261,8 +261,11 @@ export class StyleRefsService {
     })) as RefRow[];
     let done = 0;
     for (const r of rows) {
-      const claim = await this.prisma.style_references.updateMany({ where: { id: r.id, status: 'processing', claimed_at: r.claimed_at }, data: { claimed_at: new Date() } });
+      const lock = new Date();
+      const claim = await this.prisma.style_references.updateMany({ where: { id: r.id, status: 'processing', claimed_at: r.claimed_at }, data: { claimed_at: lock } });
       if (claim.count !== 1) continue;
+      // Toda escrita desta leitura confere a trava: se outro worker a tomou (leitura lenta), o resultado deste não sobrescreve o dele.
+      const mine = { id: r.id, status: 'processing', claimed_at: lock };
       try {
         const bytes = await this.files.read(BUCKET, r.storage_path!).catch(() => { throw new ReadDefinitive('imagem sumida'); });
         const raw = await this.ai.json(r.workspace_id, {
@@ -274,15 +277,15 @@ export class StyleRefsService {
         const notes = normalizeStyleNotes(raw);
         if (!notes) throw new ReadDefinitive('notas vazias');
         // updateMany: referência apagada no meio da leitura (ou a empresa inteira) não derruba a rodada.
-        await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
+        await this.prisma.style_references.updateMany({ where: mine, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
       } catch (e) {
         this.logger.warn(`estilo da referência ${r.id}: ${(e as Error).message}`);
         const transient = !(e instanceof ReadDefinitive) && isTransientReadError(e);
         if (transient && r.attempts + 1 < READ_MAX_ATTEMPTS) {
           // Volta para a fila: a nova trava (claimed_at) é o relógio da espera. Sem `increment`: o FakeTable dos testes não o entende.
-          await this.prisma.style_references.updateMany({ where: { id: r.id, status: 'processing' }, data: { attempts: r.attempts + 1, claimed_at: new Date(), error: null } });
+          await this.prisma.style_references.updateMany({ where: mine, data: { attempts: r.attempts + 1, claimed_at: new Date(), error: null } });
         } else {
-          await this.prisma.style_references.updateMany({ where: { id: r.id }, data: { status: 'failed', error: MSG_READ_FAILED, ...(transient ? { attempts: READ_MAX_ATTEMPTS } : {}) } });
+          await this.prisma.style_references.updateMany({ where: mine, data: { status: 'failed', error: MSG_READ_FAILED, ...(transient ? { attempts: READ_MAX_ATTEMPTS } : {}) } });
         }
       }
       done++;
