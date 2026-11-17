@@ -16,7 +16,7 @@ datasource db {
 //  - crm_webhook_events_dedup_idx      UNIQUE crm_webhook_events(source, external_id) WHERE external_id IS NOT NULL
 //  - crm_leads_instagram_key           UNIQUE crm_leads(workspace_id, instagram_id) WHERE instagram_id IS NOT NULL
 //  - app_credentials_workspace_key     UNIQUE app_credentials(workspace_id, key) NULLS NOT DISTINCT (PG15+)
-//  - brands_style_library_segment_idx  brands(workspace_id, style_library_segment) WHERE style_library_segment IS NOT NULL
+//  - brands_style_library_segment_idx  brands(workspace_id, style_library_segment) WHERE style_library_segment IS NOT NULL (ficou sem uso: a Seleção é por marca, sem empresa central)
 
 enum workspace_role {
   owner

@@ -1,4 +1,4 @@
-import { chooseNotes, PickRow, resolveLibrarySegment } from '../style-pick';
+import { chooseNotes, PickRow, resolveSelectionBranch } from '../style-pick';
 import { StyleCategoryId } from '../categories';
 import { StyleNotes } from '../style-notes';
 
@@ -41,26 +41,23 @@ describe('chooseNotes', () => {
   });
 });
 
-describe('resolveLibrarySegment', () => {
-  const avail = new Set<StyleCategoryId>(['acai_sorvete', 'bebida_bar']);
-  it('reconhece o ramo pelo texto de brands.segment', () => {
-    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: null }, avail)).toEqual({ segment: 'acai_sorvete', source: 'auto' });
+describe('resolveSelectionBranch', () => {
+  it('reconhece o ramo pelo texto de brands.segment (automático)', () => {
+    expect(resolveSelectionBranch({ segment: 'Açaiteria Frutá', style_library_segment: null })).toEqual({ segment: 'acai_sorvete', source: 'auto' });
   });
-  it('o ramo escolhido vale mais que o texto', () => {
-    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: 'bebida_bar' }, avail)).toEqual({ segment: 'bebida_bar', source: 'chosen' });
+  it('o ramo escolhido (do catálogo) vale mais que o texto', () => {
+    expect(resolveSelectionBranch({ segment: 'Açaiteria Frutá', style_library_segment: 'bebida_bar' })).toEqual({ segment: 'bebida_bar', source: 'chosen' });
   });
   it('"none" = nenhum desses', () => {
-    expect(resolveLibrarySegment({ segment: 'Açaiteria Frutá', style_library_segment: 'none' }, avail)).toEqual({ segment: null, source: 'none' });
+    expect(resolveSelectionBranch({ segment: 'Açaiteria Frutá', style_library_segment: 'none' })).toEqual({ segment: null, source: 'none' });
   });
-  it('texto reconhecido sem ramo disponível → nenhum, ainda "auto"', () => {
-    expect(resolveLibrarySegment({ segment: 'Pizzaria Bella', style_library_segment: null }, avail)).toEqual({ segment: null, source: 'auto' });
+  it('valor gravado que não é ramo do catálogo (beleza, xyz) vale como automático', () => {
+    expect(resolveSelectionBranch({ segment: 'Açaiteria', style_library_segment: 'beleza' })).toEqual({ segment: 'acai_sorvete', source: 'auto' });
+    expect(resolveSelectionBranch({ segment: 'Açaiteria', style_library_segment: 'xyz' })).toEqual({ segment: 'acai_sorvete', source: 'auto' });
   });
-  it('ramo válido escolhido sem prontas → sem ramo, mas "chosen"; valor inválido gravado vale como automático', () => {
-    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: 'beleza' }, avail)).toEqual({ segment: null, source: 'chosen' });
-    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: 'xyz' }, avail)).toEqual({ segment: 'acai_sorvete', source: 'auto' });
-  });
-  it('sem nenhum ramo disponível: NULL continua automático', () => {
-    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: null }, new Set())).toEqual({ segment: null, source: 'auto' });
+  it('segmento que não cai em nenhum ramo → sem ramo, ainda automático', () => {
+    expect(resolveSelectionBranch({ segment: 'Floricultura', style_library_segment: null })).toEqual({ segment: null, source: 'auto' });
+    expect(resolveSelectionBranch({ segment: null, style_library_segment: null })).toEqual({ segment: null, source: 'auto' });
   });
 });
 

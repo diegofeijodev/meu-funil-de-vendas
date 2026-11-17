@@ -1,68 +1,10 @@
 import { Logger } from '@nestjs/common';
-import { Jimp } from 'jimp';
-import { WorkspaceAccessService } from '../../access/access.service';
-import { FakeTable } from '../../brands/__tests__/fake-prisma';
-import { ImageService } from '../../media/image.service';
 import { AiError, AiKeysFailedError } from '../../ai/ai-error';
 import { NO_AI_MESSAGE } from '../../ai/ai.service';
 import { STYLE_NOTES_HEADER } from '../style-notes';
-import { isTransientReadError, StyleRefsService } from '../style-refs.service';
+import { isTransientReadError } from '../style-refs.service';
 import { RSS } from './fixtures';
-
-const WS = '11111111-1111-4111-8111-111111111111';
-const OWNER = '22222222-2222-4222-8222-222222222222';
-const VIEWER = '33333333-3333-4333-8333-333333333333';
-const BRAND = '44444444-4444-4444-8444-444444444444';
-const CAMP = '55555555-5555-4555-8555-555555555555';
-
-const status = async (p: Promise<unknown>) => {
-  try { await p; return 'ok'; } catch (e: any) { return `${e.getStatus?.() ?? 500}:${e.getResponse?.().message ?? e.message}`; }
-};
-
-async function png(): Promise<Uint8Array> {
-  return new Uint8Array(await new Jimp({ width: 8, height: 8, color: 0xff8800ff }).getBuffer('image/png'));
-}
-
-const NOTES = { paleta: ['laranja', 'creme'], composicao: 'prato ao centro', luz: 'de fim de tarde', enquadramento: 'bem de perto', clima: 'aconchegante', evitar: ['fundo branco'], categorias: ['comida_hamburguer'], assunto: 'hambúrguer no balcão', acabamento: 'madeira escura, fundo desfocado' };
-
-async function setup(opts: { pinterest?: boolean; env?: Record<string, unknown> } = {}) {
-  const t = {
-    brands: new FakeTable(() => ({ segment: null, style_library_enabled: true, style_library_segment: null, style_library_checked_at: null, style_selection_day: null, style_selection_reads: 0 })),
-    campaigns: new FakeTable(),
-    style_references: new FakeTable(() => ({ status: 'processing', style_notes: {}, error: null, claimed_at: null, attempts: 0, campaign_id: null, source_id: null, pin_id: null, kind: 'image', origin: 'own' })),
-    style_ref_sources: new FakeTable(() => ({ last_synced_at: null, last_error: null, title: null, seen_pin_ids: [], origin: 'own' })),
-    workspace_members: {
-      findUnique: async ({ where }: any) => {
-        const k = where.workspace_id_user_id;
-        if (k.workspace_id !== WS) return null;
-        return k.user_id === OWNER ? { role: 'owner' } : k.user_id === VIEWER ? { role: 'viewer' } : null;
-      },
-    },
-  };
-  await t.brands.create({ data: { id: BRAND, workspace_id: WS, name: 'Freela' } });
-  await t.campaigns.create({ data: { id: CAMP, workspace_id: WS, brand_id: BRAND, name: 'Jundiaí' } });
-  const prisma: any = { ...t, $transaction: async (fn: any) => fn(prisma) };
-  const img = await png();
-  const routes = new Map<string, () => Response>();
-  const fetched: string[] = [];
-  const fetch = jest.fn(async (url: string) => {
-    fetched.push(url);
-    const r = routes.get(url);
-    return r ? r() : new Response('não', { status: 404 });
-  });
-  const files = new Map<string, Uint8Array>();
-  const filesSvc: any = {
-    put: async (b: string, k: string, bytes: Uint8Array) => { files.set(`${b}/${k}`, new Uint8Array(bytes)); },
-    read: async (b: string, k: string) => Buffer.from(files.get(`${b}/${k}`)!),
-    delete: async (b: string, k: string) => { files.delete(`${b}/${k}`); },
-    signedUrl: (b: string, k: string) => `https://api.test/v1/files/${b}/${k}?sig=x`,
-  };
-  const ai = { json: jest.fn(async () => NOTES) };
-  const svc = new StyleRefsService(prisma, new WorkspaceAccessService(prisma), ai as any, filesSvc, new ImageService(), fetch as any, { STYLE_REFS_PINTEREST_ENABLED: opts.pinterest ?? true, STYLE_LIBRARY_ENABLED: false, STYLE_LIBRARY_WORKSPACE_ID: '', ...opts.env } as any);
-  svc.autoProcess = false;
-  const image = () => new Response(Buffer.from(img), { status: 200, headers: { 'content-type': 'image/png' } });
-  return { t, svc, ai, fetch, fetched, routes, files, img, image };
-}
+import { BRAND, CAMP, NOTES, OWNER, png, setup, status, VIEWER, WS } from './style-world';
 
 describe('StyleRefsService — envio e leitura do estilo', () => {
   it('envio grava "processing"; processPending manda a imagem à visão e grava as notas; a tela vê o resumo', async () => {
@@ -247,7 +189,7 @@ describe('StyleRefsService — Pinterest', () => {
     await t.style_ref_sources.create({ data: { workspace_id: WS, brand_id: BRAND, url: 'https://www.pinterest.com/foodnetwork/5-star-recipes/', rss_url: 'https://www.pinterest.com/foodnetwork/5-star-recipes.rss', origin: 'selection' } });
     expect(await svc.refreshDueSources(5)).toBe(1);
     const fromFolder = t.style_references.rows.filter((r) => r.source_id);
-    expect(fromFolder.length).toBeGreaterThan(0);
+    expect(fromFolder).toHaveLength(1);
     expect(fromFolder.every((r) => r.origin === 'selection')).toBe(true);
   });
 
@@ -406,140 +348,6 @@ describe('StyleRefsService — falha transitória da leitura (Fatia 0)', () => {
   });
 });
 
-describe('StyleRefsService — Seleção do Meu Funil (Fatia 4)', () => {
-  const LIB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-  const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-  const ENVON = { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: LIB };
-  const note = (cat: string, assunto: string) => ({ paleta: ['laranja'], composicao: 'x', luz: 'suave', enquadramento: 'y', clima: 'z', evitar: [], categorias: [cat], assunto, acabamento: 'a' });
-
-  async function ready(t: any, ws: string, brand: string, cat: string, n: number, campaign: string | null = null) {
-    const out: string[] = [];
-    for (let i = 0; i < n; i++) {
-      const r = await t.style_references.create({ data: { workspace_id: ws, brand_id: brand, campaign_id: campaign, status: 'ready', style_notes: note(cat, `nota ${i}`) } });
-      out.push(r.id);
-    }
-    return out;
-  }
-
-  async function world(env: Record<string, unknown> = ENVON, own = 1) {
-    const w = await setup({ env });
-    const acai = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Açaí', style_library_segment: 'acai_sorvete' } });
-    const bar = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Bar', style_library_segment: 'bebida_bar' } });
-    await w.t.brands.update({ where: { id: BRAND }, data: { segment: 'Açaiteria Frutá' } });
-    const libAcai = await ready(w.t, LIB, acai.id, 'acai_sorvete', 3);
-    const libBar = await ready(w.t, LIB, bar.id, 'bebida_bar', 2);
-    const mine = await ready(w.t, WS, BRAND, 'acai_sorvete', own);
-    return { ...w, libAcai, libBar, mine, acai, bar };
-  }
-
-  it('1 própria + 3 da seleção; a própria vem primeiro', async () => {
-    const { svc, libAcai, mine } = await world();
-    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
-    expect(pick.used.own).toEqual(mine);
-    expect([...pick.used.library].sort()).toEqual([...libAcai].sort());
-  });
-  it('4 próprias → a seleção não entra', async () => {
-    const { svc } = await world(ENVON, 4);
-    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
-    expect(pick.used.own).toHaveLength(4);
-    expect(pick.used.library).toEqual([]);
-  });
-  it('interruptor da marca desligado → só as próprias', async () => {
-    const { svc, t, mine } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
-    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
-  });
-  it('"Nenhum desses" → só as próprias', async () => {
-    const { svc, t, mine } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
-    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
-  });
-  it('ramo escolhido vale mais que o texto', async () => {
-    const { svc, t, libBar } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'bebida_bar' } });
-    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
-    expect([...pick.used.library].sort()).toEqual([...libBar].sort());
-  });
-  it('empresa A não lê notas de B', async () => {
-    const { svc, t, libAcai, libBar } = await world();
-    const otherBrand = await t.brands.create({ data: { workspace_id: OTHER_WS, name: 'Açaí do B', style_library_segment: 'acai_sorvete' } });
-    const theirs = await ready(t, OTHER_WS, otherBrand.id, 'acai_sorvete', 3);
-    const pick = (await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!;
-    const all = [...pick.used.own, ...pick.used.library];
-    for (const id of theirs) expect(all).not.toContain(id);
-    for (const id of libBar) expect(all).not.toContain(id);
-    expect([...pick.used.library].sort()).toEqual([...libAcai].sort());
-  });
-  it('flag desligada → nenhuma consulta à Biblioteca', async () => {
-    const { svc, t, mine } = await world({ ...ENVON, STYLE_LIBRARY_ENABLED: false });
-    const spy = jest.spyOn(t.style_references, 'findMany');
-    const spyB = jest.spyOn(t.brands, 'findMany');
-    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
-    expect(spy.mock.calls.some(([a]: any) => a?.where?.workspace_id === LIB)).toBe(false);
-    expect(spyB.mock.calls.some(([a]: any) => a?.where?.workspace_id === LIB)).toBe(false);
-  });
-  it('flag ligada sem id → inerte; id de empresa inexistente → só as próprias, sem erro', async () => {
-    const semId = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: '' });
-    expect(semId.svc.libraryActiveFor(WS)).toBe(false);
-    expect((await semId.svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: semId.mine, library: [] });
-    const ghost = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' });
-    expect((await ghost.svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: ghost.mine, library: [] });
-  });
-  it('a própria Biblioteca não se completa com ela mesma (ids comparados em minúsculas)', async () => {
-    const { svc, t } = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: LIB.toUpperCase() });
-    expect(svc.libraryActiveFor(LIB)).toBe(false);
-    expect(svc.libraryActiveFor(WS)).toBe(true);
-    const libBrand = t.brands.rows.find((b: any) => b.name === 'Açaí');
-    const pick = (await svc.loadStyleNotes(LIB, libBrand!.id, null, 'açaí'))!;
-    expect(pick.used.library).toEqual([]);
-  });
-  it('erro ao ler a Biblioteca → segue só com as próprias', async () => {
-    const { svc, t, mine } = await world();
-    const orig = t.brands.findMany.bind(t.brands);
-    jest.spyOn(t.brands, 'findMany').mockImplementation(async (a: any) => { if (a?.where?.workspace_id === LIB) throw new Error('boom'); return orig(a); });
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'));
-    warn.mockRestore();
-  });
-  it('ramo antigo atrás de 300+ notas mais novas de outro ramo continua disponível e entra na seleção', async () => {
-    const { svc, t, bar, acai, libAcai } = await world();
-    for (let i = 0; i < 320; i++) await t.style_references.create({ data: { workspace_id: LIB, brand_id: bar.id, status: 'ready', style_notes: note('bebida_bar', `bar ${i}`), created_at: new Date(2027, 0, 1, 0, 0, i) } });
-    for (const r of t.style_references.rows.filter((x: any) => x.brand_id === acai.id)) r.created_at = new Date(2020, 0, 1);
-    const lf = await (svc as any).libraryFor(WS, { segment: 'Açaiteria Frutá', style_library_enabled: true, style_library_segment: null });
-    expect([...lf.available].sort()).toEqual(['acai_sorvete', 'bebida_bar']);
-    expect(lf.resolved).toEqual({ segment: 'acai_sorvete', source: 'auto' });
-    expect(lf.rows.map((r: any) => r.id).sort()).toEqual([...libAcai].sort());
-    expect([...(await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used.library].sort()).toEqual([...libAcai].sort());
-  });
-  it('libraryFor com o interruptor da marca desligado ainda devolve available/resolved; o pickNotes não usa', async () => {
-    const { svc, t, mine } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
-    const lf = await (svc as any).libraryFor(WS, { segment: 'Açaiteria Frutá', style_library_enabled: false, style_library_segment: null });
-    expect([...lf.available].sort()).toEqual(['acai_sorvete', 'bebida_bar']);
-    expect(lf.resolved.segment).toBe('acai_sorvete');
-    expect(lf.rows).toHaveLength(3);
-    expect((await svc.loadStyleNotes(WS, BRAND, null, 'açaí'))!.used).toEqual({ own: mine, library: [] });
-  });
-  it('isolamento: toda consulta tem workspace_id ∈ {empresa, Biblioteca}; marca da empresa B pedida por A não ganha seleção', async () => {
-    const { svc, t } = await world();
-    const bBrand = await t.brands.create({ data: { workspace_id: OTHER_WS, name: 'B', segment: 'Açaiteria' } });
-    await ready(t, OTHER_WS, bBrand.id, 'acai_sorvete', 1);
-    const seen: unknown[] = [];
-    for (const [tbl, fns] of [['brands', ['findFirst', 'findMany']], ['style_references', ['findMany', 'groupBy']]] as const) {
-      for (const fn of fns) {
-        const orig = (t as any)[tbl][fn]?.bind((t as any)[tbl]);
-        if (!orig) continue;
-        (t as any)[tbl][fn] = async (a: any) => { seen.push(a?.where?.workspace_id); return orig(a); };
-      }
-    }
-    await svc.loadStyleNotes(WS, BRAND, null, 'açaí');
-    expect(seen.length).toBeGreaterThan(3);
-    for (const w of seen) expect([WS, LIB]).toContain(w);
-    expect(await svc.pickNotes(WS, bBrand.id, null, 'açaí')).toEqual([]);
-  });
-});
-
 describe('StyleRefsService — pickNotes lê só as notas da marca e da campanha pedida', () => {
   it('nota antiga da marca não fica de fora por causa de notas novas de outras campanhas', async () => {
     const { t, svc } = await setup();
@@ -551,93 +359,5 @@ describe('StyleRefsService — pickNotes lê só as notas da marca e da campanha
     expect(picked.map((p) => p.row.id)).toEqual([old.id]);
     const sem = await svc.pickNotes(WS, BRAND, null, null);
     expect(sem.map((p) => p.row.id)).toEqual([old.id]);
-  });
-});
-
-describe('StyleRefsService — GET library (Tarefa 11)', () => {
-  const LIB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-  const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-  const ENVON = { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: LIB };
-  const note = (cat: string, assunto: string) => ({ paleta: ['laranja'], composicao: 'x', luz: 'suave', enquadramento: 'y', clima: 'z', evitar: [], categorias: [cat], assunto, acabamento: 'a' });
-
-  async function ready(t: any, ws: string, brand: string, cat: string, n: number) {
-    const out: string[] = [];
-    for (let i = 0; i < n; i++) {
-      const r = await t.style_references.create({ data: { workspace_id: ws, brand_id: brand, campaign_id: null, status: 'ready', title: 'Pin secreto', source_url: 'https://pin.it/xyz', style_notes: note(cat, `nota ${i}`) } });
-      out.push(r.id);
-    }
-    return out;
-  }
-
-  async function world(env: Record<string, unknown> = ENVON, own = 1) {
-    const w = await setup({ env });
-    const acai = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Açaí', style_library_segment: 'acai_sorvete' } });
-    const bar = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Bar', style_library_segment: 'bebida_bar' } });
-    await w.t.brands.update({ where: { id: BRAND }, data: { segment: 'Açaiteria Frutá' } });
-    const libAcai = await ready(w.t, LIB, acai.id, 'acai_sorvete', 3);
-    await ready(w.t, LIB, bar.id, 'bebida_bar', 2);
-    await ready(w.t, WS, BRAND, 'acai_sorvete', own);
-    return { ...w, libAcai };
-  }
-
-  it('ramo reconhecido: quantas, descrições só em texto', async () => {
-    const { svc, libAcai } = await world();
-    const view = await svc.library(OWNER, WS, BRAND);
-    expect(view).toMatchObject({ count: 3, segment: 'acai_sorvete', segment_label: 'açaí e sorvete', segment_source: 'auto', brand_segment: 'Açaiteria Frutá', enabled: true, own_ready: 1, in_use: true });
-    expect(view.descriptions).toHaveLength(3);
-    const json = JSON.stringify(view);
-    for (const id of libAcai) expect(json).not.toContain(id);
-    expect(json).not.toContain('http');
-    expect(json).not.toContain('Pin secreto');
-  });
-
-  it('não reconhecido → segment null e as opções com seleção', async () => {
-    const { svc, t } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { segment: 'Floricultura' } });
-    const view = await svc.library(OWNER, WS, BRAND);
-    expect(view.segment).toBeNull();
-    expect(view.segment_label).toBeNull();
-    expect(view.count).toBe(0);
-    expect(view.in_use).toBe(false);
-    expect(view.options).toEqual([{ id: 'acai_sorvete', label: 'açaí e sorvete' }, { id: 'bebida_bar', label: 'bebida e bar' }]);
-  });
-
-  it('in_use false com 4 próprias e com o interruptor desligado', async () => {
-    const quatro = await world(ENVON, 4);
-    const v4 = await quatro.svc.library(OWNER, WS, BRAND);
-    expect(v4).toMatchObject({ own_ready: 4, count: 3, in_use: false });
-    const off = await world();
-    await off.t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
-    expect(await off.svc.library(OWNER, WS, BRAND)).toMatchObject({ enabled: false, count: 3, in_use: false });
-  });
-
-  it('chave desligada → 404; viewer lê; não-membro 403; marca de outra empresa 404', async () => {
-    const { svc, t } = await world();
-    expect((await svc.library(VIEWER, WS, BRAND)).count).toBe(3);
-    expect(await status(svc.library('99999999-9999-4999-8999-999999999999', WS, BRAND))).toMatch(/^403/);
-    const outra = await t.brands.create({ data: { workspace_id: OTHER_WS, name: 'B' } });
-    expect(await status(svc.library(OWNER, WS, outra.id))).toMatch(/^404/);
-    const off = await world({ ...ENVON, STYLE_LIBRARY_ENABLED: false });
-    expect(await status(off.svc.library(OWNER, WS, BRAND))).toBe('404:Não encontrado.');
-    const ownLib = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: WS });
-    expect(await status(ownLib.svc.library(OWNER, WS, BRAND))).toBe('404:Não encontrado.');
-  });
-
-  it('ramo com mais de 100 prontas: count real e descriptions só com as 20 mais recentes', async () => {
-    const { svc, t } = await world();
-    const extra = await t.brands.create({ data: { workspace_id: LIB, name: 'Açaí 2', style_library_segment: 'acai_sorvete' } });
-    await ready(t, LIB, extra.id, 'acai_sorvete', 117);
-    const view = await svc.library(OWNER, WS, BRAND);
-    expect(view.count).toBe(120);
-    expect(view.descriptions).toHaveLength(20);
-    expect(view.in_use).toBe(true);
-  });
-
-  it('segment_source chosen (ramo escolhido) e none ("Nenhum desses")', async () => {
-    const { svc, t } = await world();
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'bebida_bar' } });
-    expect(await svc.library(OWNER, WS, BRAND)).toMatchObject({ segment: 'bebida_bar', segment_label: 'bebida e bar', segment_source: 'chosen', count: 2, in_use: true });
-    await t.brands.update({ where: { id: BRAND }, data: { style_library_segment: 'none' } });
-    expect(await svc.library(OWNER, WS, BRAND)).toMatchObject({ segment: null, segment_label: null, segment_source: 'none', count: 0, in_use: false });
   });
 });

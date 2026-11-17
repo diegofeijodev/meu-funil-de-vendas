@@ -5,7 +5,6 @@ import { parseVacancyWorkspaces, parseWorkspaceList } from './vacancy-workspaces
 /** Variável vazia (`FOO=` ou `${FOO:-}` do compose) vale como ausente. */
 const opt = () => z.string().optional();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const bool = (def: 'true' | 'false') =>
   z
@@ -172,9 +171,8 @@ const envSchema = z
     CAMPAIGN_INTAKE_WORKSPACE_IDS: z.string().default(''),
     /** Referências do Pinterest (link de Pin e pastas acompanhadas por RSS), Fatia 6. OK jurídico dado em 29/10/2026. */
     STYLE_REFS_PINTEREST_ENABLED: bool('false'),
-    /** Seleção do Meu Funil (Fatia 4): completa as referências de estilo da marca com as da empresa interna "Biblioteca Meu Funil". */
+    /** Seleção do Meu Funil automática em cada marca (pastas do catálogo pelo ramo, lidas com a chave de IA da empresa). Depende de STYLE_REFS_PINTEREST_ENABLED. */
     STYLE_LIBRARY_ENABLED: bool('false'),
-    STYLE_LIBRARY_WORKSPACE_ID: z.string().trim().toLowerCase().default(''),
     /** Piloto do estrategista (Fatia 3): chave geral. Com ela desligada, as rotas do piloto respondem 404 e o job não roda. */
     CAMPAIGN_PILOT_ENABLED: bool('false'),
     /** Ids (uuid) das empresas com o piloto, separados por vírgula. `*` só em development/test. */
@@ -187,10 +185,6 @@ const envSchema = z
     FREELA_PUBLIC_API_URL: opt(),
   })
   .superRefine((env, ctx) => {
-    const lib = env.STYLE_LIBRARY_WORKSPACE_ID.trim();
-    if (lib !== '' && !UUID_RE.test(lib)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['STYLE_LIBRARY_WORKSPACE_ID'], message: `STYLE_LIBRARY_WORKSPACE_ID inválido: "${lib}"` });
-    }
     try {
       parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
     } catch (e) {

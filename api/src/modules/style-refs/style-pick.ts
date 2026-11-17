@@ -1,5 +1,6 @@
 /** Escolha das notas de estilo pelo assunto do pedido (Fatia 3; P8/P9). Função pura: o serviço lê as linhas e chama `chooseNotes`. */
-import { isStyleCategory, StyleCategoryId, subjectCategories, subjectWords } from './categories';
+import { StyleCategoryId, subjectCategories, subjectWords } from './categories';
+import { isSelectionBranch, selectionBranchFor } from './selection-catalog';
 import { MAX_NOTES, StyleNotes } from './style-notes';
 
 export type PickRow = { id: string; campaign_id: string | null; created_at: Date; notes: StyleNotes };
@@ -32,17 +33,15 @@ export function chooseNotes(own: PickRow[], campaignId: string | null, subject: 
 }
 
 /**
- * Ramo da Seleção do Meu Funil para a marca (P11): o escolhido (`style_library_segment`) se a Biblioteca o tem; `'none'` = "Nenhum desses";
- * sem escolha, o que `subjectCategories` reconhece em `brands.segment` e a Biblioteca tem. Escolha inválida ou sem prontas = sem ramo.
+ * Ramo da Seleção do Meu Funil para a marca (P19): o escolhido (`style_library_segment`) se for ramo do catálogo; `'none'` = "Nenhum desses";
+ * senão (NULL ou valor que não é ramo do catálogo) o automático, `selectionBranchFor(brands.segment)`.
  */
-export function resolveLibrarySegment(
-  brand: { segment: string | null; style_library_segment: string | null },
-  available: ReadonlySet<StyleCategoryId>,
-): { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' } {
+export function resolveSelectionBranch(brand: { segment: string | null; style_library_segment: string | null }): {
+  segment: StyleCategoryId | null;
+  source: 'auto' | 'chosen' | 'none';
+} {
   const chosen = brand.style_library_segment;
   if (chosen === 'none') return { segment: null, source: 'none' };
-  // Id válido escolhido: vale mesmo sem prontas (a tela mostra "escolhido, sem referências"). Valor gravado inválido = automático.
-  if (chosen && isStyleCategory(chosen)) return { segment: available.has(chosen) ? chosen : null, source: 'chosen' };
-  const found = subjectCategories(brand.segment).find((c) => available.has(c));
-  return { segment: found ?? null, source: 'auto' };
+  if (isSelectionBranch(chosen)) return { segment: chosen, source: 'chosen' };
+  return { segment: selectionBranchFor(brand.segment), source: 'auto' };
 }

@@ -8,17 +8,21 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
 import type { Env } from '../../common/config/env.validation';
+import { todaySp } from '../../common/time/dates';
 import { PrismaService } from '../../common/database/prisma.service';
 import { isUniqueViolation } from '../../common/database/next-version';
 import { WorkspaceAccessService } from '../access/access.service';
 import { AiKeysFailedError } from '../ai/ai-error';
+import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
+import { AiKeysService } from '../ai/ai-keys.service';
 import { AiService } from '../ai/ai.service';
 import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { isStyleCategory, normalizeText, STYLE_CATEGORY_IDS, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
-import { chooseNotes, PickedNote, PickRow, resolveLibrarySegment } from './style-pick';
+import { normalizeText, STYLE_CATEGORY_LABEL } from './categories';
+import { SELECTION_OPTIONS, selectionLabel } from './selection-catalog';
+import { chooseNotes, PickedNote, PickRow, resolveSelectionBranch } from './style-pick';
 import { MAX_NOTES, normalizeStyleNotes, notesSummary, PhotoStyle, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, StyleRefsUsed, styleNotesText } from './style-notes';
 
 const BUCKET = 'style-refs';
@@ -28,10 +32,8 @@ const MAX_SIDE = 1024;
 export const BRAND_CAP = 30;
 export const CAMPAIGN_CAP = 8;
 const LIST_ALL_CAP = 200;
-const LIBRARY_BRANDS_CAP = 200;
-const LIBRARY_ROWS_CAP = 100;
-/** Resumos devolvidos por `library()` (as prontas mais recentes do ramo); `count` é a contagem real no banco. */
-export const LIBRARY_DESCRIPTIONS_CAP = 20;
+/** Cota diária de leitura da Seleção por marca (P21′): `daily_left` da vista = 12 menos as de hoje. */
+const SELECTION_DAILY_NEW = 12;
 const SOURCE_CAP = 5;
 const PINS_PER_SYNC = 8;
 const RESYNC_MS = 24 * 3600_000;
@@ -89,7 +91,7 @@ function toPickRow(r: RefRow): PickRow | null {
 type RefRow = {
   id: string; workspace_id: string; brand_id: string; campaign_id: string | null; source_id: string | null; source: string;
   source_url: string | null; pin_id: string | null; title: string | null; storage_path: string | null; style_notes: unknown;
-  status: string; error: string | null; claimed_at: Date | null; attempts: number; created_at: Date;
+  status: string; error: string | null; claimed_at: Date | null; attempts: number; created_at: Date; origin?: string;
 };
 
 export type StyleRefView = {
@@ -98,10 +100,11 @@ export type StyleRefView = {
   attempts: number; created_at: Date;
 };
 
-/** Seleção do Meu Funil vista pela empresa (contrato §28): só números, rótulos e resumos em texto — nada que identifique ou leve à referência da Biblioteca. */
-export type StyleLibraryView = {
+/** Seleção do Meu Funil vista pela empresa (contrato §28, P34): só números e rótulos — nada que leve a uma referência. */
+export type StyleSelectionView = {
   segment: string | null; segment_label: string | null; segment_source: 'auto' | 'chosen' | 'none'; brand_segment: string | null;
-  options: { id: string; label: string }[]; count: number; descriptions: string[]; enabled: boolean; own_ready: number; in_use: boolean;
+  options: { id: string; label: string }[]; enabled: boolean; needs_ai_key: boolean; ai_credit: 'no_credit' | 'daily_limit' | null;
+  daily_left: number; sources_count: number; count: number; reading: number; own_ready: number; in_use: boolean;
 };
 
 type ViewNames = { campaigns: Map<string, string>; sources: Map<string, string | null> };
@@ -134,7 +137,6 @@ export class StyleRefsService {
   autoProcess = true;
   private readonly pinterestOn: boolean;
   private readonly libraryOn: boolean;
-  private readonly libraryWs: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -143,16 +145,17 @@ export class StyleRefsService {
     private readonly files: FilesService,
     private readonly images: ImageService,
     @Inject(EXTERNAL_FETCH) private readonly fetchExternal: ExternalFetch,
-    @Inject(ENV) env: Pick<Env, 'STYLE_REFS_PINTEREST_ENABLED' | 'STYLE_LIBRARY_ENABLED' | 'STYLE_LIBRARY_WORKSPACE_ID'>,
+    @Inject(ENV) env: Pick<Env, 'STYLE_REFS_PINTEREST_ENABLED' | 'STYLE_LIBRARY_ENABLED'>,
+    private readonly aiKeys: AiKeysService,
+    private readonly aiAlerts: AiCreditAlertsService,
   ) {
     this.pinterestOn = env.STYLE_REFS_PINTEREST_ENABLED === true;
     this.libraryOn = env.STYLE_LIBRARY_ENABLED === true;
-    this.libraryWs = (env.STYLE_LIBRARY_WORKSPACE_ID ?? '').trim();
   }
 
-  /** Seleção do Meu Funil ativa para esta empresa: chave ligada, id preenchido e a empresa não é a própria Biblioteca (ids em minúsculas). */
-  libraryActiveFor(ws: string): boolean {
-    return this.libraryOn && this.libraryWs !== '' && ws.toLowerCase() !== this.libraryWs.toLowerCase();
+  /** Seleção do Meu Funil ligada (P18): as duas chaves, porque ela só existe pelo RSS. Desligada = inerte (nada é lido nem usado na escolha). */
+  selectionOn(): boolean {
+    return this.libraryOn && this.pinterestOn;
   }
 
   pinterestEnabled(): boolean {
@@ -189,31 +192,44 @@ export class StyleRefsService {
     };
   }
 
-  /** Painel da Seleção do Meu Funil na marca. Chave inativa (ou a própria Biblioteca) = 404 como se a rota não existisse. */
-  async library(userId: string, ws: string, brandId: string): Promise<StyleLibraryView> {
+  /** Painel da Seleção do Meu Funil na marca. Seleção desligada = 404 como se a rota não existisse. Toda consulta leva o `workspace_id` da empresa. */
+  async library(userId: string, ws: string, brandId: string): Promise<StyleSelectionView> {
     await this.access.require(userId, ws, 'read');
-    if (!this.libraryActiveFor(ws)) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Não encontrado.' });
-    const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
+    if (!this.selectionOn()) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Não encontrado.' });
+    const brand = await this.prisma.brands.findFirst({
+      where: { id: brandId, workspace_id: ws },
+      select: { segment: true, style_library_enabled: true, style_library_segment: true, style_selection_day: true, style_selection_reads: true },
+    });
     if (!brand) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Marca não encontrada.' });
-    const { available, resolved, rows, brandIds } = await this.libraryFor(ws, brand);
+    const resolved = resolveSelectionBranch(brand);
     const segment = resolved.segment;
-    const ownReady = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, status: 'ready', campaign_id: null } });
-    // `rows` vem com teto de 100 (escolha das notas): a contagem da tela é a real no banco; os resumos, as 20 mais recentes.
-    const count = segment && brandIds.length
-      ? await this.prisma.style_references.count({ where: { workspace_id: this.libraryWs, brand_id: { in: brandIds }, status: 'ready', campaign_id: null } })
-      : 0;
-    const descriptions = rows.slice(0, LIBRARY_DESCRIPTIONS_CAP).map((r) => notesSummary(r.notes)).filter((d): d is string => !!d);
+    const fromSelection = { workspace_id: ws, brand_id: brandId, origin: 'selection' };
+    const sourcesCount = await this.prisma.style_ref_sources.count({ where: fromSelection });
+    const count = await this.prisma.style_references.count({ where: { ...fromSelection, status: 'ready' } });
+    const reading = await this.prisma.style_references.count({ where: { ...fromSelection, status: 'processing' } });
+    // Régua do "útil" (P21′): próprias prontas ou ainda sendo lidas, sem campanha.
+    const ownReady = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, origin: 'own', campaign_id: null, status: { in: ['ready', 'processing'] } } });
+    const hasKey = !!(await this.aiKeys.get(ws, 'openai')) || !!(await this.aiKeys.get(ws, 'gemini'));
+    const credit = await this.aiAlerts.status(ws);
+    const day = brand.style_selection_day;
+    const dayStr = day instanceof Date ? day.toISOString().slice(0, 10) : day ? String(day).slice(0, 10) : null;
+    const reads = dayStr === todaySp() ? brand.style_selection_reads ?? 0 : 0;
+    const enabled = brand.style_library_enabled === true;
     return {
       segment,
-      segment_label: segment ? STYLE_CATEGORY_LABEL[segment] : null,
+      segment_label: segment ? selectionLabel(segment) : null,
       segment_source: resolved.source,
       brand_segment: brand.segment ?? null,
-      options: STYLE_CATEGORY_IDS.filter((id) => available.has(id)).map((id) => ({ id, label: STYLE_CATEGORY_LABEL[id] })),
+      options: SELECTION_OPTIONS.map((o) => ({ id: o.id, label: o.label })),
+      enabled,
+      needs_ai_key: !hasKey,
+      ai_credit: credit?.vendors[0]?.reason ?? null,
+      daily_left: Math.max(0, SELECTION_DAILY_NEW - reads),
+      sources_count: sourcesCount,
       count,
-      descriptions,
-      enabled: brand.style_library_enabled === true,
+      reading,
       own_ready: ownReady,
-      in_use: brand.style_library_enabled === true && !!segment && count > 0 && ownReady < MAX_NOTES,
+      in_use: enabled && !!segment && count > 0 && ownReady < MAX_NOTES,
     };
   }
 
@@ -228,55 +244,19 @@ export class StyleRefsService {
       orderBy: { created_at: 'desc' },
       take: BRAND_CAP + CAMPAIGN_CAP,
     })) as RefRow[];
-    const own = rows.map(toPickRow).filter((x): x is PickRow => !!x);
+    // Separa por origem (P23): as próprias escolhem como sempre; as da Seleção (sem campanha) só completam, e só com a Seleção ligada.
+    const own = rows.filter((r) => r.origin !== 'selection').map(toPickRow).filter((x): x is PickRow => !!x);
     let library: PickRow[] = [];
-    if (own.length < MAX_NOTES && this.libraryActiveFor(ws)) {
+    const selection = rows.filter((r) => r.origin === 'selection' && r.campaign_id === null);
+    if (own.length < MAX_NOTES && selection.length > 0 && this.selectionOn()) {
       try {
-        const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
-        if (brand?.style_library_enabled) library = (await this.libraryFor(ws, brand)).rows;
+        const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { style_library_enabled: true } });
+        if (brand?.style_library_enabled) library = selection.map(toPickRow).filter((x): x is PickRow => !!x);
       } catch (e) {
         this.logger.warn(`Seleção do Meu Funil indisponível; seguindo só com as referências da marca: ${(e as Error).message}`);
       }
     }
     return chooseNotes(own, campaignId ?? null, subject, library);
-  }
-
-  /**
-   * Leitura única da Seleção do Meu Funil (P11), em 3 passos, sempre com `workspace_id` da Biblioteca (nunca ids soltos):
-   * (1) marcas da Biblioteca com ramo; (2) disponibilidade por marca (`distinct brand_id` entre as prontas, sem teto de linhas, para um ramo
-   * antigo não sumir atrás de notas novas de outro); (3) resolve o ramo e lê as linhas só das marcas dele.
-   * Vazio só quando inativa (chave, id ou a própria Biblioteca). O interruptor da marca NÃO entra aqui (quem usa a seleção confere; a tela
-   * precisa de ramo/quantidade/opções mesmo com ele desligado). Erro de leitura sobe ao chamador, que registra e segue só com as próprias.
-   */
-  private async libraryFor(
-    ws: string,
-    brand: { segment: string | null; style_library_enabled: boolean; style_library_segment: string | null },
-  ): Promise<{ available: Set<StyleCategoryId>; resolved: { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }; rows: PickRow[]; brandIds: string[] }> {
-    if (!this.libraryActiveFor(ws)) return { available: new Set(), resolved: { segment: null, source: 'none' }, rows: [], brandIds: [] };
-    const lib = this.libraryWs;
-    const brands = ((await this.prisma.brands.findMany({
-      where: { workspace_id: lib, style_library_segment: { not: null } },
-      select: { id: true, style_library_segment: true },
-      orderBy: { created_at: 'asc' },
-      take: LIBRARY_BRANDS_CAP,
-    })) as { id: string; style_library_segment: string | null }[]).filter((b) => !!b.style_library_segment && isStyleCategory(b.style_library_segment));
-    const segmentOf = new Map(brands.map((b) => [b.id, b.style_library_segment as StyleCategoryId]));
-    const withReady = brands.length === 0 ? [] : ((await this.prisma.style_references.findMany({
-      where: { workspace_id: lib, brand_id: { in: brands.map((b) => b.id) }, status: 'ready', campaign_id: null },
-      distinct: ['brand_id'],
-      select: { brand_id: true },
-    })) as { brand_id: string }[]);
-    const available = new Set<StyleCategoryId>();
-    for (const r of withReady) { const seg = segmentOf.get(r.brand_id); if (seg) available.add(seg); }
-    const resolved = resolveLibrarySegment(brand, available);
-    if (!resolved.segment) return { available, resolved, rows: [], brandIds: [] };
-    const ids = withReady.map((r) => r.brand_id).filter((id) => segmentOf.get(id) === resolved.segment);
-    const ready = (await this.prisma.style_references.findMany({
-      where: { workspace_id: lib, brand_id: { in: ids }, status: 'ready', campaign_id: null },
-      orderBy: { created_at: 'desc' },
-      take: LIBRARY_ROWS_CAP,
-    })) as RefRow[];
-    return { available, resolved, rows: ready.map(toPickRow).filter((x): x is PickRow => !!x), brandIds: ids };
   }
 
   /**

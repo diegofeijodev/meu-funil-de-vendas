@@ -52,20 +52,18 @@ describe('validateEnv — chaves do schema declaradas no compose e no .env.examp
   });
 });
 
-describe('validateEnv — Seleção do Meu Funil (Fatia 4)', () => {
-  it('padrão: desligada e id vazio', () => {
+const OLD_CENTRAL_VAR = ['STYLE_LIBRARY', 'WORKSPACE', 'ID'].join('_');
+
+describe('validateEnv — Seleção do Meu Funil (por empresa)', () => {
+  it('padrão: desligada; a empresa central não existe mais', () => {
     const env = validateEnv({ ...base, NODE_ENV: 'test' });
     expect(env.STYLE_LIBRARY_ENABLED).toBe(false);
-    expect(env.STYLE_LIBRARY_WORKSPACE_ID).toBe('');
+    expect(env).not.toHaveProperty(OLD_CENTRAL_VAR);
   });
-  it('id que não é uuid derruba a subida citando a variável; uuid válido passa', () => {
-    expect(() => validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_WORKSPACE_ID: 'abc' })).toThrow(/STYLE_LIBRARY_WORKSPACE_ID inválido: .{1,3}abc/);
-    const id = '9b1c3a5e-6f7d-4a2b-8c9d-0e1f2a3b4c5d';
-    expect(validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_ENABLED: 'true', STYLE_LIBRARY_WORKSPACE_ID: id }).STYLE_LIBRARY_WORKSPACE_ID).toBe(id);
-  });
-  it('maiúsculas e espaços são normalizados (trim + minúsculas)', () => {
-    const id = '9b1c3a5e-6f7d-4a2b-8c9d-0e1f2a3b4c5d';
-    expect(validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_WORKSPACE_ID: `  ${id.toUpperCase()} ` }).STYLE_LIBRARY_WORKSPACE_ID).toBe(id);
+  it('variável da empresa central (aposentada) no ambiente é ignorada (sem erro, sem sair no resultado)', () => {
+    const env = validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_ENABLED: 'true', [OLD_CENTRAL_VAR]: 'abc' });
+    expect(env.STYLE_LIBRARY_ENABLED).toBe(true);
+    expect(env).not.toHaveProperty(OLD_CENTRAL_VAR);
   });
 });
 

@@ -11,6 +11,8 @@ describe('UpdateBrandDto — Seleção do Meu Funil', () => {
     expect(await errs({ style_library_segment: 'none' })).toEqual([]);
     expect(await errs({ style_library_segment: null })).toEqual([]);
     expect(await errs({ style_library_segment: 'xyz' })).toEqual(['style_library_segment']);
+    // 'beleza' é categoria de notas, mas não é ramo do catálogo da Seleção.
+    expect(await errs({ style_library_segment: 'beleza' })).toEqual(['style_library_segment']);
   });
   it('interruptor: boolean passa, ausente passa, null é recusado (coluna NOT NULL)', async () => {
     expect(await errs({ style_library_enabled: false })).toEqual([]);

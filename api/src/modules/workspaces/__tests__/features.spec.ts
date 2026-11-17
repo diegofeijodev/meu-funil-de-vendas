@@ -27,13 +27,14 @@ describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
     expect((await f.forWorkspace('u1', B)).campaign_pilot).toBe(false);
   });
 
-  it('style_library só com a flag, o id preenchido e a empresa diferente da Biblioteca (comparação em minúsculas)', async () => {
-    const on = { STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: A } as any;
+  it('style_library só com as duas chaves (STYLE_LIBRARY_ENABLED e STYLE_REFS_PINTEREST_ENABLED), para qualquer empresa', async () => {
+    const on = { STYLE_LIBRARY_ENABLED: true, STYLE_REFS_PINTEREST_ENABLED: true } as any;
+    expect((await make(on).forWorkspace('u1', A)).style_library).toBe(true);
     expect((await make(on).forWorkspace('u1', B)).style_library).toBe(true);
-    expect((await make(on).forWorkspace('u1', A.toUpperCase())).style_library).toBe(false);
     expect((await make({ ...on, STYLE_LIBRARY_ENABLED: false }).forWorkspace('u1', B)).style_library).toBe(false);
-    expect((await make({ ...on, STYLE_LIBRARY_WORKSPACE_ID: '' }).forWorkspace('u1', B)).style_library).toBe(false);
+    expect((await make({ ...on, STYLE_REFS_PINTEREST_ENABLED: false }).forWorkspace('u1', B)).style_library).toBe(false);
     expect((await make({ STYLE_LIBRARY_ENABLED: true } as any).forWorkspace('u1', B)).style_library).toBe(false);
+    expect((await make({ STYLE_REFS_PINTEREST_ENABLED: true } as any).forWorkspace('u1', B)).style_library).toBe(false);
   });
 
   it('qualquer membro lê; quem não é da empresa recebe o erro do acesso', async () => {

@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 
-import { STYLE_CATEGORY_IDS } from '../../style-refs/categories';
+import { SELECTION_BRANCHES } from '../../style-refs/selection-catalog';
 
 const LONG = 10_000;
 
@@ -28,9 +28,9 @@ export class UpdateBrandDto {
   @IsOptional() @IsString() @MaxLength(2000) logo_url?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(200, { each: true }) preferred_words?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) @MaxLength(200, { each: true }) banned_words?: string[];
-  /** Seleção do Meu Funil (Fatia 4): sem default (o PATCH só grava o que vem). */
+  /** Seleção do Meu Funil: sem default (o PATCH só grava o que vem). Ramo = do catálogo, 'none' ou null (volta ao automático). */
   @ValidateIf((_, v) => v !== undefined) @IsBoolean() style_library_enabled?: boolean;
-  @IsOptional() @IsIn([...STYLE_CATEGORY_IDS, 'none']) style_library_segment?: string;
+  @IsOptional() @IsIn([...SELECTION_BRANCHES, 'none']) style_library_segment?: string;
   /** Guia visual (`VisualStyle`, jsonb). */
   @IsOptional() @IsObject() visual_style?: Record<string, unknown>;
 }
