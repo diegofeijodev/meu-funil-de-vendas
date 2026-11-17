@@ -576,3 +576,66 @@ describe('Seleção — colisões e lista', () => {
     expect(w.t.brands.rows.find((b) => b.id === OTHER_BRAND)!.style_library_checked_at).toBeNull();
   });
 });
+
+describe('Seleção — rodada 1 de correção (18a)', () => {
+  it('reconcileSelection → refreshDueSources → whenIdle: cada RSS é buscado UMA vez e o seen_pin_ids guarda os Pins que entraram', async () => {
+    const w = await world(KEY, 0, 0);
+    w.svc.autoProcess = true;
+    for (const u of ACAI) w.routes.set(rssOf(u), () => new Response(RSS, { status: 200 }));
+    w.routes.set('https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg', w.image);
+    w.routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', w.image);
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.svc.refreshDueSources(5);
+    await w.svc.whenIdle();
+    const rss = w.fetched.filter((u) => u.endsWith('.rss'));
+    expect(rss.sort()).toEqual(ACAI.map(rssOf).sort());
+    // (as duas pastas do teste têm o mesmo RSS: a 2ª não tem Pin novo; a 1ª precisa ter guardado os dela)
+    expect(w.t.style_ref_sources.rows.some((s) => s.seen_pin_ids.length > 0)).toBe(true);
+  });
+
+  it('refreshDueSources pula pasta que sumiu, que já foi renovada ou que é da Seleção com a Seleção desligada', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    const gone = await folder(w, ACAI[0]!, 'selection');
+    const fresh = await folder(w, ACAI[1]!, 'selection', 0, { last_synced_at: new Date() });
+    const orig = w.t.style_ref_sources.findMany.bind(w.t.style_ref_sources);
+    // o job leu as duas como vencidas; antes de a vez chegar, uma sumiu e a outra foi renovada
+    w.t.style_ref_sources.findMany = async (a: any) => !a.take ? orig(a) : (await orig(a)).concat([{ ...gone.src }, { ...fresh.src, last_synced_at: null }]).filter((r: any, i: number, arr: any[]) => arr.findIndex((x) => x.id === r.id) === i);
+    await w.t.style_ref_sources.deleteMany({ where: { id: gone.src.id } });
+    await w.svc.refreshDueSources(5);
+    expect(w.fetch).not.toHaveBeenCalled();
+  });
+
+  it('o carimbo style_library_checked_at é gravado no INÍCIO: erro depois (cofre) não deixa a marca no topo da fila', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    w.keys.get.mockImplementation(async () => { throw new Error('cofre caiu'); });
+    await expect(w.svc.reconcileSelection(WS, BRAND)).rejects.toThrow('cofre caiu');
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeInstanceOf(Date);
+  });
+
+  it('chave gravada no meio da reconciliação (markSelectionDue): o checked_at continua nulo e o job volta a pegar a marca', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    w.keys.get.mockImplementation(async () => { await w.svc.markSelectionDue(WS); return null; });
+    await w.svc.reconcileSelection(WS, BRAND);
+    expect(w.t.brands.rows[0]!.style_library_checked_at).toBeNull();
+    expect(await w.svc.reconcileDueBrands()).toBe(1);
+  });
+
+  it('a chave da fila é em minúsculas: uuid em maiúsculas espera a mesma fila', async () => {
+    const w = await world(KEY, 0, 0);
+    expect((w.svc as any).queueKey('AAAA-bbbb', 'CCCC-dddd')).toBe('aaaa-bbbb:cccc-dddd');
+  });
+
+  it('promover o Pin da Seleção não espera a fila da marca (updateMany atômico)', async () => {
+    const w = await world(KEY, 0, 0);
+    const { ids } = await folder(w, ACAI[0]!, 'selection', 1);
+    await w.t.style_references.update({ where: { id: ids[0] }, data: { pin_id: '555' } });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const busy = (w.svc as any).queue.run(`${WS}:${BRAND}`, () => gate);
+    const out: any = await w.svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/555/'); // se esperasse a fila, travaria aqui
+    expect(out.promoted).toBe(true);
+    expect(w.t.style_references.rows[0]).toMatchObject({ origin: 'own', source_id: null });
+    release();
+    await busy;
+  });
+});

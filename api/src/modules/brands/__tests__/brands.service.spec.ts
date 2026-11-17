@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -121,11 +122,18 @@ describe('BrandsService — marcas', () => {
     });
 
     it('reconcileSoon que lança não derruba o update (a marca foi gravada)', async () => {
-      const { svc, t } = setup(() => { throw new Error('fila quebrou'); });
-      const b = await svc.create(USER, WS_A, { name: 'M' });
-      const up = await svc.update(USER, WS_A, b.id, { segment: 'Bar' });
-      expect(up.segment).toBe('Bar');
-      expect(t.brands.rows[0]!.segment).toBe('Bar');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        const { svc, t } = setup(() => { throw new Error('fila quebrou'); });
+        const b = await svc.create(USER, WS_A, { name: 'M' });
+        const up = await svc.update(USER, WS_A, b.id, { segment: 'Bar' });
+        expect(up.segment).toBe('Bar');
+        expect(t.brands.rows[0]!.segment).toBe('Bar');
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain('fila quebrou');
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it('marca de outro workspace: 404 e nada é reconciliado', async () => {

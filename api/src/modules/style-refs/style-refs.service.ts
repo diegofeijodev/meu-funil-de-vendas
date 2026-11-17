@@ -3,7 +3,7 @@
  * acompanhados pelo RSS. Cada referência vira NOTAS DE ESTILO em texto (IA de visão); a imagem fica guardada só para a tela
  * (bucket `style-refs`, ≤ 1024 px) e nunca vai ao gerador, à Biblioteca, à Meta ou ao Instagram.
  */
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { ENV } from '../../common/config/env.module';
@@ -139,7 +139,7 @@ async function shrink(images: ImageService, bytes: Uint8Array): Promise<Uint8Arr
 }
 
 @Injectable()
-export class StyleRefsService {
+export class StyleRefsService implements OnModuleDestroy {
   private readonly logger = new Logger(StyleRefsService.name);
   /** Lê o estilo logo depois de adicionar (em segundo plano). Os testes desligam e chamam `processPending`. */
   autoProcess = true;
@@ -353,16 +353,18 @@ export class StyleRefsService {
 
     if (link.kind === 'pin') {
       const pinId = link.pinId;
-      // Pin que a Seleção já trouxe (P26′): promove a própria e devolve (sem "já está"). Pela fila da marca: a reconciliação não o apaga no meio.
-      const taken = await this.queue.run(key, async () => {
-        const dup = (await this.prisma.style_references.findFirst({ where: { workspace_id: ws, brand_id: brandId, pin_id: pinId } })) as RefRow | null;
-        if (!dup) return null;
+      // Pin que a Seleção já trouxe (P26′): promove a própria e devolve (sem "já está"). Escrita atômica (sem esperar a fila da marca):
+      // só vale se ainda é da Seleção; `source_id` nulo na mesma escrita, senão o cascade da FK o apagaria junto com a pasta.
+      const dup = (await this.prisma.style_references.findFirst({ where: { workspace_id: ws, brand_id: brandId, pin_id: pinId } })) as RefRow | null;
+      if (dup) {
         if (dup.origin !== 'selection') throw bad('Esse Pin já está nas referências.');
-        // `source_id` nulo: senão o cascade da FK o apagaria junto com a pasta da Seleção.
-        await this.prisma.style_references.updateMany({ where: { id: dup.id, workspace_id: ws }, data: { origin: 'own', source_id: null } });
-        return { ...dup, origin: 'own' as const, source_id: null };
-      });
-      if (taken) return { kind: 'pin' as const, added: 0, refs: [this.view(taken, await this.namesFor(ws, [taken]))], promoted: true as const };
+        const done = await this.prisma.style_references.updateMany({ where: { id: dup.id, workspace_id: ws, origin: 'selection' }, data: { origin: 'own', source_id: null } });
+        if (done.count === 1) {
+          const taken = { ...dup, origin: 'own' as const, source_id: null };
+          return { kind: 'pin' as const, added: 0, refs: [this.view(taken, await this.namesFor(ws, [taken]))], promoted: true as const };
+        }
+        // Perdeu a corrida (já promovida ou apagada): segue o fluxo normal; o índice único barra a duplicata.
+      }
       const imageUrl = await this.pinImage(link.url);
       const jpeg = await this.download(imageUrl).then((b) => shrink(this.images, b)).catch(() => {
         throw bad(MSG_PIN_IMAGE);
@@ -465,9 +467,13 @@ export class StyleRefsService {
     await this.prisma.brands.updateMany({ where: { workspace_id: { in: [ws, ...heirs.map((h) => h.id)] } }, data: { style_library_checked_at: null } });
   }
 
-  /** Espera os trabalhos em segundo plano em andamento (testes e desligamento). */
+  /** Espera os trabalhos em segundo plano em andamento (usado pelos testes e pelo desligamento da API). */
   async whenIdle(): Promise<void> {
     while (this.inflight.size) await Promise.allSettled([...this.inflight]);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.whenIdle();
   }
 
   private async reconcileNow(ws: string, brandId: string): Promise<{ created: number; removed: number }> {
@@ -475,6 +481,8 @@ export class StyleRefsService {
     if (!this.selectionOn()) return none;
     const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
     if (!brand) return none;
+    // Carimbo no INÍCIO (antes do cofre): marca que dá erro não volta ao topo da fila e chave gravada no meio (`markSelectionDue`) não perde o efeito.
+    await this.prisma.brands.updateMany({ where: { id: brandId, workspace_id: ws }, data: { style_library_checked_at: new Date() } });
     const branch = resolveSelectionBranch(brand).segment;
     const target = new Map<string, string>(); // rss_url → url
     if (brand.style_library_enabled && branch) {
@@ -505,7 +513,6 @@ export class StyleRefsService {
         }
       }
     }
-    await this.prisma.brands.updateMany({ where: { id: brandId, workspace_id: ws }, data: { style_library_checked_at: new Date() } });
     if (made.length) this.kickSelection(ws, brandId, made);
     return { created: made.length, removed };
   }
@@ -579,14 +586,27 @@ export class StyleRefsService {
       take: limit,
     })) as SourceRow[];
     // Uma fonte com erro (ex.: empresa apagada no meio) não impede as outras.
-    for (const s of due) await this.queue.run(this.queueKey(s.workspace_id, s.brand_id), () => this.sync(s)).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
+    for (const s of due) await this.queue.run(this.queueKey(s.workspace_id, s.brand_id), () => this.syncIfDue(s)).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
     return due.length;
   }
 
   // ── internos ───────────────────────────────────────────────────────────
 
+  /**
+   * `sync` com a pasta relida DENTRO da fila (o retrato lido antes pode estar velho): pula se ela sumiu, se já foi renovada há menos de 24 h
+   * (ex.: o chute da reconciliação passou na frente do job) ou se é da Seleção com a Seleção desligada.
+   */
+  private async syncIfDue(s: { id: string; workspace_id: string }): Promise<number | null> {
+    const row = (await this.prisma.style_ref_sources.findFirst({ where: { id: s.id, workspace_id: s.workspace_id } })) as (SourceRow & { last_synced_at?: Date | null }) | null;
+    if (!row) return null;
+    if (row.origin === 'selection' && !this.selectionOn()) return null;
+    if (row.last_synced_at && new Date(row.last_synced_at).getTime() >= Date.now() - RESYNC_MS) return null;
+    return this.sync(row);
+  }
+
   private queueKey(ws: string, brandId: string): string {
-    return `${ws}:${brandId}`;
+    // minúsculas: o uuid que chega pela URL pode vir em maiúsculas e a linha do banco (job) vem em minúsculas.
+    return `${ws}:${brandId}`.toLowerCase();
   }
 
   private track(p: Promise<unknown>): void {
@@ -607,7 +627,7 @@ export class StyleRefsService {
     this.track(
       this.queue
         .run(this.queueKey(ws, brandId), async () => {
-          for (const s of sources) await this.sync(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
+          for (const s of sources) await this.syncIfDue(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
         })
         .then(() => this.processPending(PINS_PER_SYNC))
         .catch((e) => this.logger.warn(`Seleção da marca ${brandId}: ${(e as Error).message}`)),

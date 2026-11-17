@@ -13,7 +13,7 @@ export class StyleRefsCronService implements OnModuleInit {
 
   async tick() {
     const reconciled = await this.refs.reconcileDueBrands(10);
-    const refreshed = await this.refs.refreshDueSources(3);
+    const refreshed = await this.refs.refreshDueSources(5);
     const processed = await this.refs.processPending(10);
     return { reconciled, refreshed, processed };
   }
