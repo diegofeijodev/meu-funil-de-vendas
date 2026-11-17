@@ -553,15 +553,24 @@ try {
   await page.getByText('Aa · Marca.ttf').waitFor({ timeout: 20000 });
   ok('fonte .ttf enviada (cartão "Aa · Marca.ttf")');
   check('rótulos dos arquivos (Logo / Fonte)', (await corpo()).includes('Logo') && (await corpo()).includes('Fonte (.ttf/.otf)'));
+  // Tarefa 6: bloco "Logo e fotos da sua marca" com o aviso do Pinterest, rótulo e aviso de envio da foto própria
+  check('identidade: título "Logo e fotos da sua marca"', tem(await corpo(), 'Logo e fotos da sua marca'));
+  check('identidade: aviso para o Pinterest ir em Estilo das artes', tem(await corpo(), 'Só envie aqui fotos que são suas. Imagem do Pinterest ou de outra empresa vai em Estilo das artes, na aba Guia visual.'));
+  check('identidade: seletor "Tipo da foto da sua marca" com "Foto de: Produto"', (await page.getByLabel('Tipo da foto da sua marca').locator('option', { hasText: 'Foto de: Produto' }).count()) === 1);
+  await page.locator('label', { hasText: 'Foto da sua marca' }).locator('input[type=file]').setInputFiles(path.join(tmp, 'ref.png'));
+  await page.getByText('Foto enviada. Ela pode aparecer nas artes.').waitFor({ timeout: 20000 });
+  check('identidade: foto própria listada como "Foto de: Produto"', tem(await corpo(), 'Foto de: Produto'));
   // arquivo inválido: o próprio navegador avisa antes de enviar
   writeFileSync(path.join(tmp, 'x.txt'), 'texto');
   await page.locator('label', { hasText: 'Identidade visual' }).last().locator('input[type=file]').setInputFiles(path.join(tmp, 'x.txt'));
   await page.getByText('x.txt: envie uma imagem (JPG, PNG, SVG, WEBP) ou PDF.').waitFor({ timeout: 10000 });
   ok('arquivo .txt é recusado com a mensagem do protótipo');
-  // remover os dois
+  // remover os três
   const removers = page.getByRole('button', { name: 'Remover' });
-  check('2 arquivos listados', (await removers.count()) === 2, String(await removers.count()));
+  check('3 arquivos listados (logo, fonte e foto da marca)', (await removers.count()) === 3, String(await removers.count()));
   await removers.first().click();
+  await page.waitForFunction(() => document.querySelectorAll('button[aria-label="Remover"]').length === 2, null, { timeout: 10000 });
+  await page.getByRole('button', { name: 'Remover' }).first().click();
   await page.waitForFunction(() => document.querySelectorAll('button[aria-label="Remover"]').length === 1, null, { timeout: 10000 });
   await page.getByRole('button', { name: 'Remover' }).first().click();
   await page.getByText('Nenhum arquivo enviado ainda.').waitFor({ timeout: 10000 });

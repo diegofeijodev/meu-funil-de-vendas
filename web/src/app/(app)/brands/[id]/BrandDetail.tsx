@@ -4,19 +4,19 @@ import { Link, useParams, useSearch } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Plus, Trash2, Upload } from "lucide-react";
 
 const ASSET_KINDS = [
   { kind: "logo", label: "Logo" },
   { kind: "identity", label: "Identidade visual" },
-  { kind: "reference", label: "Foto de referência" },
+  { kind: "reference", label: BRAND_PHOTOS_TEXT.button },
   { kind: "font", label: "Fonte (.ttf/.otf)" },
 ];
 const kindLabel = (a: { kind: string; tag?: string | null }) =>
   a.kind === "vacancy_template"
     ? "Arte modelo de vaga"
     : a.kind === "photo" || a.kind === "reference"
-    ? `Referência${a.tag ? ` · ${REFERENCE_TAGS[a.tag] ?? a.tag}` : ""}`
+    ? photoLabel(a.tag ? (REFERENCE_TAGS[a.tag] ?? a.tag) : null)
     : (ASSET_KINDS.find((k) => k.kind === a.kind)?.label ?? a.kind);
 import {
   addPersona as apiAddPersona, addProduct as apiAddProduct, getBrand, listAssets, listLearnings, listPersonas, listProducts,
@@ -26,7 +26,7 @@ import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import { useWorkspace, logActivity } from "@/lib/workspace";
 import { PageHeader, Section } from "@/components/ui-bits";
 import { StyleRefsPanel } from "@/components/style-refs-panel";
-import { PANEL_TEXT } from "@/lib/style-refs";
+import { BRAND_PHOTOS_TEXT, PANEL_TEXT, brandPhotosToast, photoLabel } from "@/lib/style-refs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -183,7 +183,7 @@ export function BrandDetail() {
       ok++;
     }
     setUploading(null);
-    if (ok) toast.success(ok === 1 ? "Arquivo enviado." : `${ok} arquivos enviados.`);
+    if (ok) toast.success(kind === "reference" ? brandPhotosToast(ok) : ok === 1 ? "Arquivo enviado." : `${ok} arquivos enviados.`);
     qc.invalidateQueries({ queryKey: ["assets", id] });
   };
 
@@ -294,8 +294,8 @@ export function BrandDetail() {
           </Section>
 
           <Section
-            title="Logo, identidade visual e referências"
-            description="Envie os arquivos do seu computador. Eles entram no contexto usado pela IA para criar os criativos."
+            title={BRAND_PHOTOS_TEXT.title}
+            description={BRAND_PHOTOS_TEXT.description}
             actions={
               canEdit && (
                 <div className="flex flex-wrap gap-2">
@@ -303,10 +303,10 @@ export function BrandDetail() {
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                     value={refTag}
                     onChange={(e) => setRefTag(e.target.value)}
-                    aria-label="Tipo da foto de referência"
+                    aria-label={BRAND_PHOTOS_TEXT.selectLabel}
                   >
                     {Object.entries(REFERENCE_TAGS).map(([k, v]) => (
-                      <option key={k} value={k}>Referência: {v}</option>
+                      <option key={k} value={k}>{BRAND_PHOTOS_TEXT.option(v)}</option>
                     ))}
                   </select>
                   {ASSET_KINDS.map((k) => (
@@ -323,6 +323,12 @@ export function BrandDetail() {
               )
             }
           >
+            {canEdit && (
+              <p className="mb-2 flex items-start gap-2 text-sm text-foreground">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
+                <span>{BRAND_PHOTOS_TEXT.warning}</span>
+              </p>
+            )}
             {canEdit && <p className="mb-3 text-xs text-muted-foreground">{LOGO_HINT}</p>}
             {assets.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhum arquivo enviado ainda.</p>
@@ -651,7 +657,7 @@ function VisualGuide({
   return (
     <Section
       title="Guia visual"
-      description="Como as fotos da marca devem parecer. O diretor de arte usa isto em todo criativo. Envie as fotos de referência na aba Identidade visual."
+      description={BRAND_PHOTOS_TEXT.guide}
       actions={
         canEdit && (
           <div className="flex gap-2">

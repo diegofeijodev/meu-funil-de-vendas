@@ -92,3 +92,22 @@ export function liveAnnouncement(
   if (reading) return "Lendo o estilo…";
   return null;
 }
+
+/** Bloco "Logo e fotos da sua marca" na aba Identidade visual (ui.md §1; P12). Foto própria não é "referência". */
+export const BRAND_PHOTOS_TEXT = {
+  title: "Logo e fotos da sua marca",
+  description: "Fotos de verdade do seu negócio. Elas podem aparecer nas artes.",
+  button: "Foto da sua marca",
+  option: (tag: string): string => `Foto de: ${tag}`,
+  selectLabel: "Tipo da foto da sua marca",
+  warning:
+    "Só envie aqui fotos que são suas. Imagem do Pinterest ou de outra empresa vai em Estilo das artes, na aba Guia visual.",
+  guide:
+    "Como as fotos da marca devem parecer. O diretor de arte usa isto em todo criativo. Envie as fotos da sua marca na aba Identidade visual.",
+} as const;
+
+export const photoLabel = (tagLabel: string | null): string =>
+  tagLabel ? BRAND_PHOTOS_TEXT.option(tagLabel) : BRAND_PHOTOS_TEXT.button;
+
+export const brandPhotosToast = (n: number): string =>
+  n === 1 ? "Foto enviada. Ela pode aparecer nas artes." : `${n} fotos enviadas. Elas podem aparecer nas artes.`;

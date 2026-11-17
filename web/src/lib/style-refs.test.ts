@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BRAND_PHOTOS_TEXT,
   brandCounter,
+  brandPhotosToast,
   liveAnnouncement,
+  photoLabel,
   refOrigin,
   refScope,
   refStateText,
@@ -56,5 +59,13 @@ describe('style-refs', () => {
     expect(
       liveAnnouncement([{ id: 'a', status: 'processing' }], [{ id: 'a', status: 'ready' }, { id: 'c', status: 'processing' }]),
     ).toBe('Referência pronta. O estilo já está em uso.');
+  });
+
+  it('fotos da marca: rótulo da grade e aviso de envio', () => {
+    expect(photoLabel('Produto')).toBe('Foto de: Produto');
+    expect(photoLabel(null)).toBe('Foto da sua marca');
+    expect(brandPhotosToast(1)).toBe('Foto enviada. Ela pode aparecer nas artes.');
+    expect(brandPhotosToast(3)).toBe('3 fotos enviadas. Elas podem aparecer nas artes.');
+    expect(BRAND_PHOTOS_TEXT.option('Ambiente')).toBe('Foto de: Ambiente');
   });
 });
