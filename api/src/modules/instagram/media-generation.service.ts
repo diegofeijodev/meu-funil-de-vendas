@@ -177,6 +177,7 @@ export class MediaGenerationService {
       return await composeCreative(this.images, {
         image,
         aspectRatio: ASPECT[post.format as IgFormat],
+        targetFormat: targetForIgFormat(post.format),
         layout: last ? 'cta_rodape' : first || slideText ? 'titulo_topo' : 'limpo',
         title: first ? (post.hook ?? post.theme ?? null) : slideText,
         cta: last ? (post.cta ?? null) : null,
@@ -209,7 +210,7 @@ export class MediaGenerationService {
         this.refs.loadFont(post.workspace_id, brand.id),
       ]);
       return await composeCreative(this.images, {
-        image, aspectRatio: ASPECT[post.format as IgFormat], layout: 'limpo', logo, logoPosition, font,
+        image, aspectRatio: ASPECT[post.format as IgFormat], targetFormat: targetForIgFormat(post.format), layout: 'limpo', logo, logoPosition, font,
         primary: brand.primary_color ?? null, secondary: brand.secondary_color ?? null,
       });
     } catch (e) {

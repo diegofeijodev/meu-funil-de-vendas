@@ -4,6 +4,7 @@
  * Texto = preenchimento por varredura (4x de supersampling vertical, regra do enrolamento não-zero) dos contornos da fonte.
  */
 import { ImageService, Img } from '../media/image.service';
+import { TargetFormat } from '../media/formats';
 import type { LogoPosition, TextLayout } from './visual-style';
 
 // opentype.js 2.x não traz tipos e é UMD/CJS: `require` mantém o jest e o ts-node simples.
@@ -168,6 +169,11 @@ function regionLum(img: Img, x: number, y: number, w: number, h: number) {
 export type ComposeInput = {
   image: Uint8Array;
   aspectRatio: string;
+  /**
+   * Formato final da Biblioteca. A imagem é ajustada a ele (cover, centralizado) ANTES de compor: provedores devolvem proporção
+   * diferente (a OpenAI devolve 2:3 para 4:5 e 9:16) e a Biblioteca recorta ao salvar — o que cortava texto e logo nas bordas.
+   */
+  targetFormat?: TargetFormat;
   layout: TextLayout;
   title?: string | null;
   price?: string | null;
@@ -184,7 +190,8 @@ export const parseFont = (buf: ArrayBuffer) => opentype.parse(buf);
 
 /** Aplica texto (título/preço/chamada) e logo por cima da imagem; devolve JPEG q92. */
 export async function composeCreative(images: ImageService, inp: ComposeInput): Promise<Uint8Array> {
-  const img = await images.read(inp.image);
+  const source = inp.targetFormat && inp.targetFormat !== 'other' ? (await images.normalize(inp.image, inp.targetFormat, 'jpg')).bytes : inp.image;
+  const img = await images.read(source);
   const W = img.bitmap.width as number;
   const H = img.bitmap.height as number;
   const font = parseFont(inp.font);
@@ -209,14 +216,31 @@ export async function composeCreative(images: ImageService, inp: ComposeInput): 
     if (line) lines.push(line);
     return lines;
   };
-  const fit = (text: string, start: number, maxW: number, maxLines: number) => {
+  /** Reticências com a fonte da marca; a linha só encolhe (por palavra, depois por letra) até caber em `maxW`. */
+  const ellipsize = (text: string, size: number, maxW: number) => {
+    const dots = '...';
+    const w = (t: string) => font.getAdvanceWidth(t, size);
+    if (w(text) <= maxW) return text;
+    const words = text.split(/\s+/).filter(Boolean);
+    while (words.length > 1 && w(`${words.join(' ')}${dots}`) > maxW) words.pop();
+    let out = words.join(' ');
+    while (out.length > 1 && w(`${out}${dots}`) > maxW) out = out.slice(0, -1);
+    return `${out.replace(/[\s,.;:!?-]+$/, '')}${dots}`;
+  };
+  /** Nunca devolve linha mais larga que `maxW` nem corta palavra: no tamanho mínimo, o que sobrar vira reticências. */
+  const fit = (text: string, start: number, maxW: number, maxLines: number, minScale = 0) => {
+    const floor = Math.max(18, start * minScale);
     let size = start;
     let lines = wrap(text, size, maxW);
-    while ((lines.length > maxLines || lines.some((l) => font.getAdvanceWidth(l, size) > maxW)) && size > 18) {
+    while ((lines.length > maxLines || lines.some((l) => font.getAdvanceWidth(l, size) > maxW)) && size > floor) {
       size *= 0.92;
       lines = wrap(text, size, maxW);
     }
-    return { size, lines: lines.slice(0, maxLines) };
+    if (lines.length > maxLines) {
+      lines = lines.slice(0, maxLines);
+      lines[maxLines - 1] = `${lines[maxLines - 1]} ${wrap(text, size, maxW).slice(maxLines).join(' ')}`;
+    }
+    return { size, lines: lines.map((l) => ellipsize(l, size, maxW)) };
   };
   const drawLines = (lines: string[], size: number, top: number, color: RGB, align: 'center' | 'left' = 'center') => {
     let y = top;
@@ -264,8 +288,11 @@ export async function composeCreative(images: ImageService, inp: ComposeInput): 
   }
 
   if (inp.layout === 'cta_rodape') {
-    const label = cta || 'Saiba mais';
-    const size = W * 0.05;
+    // A chamada também é ajustada: o botão (texto + folga) nunca passa da largura útil.
+    const pad = W * 0.05 * 1.6;
+    const fitted = fit(cta || 'Saiba mais', W * 0.05, W - margin * 2 - pad, 1, 0.7);
+    const label = fitted.lines[0]!;
+    const size = fitted.size;
     const tw = font.getAdvanceWidth(label, size);
     const bw = tw + size * 1.6;
     const bh = size * 2;

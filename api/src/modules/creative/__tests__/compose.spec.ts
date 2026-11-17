@@ -150,4 +150,47 @@ describe('composeCreative (texto e logo por cima, nunca pela IA)', () => {
     expect(await changed(out, [128, 128, 128], [0, 20, 600, 200])).toBeGreaterThan(500);
     expect(await changed(out, [128, 128, 128], [0, 330, 600, 600])).toBe(0);
   });
+
+  describe('formato de destino (a OpenAI devolve 2:3 para 4:5; a Biblioteca recorta ao salvar)', () => {
+    const TITLE = 'É hora do almoço!';
+    const CTA = 'Venha experimentar nosso Prato do Dia hoje mesmo';
+    const tall = async () => base(1024, 1536);
+
+    it('causa raiz: compor em 1024x1536 e depois recortar para 1080x1350 come o título do topo', async () => {
+      const composed = await composeCreative(images, { image: await tall(), aspectRatio: '4:5', layout: 'titulo_topo', title: TITLE, font });
+      const stored = (await images.normalize(composed, 'ig_feed_portrait')).bytes; // o que o ingest fazia
+      // o texto começava em y≈92 (6% de 1536); o recorte tira 135 px do topo da imagem escalada: sobra faixa cortada
+      const fixed = await composeCreative(images, { image: await tall(), aspectRatio: '4:5', targetFormat: 'ig_feed_portrait', layout: 'titulo_topo', title: TITLE, font });
+      const a = await changed(stored, [128, 128, 128], [0, 0, 1080, 40]);
+      const b = await changed(fixed, [128, 128, 128], [0, 0, 1080, 40]);
+      expect(a).toBeGreaterThan(0); // letras partidas na borda de cima
+      expect(b).toBe(0); // com a correção a borda de cima fica limpa (margem de segurança)
+    });
+
+    it('com targetFormat a saída já sai 1080x1350 e o texto inteiro fica dentro (nada na borda)', async () => {
+      const out = await composeCreative(images, {
+        image: await tall(), aspectRatio: '4:5', targetFormat: 'ig_feed_portrait', layout: 'cta_rodape', title: TITLE, cta: CTA, font,
+      });
+      expect(await images.size(out)).toEqual({ width: 1080, height: 1350 });
+      const again = (await images.normalize(out, 'ig_feed_portrait')).bytes; // o ingest final não recorta mais nada
+      expect(Buffer.from(again).length).toBeGreaterThan(0);
+      expect(await images.size(again)).toEqual({ width: 1080, height: 1350 });
+      expect(await changed(out, [128, 128, 128], [0, 1350 - 20, 1080, 1350])).toBe(0);
+    });
+
+    it('chamada longa: o botão nunca passa da largura útil (nada nas bordas laterais)', async () => {
+      const out = await composeCreative(images, {
+        image: await base(1080, 1350), aspectRatio: '4:5', targetFormat: 'ig_feed_portrait', layout: 'cta_rodape', cta: `${CTA} e aproveite a promoção`, font,
+      });
+      expect(await changed(out, [128, 128, 128], [0, 900, 1080 * 0.06 - 2, 1350])).toBe(0);
+      expect(await changed(out, [128, 128, 128], [1080 - 1080 * 0.06 + 2, 900, 1080, 1350])).toBe(0);
+    });
+
+    it('título que não cabe em 2 linhas termina em reticências, sem passar da largura e sem partir palavra', async () => {
+      const longo = Array.from({ length: 80 }, () => 'delicioso').join(' ');
+      const out = await composeCreative(images, { image: await base(1080, 1350), aspectRatio: '4:5', layout: 'titulo_topo', title: longo, font });
+      expect(await changed(out, [128, 128, 128], [0, 0, 1080 * 0.06 - 2, 1350])).toBe(0);
+      expect(await changed(out, [128, 128, 128], [1080 - 1080 * 0.06 + 2, 0, 1080, 1350])).toBe(0);
+    });
+  });
 });

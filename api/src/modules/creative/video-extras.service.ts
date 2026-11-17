@@ -85,7 +85,7 @@ export class VideoExtrasService {
         else throw new UserError('o provedor não devolveu a imagem da capa');
         const [font, logo] = await Promise.all([this.refs.loadFont(inp.workspaceId, inp.brand?.id), this.refs.loadLogo(inp.workspaceId, inp.brand?.id)]);
         const composed = await composeCreative(this.images, {
-          image, aspectRatio: ratio, layout: inp.cta ? 'cta_rodape' : 'titulo_topo', title: inp.headline, cta: inp.cta, logo, font,
+          image, aspectRatio: ratio, targetFormat: ratio === '16:9' ? 'other' : 'ig_story', layout: inp.cta ? 'cta_rodape' : 'titulo_topo', title: inp.headline, cta: inp.cta, logo, font,
           primary: inp.brand?.primary_color ?? null, secondary: inp.brand?.secondary_color ?? null,
         });
         const asset = await this.assets.ingest({
