@@ -4,6 +4,7 @@ jest.setTimeout(180_000);
 import { AiError } from '../../ai/ai-error';
 import { ADMIN, MARKETING, OWNER, sampleMp4, status, STRANGER, VIEWER, WS_A, WS_B } from '../../media/__tests__/mem';
 import { buildCaptions } from '../video-extras.service';
+import { RefsService } from '../refs.service';
 import { ART, creativeWorld, CreativeWorld, SCORE } from './world';
 
 const dto = (extra: Record<string, unknown> = {}) => ({ workspaceId: WS_A, title: 'Chopp gelado', type: 'static_image', aspectRatio: '1:1', targetFormat: 'other', variations: 2, provider: 'auto', ...extra }) as any;
@@ -420,6 +421,54 @@ describe('generateAsSystem (piloto)', () => {
     expect(r.status).toBe('ready');
     expect(w.t['creative_generation_jobs']!.rows[0]!.created_by).toBe(OWNER);
     expect(w.logs).toEqual([[WS_A, null, 'creative.generated', 'creative', { creative_id: r.creativeId, provider: 'gemini', via: 'pilot', run_id: RUN }]]);
+    w.cleanup();
+  });
+});
+
+describe('registro do estilo (Fatia 1)', () => {
+  afterEach(() => jest.restoreAllMocks());
+  const pick = { text: 'INSPIRAÇÃO…', used: { own: ['r1', 'r2'], library: [] as string[] } };
+
+  it('imagem: o criativo guarda own/library/brand_id do que o diretor seguiu', async () => {
+    jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(pick);
+    const w = await creativeWorld();
+    const { brand } = await seed(w);
+    const r = await w.svc.generate(OWNER, dto({ brandId: brand.id }));
+    expect(r.status).toBe('ready');
+    expect(w.t['creatives']!.rows[0]!.style_refs).toEqual({ own: ['r1', 'r2'], library: [], brand_id: brand.id });
+    w.cleanup();
+  });
+
+  it('Review Focus #4: direção editada reaproveitada sem ajuste → style_refs null', async () => {
+    jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(pick);
+    const w = await creativeWorld();
+    const { brand } = await seed(w);
+    const r = await w.svc.generate(OWNER, dto({ brandId: brand.id, visualPrompt: 'meu prompt editado', artDirection: { ...ART } }));
+    expect(r.status).toBe('ready');
+    expect(w.t['creatives']!.rows[0]!.style_refs).toBeNull();
+    w.cleanup();
+  });
+
+  it('vídeo assíncrono: o registro vai no options do job e o poller grava no criativo', async () => {
+    jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(pick);
+    const w = await creativeWorld();
+    const { brand } = await seed(w);
+    const r = await w.svc.generate(OWNER, dto({ type: 'reels', aspectRatio: '9:16', targetFormat: 'ig_reel', brandId: brand.id, copyText: 'Chopp gelado todo dia no Bar do Zé venha conferir', useBrandImage: false }));
+    expect(r.status).toBe('generating');
+    const expected = { own: ['r1', 'r2'], library: [], brand_id: brand.id };
+    expect(w.t['creative_generation_jobs']!.rows[0]!.options.style_refs).toEqual(expected);
+    w.provider.status.mockResolvedValue({ status: 'ready', assetUrl: null, bytes: sampleMp4(), mime: 'video/mp4', thumbnailUrl: null, externalJobId: 'veo:job1', cost: 6, note: null });
+    await w.svc.pollPendingCreatives();
+    expect(w.t['creatives']!.rows[0]!.style_refs).toEqual(expected);
+    w.cleanup();
+  });
+
+  it('sem referência pronta → { own: [], library: [], brand_id }', async () => {
+    jest.spyOn(RefsService.prototype, 'loadStyleNotes').mockResolvedValue(null);
+    const w = await creativeWorld();
+    const { brand } = await seed(w);
+    await w.svc.generate(OWNER, dto({ brandId: brand.id }));
+    expect(w.t['creatives']!.rows[0]!.style_refs).toEqual({ own: [], library: [], brand_id: brand.id });
     w.cleanup();
   });
 });

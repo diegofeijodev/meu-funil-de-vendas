@@ -361,6 +361,7 @@ model creatives {
   angle                    String?
   extras                   Json                       @default("{}") @db.JsonB
   workspace                workspaces                 @relation("creatives_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
+  style_refs  Json? @db.JsonB
   campaign                 campaigns?                 @relation("creatives_campaign_id", fields: [campaign_id], references: [id], onDelete: Cascade)
   brand                    brands?                    @relation("creatives_brand_id", fields: [brand_id], references: [id], onDelete: Cascade)
   creative_versions        creative_versions[]        @relation("creative_versions_creative_id")
@@ -611,6 +612,7 @@ model ig_posts {
   review_score        Decimal?              @db.Decimal
   review_attempts     Int                   @default(0)
   failure_kind        String?
+  style_refs  Json? @db.JsonB
   workspace           workspaces            @relation("ig_posts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
   plan                ig_content_plans?     @relation("ig_posts_plan_id", fields: [plan_id], references: [id], onDelete: SetNull)
   run                 ig_auto_runs?         @relation("ig_posts_run_id", fields: [run_id], references: [id], onDelete: SetNull)

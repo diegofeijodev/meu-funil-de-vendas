@@ -711,3 +711,59 @@ describe('revisão final — I1: refação assíncrona que dá erro mantém o pr
     expect(conv.media[0].asset_id).toBe('a1');
   });
 });
+
+describe('registro do estilo (Fatia 1)', () => {
+  const pick = { text: 'INSPIRAÇÃO…', used: { own: ['r1'], library: [] as string[] } };
+  const withBrand = () => {
+    const ctx = setup();
+    ctx.s.refs.loadStyleNotes.mockResolvedValue(pick);
+    const brand = { id: uuid(), workspace_id: WS_A, name: 'Zé', primary_color: '#c00', secondary_color: '#fff', visual_style: {} };
+    ctx.w.t['brands']!.rows.push(brand);
+    const p = plan(ctx.w, { brand_id: brand.id });
+    return { ...ctx, brand, p };
+  };
+
+  it('post feed_image gerado: style_refs = { own, library, brand_id do post }', async () => {
+    const { w, gen, brand, p } = withBrand();
+    const post = idea(w, { plan_id: p.id });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).toEqual({ own: ['r1'], library: [], brand_id: brand.id });
+  });
+
+  it('carrossel: um registro só para o post', async () => {
+    const { w, gen, brand, p } = withBrand();
+    const post = idea(w, { plan_id: p.id, format: 'feed_carousel', creative_brief: { prompt: 'base', slides: ['s1', 's2', 's3'], compose: false } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).toEqual({ own: ['r1'], library: [], brand_id: brand.id });
+  });
+
+  it('Reels: o startVideo grava o registro', async () => {
+    const { w, gen, brand, p } = withBrand();
+    const post = idea(w, { plan_id: p.id, format: 'reel', hook: 'Gancho' });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).toEqual({ own: ['r1'], library: [], brand_id: brand.id });
+  });
+
+  it('post com visual_prompt_override e art_direction, sem instrução: style_refs null', async () => {
+    const { w, gen, p } = withBrand();
+    const post = idea(w, { plan_id: p.id, style_refs: { own: ['velho'], library: [], brand_id: null }, creative_brief: { prompt: 'x', art_direction: { ...ART }, visual_prompt_override: 'MEU PROMPT FINAL' } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).toBeNull();
+  });
+
+  it('reels com visual_prompt_override: style_refs null', async () => {
+    const { w, gen, p } = withBrand();
+    const post = idea(w, { plan_id: p.id, format: 'reel', creative_brief: { prompt: 'x', visual_prompt_override: 'MEU PROMPT DE VÍDEO' } });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).toBeNull();
+  });
+
+  it('mídia enviada pela pessoa (upload) zera o registro', async () => {
+    const { w, a, gen, p } = withBrand();
+    const post = idea(w, { plan_id: p.id });
+    await gen.generatePostAssets(WS_A, post.id);
+    expect(post.style_refs).not.toBeNull();
+    await a.uploadPostMedia(OWNER, WS_A, post.id, { filename: 'foto.png', mimetype: 'image/png', bytes: Buffer.alloc(10, 1) });
+    expect(post.style_refs).toBeNull();
+  });
+});

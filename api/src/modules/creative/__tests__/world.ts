@@ -33,7 +33,7 @@ export interface CreativeWorld extends MediaWorld {
 export async function creativeWorld(): Promise<CreativeWorld> {
   const w = mediaWorld();
   const camp = (r: any) => { const c = w.t['campaigns']!.rows.find((x) => x.id === r.campaign_id); return c ? { name: c.name } : null; };
-  w.t['creatives'] = new MemTable(() => ({ version: 1, status: 'draft', extras: {}, provider: 'mock', final_prompt: null }), { campaign: camp });
+  w.t['creatives'] = new MemTable(() => ({ version: 1, status: 'draft', extras: {}, provider: 'mock', final_prompt: null, style_refs: null }), { campaign: camp });
   w.t['creative_generation_jobs'] = new MemTable(() => ({ status: 'queued', provider: 'mock', options: {}, external_job_id: null, creative_id: null }));
   w.t['creative_versions'] = new MemTable();
   w.t['products'] = new MemTable();

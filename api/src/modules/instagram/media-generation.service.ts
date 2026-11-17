@@ -17,12 +17,16 @@ import { VideoConformService } from '../media/video-conform.service';
 import { targetForIgFormat } from '../media/formats';
 import { ImageService } from '../media/image.service';
 import { UserError } from '../media/user-error';
+import { StylePick, StyleRefsRecord, styleRecord } from '../style-refs/style-notes';
 import { ContentService } from './content.service';
 import { ASPECT, IgFormat, isVideoFormat, PostRow } from './ig-types';
 import { IgStore, PostLease, PublishClaimLost, errText, leaseFree } from './ig-store.service';
 import { PublishingService } from './publishing.service';
 import { firstFrameRef, orderRefsForProduct } from '../creative/creative-context';
 import { PostContextService } from './post-context.service';
+
+/** Coluna jsonb anulável do Prisma: `null` só entra como `Prisma.DbNull`. */
+const styleColumn = (r: StyleRefsRecord | null) => (r ? (r as unknown as Prisma.InputJsonObject) : Prisma.DbNull);
 
 const MAX_UPLOAD = 100 * 1024 * 1024;
 const PENDING_TIMEOUT_MS = 60 * 60e3;
@@ -395,20 +399,23 @@ export class MediaGenerationService {
     await lease.renew();
     let direction: VideoDirection | null = prev?.direction ?? null;
     let prompt: string;
+    let pick: StylePick | null = null;
     if (override) prompt = override;
     else {
+      pick = await this.refs.loadStyleNotes(ws, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null);
       const r = await directVideo(this.ai, {
         workspaceId: ws, brand, context: ctx, format: post.format === 'story_video' ? 'story_video' : 'reel',
         theme: post.theme ?? null, hook: post.hook ?? null, cta: post.cta ?? null, userPrompt: (brief.prompt as string | undefined) ?? null,
         audio, hasFirstFrame: !!frame, provider: provider.id, adjust: instructions, previousPrompt: instructions || criticNote ? (prev?.prompt ?? null) : null, criticNote,
-        styleNotes: (await this.refs.loadStyleNotes(ws, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null))?.text ?? null,
+        styleNotes: pick?.text ?? null,
       });
       direction = r.direction;
       prompt = r.prompt;
     }
     const stored: StoredVideoDirection = { direction, prompt, audio, first_frame_ref: frame && ref ? ref.id : null, scores: state.scores };
     post.creative_brief = { ...brief, video_direction: stored, visual_prompt: prompt };
-    await this.store.patchPost(post.id, { creative_brief: post.creative_brief });
+    // Prompt escrito à mão (override): o diretor não rodou, a peça não diz que seguiu referências (P6).
+    await this.store.patchPost(post.id, { creative_brief: post.creative_brief, style_refs: styleColumn(override ? null : styleRecord(pick, brand?.id)) });
     await lease.renew();
     const req: GenerationRequest = {
       finalPrompt: prompt, aspectRatio: '9:16', kind: 'video', maxWaitMs: VIDEO_WAIT_MS, audio: audio.modo !== 'sem_audio',
@@ -544,7 +551,8 @@ export class MediaGenerationService {
         : orderRefsForProduct(await this.refs.loadBrandRefs(workspaceId, brand?.id, { max: 4, ids: vs.referencias?.length ? vs.referencias : undefined }), ctx.product?.name ?? null);
       const base = brief.prompt || post.theme || 'Post de Instagram';
       // Estilo das referências (Pinterest/envio) em texto — nunca o pixel. Campanha do post quando o briefing a traz.
-      const styleNotes = (await this.refs.loadStyleNotes(workspaceId, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null))?.text ?? null;
+      const pick = await this.refs.loadStyleNotes(workspaceId, brand?.id, typeof brief.campaign_id === 'string' ? brief.campaign_id : null);
+      const styleNotes = pick?.text ?? null;
       const briefs: string[] = format === 'feed_carousel' ? (brief.slides?.length ? brief.slides : [base, base, base]).slice(0, 10) : [base];
       const artBrief = (userPrompt: string, i: number) => ({
         workspaceId,
@@ -589,7 +597,9 @@ export class MediaGenerationService {
         visual_prompt: ads[0]!.prompt_final,
         ...(thread ? { visual_thread: thread } : {}),
       };
-      await this.store.patchPost(postId, { creative_brief: post.creative_brief });
+      // Direção escrita à mão (override + art_direction guardada) não passa pelo diretor: sem registro (P6).
+      const usedDirector = !(override && brief.art_direction);
+      await this.store.patchPost(postId, { creative_brief: post.creative_brief, style_refs: styleColumn(usedDirector ? styleRecord(pick, brand?.id) : null) });
       await lease.renew();
 
       // Imagem única: variações + crítico + composição.
@@ -844,6 +854,8 @@ export class MediaGenerationService {
     const media = [...current, this.mediaItem(asset, current.length)];
     await this.store.patchPost(postId, {
       media,
+      // A arte deixa de ser só do sistema: o registro das referências não vale mais.
+      style_refs: Prisma.DbNull,
       status: post.status === 'idea' || post.status === 'failed' ? 'pending_approval' : post.status,
       ai_generation_log: this.store.appendLog(post, { step: 'upload', file: file.filename }),
     });

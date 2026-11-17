@@ -19,6 +19,7 @@ import { StrategistService } from '../strategist/strategist.service';
 import { ArtBrief, buildVisualPrompt, providerPrompt } from './art-director';
 import { choiceForProvider, CreativeKind, GenerationRequest, GenerationResult, ProviderChoice, ServerCreativeProvider, VIDEO_TYPES } from './creative.types';
 import { GenerateCreativeDto } from './creative.dto';
+import { asStyleRefsRecord, StyleRefsRecord, styleRecord } from '../style-refs/style-notes';
 import { PipelineService } from './pipeline.service';
 import { ChainedProvider, ProviderResolverService, providerLog } from './provider-resolver.service';
 import { RefsService } from './refs.service';
@@ -55,6 +56,8 @@ export type RunGenerationInput = {
   useBrandImage?: boolean;
   /** Vídeo: capa com logo/CTA e legendas (persistido no job para o poller). */
   videoOptions?: VideoOptions | null;
+  /** Referências de estilo que o diretor seguiu (P6). Ausente = não mexe na coluna; null = prompt escrito à mão. */
+  styleRefs?: StyleRefsRecord | null;
 };
 
 export type GenerationOutcome = {
@@ -113,7 +116,7 @@ export class CreativeService {
       kind: CreativeKind; visualPrompt?: string | null; artDirection?: Record<string, unknown> | null; adjust?: string | null; angle?: string | null;
     },
     providerId: string,
-  ): Promise<{ ad: ArtDirection; brief: ArtBrief }> {
+  ): Promise<{ ad: ArtDirection; brief: ArtBrief; styleRefs: StyleRefsRecord | null }> {
     const brandId = input.brand?.id;
     const products = brandId
       ? await this.prisma.products.findMany({ where: { brand_id: brandId, workspace_id: input.workspaceId }, select: { name: true, description: true }, take: 3 })
@@ -124,17 +127,19 @@ export class CreativeService {
     // A estratégia aprovada da campanha (big idea, ângulo, direção visual) orienta o diretor de arte.
     const strategy = strategyBrief(await this.strategist.currentStrategy(input.workspaceId, input.campaign?.id), input.angle);
     // Estilo das referências (Pinterest/envio) em texto — nunca o pixel.
-    const styleNotes = (await this.refs.loadStyleNotes(input.workspaceId, brandId, input.campaign?.id ?? null))?.text ?? null;
+    const pick = await this.refs.loadStyleNotes(input.workspaceId, brandId, input.campaign?.id ?? null);
+    const styleNotes = pick?.text ?? null;
     const brief: ArtBrief = {
       workspaceId: input.workspaceId, brand: input.brand, campaign: input.campaign, strategy, products, styleNotes,
       theme: input.title, hook: input.copyText || null, offer: input.campaign?.offer_product ?? null, userPrompt: input.prompt,
       aspectRatio: input.aspectRatio, kind: input.kind, provider: providerId, hasProductRef: productRefs > 0,
     };
     if (input.visualPrompt && input.artDirection && !input.adjust) {
-      return { ad: { ...(input.artDirection as unknown as ArtDirection), prompt_final: input.visualPrompt }, brief };
+      // Direção editada reaproveitada: o diretor não rodou, então a peça não diz que seguiu referências.
+      return { ad: { ...(input.artDirection as unknown as ArtDirection), prompt_final: input.visualPrompt }, brief, styleRefs: null };
     }
     const ad = await buildVisualPrompt(this.ai, { ...brief, adjust: input.adjust ?? null, previousPrompt: input.visualPrompt ?? null });
-    return { ad, brief };
+    return { ad, brief, styleRefs: styleRecord(pick, brandId) };
   }
 
   // ------------------------------------------------------------------ ações (server fns)
@@ -219,6 +224,7 @@ export class CreativeService {
       jobId: job.id, workspaceId: job.workspace_id, brandId: job.brand_id, campaignId: job.campaign_id, title: 'Criativo (nova tentativa)', type: job.type,
       aspectRatio: job.aspect_ratio ?? '1:1', prompt: job.prompt ?? '', finalPrompt: job.final_prompt ?? job.prompt ?? '', copyText: '',
       kind: VIDEO_TYPES.has(job.type) ? 'video' : 'image', existingCreativeId: job.creative_id, providerChoice: choiceForProvider(job.provider),
+      styleRefs: asStyleRefsRecord((job.options as Record<string, unknown> | null)?.['style_refs']),
     });
   }
 
@@ -380,7 +386,7 @@ export class CreativeService {
             workspace_id: ws, campaign_id: input.campaignId, brand_id: input.brandId, title: input.title, type: input.type, prompt: input.prompt,
             final_prompt: input.finalPrompt, aspect_ratio: input.aspectRatio, copy_text: input.copyText, status: 'ready', provider: provider.id,
             estimated_cost: result.cost, real_cost: result.cost, preview_url: assetUrl, thumbnail_url: thumbnailUrl, external_job_id: result.externalJobId,
-            version: 1, angle: input.angle ?? null,
+            version: 1, angle: input.angle ?? null, ...(input.styleRefs ? { style_refs: input.styleRefs } : {}),
           },
           select: { id: true },
         });
@@ -463,6 +469,7 @@ export class CreativeService {
           jobId: job.id, workspaceId: job.workspace_id, brandId: job.brand_id, campaignId: job.campaign_id, title: opts.title || String(job.prompt ?? 'Criativo').slice(0, 80),
           type: job.type, aspectRatio: job.aspect_ratio ?? '1:1', targetFormat: opts.targetFormat ?? null, prompt: job.prompt ?? '', finalPrompt: job.final_prompt ?? job.prompt ?? '',
           copyText: opts.copyText ?? '', kind, angle: opts.angle ?? null, existingCreativeId: job.creative_id, videoOptions: opts,
+          styleRefs: asStyleRefsRecord((job.options as Record<string, unknown> | null)?.['style_refs']),
         }, true);
         out.push({ job: job.id, status: res.status });
       } catch (e) {
@@ -485,7 +492,7 @@ export class CreativeService {
     const ws = input.workspaceId;
     // Provedor indisponível ("Higgsfield não está conectado…") é lançado, como no protótipo.
     const provider = await this.providers.resolve(ws, input.providerChoice);
-    const { ad, brief } = await this.directArt({ ...input, aspectRatio: input.aspectRatio }, provider.id);
+    const { ad, brief, styleRefs } = await this.directArt({ ...input, aspectRatio: input.aspectRatio }, provider.id);
     const finalPrompt = providerPrompt(ad);
     const videoOptions: VideoOptions | null =
       input.kind === 'video' ? { coverWithLogo: !!input.coverWithLogo, headline: input.headline ?? null, cta: input.cta ?? null, captionText: input.copyText || null } : null;
@@ -495,6 +502,7 @@ export class CreativeService {
         final_prompt: finalPrompt, aspect_ratio: input.aspectRatio, status: 'generating', created_by: input.userId,
         options: {
           ...(videoOptions ? { ...videoOptions, title: input.title || input.campaign?.name || 'Criativo sem título', angle: input.angle ?? null, copyText: input.copyText, targetFormat: input.targetFormat } : {}),
+          style_refs: styleRefs,
           ...(input.jobOptions ?? {}),
         } as Prisma.InputJsonObject,
       },
@@ -504,7 +512,7 @@ export class CreativeService {
       jobId: job.id, workspaceId: ws, brandId: input.brand?.id ?? null, campaignId: input.campaign?.id ?? null,
       title: input.title || input.campaign?.name || 'Criativo sem título', type: input.type, aspectRatio: input.aspectRatio, targetFormat: input.targetFormat,
       prompt: input.prompt, finalPrompt, copyText: input.copyText, kind: input.kind, providerChoice: input.providerChoice, angle: input.angle ?? null,
-      useBrandImage: input.useBrandImage, videoOptions,
+      useBrandImage: input.useBrandImage, videoOptions, styleRefs,
     };
 
     // Vídeo: só o prompt do diretor de arte, fluxo de sempre.
@@ -533,7 +541,7 @@ export class CreativeService {
         data: {
           workspace_id: ws, campaign_id: base.campaignId, brand_id: base.brandId, title: base.title, type: input.type, prompt: input.prompt, final_prompt: providerPrompt(res.ad),
           aspect_ratio: input.aspectRatio, copy_text: input.copyText, status: 'ready', provider: provider.id, estimated_cost: res.cost, real_cost: res.cost,
-          preview_url: res.finalUrl, thumbnail_url: res.finalThumb, version: 1, angle: input.angle ?? null,
+          preview_url: res.finalUrl, thumbnail_url: res.finalThumb, version: 1, angle: input.angle ?? null, ...(styleRefs ? { style_refs: styleRefs } : {}),
         },
         select: { id: true },
       });
