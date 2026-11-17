@@ -17,7 +17,7 @@ import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, styleNotesText } from './style-notes';
+import { MAX_NOTES, normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
 
 const BUCKET = 'style-refs';
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -152,8 +152,8 @@ export class StyleRefsService {
     };
   }
 
-  /** Texto para o diretor de arte/vídeo: até 8 prontas (as da campanha primeiro, depois as da marca), ou null. */
-  async loadStyleNotes(ws: string, brandId: string | null | undefined, campaignId?: string | null): Promise<string | null> {
+  /** Bloco para o diretor de arte/vídeo: até 4 prontas (as da campanha primeiro, depois as mais novas da marca) + quais entraram, ou null. */
+  async loadStyleNotes(ws: string, brandId: string | null | undefined, campaignId?: string | null): Promise<StylePick | null> {
     if (!brandId) return null;
     const rows = (await this.prisma.style_references.findMany({
       where: { workspace_id: ws, brand_id: brandId, status: 'ready' },
@@ -162,8 +162,12 @@ export class StyleRefsService {
     })) as RefRow[];
     const usable = rows.filter((r) => !r.campaign_id || r.campaign_id === campaignId);
     usable.sort((a, b) => Number(b.campaign_id === campaignId && !!campaignId) - Number(a.campaign_id === campaignId && !!campaignId));
-    const notes = usable.map((r) => normalizeStyleNotes(r.style_notes)).filter((n): n is StyleNotes => !!n);
-    return styleNotesText(notes);
+    const items = usable
+      .map((r) => ({ id: r.id, notes: normalizeStyleNotes(r.style_notes) }))
+      .filter((x): x is { id: string; notes: StyleNotes } => !!x.notes)
+      .slice(0, MAX_NOTES * 2);
+    const r = styleNotesText(items);
+    return r ? { text: r.text, used: { own: r.ids, library: [] } } : null;
   }
 
   // ── adicionar ──────────────────────────────────────────────────────────
@@ -277,7 +281,7 @@ export class StyleRefsService {
         const notes = normalizeStyleNotes(raw);
         if (!notes) throw new ReadDefinitive('notas vazias');
         // updateMany: referência apagada no meio da leitura (ou a empresa inteira) não derruba a rodada.
-        await this.prisma.style_references.updateMany({ where: mine, data: { status: 'ready', style_notes: notes as unknown as Prisma.InputJsonObject, error: null } });
+        await this.prisma.style_references.updateMany({ where: mine, data: { status: 'ready', style_notes: { ...notes, v: 2 } as unknown as Prisma.InputJsonObject, error: null } });
       } catch (e) {
         this.logger.warn(`estilo da referência ${r.id}: ${(e as Error).message}`);
         const transient = !(e instanceof ReadDefinitive) && isTransientReadError(e);

@@ -3,6 +3,7 @@
  * texto final em pt-BR enviado ao modelo de vídeo (Veo/Kling): marcas de tempo por tomada, câmera/lente/luz/paleta/estilo, direção de
  * áudio e "Evite: …", com 250–450 palavras e no máximo 3000 caracteres. A IA decide O QUE acontece; o código decide COMO o texto sai.
  */
+import { cleanFree } from '../../common/text/clean-free';
 import { AiService } from '../ai/ai.service';
 import { UserError } from '../media/user-error';
 import { contextForPrompt, contextProhibitions, PostCreativeContext } from './creative-context';
@@ -95,12 +96,7 @@ export const VIDEO_SCHEMA = {
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
-/** Texto livre (usuário ou IA) para dentro de um prompt: sem « » (o delimitador), sem quebras nem controle, com teto. */
-export function cleanFree(v: unknown, max: number): string {
-  return typeof v === 'string'
-    ? v.replace(/[«»]/g, '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max)
-    : '';
-}
+export { cleanFree };
 
 /** Áudio efetivo: camadas da mais geral para a mais específica (execução → post); camada inválida é ignorada. */
 export function resolveAudio(...layers: unknown[]): VideoAudio {

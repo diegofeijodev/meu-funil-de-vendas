@@ -124,7 +124,7 @@ export class CreativeService {
     // A estratégia aprovada da campanha (big idea, ângulo, direção visual) orienta o diretor de arte.
     const strategy = strategyBrief(await this.strategist.currentStrategy(input.workspaceId, input.campaign?.id), input.angle);
     // Estilo das referências (Pinterest/envio) em texto — nunca o pixel.
-    const styleNotes = await this.refs.loadStyleNotes(input.workspaceId, brandId, input.campaign?.id ?? null);
+    const styleNotes = (await this.refs.loadStyleNotes(input.workspaceId, brandId, input.campaign?.id ?? null))?.text ?? null;
     const brief: ArtBrief = {
       workspaceId: input.workspaceId, brand: input.brand, campaign: input.campaign, strategy, products, styleNotes,
       theme: input.title, hook: input.copyText || null, offer: input.campaign?.offer_product ?? null, userPrompt: input.prompt,

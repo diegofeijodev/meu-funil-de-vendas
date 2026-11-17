@@ -4,6 +4,7 @@ import { FakeTable } from '../../brands/__tests__/fake-prisma';
 import { ImageService } from '../../media/image.service';
 import { AiError, AiKeysFailedError } from '../../ai/ai-error';
 import { NO_AI_MESSAGE } from '../../ai/ai.service';
+import { STYLE_NOTES_HEADER } from '../style-notes';
 import { isTransientReadError, StyleRefsService } from '../style-refs.service';
 import { RSS } from './fixtures';
 
@@ -21,7 +22,7 @@ async function png(): Promise<Uint8Array> {
   return new Uint8Array(await new Jimp({ width: 8, height: 8, color: 0xff8800ff }).getBuffer('image/png'));
 }
 
-const NOTES = { paleta: ['laranja', 'creme'], composicao: 'prato ao centro', luz: 'de fim de tarde', enquadramento: 'bem de perto', clima: 'aconchegante', evitar: ['fundo branco'] };
+const NOTES = { paleta: ['laranja', 'creme'], composicao: 'prato ao centro', luz: 'de fim de tarde', enquadramento: 'bem de perto', clima: 'aconchegante', evitar: ['fundo branco'], categorias: ['comida_hamburguer'], assunto: 'hambúrguer no balcão', acabamento: 'madeira escura, fundo desfocado' };
 
 async function setup(opts: { pinterest?: boolean } = {}) {
   const t = {
@@ -89,12 +90,38 @@ describe('StyleRefsService — envio e leitura do estilo', () => {
   });
 
   it('loadStyleNotes: só as prontas da marca/campanha, como texto de inspiração; sem nenhuma = null', async () => {
-    const { svc, img } = await setup();
+    const { t, svc, img } = await setup();
     expect(await svc.loadStyleNotes(WS, BRAND, CAMP)).toBeNull();
     await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' }, CAMP);
     await svc.processPending(5);
-    const text = await svc.loadStyleNotes(WS, BRAND, CAMP);
-    expect(text).toMatch(/^INSPIRAÇÃO DE ESTILO \(não copie composição, pessoas, marcas nem textos; use só como clima\): 1\) paleta laranja, creme/);
+    const pick = (await svc.loadStyleNotes(WS, BRAND, CAMP))!;
+    expect(pick.text.startsWith(`${STYLE_NOTES_HEADER} 1) «assunto hambúrguer no balcão; paleta laranja, creme`)).toBe(true);
+    expect(pick.used).toEqual({ own: [t.style_references.rows[0].id], library: [] });
+  });
+
+  it('processPending grava v: 2', async () => {
+    const { t, svc, img } = await setup();
+    await svc.upload(OWNER, WS, BRAND, { bytes: img, mime: 'image/png' });
+    await svc.processPending(5);
+    expect(t.style_references.rows[0].style_notes).toMatchObject({ v: 2, acabamento: 'madeira escura, fundo desfocado' });
+  });
+
+  it('empresa A não lê notas de B', async () => {
+    const { t, svc } = await setup();
+    const OTHER = '66666666-6666-4666-8666-666666666666';
+    const OTHER_BRAND = '77777777-7777-4777-8777-777777777777';
+    await t.style_references.create({ data: { workspace_id: OTHER, brand_id: OTHER_BRAND, source: 'upload', status: 'ready', style_notes: NOTES } });
+    expect(await svc.loadStyleNotes(WS, OTHER_BRAND, null)).toBeNull();
+    expect((await svc.loadStyleNotes(OTHER, OTHER_BRAND, null))!.text).toContain('INSPIRAÇÃO DE ESTILO');
+  });
+
+  it('até 4 notas, as da campanha primeiro', async () => {
+    const { t, svc } = await setup();
+    const mk = (campaign_id: string | null) => t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, campaign_id, source: 'upload', status: 'ready', style_notes: NOTES } }) as Promise<{ id: string }>;
+    const b1 = await mk(null), b2 = await mk(null), c1 = await mk(CAMP), c2 = await mk(CAMP), b3 = await mk(null), b4 = await mk(null);
+    const pick = (await svc.loadStyleNotes(WS, BRAND, CAMP))!;
+    expect(pick.used.own).toEqual([c2.id, c1.id, b4.id, b3.id]);
+    expect([b1.id, b2.id].some((id) => pick.used.own.includes(id))).toBe(false);
   });
 
   it('8 por campanha: a 9ª é recusada com a frase da tela', async () => {

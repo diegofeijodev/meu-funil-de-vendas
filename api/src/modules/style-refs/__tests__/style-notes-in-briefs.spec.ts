@@ -2,7 +2,7 @@ import { buildVisualPrompt } from '../../creative/art-director';
 import { DEFAULT_VIDEO_AUDIO, videoDirectorPrompt } from '../../creative/video-director';
 import { styleNotesText } from '../style-notes';
 
-const NOTES = styleNotesText([{ paleta: ['laranja'], composicao: 'centro', luz: 'quente', enquadramento: 'perto', clima: 'aconchegante', evitar: [] }])!;
+const NOTES = styleNotesText([{ id: 'r1', notes: { paleta: ['laranja'], composicao: 'centro', luz: 'quente', enquadramento: 'perto', clima: 'aconchegante', evitar: [], categorias: [], assunto: '', acabamento: 'madeira' } }])!.text;
 
 describe('notas de estilo chegam ao diretor de arte e ao de vídeo — só texto', () => {
   it('buildVisualPrompt põe a inspiração quando há notas e não põe sem notas; nenhuma imagem é anexada', async () => {
