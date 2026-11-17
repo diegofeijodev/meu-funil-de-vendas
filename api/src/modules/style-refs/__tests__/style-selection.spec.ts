@@ -3,7 +3,7 @@ import { todaySp } from '../../../common/time/dates';
 import { parsePinterestLink } from '../pinterest';
 import { SELECTION_CATALOG, SELECTION_OPTIONS } from '../selection-catalog';
 import { RSS } from './fixtures';
-import { BRAND, OWNER, setup, status, VIEWER, WS } from './style-world';
+import { BRAND, CAMP, OWNER, setup, status, VIEWER, WS } from './style-world';
 
 const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const OTHER_BRAND = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -364,7 +364,8 @@ describe('Seleção — reconciliação (reconcileSelection)', () => {
     w.routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', w.image);
     await w.svc.reconcileSelection(WS, BRAND);
     await w.svc.whenIdle();
-    expect(w.fetched.filter((u) => u.endsWith('.rss')).sort()).toEqual(ACAI.map(rssOf).sort());
+    // 18b: a 1ª pasta traz as dela (ficam lendo) e a 2ª, sem vaga enquanto há leitura em curso, só grava o carimbo (sem rede)
+    expect(w.fetched.filter((u) => u.endsWith('.rss'))).toEqual([rssOf(ACAI[0]!)]);
     expect(w.t.style_ref_sources.rows.every((s) => s.last_synced_at instanceof Date)).toBe(true);
     expect(w.t.style_references.rows.length).toBeGreaterThan(0);
     expect(w.t.style_references.rows.every((r) => r.origin === 'selection')).toBe(true);
@@ -578,7 +579,7 @@ describe('Seleção — colisões e lista', () => {
 });
 
 describe('Seleção — rodada 1 de correção (18a)', () => {
-  it('reconcileSelection → refreshDueSources → whenIdle: cada RSS é buscado UMA vez e o seen_pin_ids guarda os Pins que entraram', async () => {
+  it('reconcileSelection → refreshDueSources → whenIdle: o RSS é buscado UMA vez (a 2ª pasta espera as leituras) e o seen_pin_ids guarda os Pins que entraram', async () => {
     const w = await world(KEY, 0, 0);
     w.svc.autoProcess = true;
     for (const u of ACAI) w.routes.set(rssOf(u), () => new Response(RSS, { status: 200 }));
@@ -587,9 +588,9 @@ describe('Seleção — rodada 1 de correção (18a)', () => {
     await w.svc.reconcileSelection(WS, BRAND);
     await w.svc.refreshDueSources(5);
     await w.svc.whenIdle();
-    const rss = w.fetched.filter((u) => u.endsWith('.rss'));
-    expect(rss.sort()).toEqual(ACAI.map(rssOf).sort());
-    // (as duas pastas do teste têm o mesmo RSS: a 2ª não tem Pin novo; a 1ª precisa ter guardado os dela)
+    // 18b: só a 1ª pasta busca o RSS; a 2ª espera (há leitura da Seleção em curso)
+    expect(w.fetched.filter((u) => u.endsWith('.rss'))).toEqual([rssOf(ACAI[0]!)]);
+    // a 1ª precisa ter guardado os Pins dela
     expect(w.t.style_ref_sources.rows.some((s) => s.seen_pin_ids.length > 0)).toBe(true);
   });
 
@@ -671,5 +672,256 @@ describe('Seleção — rodada 1 de correção (18a)', () => {
     await w.svc.removeSource(OWNER, WS, BRAND, src.id);
     expect(w.t.style_references.rows.map((r) => r.id)).toEqual([ids[0]]);
     expect(w.files.has(`style-refs/${WS}/${BRAND}/${src.id}-0.jpg`)).toBe(true);
+  });
+});
+
+// ── Task 18b: sincronização da Seleção (tetos, cota do dia, chave em apuros) e leitura só com a chave da empresa ────────────────────
+type W = Awaited<ReturnType<typeof world>>;
+const today = () => new Date(`${todaySp()}T00:00:00Z`);
+const dayOf = (d: unknown) => (d instanceof Date ? d.toISOString().slice(0, 10) : null);
+const rssCalls = (w: W) => w.fetched.filter((u) => u.endsWith('.rss'));
+
+/** Pasta com RSS de 25 Pins (`<tag>0`…`<tag>24`) e as imagens deles no servidor falso. */
+function feed(w: W, tag: string, n = 25) {
+  const url = `https://www.pinterest.com/u${tag}/b${tag}/`;
+  const items = Array.from({ length: n }, (_, i) => `<item><title>Pin ${tag}${i}</title><link>https://www.pinterest.com/pin/${tag}${i}/</link><description>&lt;img src=&quot;https://i.pinimg.com/236x/${tag}/${i}.jpg&quot;&gt;</description></item>`).join('');
+  w.routes.set(rssOf(url), () => new Response(`<?xml version="1.0"?><rss version="2.0"><channel><title>Pasta ${tag}</title>${items}</channel></rss>`, { status: 200 }));
+  for (let i = 0; i < n; i++) w.routes.set(`https://i.pinimg.com/736x/${tag}/${i}.jpg`, w.image);
+  return url;
+}
+
+/** Só esta pasta fica vencida; roda o job e lê as pendentes (um ciclo do dia a dia). */
+async function cycle(w: W, srcId: string) {
+  for (const r of w.t.style_ref_sources.rows) r.last_synced_at = r.id === srcId ? null : new Date();
+  await w.svc.refreshDueSources(5);
+  await w.svc.processPending(10);
+}
+
+/** Referências pendentes (`processing`) com arquivo guardado, para o `processPending`. */
+async function pending(w: W, origin: 'own' | 'selection', n: number, tag: string, over: Record<string, unknown> = {}) {
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const path = `${WS}/${BRAND}/${tag}-${i}.jpg`;
+    w.files.set(`style-refs/${path}`, new Uint8Array(w.img));
+    ids.push((await w.t.style_references.create({ data: { workspace_id: WS, brand_id: BRAND, status: 'processing', origin, storage_path: path, source: 'pinterest', ...over } })).id);
+  }
+  return ids;
+}
+
+describe('Seleção — sincronização da pasta (18b)', () => {
+  it('1º sync: até 4 por pasta, origem selection, sem makeRoom; a cota do dia guarda o dia de Brasília e as 4 lidas', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    expect(await w.svc.refreshDueSources(5)).toBe(1);
+    const mine = w.t.style_references.rows.filter((r) => r.source_id === a.src.id);
+    expect(mine).toHaveLength(4);
+    expect(mine.every((r) => r.origin === 'selection' && r.status === 'processing')).toBe(true);
+    expect(rssCalls(w)).toHaveLength(1);
+    const brand = w.t.brands.rows[0]!;
+    expect(dayOf(brand.style_selection_day)).toBe(todaySp());
+    expect(brand.style_selection_reads).toBe(4);
+    expect(w.t.style_ref_sources.rows[0]!.seen_pin_ids).toHaveLength(4);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'own')).toHaveLength(1);
+  });
+
+  it('3 pastas → 12 (um ciclo de leitura por pasta); uma 4ª pasta criada à mão não passa de 12 e nem busca o RSS', async () => {
+    const w = await world(KEY, 1, 0);
+    const srcs = [];
+    for (const tag of ['a', 'b', 'c']) srcs.push((await folder(w, feed(w, tag), 'selection')).src);
+    for (const s of srcs) await cycle(w, s.id);
+    const sel = () => w.t.style_references.rows.filter((r) => r.origin === 'selection');
+    expect(sel()).toHaveLength(12);
+    expect(sel().every((r) => r.status === 'ready')).toBe(true);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(12);
+    const d = await folder(w, feed(w, 'd'), 'selection');
+    const before = rssCalls(w).length;
+    await cycle(w, d.src.id);
+    expect(rssCalls(w)).toHaveLength(before); // vaga 0: sem rede
+    expect(sel()).toHaveLength(12);
+    expect(w.t.style_ref_sources.rows.find((s) => s.id === d.src.id)!.last_synced_at).toBeInstanceOf(Date);
+  });
+
+  it('cota: com 10 leituras hoje só entram 2; em outro dia volta a 12 (4 por pasta); ligar/desligar a marca não zera', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_selection_day: today(), style_selection_reads: 10 } });
+    await cycle(w, a.src.id);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(2);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(12);
+    // ligar/desligar e reconciliar não mexem na cota
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: true } });
+    await w.svc.reconcileSelection(WS, BRAND);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(12);
+    expect(dayOf(w.t.brands.rows[0]!.style_selection_day)).toBe(todaySp());
+    // amanhã (dia diferente do gravado): a cota volta
+    await w.t.style_references.deleteMany({ where: { origin: 'selection' } });
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_selection_day: new Date('2020-01-01T00:00:00Z'), style_selection_reads: 12 } });
+    const b = await folder(w, feed(w, 'b'), 'selection');
+    await cycle(w, b.src.id);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection' && r.source_id === b.src.id)).toHaveLength(4);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(4);
+    expect(dayOf(w.t.brands.rows[0]!.style_selection_day)).toBe(todaySp());
+  });
+
+  it('não gira: com 12 da Seleção o sync não busca o RSS e não tira nenhuma', async () => {
+    const w = await world(KEY, 1, 12);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    const ids = w.t.style_references.rows.filter((r) => r.origin === 'selection').map((r) => r.id);
+    await cycle(w, a.src.id);
+    expect(rssCalls(w)).toEqual([]);
+    expect(w.fetch).not.toHaveBeenCalled();
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection').map((r) => r.id)).toEqual(ids);
+  });
+
+  it('total: com 28 próprias (de campanha) a Seleção só põe 2 e nunca tira própria', async () => {
+    const w = await world(KEY, 0, 0);
+    const own = await refs(w.t, WS, BRAND, 'own', 28, { campaign_id: CAMP });
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    await cycle(w, a.src.id);
+    const rows = w.t.style_references.rows;
+    expect(rows.filter((r) => r.origin === 'selection')).toHaveLength(2);
+    expect(rows.filter((r) => r.origin === 'own').map((r) => r.id).sort()).toEqual([...own].sort());
+    expect(rows).toHaveLength(30);
+  });
+
+  it('só quando útil: com 4 próprias prontas, ou 3 prontas + 1 lendo, não busca o RSS', async () => {
+    for (const lendo of [false, true]) {
+      const w = await world(KEY, lendo ? 3 : 4, 0);
+      if (lendo) await refs(w.t, WS, BRAND, 'own', 1, { status: 'processing' });
+      const a = await folder(w, feed(w, 'a'), 'selection');
+      await cycle(w, a.src.id);
+      expect(rssCalls(w)).toEqual([]);
+      expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(0);
+      expect(w.t.style_ref_sources.rows[0]!.last_synced_at).toBeInstanceOf(Date);
+    }
+  });
+
+  it('não busca o RSS sem chave, com alerta de crédito ou com uma da Seleção lendo (só grava last_synced_at)', async () => {
+    const semChave = await world({ env: ON }, 1, 0);
+    const comAlerta = await world({ env: ON, aiKey: 'sk', aiCredit: 'no_credit' }, 1, 0);
+    const lendo = await world(KEY, 1, 0);
+    await refs(lendo.t, WS, BRAND, 'selection', 1, { status: 'processing' });
+    for (const w of [semChave, comAlerta, lendo]) {
+      const a = await folder(w, feed(w, 'a'), 'selection');
+      await w.svc.refreshDueSources(5);
+      expect(rssCalls(w)).toEqual([]);
+      expect(w.t.style_ref_sources.rows.find((s) => s.id === a.src.id)!.last_synced_at).toBeInstanceOf(Date);
+      expect(w.t.style_references.rows.filter((r) => r.origin === 'selection' && r.status === 'ready')).toHaveLength(0);
+    }
+    expect(semChave.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(0);
+    expect(comAlerta.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(0);
+    expect(lendo.t.style_references.rows.filter((r) => r.origin === 'selection')).toHaveLength(1);
+  });
+
+  it('marca sumiu ou interruptor desligado: só grava last_synced_at e devolve 0 (sem rede)', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    await w.t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
+    expect(await (w.svc as any).sync(a.src)).toBe(0);
+    expect(rssCalls(w)).toEqual([]);
+    expect(w.t.style_ref_sources.rows[0]!.last_synced_at).toBeInstanceOf(Date);
+    await w.t.brands.deleteMany({ where: { id: BRAND } });
+    expect(await (w.svc as any).sync(a.src)).toBe(0);
+    expect(w.fetch).not.toHaveBeenCalled();
+  });
+
+  it('falha definitiva sai (linha + arquivo) e o Pin não volta; a transitória esgotada volta para a fila só sem alerta', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection', 3, { seen_pin_ids: ['a0'] });
+    const [def, trans, ok] = a.ids as [string, string, string];
+    await w.t.style_references.updateMany({ where: { id: def }, data: { status: 'failed', attempts: 1, pin_id: 'a0', error: 'x' } });
+    await w.t.style_references.updateMany({ where: { id: trans }, data: { status: 'failed', attempts: 3, error: 'Não conseguimos ler o estilo desta referência. Remova e tente outra.', claimed_at: new Date() } });
+    // com alerta de crédito: a definitiva sai, a transitória fica
+    w.alerts.status.mockResolvedValue({ level: 'stopped', vendors: [{ reason: 'no_credit' }] });
+    await cycle(w, a.src.id);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection').map((r) => r.id).sort()).toEqual([trans, ok].sort());
+    expect(w.files.has(`style-refs/${WS}/${BRAND}/${a.src.id}-0.jpg`)).toBe(false);
+    expect(w.t.style_references.rows.find((r) => r.id === trans)).toMatchObject({ status: 'failed', attempts: 3 });
+    // sem alerta: volta para a fila (zerada)
+    w.alerts.status.mockResolvedValue(null);
+    await w.svc.refreshDueSources(5); // pasta já renovada hoje: o `syncIfDue` pula; força pelo sync direto
+    await (w.svc as any).sync(w.t.style_ref_sources.rows[0]!);
+    expect(w.t.style_references.rows.find((r) => r.id === trans)).toMatchObject({ status: 'processing', attempts: 0, claimed_at: null, error: null });
+    // o Pin da definitiva nunca volta, mesmo com vaga
+    await w.t.style_references.updateMany({ where: { id: trans }, data: { status: 'ready' } });
+    await w.t.style_references.updateMany({ where: { id: ok }, data: { status: 'ready' } });
+    await (w.svc as any).sync(w.t.style_ref_sources.rows[0]!);
+    expect(w.t.style_references.rows.some((r) => r.pin_id === 'a0')).toBe(false);
+    expect(w.t.style_references.rows.filter((r) => r.pin_id && r.source_id === a.src.id).length).toBeGreaterThan(0);
+  });
+
+  it('própria nova com a marca cheia (30) tira a da Seleção mais antiga antes de qualquer própria vinda de pasta', async () => {
+    const w = await world(KEY, 0, 0);
+    const f = await folder(w, feed(w, 'o'), 'own', 10); // próprias de pasta, as mais antigas
+    const s = await folder(w, feed(w, 'a'), 'selection', 20);
+    expect(w.t.style_references.rows).toHaveLength(30);
+    await w.svc.upload(OWNER, WS, BRAND, { bytes: w.img, mime: 'image/png' });
+    const ids = w.t.style_references.rows.map((r) => r.id);
+    expect(ids).toHaveLength(30);
+    for (const id of f.ids) expect(ids).toContain(id);
+    expect(ids).not.toContain(s.ids[0]);
+    expect(ids).toContain(s.ids[1]);
+    expect(w.files.has(`style-refs/${WS}/${BRAND}/${s.src.id}-0.jpg`)).toBe(false);
+  });
+
+  it('sem nenhuma da Seleção, a própria nova tira a própria de pasta mais antiga, como antes', async () => {
+    const w = await world(KEY, 0, 0);
+    const f = await folder(w, feed(w, 'o'), 'own', 30);
+    await w.svc.upload(OWNER, WS, BRAND, { bytes: w.img, mime: 'image/png' });
+    const ids = w.t.style_references.rows.map((r) => r.id);
+    expect(ids).not.toContain(f.ids[0]);
+    expect(ids).toContain(f.ids[1]);
+    expect(ids).toHaveLength(30);
+  });
+
+  it('pasta apagada no meio do sync (updateMany → 0): as referências e os arquivos criados na rodada somem e a cota não conta', async () => {
+    const w = await world(KEY, 1, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection');
+    const orig = w.t.style_ref_sources.updateMany.bind(w.t.style_ref_sources);
+    w.t.style_ref_sources.updateMany = async (args: any) => {
+      if (args?.data?.seen_pin_ids) await w.t.style_ref_sources.deleteMany({ where: { id: a.src.id } });
+      return orig(args);
+    };
+    expect(await (w.svc as any).sync(a.src)).toBe(0);
+    expect(w.t.style_references.rows.filter((r) => r.origin === 'selection')).toEqual([]);
+    expect([...w.files.keys()]).toEqual([]);
+    expect(w.t.brands.rows[0]!.style_selection_reads).toBe(0);
+  });
+
+  it('processPending(10) com 12 da Seleção pendentes (mais antigas) e 1 própria nova: a própria é lida nesta rodada; a da Seleção vai com ownKeysOnly', async () => {
+    const w = await world(KEY, 0, 0);
+    const sel = await pending(w, 'selection', 12, 'sel');
+    const [own] = await pending(w, 'own', 1, 'own');
+    expect(await w.svc.processPending(10)).toBe(10);
+    expect(w.t.style_references.rows.find((r) => r.id === own)!.status).toBe('ready');
+    const reqs = w.ai.json.mock.calls.map((c: any) => c[1]);
+    expect(reqs).toHaveLength(10);
+    expect(reqs[0].ownKeysOnly).toBeFalsy();
+    expect(reqs.slice(1).every((r: any) => r.ownKeysOnly === true)).toBe(true);
+    expect(w.t.style_references.rows.filter((r) => sel.includes(r.id) && r.status === 'ready')).toHaveLength(9);
+  });
+
+  it('processPending com a Seleção desligada: nenhuma da Seleção é lida', async () => {
+    const w = await world({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: false }, aiKey: 'sk' }, 0, 0);
+    await pending(w, 'selection', 3, 'sel');
+    const [own] = await pending(w, 'own', 1, 'own');
+    expect(await w.svc.processPending(10)).toBe(1);
+    expect(w.ai.json).toHaveBeenCalledTimes(1);
+    expect(w.t.style_references.rows.filter((r) => r.status === 'ready').map((r) => r.id)).toEqual([own]);
+  });
+
+  it('refreshDueSources(5) com 200 pastas em dia e 1 vencida: renova a vencida; a nunca sincronizada vem antes', async () => {
+    const w = await world({ env: ON }, 0, 0);
+    for (let i = 0; i < 200; i++) await w.t.style_ref_sources.create({ data: { workspace_id: WS, brand_id: BRAND, url: `https://www.pinterest.com/e${i}/p${i}/`, rss_url: `https://www.pinterest.com/e${i}/p${i}.rss`, origin: 'own', last_synced_at: new Date() } });
+    const old = await folder(w, 'https://www.pinterest.com/velha/p/', 'own', 0, { last_synced_at: hours(25) });
+    expect(await w.svc.refreshDueSources(5)).toBe(1);
+    expect(rssCalls(w)).toEqual([old.src.rss_url]);
+    const nova = await folder(w, 'https://www.pinterest.com/nova/p/', 'own');
+    w.t.style_ref_sources.rows.find((r) => r.id === old.src.id)!.last_synced_at = hours(25);
+    w.fetched.length = 0;
+    expect(await w.svc.refreshDueSources(5)).toBe(2);
+    expect(rssCalls(w)).toEqual([nova.src.rss_url, old.src.rss_url]);
   });
 });

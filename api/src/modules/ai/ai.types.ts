@@ -16,6 +16,8 @@ export interface AiJsonRequest {
   images?: AiImageInput[];
   /** Id de modelo do protótipo (ex.: `openai/gpt-6-astra`); passa pelo mapa AI_MODEL_*. */
   model?: string;
+  /** Só as chaves da empresa: sem elas (ou se falharem) não cai no gateway do app (`AI_NOT_CONFIGURED` / `AiKeysFailedError`). */
+  ownKeysOnly?: boolean;
 }
 
 export interface AiTextRequest {

@@ -178,7 +178,7 @@ describe('StyleRefsService — Pinterest', () => {
   });
 
   it('origem: envio e Pin colado gravam own; pasta da Seleção faz o sync gravar as referências com selection', async () => {
-    const { t, svc, routes, image } = await setup({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true } });
+    const { t, svc, routes, image } = await setup({ env: { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true }, aiKey: 'sk-teste' });
     routes.set(`https://www.pinterest.com/oembed.json?url=${encodeURIComponent('https://www.pinterest.com/pin/424605071146230977/')}`, () => Response.json({ thumbnail_url: 'https://i.pinimg.com/236x/9a/95/x.jpg' }));
     routes.set('https://i.pinimg.com/736x/9a/95/x.jpg', image);
     await svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/pin/424605071146230977/');

@@ -35,6 +35,9 @@ export const CAMPAIGN_CAP = 8;
 const LIST_ALL_CAP = 200;
 /** Cota diária de leitura da Seleção por marca (P21′): `daily_left` da vista = 12 menos as de hoje. */
 const SELECTION_DAILY_NEW = 12;
+/** Teto da Seleção por marca e quanto cada `sync` de pasta traz (P21′). */
+const SELECTION_MAX = 12;
+const SELECTION_PER_SYNC = 4;
 /** Pastas PRÓPRIAS acompanhadas por marca (as da Seleção não contam). */
 const SOURCE_CAP = 5;
 /** A Seleção de uma marca é conferida de novo depois de 6 h (ou antes, quando um gatilho zera o `style_library_checked_at`). */
@@ -531,14 +534,12 @@ export class StyleRefsService implements OnModuleDestroy {
    */
   async processPending(limit = 5): Promise<number> {
     const now = Date.now();
-    const rows = (await this.prisma.style_references.findMany({
-      where: {
-        status: 'processing',
-        OR: [{ claimed_at: null }, ...RETRY_AFTER_MS.map((ms, i) => ({ attempts: i, claimed_at: { lt: new Date(now - ms) } }))],
-      },
-      orderBy: { created_at: 'asc' },
-      take: limit,
-    })) as RefRow[];
+    // Duas filas (P22′): as PRÓPRIAS primeiro; com o que sobrar do limite, as da Seleção (só com a Seleção ligada).
+    const waiting = { status: 'processing', OR: [{ claimed_at: null }, ...RETRY_AFTER_MS.map((ms, i) => ({ attempts: i, claimed_at: { lt: new Date(now - ms) } }))] };
+    const rows = (await this.prisma.style_references.findMany({ where: { ...waiting, origin: 'own' }, orderBy: { created_at: 'asc' }, take: limit })) as RefRow[];
+    if (this.selectionOn() && limit - rows.length > 0) {
+      rows.push(...((await this.prisma.style_references.findMany({ where: { ...waiting, origin: 'selection' }, orderBy: { created_at: 'asc' }, take: limit - rows.length })) as RefRow[]));
+    }
     let done = 0;
     for (const r of rows) {
       const lock = new Date();
@@ -553,6 +554,8 @@ export class StyleRefsService implements OnModuleDestroy {
           schema: STYLE_NOTES_SCHEMA as unknown as Record<string, unknown>,
           name: 'style_notes',
           images: [{ bytes: new Uint8Array(bytes), mime: 'image/jpeg' }],
+          // A Seleção é da casa: lê só com a chave da empresa, nunca gasta a IA do app (P31).
+          ...(r.origin === 'selection' ? { ownKeysOnly: true } : {}),
         });
         const notes = normalizeStyleNotes(raw);
         if (!notes) throw new ReadDefinitive('notas vazias');
@@ -577,7 +580,7 @@ export class StyleRefsService implements OnModuleDestroy {
    * Renova as pastas acompanhadas há mais de 24 h (P22): o vencimento vai no `where` (nulas primeiro); pastas da Seleção só entram com a
    * Seleção ligada. Cada `sync` roda pela fila da marca. Devolve quantas tentou.
    */
-  async refreshDueSources(limit = 3): Promise<number> {
+  async refreshDueSources(limit = 5): Promise<number> {
     if (!this.pinterestOn) return 0;
     const cutoff = new Date(Date.now() - RESYNC_MS);
     const due = (await this.prisma.style_ref_sources.findMany({
@@ -712,17 +715,18 @@ export class StyleRefsService implements OnModuleDestroy {
    * Apaga a referência (linha + arquivo). `fromSource`: o apagar vem da pasta — só apaga se a linha AINDA é daquela pasta (e, na reconciliação,
    * ainda da Seleção); se um Pin foi promovido no meio (própria, `source_id` nulo), nada some, nem o arquivo.
    */
-  private async drop(r: RefRow, fromSource?: { sourceId: string; origin?: 'selection' }) {
+  private async drop(r: RefRow, fromSource?: { sourceId: string; origin?: 'selection' }): Promise<boolean> {
     // `deleteMany` com a empresa: nada é apagado só pelo id.
     const where = { id: r.id, workspace_id: r.workspace_id, ...(fromSource ? { source_id: fromSource.sourceId, ...(fromSource.origin ? { origin: fromSource.origin } : {}) } : {}) };
     const { count } = await this.prisma.style_references.deleteMany({ where });
-    if (fromSource && count !== 1) return;
+    if (fromSource && count !== 1) return false;
     if (r.storage_path) await this.files.delete(BUCKET, r.storage_path).catch(() => undefined);
+    return true;
   }
 
   /**
-   * Abre espaço para `n` novas: 8 por campanha (pedido da pessoa → recusa) e 30 por marca (saem as mais antigas vindas de pastas;
-   * enviadas e Pins colados não saem sozinhos). Devolve quantas cabem (RSS adiciona só o que couber).
+   * Abre espaço para `n` novas: 8 por campanha (pedido da pessoa → recusa) e 30 por marca (saem primeiro as da Seleção, depois as mais
+   * antigas vindas de pastas próprias; enviadas e Pins colados não saem sozinhos). Devolve quantas cabem (RSS adiciona só o que couber).
    */
   private async makeRoom(ws: string, brandId: string, campaignId: string | null, n: number, strict: boolean): Promise<number> {
     if (campaignId) {
@@ -731,9 +735,15 @@ export class StyleRefsService implements OnModuleDestroy {
     }
     const all = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, brand_id: brandId }, orderBy: { created_at: 'asc' } })) as RefRow[];
     let over = all.length + n - BRAND_CAP;
+    // P21′: primeiro saem as da Seleção (mais antigas; só se ainda são dela), depois as próprias vindas de pasta.
     for (const r of all) {
       if (over <= 0) break;
-      if (!r.source_id) continue;
+      if (r.origin !== 'selection' || !r.source_id) continue;
+      if (await this.drop(r, { sourceId: r.source_id, origin: 'selection' })) over--;
+    }
+    for (const r of all) {
+      if (over <= 0) break;
+      if (r.origin === 'selection' || !r.source_id) continue;
       await this.drop(r);
       over--;
     }
@@ -809,6 +819,7 @@ export class StyleRefsService implements OnModuleDestroy {
 
   /** Lê o RSS da fonte e adiciona até 8 Pins novos. Devolve quantos entraram, ou null se o Pinterest não respondeu. */
   private async sync(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; created_by?: string | null; seen_pin_ids?: string[]; origin?: string }): Promise<number | null> {
+    if (source.origin === 'selection') return this.syncSelection(source);
     let xml: string;
     try {
       xml = Buffer.from((await this.get(source.rss_url, isPinterestHost, MAX_PAGE_BYTES)).bytes).toString('utf8');
@@ -831,7 +842,7 @@ export class StyleRefsService implements OnModuleDestroy {
     for (const p of fresh.slice(0, room)) {
       try {
         const jpeg = await shrink(this.images, await this.download(p.imageUrl));
-        await this.store(source.workspace_id, source.brand_id, { campaignId: null, source: 'pinterest', sourceUrl: p.link, pinId: p.pinId, title: p.title || null, sourceId: source.id, createdBy: source.created_by ?? null, origin: source.origin === 'selection' ? 'selection' : 'own' }, jpeg);
+        await this.store(source.workspace_id, source.brand_id, { campaignId: null, source: 'pinterest', sourceUrl: p.link, pinId: p.pinId, title: p.title || null, sourceId: source.id, createdBy: source.created_by ?? null, origin: 'own' }, jpeg);
         added++;
       } catch (e) {
         this.logger.warn(`Pin ${p.pinId}: ${(e as Error).message}`);
@@ -848,5 +859,106 @@ export class StyleRefsService implements OnModuleDestroy {
       },
     });
     return added;
+  }
+
+  /**
+   * `sync` de pasta da Seleção (P21′; sempre dentro da fila da marca). Nunca chama o `makeRoom`: a vaga é decidida ANTES de buscar o RSS
+   * (vaga 0 = só `last_synced_at`, sem rede) e nada de próprio é tocado. Devolve quantas entraram, ou null se o Pinterest não respondeu.
+   */
+  private async syncSelection(source: { id: string; workspace_id: string; brand_id: string; rss_url: string; seen_pin_ids?: string[] }): Promise<number | null> {
+    const ws = source.workspace_id;
+    const brandId = source.brand_id;
+    const folder = { id: source.id, workspace_id: ws };
+    const stamp = () => this.prisma.style_ref_sources.updateMany({ where: folder, data: { last_synced_at: new Date() } });
+    const readQuota = (b: { style_selection_day?: Date | string | null; style_selection_reads?: number | null }) => {
+      const d = b.style_selection_day;
+      const day = d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null;
+      return day === todaySp() ? b.style_selection_reads ?? 0 : 0;
+    };
+    // 1. marca de hoje (a reconciliação tira a pasta se ela sumiu ou foi desligada).
+    const quotaSelect = { style_library_enabled: true, style_selection_day: true, style_selection_reads: true };
+    const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: quotaSelect });
+    if (!brand || brand.style_library_enabled !== true) {
+      await stamp();
+      return 0;
+    }
+    const fromSelection = { workspace_id: ws, brand_id: brandId, origin: 'selection' };
+    const credit = await this.aiAlerts.status(ws);
+    // 2. falhas desta pasta: a definitiva sai (o Pin já está em `seen_pin_ids`); a transitória esgotada volta para a fila quando a chave está bem.
+    const failed = (await this.prisma.style_references.findMany({ where: { workspace_id: ws, source_id: source.id, origin: 'selection', status: 'failed' } })) as RefRow[];
+    const exhausted: RefRow[] = [];
+    for (const r of failed) {
+      if (r.attempts < READ_MAX_ATTEMPTS) await this.drop(r, { sourceId: source.id, origin: 'selection' });
+      else exhausted.push(r);
+    }
+    let reading = await this.prisma.style_references.count({ where: { ...fromSelection, status: 'processing' } });
+    if (exhausted.length && !credit && reading === 0) {
+      for (const r of exhausted) {
+        const back = await this.prisma.style_references.updateMany({
+          where: { id: r.id, workspace_id: ws, origin: 'selection', status: 'failed' },
+          data: { status: 'processing', attempts: 0, claimed_at: null, error: null },
+        });
+        reading += back.count;
+      }
+    }
+    // 3. vaga: min(4, 12 − da Seleção, 30 − total, cota de hoje); 0 se a Seleção não é útil agora ou a chave não está bem.
+    const ownUseful = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, origin: 'own', campaign_id: null, status: { in: ['ready', 'processing'] } } });
+    let room = 0;
+    if (ownUseful < MAX_NOTES && !credit && reading === 0 && (await this.hasAiKey(ws))) {
+      const inSelection = await this.prisma.style_references.count({ where: fromSelection });
+      const total = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId } });
+      room = Math.max(0, Math.min(SELECTION_PER_SYNC, SELECTION_MAX - inSelection, BRAND_CAP - total, SELECTION_DAILY_NEW - readQuota(brand)));
+    }
+    // 4. sem vaga: não vai ao Pinterest.
+    if (room === 0) {
+      await stamp();
+      return 0;
+    }
+    // 5. RSS como hoje; até `room` Pins novos.
+    let xml: string;
+    try {
+      xml = Buffer.from((await this.get(source.rss_url, isPinterestHost, MAX_PAGE_BYTES)).bytes).toString('utf8');
+    } catch (e) {
+      this.logger.warn(`RSS ${source.rss_url}: ${(e as Error).message}`);
+      await this.prisma.style_ref_sources.updateMany({ where: folder, data: { last_error: MSG_RSS_DOWN, last_synced_at: new Date() } });
+      return null;
+    }
+    const pins = parseRss(xml);
+    const known = new Set(
+      ((await this.prisma.style_references.findMany({ where: { workspace_id: ws, brand_id: brandId }, select: { pin_id: true } })) as { pin_id: string | null }[])
+        .map((r) => r.pin_id)
+        .filter(Boolean) as string[],
+    );
+    for (const id of source.seen_pin_ids ?? []) known.add(id);
+    const fresh = pins.filter((p) => !known.has(p.pinId)).slice(0, room);
+    const created: RefRow[] = [];
+    for (const p of fresh) {
+      try {
+        const jpeg = await shrink(this.images, await this.download(p.imageUrl));
+        created.push(await this.store(ws, brandId, { campaignId: null, source: 'pinterest', sourceUrl: p.link, pinId: p.pinId, title: p.title || null, sourceId: source.id, createdBy: null, origin: 'selection' }, jpeg));
+      } catch (e) {
+        this.logger.warn(`Pin ${p.pinId}: ${(e as Error).message}`);
+      }
+    }
+    const done = await this.prisma.style_ref_sources.updateMany({
+      where: folder,
+      data: {
+        last_synced_at: new Date(),
+        last_error: pins.length ? null : 'A pasta está vazia ou não é pública.',
+        title: rssTitle(xml),
+        seen_pin_ids: [...new Set([...fresh.map((p) => p.pinId), ...(source.seen_pin_ids ?? [])])].slice(0, SEEN_CAP),
+      },
+    });
+    // 6. pasta apagada no meio (ex.: cascade): o que esta rodada criou não fica solto.
+    if (done.count === 0) {
+      for (const r of created) await this.drop(r);
+      return 0;
+    }
+    // Cota do dia: a fila da marca já serializa, então é releitura + `updateMany` simples (sem `increment`).
+    if (created.length) {
+      const now = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: quotaSelect });
+      if (now) await this.prisma.brands.updateMany({ where: { id: brandId, workspace_id: ws }, data: { style_selection_day: new Date(`${todaySp()}T00:00:00Z`), style_selection_reads: readQuota(now) + created.length } });
+    }
+    return created.length;
   }
 }

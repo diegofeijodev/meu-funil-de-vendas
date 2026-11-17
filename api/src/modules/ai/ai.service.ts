@@ -197,8 +197,8 @@ export class AiService {
    * juntas, + "Confira as chaves em Integrações." quando são duas); sem chave nenhuma, "Nenhuma IA disponível…"
    * (`AI_NOT_CONFIGURED`). Com gateway, segue para ele.
    */
-  private requireGatewayOr(fails: KeyFailure[], keys: (string | null | undefined)[]): void {
-    if (this.hasGateway()) return;
+  private requireGatewayOr(fails: KeyFailure[], keys: (string | null | undefined)[], ownKeysOnly = false): void {
+    if (!ownKeysOnly && this.hasGateway()) return;
     if (!fails.length) throw new AiError(NO_AI_MESSAGE, 'AI_NOT_CONFIGURED');
     const failures = fails.map((f) => ({ vendor: f.vendor, kind: kindOf(f.error) }));
     if (fails.length === 1) {
@@ -279,7 +279,8 @@ export class AiService {
         return parseJsonLoose(await this.ownKey({ workspaceId, vendor: 'gemini', key: g, scope: 'text' }, () => this.geminiText(g, parts, true)));
       } catch (e) { this.warn('chave Gemini', e); fails.push({ vendor: 'gemini', error: e }); }
     }
-    this.requireGatewayOr(fails, [o, g]);
+    // `ownKeysOnly` (P31): como se não houvesse gateway (a leitura da Seleção nunca gasta a IA do app).
+    this.requireGatewayOr(fails, [o, g], req.ownKeysOnly === true);
     return this.gatewayJson<T>(req);
   }
 

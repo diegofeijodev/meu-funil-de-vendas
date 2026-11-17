@@ -86,6 +86,31 @@ describe('AiService.json', () => {
     expect(f.calls.map((c) => new URL(c.url).host)).toEqual(['api.openai.com', 'generativelanguage.googleapis.com', 'gw.test']);
   });
 
+  it('ownKeysOnly: com gateway e a chave própria falhando, devolve AiKeysFailedError e o gateway NÃO é chamado', async () => {
+    const f = fakeFetch([
+      ['api.openai.com', () => new Response('no', { status: 401 })],
+      ['gw.test', () => chat('{"a":"gw"}')],
+    ]);
+    const ai = setup(gwEnv, { openai: 'sk-cliente-0123456789' }, f.fn);
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n', ownKeysOnly: true })).rejects.toBeInstanceOf(AiKeysFailedError);
+    expect(f.calls.map((c) => new URL(c.url).host)).toEqual(['api.openai.com']);
+  });
+
+  it('ownKeysOnly: com gateway e sem chave nenhuma → AI_NOT_CONFIGURED, sem chamar ninguém', async () => {
+    const f = fakeFetch([['gw.test', () => chat('{"a":"gw"}')]]);
+    const ai = setup(gwEnv, {}, f.fn);
+    await expect(ai.json(WS, { prompt: 'P', schema, name: 'n', ownKeysOnly: true })).rejects.toMatchObject({ status: 502, response: { code: 'AI_NOT_CONFIGURED' } });
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it('ownKeysOnly: a chave própria que funciona responde normalmente; sem a opção e com gateway, cai no gateway como sempre', async () => {
+    const ok = fakeFetch([['api.openai.com', () => chat('{"a":"byo"}')]]);
+    expect(await setup(gwEnv, { openai: 'sk-cliente' }, ok.fn).json(WS, { prompt: 'P', schema, name: 'n', ownKeysOnly: true })).toEqual({ a: 'byo' });
+    const f = fakeFetch([['gw.test', () => chat('{"a":"gw"}')]]);
+    expect(await setup(gwEnv, {}, f.fn).json(WS, { prompt: 'P', schema, name: 'n', ownKeysOnly: false })).toEqual({ a: 'gw' });
+    expect(f.calls).toHaveLength(1);
+  });
+
   it('sem chave própria e sem gateway → "Nenhuma IA disponível…" (502 AI_NOT_CONFIGURED), sem chamar ninguém', async () => {
     const f = fakeFetch([]);
     const ai = setup(baseEnv, {}, f.fn);
