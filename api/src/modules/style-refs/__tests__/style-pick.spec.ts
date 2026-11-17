@@ -55,9 +55,12 @@ describe('resolveLibrarySegment', () => {
   it('texto reconhecido sem ramo disponível → nenhum, ainda "auto"', () => {
     expect(resolveLibrarySegment({ segment: 'Pizzaria Bella', style_library_segment: null }, avail)).toEqual({ segment: null, source: 'auto' });
   });
-  it('ramo escolhido que não está disponível (ou lixo) não vale', () => {
-    expect(resolveLibrarySegment({ segment: null, style_library_segment: 'beleza' }, avail)).toEqual({ segment: null, source: 'none' });
-    expect(resolveLibrarySegment({ segment: null, style_library_segment: 'xyz' }, avail)).toEqual({ segment: null, source: 'none' });
+  it('ramo válido escolhido sem prontas → sem ramo, mas "chosen"; valor inválido gravado vale como automático', () => {
+    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: 'beleza' }, avail)).toEqual({ segment: null, source: 'chosen' });
+    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: 'xyz' }, avail)).toEqual({ segment: 'acai_sorvete', source: 'auto' });
+  });
+  it('sem nenhum ramo disponível: NULL continua automático', () => {
+    expect(resolveLibrarySegment({ segment: 'Açaiteria', style_library_segment: null }, new Set())).toEqual({ segment: null, source: 'auto' });
   });
 });
 

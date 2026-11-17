@@ -41,9 +41,8 @@ export function resolveLibrarySegment(
 ): { segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' } {
   const chosen = brand.style_library_segment;
   if (chosen === 'none') return { segment: null, source: 'none' };
-  if (chosen) {
-    return isStyleCategory(chosen) && available.has(chosen) ? { segment: chosen, source: 'chosen' } : { segment: null, source: 'none' };
-  }
+  // Id válido escolhido: vale mesmo sem prontas (a tela mostra "escolhido, sem referências"). Valor gravado inválido = automático.
+  if (chosen && isStyleCategory(chosen)) return { segment: available.has(chosen) ? chosen : null, source: 'chosen' };
   const found = subjectCategories(brand.segment).find((c) => available.has(c));
   return { segment: found ?? null, source: 'auto' };
 }

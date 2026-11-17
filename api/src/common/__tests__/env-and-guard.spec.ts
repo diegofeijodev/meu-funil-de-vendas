@@ -63,6 +63,10 @@ describe('validateEnv — Seleção do Meu Funil (Fatia 4)', () => {
     const id = '9b1c3a5e-6f7d-4a2b-8c9d-0e1f2a3b4c5d';
     expect(validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_ENABLED: 'true', STYLE_LIBRARY_WORKSPACE_ID: id }).STYLE_LIBRARY_WORKSPACE_ID).toBe(id);
   });
+  it('maiúsculas e espaços são normalizados (trim + minúsculas)', () => {
+    const id = '9b1c3a5e-6f7d-4a2b-8c9d-0e1f2a3b4c5d';
+    expect(validateEnv({ ...base, NODE_ENV: 'test', STYLE_LIBRARY_WORKSPACE_ID: `  ${id.toUpperCase()} ` }).STYLE_LIBRARY_WORKSPACE_ID).toBe(id);
+  });
 });
 
 describe('JwtAuthGuard — ver do access token', () => {

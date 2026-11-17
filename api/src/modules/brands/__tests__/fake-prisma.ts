@@ -33,6 +33,10 @@ export class FakeTable {
       const dir = typeof d === 'string' ? d : d.sort;
       out = [...out].sort((x, y) => (x[k] > y[k] ? 1 : x[k] < y[k] ? -1 : 0) * (dir === 'desc' ? -1 : 1));
     }
+    if (a.distinct) {
+      const seen = new Set<string>();
+      out = out.filter((r) => { const k = JSON.stringify((a.distinct as string[]).map((f) => r[f])); if (seen.has(k)) return false; seen.add(k); return true; });
+    }
     if (a.take) out = out.slice(0, a.take);
     return out.map((r) => ({ ...r }));
   }

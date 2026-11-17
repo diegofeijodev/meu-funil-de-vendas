@@ -174,7 +174,7 @@ const envSchema = z
     STYLE_REFS_PINTEREST_ENABLED: bool('false'),
     /** Seleção do Meu Funil (Fatia 4): completa as referências de estilo da marca com as da empresa interna "Biblioteca Meu Funil". */
     STYLE_LIBRARY_ENABLED: bool('false'),
-    STYLE_LIBRARY_WORKSPACE_ID: z.string().default(''),
+    STYLE_LIBRARY_WORKSPACE_ID: z.string().trim().toLowerCase().default(''),
     /** Piloto do estrategista (Fatia 3): chave geral. Com ela desligada, as rotas do piloto respondem 404 e o job não roda. */
     CAMPAIGN_PILOT_ENABLED: bool('false'),
     /** Ids (uuid) das empresas com o piloto, separados por vírgula. `*` só em development/test. */
