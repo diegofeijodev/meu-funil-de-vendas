@@ -1135,6 +1135,56 @@ da P12. As Tasks 10–12 já construídas (empresa central) são **desfeitas** n
   inofensivo).
 - **P30. Textos novos** = ui.md §3 v4, depois da revisão do ux-designer (os textos finais ficam lá; as tarefas copiam de lá).
 
+### Revisão do software-architect (17/11) — incorporada; vale MAIS que as P16–P30 acima onde elas divergem
+
+- **P20′. Gatilho, fila por marca e corridas.**
+  - O `BrandsService.update` grava, no MESMO `update`, `style_library_checked_at = null` quando o corpo traz `segment`, `style_library_enabled`
+    ou `style_library_segment` (o "Salvar" da Marca manda `segment` sempre). Depois põe `reconcileSelection(ws, brandId)` na fila **em segundo
+    plano, sem esperar** (o `PATCH` nunca fica lento nem falha por causa da Seleção; erro vai para o log). O job pega primeiro as marcas com
+    `checked_at` nulo, depois as com mais de 6 h.
+  - **Fila em memória por marca** (`KeyedQueue`, chave `ws:brand`; a API roda numa instância só, `CLAUDE.md`): reconciliação, `sync` (própria e
+    da Seleção) e `removeSource` da mesma marca rodam um de cada vez. A reconciliação relê a marca com `{ id, workspace_id }` dentro da fila.
+  - Violação do índice único ao criar a pasta = a pasta já existe (segue). Se o `updateMany` final do `sync` devolver `count 0` (pasta apagada
+    no meio, ex.: cascade), o `sync` apaga as referências e os arquivos que ele mesmo criou nesta rodada.
+  - **Chave herdada da agência conta** como chave da empresa (é a mesma que a leitura usa). **(decisão do plano; vai ao dono)**
+- **P21′. Tetos, cota e falhas (troca a P21).**
+  - Vaga da Seleção = `min(12 − referências da Seleção na marca, 30 − total da marca, cota que sobra hoje)`, calculada **sem apagar nada**
+    (o `sync` da Seleção nunca chama o `makeRoom` de hoje). A vaga é decidida **antes** de buscar o RSS: vaga 0 = só grava `last_synced_at`
+    (sem rede). Até 4 por pasta em cada `sync`.
+  - **Útil** = a marca tem menos de 4 próprias (prontas **ou** `processing`) sem campanha. **Sem gasto com a chave em apuros:** não traz Pin
+    novo se `AiCreditAlertsService.status(ws)` não é nulo (sem saldo ou limite do dia) ou se alguma referência da Seleção da marca está
+    `processing`.
+  - **Cota por dia de Brasília:** colunas `brands.style_selection_day date` e `brands.style_selection_reads int NOT NULL DEFAULT 0`. Dia ≠
+    `todaySp()` → zera. Máximo 12 novas por marca por dia, gravadas por `updateMany` condicionado aos valores lidos (sem `increment`). Ligar,
+    desligar e trocar de ramo não zeram a cota.
+  - **Falha da leitura:** `failed` transitória esgotada (`attempts = 3`) da Seleção **volta para a fila** (`processing`, `attempts 0`,
+    `claimed_at null`, `error null`) no `sync` da pasta quando não há aviso de crédito nem referência da Seleção em `processing`. Só a
+    `failed` definitiva (`attempts < 3`) sai, e o Pin fica em `seen_pin_ids`.
+  - Ao pôr uma própria, `makeRoom` tira primeiro as da Seleção (mais antigas), depois as próprias vindas de pasta, como hoje. `SOURCE_CAP` (5)
+    conta só as próprias.
+- **P22′. Leitura e renovação.** `processPending(limit)` faz duas consultas: próprias primeiro; com o que sobrar do `limit`, as da Seleção (só
+  com a Seleção ligada). Com a Seleção desligada, nada da Seleção é lido; a `list` também esconde pastas e referências da Seleção.
+  `refreshDueSources` como na P22 (vencimento no `where`, `orderBy: { last_synced_at: { sort: 'asc', nulls: 'first' } }`).
+- **P26′. Colisões = promover para própria.** Colar o link de uma pasta que já é da Seleção na marca promove a pasta e as referências dela a
+  `origin='own'` (confere o teto de 5 próprias com a mensagem de hoje). Colar um Pin que a Seleção já trouxe promove essa referência a
+  própria e a devolve (sem "já está"). `DELETE` de pasta da Seleção → `400` (texto do ui.md §3).
+- **P31. Só a chave da empresa.** `AiService.json` ganha a opção `ownKeysOnly` (sem cair no gateway do app; sem chave → `AI_NOT_CONFIGURED`,
+  falha das chaves → `AiKeysFailedError`). A leitura de referência `origin='selection'` usa `ownKeysOnly: true`.
+- **P32. `FakeTable` (`api/src/modules/brands/__tests__/fake-prisma.ts`).** Corrigir o `not` (hoje, pela precedência, nunca exclui a linha
+  igual ao valor), aceitar `nulls` no `orderBy` e criar `deleteMany`. O espião do teste de isolamento cobre `findMany`/`findFirst`/`count`/
+  `create`/`updateMany`/`delete`. Depois de mexer no `FakeTable`, rodar por arquivo os specs que o usam (`grep -rl fake-prisma api/src`).
+  Código novo não usa `AND`, `NOT`, `notIn`, `equals` nem filtro por relação (o fake devolve `true` em silêncio).
+- **P33. Pasta do catálogo quebrada** (404, privada, vazia): o painel já mostra o `last_error` da pasta; o roteiro de subida ganha
+  `--conferir-selecao`, que lista as pastas da Seleção com erro. Trocar a pasta = editar o catálogo (a reconciliação troca nas marcas).
+- **Ficou como está (com o porquê):** "Pins fixos em vez de pastas" — a ordem do dono é pasta acompanhada pelo RSS; com a vaga decidida
+  antes do RSS, pasta cheia não gera chamada nenhuma. "Ligar por lista de empresas": a chave do servidor é uma só (ordem do coordenador);
+  o risco de gastar a chave de todos ao ligar vai ao dono.
+- **Acréscimos à P28:** comentários de `env.validation.ts` e `schema.prisma` sobre a Biblioteca; `web/src/lib/style-refs.ts` ("Outras empresas
+  do mesmo ramo também usam."), `LIBRARY_*`/`StyleLibraryView` antigos; o roteiro de subida. Filtro das migrações no roteiro:
+  `migration_name ~ '^2026111[67]'` (o `LIKE` não entende `[67]`).
+- **Tasks:** a migração da Task 16 leva também `style_selection_day`/`style_selection_reads`; o `FakeTable` (P32) entra na Task 16; P31 e P26′
+  entram na Task 18; P22′ (as duas consultas) na Task 18.
+
 ### Regras desta rodada (além das de sempre)
 
 - Memória: antes de cada comando pesado, `awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo` ≥ 2300; senão esperar 60 s e conferir de
@@ -1211,5 +1261,5 @@ style-refs-panel.tsx` (pasta da Seleção sem "Parar", rótulos), `web/src/compo
 Jest por arquivo dos specs tocados nas Tasks 16–19 e dos de sempre (`creative.service`, `media-generation`, `compose`); `tsc` da API e do web
 uma vez cada; lint sem `--fix`; smoke; browser-check grupos 1 (marcas/configuração) e 3 (Estúdio), um por vez. `git merge
 fix/texto-cortado-arte` e de novo os testes de compose, `creative.service` e `media-generation`. Roteiro
-`~/meufunil-deploy/subir-pinterest-automatico.sh`: migração `20261117120000`, filtro `2026111[67]%`, sem `STYLE_LIBRARY_WORKSPACE_ID`,
+`~/meufunil-deploy/subir-pinterest-automatico.sh`: migração `20261117120000`, filtro `~ '^2026111[67]'`, sem `STYLE_LIBRARY_WORKSPACE_ID`,
 notas de como ligar; `bash -n`, sem executar. `code-reviewer-pro` no ramo inteiro e correção de críticos/importantes.

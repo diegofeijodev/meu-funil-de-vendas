@@ -149,7 +149,9 @@ Reescrita depois das respostas do Denner em 17/11 (§5.1): **não existe mais em
   criado, renovado, lido nem usado, e nada é apagado (religar retoma).
 - **Própria sempre antes.** Na escolha das notas a Seleção só completa as vagas que as próprias não ocuparam (como em 16/11). As pastas da
   Seleção não contam no limite de 5 pastas próprias; a Seleção tem teto próprio e nunca tira referência própria do teto de 30 da marca
-  (a própria tira a da Seleção primeiro). A Seleção só busca Pins novos enquanto é útil (a marca tem menos de 4 próprias prontas).
+  (a própria tira a da Seleção primeiro). A Seleção só busca Pins novos enquanto é útil (a marca tem menos de 4 próprias) e não gira:
+  o RSS só completa as vagas (até 12 por marca, cota de 12 novas por dia). Chave sem saldo não gasta nem perde a Seleção (a leitura volta
+  para a fila quando o aviso de crédito some).
 - **Isolamento:** toda consulta leva `workspace_id` da própria empresa; duas empresas do mesmo ramo têm cópias separadas das mesmas pastas
   públicas. Teste "empresa A não lê notas de B" continua.
 - **Miniaturas:** agora são cópias da própria empresa, então o painel mostra as pastas e as referências da Seleção como qualquer pasta, com
@@ -218,3 +220,7 @@ migrações aditivas e roteiro de subida no padrão de `~/meufunil-deploy/`.
 - 16/11 ux-designer: 4 bloqueantes (foto do Pinterest na área errada vira pixel; porta só na Marca repete o zero uso; lista na Marca
   dizia "desta campanha" para tudo; marca das vagas invisível) e 8 importantes, incorporados nesta v3. Textos prontos em
   `2026-11-16-pinterest-automatico-ui.md`. Larguras citadas são conta pelas classes, não medição em navegador.
+- 17/11 software-architect (Fatia 4 v4): 1 crítico (chave sem saldo esgotava as tentativas e a Seleção morria) e 8 importantes (colisão com
+  pasta/Pin da Seleção, corridas, fila de leitura única, Seleção desligada ainda lida, `makeRoom` apagando própria, cota burlável, gatilho
+  em todo "Salvar", `FakeTable` que deixa teste passar sem testar). Incorporados no plano (P20′–P33). Não adotado: catálogo de Pins fixos
+  (a ordem do dono é pasta acompanhada pelo RSS; com a vaga decidida antes do RSS, pasta cheia não gera chamada).
