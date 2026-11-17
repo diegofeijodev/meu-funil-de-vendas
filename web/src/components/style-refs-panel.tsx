@@ -62,6 +62,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
   const [stopping, setStopping] = useState<{ id: string; refs_count: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const prevRefs = useRef<{ id: string; status: string }[] | undefined>(undefined);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const fieldId = useId();
   const refresh = () => qc.invalidateQueries({ queryKey: key });
@@ -76,8 +77,17 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
     const next = data.refs.map((r) => ({ id: r.id, status: r.status }));
     const msg = liveAnnouncement(prevRefs.current, next);
     prevRefs.current = next;
-    if (msg) setAnnouncement(msg);
+    if (msg) {
+      // Limpa antes: a mesma frase duas vezes seguidas precisa mudar o DOM para ser anunciada de novo.
+      setAnnouncement("");
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setAnnouncement(msg), 100);
+    }
   }, [data]);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -145,7 +155,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      {started && <p className="text-xs text-muted-foreground">Vale para as artes que ainda vão ser feitas.</p>}
+      {started && <p className="text-sm text-muted-foreground">Vale para as artes que ainda vão ser feitas.</p>}
       {campaignId && <p className="text-sm text-muted-foreground">{PANEL_TEXT.campaignOnly}</p>}
 
       {canEdit && (
@@ -206,7 +216,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
                   <a href={s.url} target="_blank" rel="noreferrer" className="font-medium underline-offset-2 hover:underline">
                     {s.title ?? "Pasta do Pinterest"}
                   </a>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     {s.last_synced_at ? `Atualizada em ${fullDate(s.last_synced_at)}` : "Aguardando a primeira leitura"}
                   </p>
                   {s.last_error && (
@@ -239,7 +249,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
                     <div className="size-16 shrink-0 rounded-md bg-muted" />
                   )}
                   <div className="min-w-0 flex-1 space-y-1 text-sm">
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-sm text-muted-foreground">
                       {refOrigin(r)} · {refScope(r)}
                     </p>
                     <p className={r.status === "failed" ? "text-destructive" : undefined}>{refStateText(r)}</p>

@@ -46,5 +46,15 @@ describe('style-refs', () => {
     expect(liveAnnouncement([], [{ id: 'a', status: 'processing' }])).toBe('Lendo o estilo…');
     expect(liveAnnouncement([{ id: 'a', status: 'processing' }], [{ id: 'a', status: 'ready' }])).toBe('Referência pronta. O estilo já está em uso.');
     expect(liveAnnouncement([{ id: 'a', status: 'processing' }], [{ id: 'a', status: 'failed' }])).toBe('Não conseguimos ler uma referência.');
+    // prioridade: falha > pronta > lendo
+    expect(
+      liveAnnouncement(
+        [{ id: 'a', status: 'processing' }, { id: 'b', status: 'processing' }],
+        [{ id: 'a', status: 'ready' }, { id: 'b', status: 'failed' }, { id: 'c', status: 'processing' }],
+      ),
+    ).toBe('Não conseguimos ler uma referência.');
+    expect(
+      liveAnnouncement([{ id: 'a', status: 'processing' }], [{ id: 'a', status: 'ready' }, { id: 'c', status: 'processing' }]),
+    ).toBe('Referência pronta. O estilo já está em uso.');
   });
 });
