@@ -1,6 +1,6 @@
 # Referências do Pinterest automáticas — desenho
 
-Data: 16/11/2026 · Ramo: `feat/pinterest-automatico` (sobre `d9fb28b`, em produção desde 16/11 18h58) · Estado: **APROVADO pelo Denner em 16/11 ("eu aprovo o desenho ai do pinterest automatico, faça")**; teste da Fatia 0 feito em 16/11 (mudou de forma visível, ver o roteiro) · Telas e textos: `2026-11-16-pinterest-automatico-ui.md`
+Data: 16/11/2026 · Ramo: `feat/pinterest-automatico` (sobre `d9fb28b`, em produção desde 16/11 18h58) · Estado: **APROVADO pelo Denner em 16/11 ("eu aprovo o desenho ai do pinterest automatico, faça")**; Fatia 4 refeita em 17/11 (v4, respostas do Denner na §5.1); teste da Fatia 0 feito em 16/11 (mudou de forma visível, ver o roteiro) · Telas e textos: `2026-11-16-pinterest-automatico-ui.md`
 
 ## 1. Pedido e porquê
 
@@ -125,28 +125,39 @@ Sobreposição de palavras soltas é frágil em português ("burger" × "hambúr
 - `subject` por chamador: post e vídeo = tema + gancho + pedido + produto; Estúdio = título + pedido + `offer_product` (não os 3 produtos
   sem ordem de `creative.service.ts:118-120`); piloto = passa por `directArt`, nome da campanha + ângulo; vagas = função.
 
-### Fatia 4 — biblioteca pronta por segmento
+### Fatia 4 — Seleção do Meu Funil automática, em cada empresa (v4, 17/11)
 
-Depende das decisões 1, 2 e 3 da seção 5.1 abaixo. **O código entra atrás de `STYLE_LIBRARY_ENABLED` desligada; ligar, criar a empresa
-"Biblioteca" e montar as pastas só depois dessas decisões.**
+Reescrita depois das respostas do Denner em 17/11 (§5.1): **não existe mais empresa central**. A versão de 16/11 (empresa "Biblioteca" em
+`STYLE_LIBRARY_WORKSPACE_ID`, lida por todas as empresas) foi construída no ramo e sai inteira nesta versão. Agora:
 
-- **Sem tabela nova (recomendação do arquiteto, a conferir no plano):** uma empresa interna "Biblioteca Meu Funil", com uma marca por
-  segmento. A curadoria usa a própria tela da Fatia 2; a leitura gasta a chave de IA dessa empresa e os avisos de crédito aparecem nela.
-  `STYLE_LIBRARY_WORKSPACE_ID` (uuid validado em `env.validation.ts`) aponta para ela; a exclusão dessa empresa fica bloqueada
-  (`workspace-deletion.service.ts`). Descartado: `workspace_id` nulo em `style_references` (quebra NOT NULL, FK, índice parcial e
-  `ai.json(r.workspace_id)`).
-- A conferir no plano: jobs que varrem todas as empresas não podem tratar a Biblioteca como cliente; teste novo "empresa A não lê notas de B".
-- Uso: marca com menos de 4 referências próprias prontas completa com as notas da marca-segmento da Biblioteca, pelo critério da Fatia 3.
-  Referência própria sempre ganha.
-- Na tela o nome é **"Seleção do Meu Funil"** ("prontas" colidia com o estado "pronta" de cada referência). Linha com o segmento e a
-  quantidade, "Ver as descrições" e o interruptor "Usar a seleção do Meu Funil" (`brands.style_library_enabled`, padrão ligado; decorator em
-  `UpdateBrandDto`, zod no web), que **vale na hora**, sem o "Salvar" da tela. Com 4 ou mais referências próprias a tela diz que a seleção
-  está sem uso. **As empresas veem só o número e as descrições em texto, não as miniaturas (decisão minha: evita exibir imagem de terceiro
-  a todas as empresas e o problema de miniatura para quem não é membro).**
-- Segmento: reconhecido sozinho pelo texto de `brands.segment`; quando não reconhece, a tela oferece os ramos que têm seleção e "Nenhum
-  desses" (coluna `brands.style_library_segment`). **(decisão minha)**
-- Flag `STYLE_LIBRARY_ENABLED` (padrão false) em `env.validation.ts`, `.env.example`, `docker-compose.yml`,
-  `docs/deploy/.env.prod.example` (produção usa `env_file`) e em `GET /features`.
+- **Catálogo de pastas por ramo no código** (`api/src/modules/style-refs/selection-catalog.ts`): ramo (id de `categories.ts`) → 2 ou 3 pastas
+  públicas do Pinterest, montado uma vez em 17/11 por busca na web (domínio pinterest.com) e conferido pelo RSS oficial de cada pasta
+  (200, ≥ 16 Pins com imagem) e por uma folha de miniaturas (foto de verdade do ramo, sem infográfico nem ilustração). Nenhuma busca nem
+  raspagem do Pinterest no produto. Ramos: `equipe_vagas`, `acai_sorvete`, `comida_hamburguer`, `comida_churrasco`, `bebida_bar` e
+  `ambiente` (restaurante/gastronomia). Tabela das pastas no plano (Task 16).
+- **Cada marca tem as próprias pastas da Seleção.** Com `STYLE_LIBRARY_ENABLED=true` (e `STYLE_REFS_PINTEREST_ENABLED=true`, de que a
+  Seleção depende), `brands.style_library_enabled` ligado, ramo resolvido e a empresa com chave de IA (OpenAI ou Gemini, própria ou herdada
+  da agência, pelo `AiKeysService`), o sistema cria em `style_ref_sources` **da própria marca** as pastas do ramo, com `origin = 'selection'`.
+  O RSS e a leitura de hoje fazem o resto, com a chave da empresa. Sem chave: não cria nada e o painel diz que a Seleção precisa de uma
+  chave de IA em Integrações.
+- **Reconciliação única por marca** (`reconcileSelection`): calcula as pastas que a marca deveria ter e acerta o banco (cria as que faltam,
+  tira as que sobram com as referências delas). Roda no `PATCH` da marca quando muda `segment`, `style_library_enabled` ou
+  `style_library_segment` (só grava linhas; o RSS e o download vão para segundo plano) e no job `style-refs-15min`, poucas marcas por
+  rodada (é o que pega a chave cadastrada depois em Integrações e a marca nova).
+- **Desligar, "Nenhum desses" ou trocar de ramo** tira as pastas da Seleção e as referências delas; na troca, entram as do ramo novo. O ramo
+  reconhecido **pode ser trocado na tela** (fecha o ponto que ficou aberto em 16/11). Chave do servidor desligada = **inerte**: nada é
+  criado, renovado, lido nem usado, e nada é apagado (religar retoma).
+- **Própria sempre antes.** Na escolha das notas a Seleção só completa as vagas que as próprias não ocuparam (como em 16/11). As pastas da
+  Seleção não contam no limite de 5 pastas próprias; a Seleção tem teto próprio e nunca tira referência própria do teto de 30 da marca
+  (a própria tira a da Seleção primeiro). A Seleção só busca Pins novos enquanto é útil (a marca tem menos de 4 próprias prontas).
+- **Isolamento:** toda consulta leva `workspace_id` da própria empresa; duas empresas do mesmo ramo têm cópias separadas das mesmas pastas
+  públicas. Teste "empresa A não lê notas de B" continua.
+- **Miniaturas:** agora são cópias da própria empresa, então o painel mostra as pastas e as referências da Seleção como qualquer pasta, com
+  o rótulo do ui.md §3. O bloco "Ver as descrições" sai.
+- **Convite "Estilo: …"** nas artes só aparece com a Seleção ligada para a empresa (`features.style_library`), para não divulgar antes.
+  **(decisão do Denner via coordenador, reversível)**
+- `STYLE_LIBRARY_ENABLED` continua existindo e nasce `false`. Saem `STYLE_LIBRARY_WORKSPACE_ID`, o bloqueio de exclusão da Biblioteca e a
+  leitura de outra empresa.
 
 ### Fatia 5 — stories das vagas (por último)
 
@@ -165,6 +176,16 @@ letreiro, garrafa) aumentam esse risco. Por isso:
   **(decisão minha)**
 
 ### 5.1 Decisões do dono
+
+**Respostas do Denner em 17/11 (mudam a Fatia 4):**
+- Decisão 1 (guardar imagem de terceiro): "Pode".
+- Decisão 2 (quem paga a leitura): "Deixa cada conta ter sua própria pasta/biblioteca e aí usa as chaves cadastradas dela pra fazer isso."
+  → **sai a empresa central "Biblioteca"**: cada empresa tem as próprias pastas da Seleção e a leitura usa a chave de IA dela.
+- Decisão 3 (quem monta as pastas): "A seleção não pode ser automática não?" → a Seleção é automática: o sistema põe sozinho, em cada
+  marca, as pastas públicas do Pinterest do ramo dela, tiradas de um catálogo de pastas por ramo que vive no código (montado uma vez,
+  sem busca nem raspagem no Pinterest); depois o RSS atualiza sozinho como qualquer pasta.
+
+Decisões originais (para histórico):
 
 1. **Guardar imagem de terceiro numa biblioteca do Meu Funil** (as empresas veriam só texto, mas o sistema guarda a miniatura para a
    curadoria): o OK jurídico de 29/10 cobria a referência colada por cada empresa. Precisa de um "sim" para a biblioteca.

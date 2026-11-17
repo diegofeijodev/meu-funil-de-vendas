@@ -1,6 +1,6 @@
 # Referências do Pinterest automáticas — telas e textos
 
-Acompanha `2026-11-16-pinterest-automatico-design.md` (v3). Textos propostos pelo ux-designer em 16/11/2026, prontos para copiar.
+Acompanha `2026-11-16-pinterest-automatico-design.md` (v3; Fatia 4 em v4 de 17/11). Textos propostos pelo ux-designer em 16/11/2026, prontos para copiar.
 Quem usa: dono e funcionário de pequeno negócio e uma pessoa de marketing, muito pelo celular. Palavra do dia a dia, sem termo técnico.
 
 Regra que atravessa tudo: **"referência" vale só para estilo** (nunca aparece na arte). Foto própria é "foto da sua marca" (pode aparecer).
@@ -49,14 +49,27 @@ Mudar esses rótulos sai do 1:1 com o protótipo: depende da decisão 4 do dono 
 - Texto de apoio em 14 px (hoje há 12 e 11 px). Erro da pasta com ícone e cor de erro, não em cinza.
 - Uma única região `aria-live="polite"` no painel anuncia "lendo" e "pronta"; `aria-label` do "Remover" com a origem; `id` do campo não fixo.
 
-## 3. Seleção do Meu Funil (Fatia 4)
+## 3. Seleção do Meu Funil (Fatia 4, v4 de 17/11: automática e da própria empresa)
 
-- Linha: "Seleção do Meu Funil para {segmento}: {N} referências escolhidas pela nossa equipe. Outras empresas do mesmo ramo também usam." · "Ver as descrições"
+Fica dentro do painel "Estilo das artes" (aba Guia visual), abaixo das referências próprias. Só aparece com `features.style_library`.
+Rascunho do coordenador em 17/11; passa pelo ux-designer antes de construir.
+
 - Interruptor: "Usar a seleção do Meu Funil" · "Vale na hora, sem precisar salvar."
+- Linha do ramo: "Seleção do Meu Funil para {ramo}: {N} referências de pastas públicas do Pinterest escolhidas pela nossa equipe." · [Trocar o ramo]
 - Ligado: "Suas referências vêm primeiro; a seleção completa quando você tem menos de 4."
 - Ligado sem efeito: "Sem uso agora: você já tem 4 ou mais referências suas."
 - Desligado: "As artes seguem só as suas referências."
-- Segmento não reconhecido: "Ainda não temos seleção para "{segmento}". Escolha o ramo mais parecido:" com as opções e "Nenhum desses".
+- Ligado, ainda lendo: "Estamos trazendo as referências da seleção. Leva alguns minutos."
+- Sem chave de IA: "A seleção usa a sua chave de IA para ler as imagens. Cadastre uma chave do ChatGPT ou do Gemini em Integrações." · [Ir para Integrações]
+- Ramo não reconhecido: "Ainda não temos seleção para "{segmento}". Escolha o ramo mais parecido:" com as opções e "Nenhum desses".
+- Trocar o ramo (ramo já reconhecido ou escolhido): "Escolha o ramo mais parecido:" com as opções, "Nenhum desses" e o atual marcado.
+- Ao trocar ou desligar (aviso na hora, toast): "Pronto. As referências da seleção anterior saíram."
+
+### Na lista do painel
+
+- Pasta da Seleção: "Seleção do Meu Funil · {título da pasta}" · sem o botão "Parar" (quem tira é o interruptor) · ajuda: "Para tirar, desligue a seleção."
+- Referência da Seleção: origem "Seleção do Meu Funil" · "vale para toda a marca"; "Remover" continua (ela não volta).
+- O contador "{n} de 30 referências nesta marca…" conta só as suas.
 
 ## 4. Vagas, Ajustes (Fatia 5) — depois de "Quem faz a foto", entra no "Salvar ajustes"
 
@@ -74,4 +87,3 @@ Mudar esses rótulos sai do 1:1 com o protótipo: depende da decisão 4 do dono 
 
 - Vídeo como referência (o desenho de 29/10 prometia; o painel só aceita JPG e PNG).
 - Trocar a marca das vagas pela tela.
-- Miniaturas da Seleção para as empresas (veem só as descrições).

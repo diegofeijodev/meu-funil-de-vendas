@@ -26,9 +26,9 @@ Fazem parte dos requisitos de **toda** tarefa: as decisões P1–P15 (o que o de
 - **P8. Pedido sem categoria reconhecida.** Toda nota entra completa, como hoje. Nota sem `categorias` (v1, ou a IA não marcou nenhuma) num pedido com categoria entra reduzida, como o desenho manda.
 - **P9. Campanha na escolha.** As notas da campanha ficam com no máximo 2 das 4 vagas enquanto houver nota da marca. Vaga que sobra é preenchida com as notas restantes da campanha.
 - **P10. Assunto por chamador.** `styleSubject(...partes)` junta as partes com espaço, até 500 letras. Post e vídeo: tema, gancho, pedido e produto. Estúdio e piloto (via `directArt`): título, pedido, `offer_product` e ângulo; o título do piloto já é "campanha · ângulo". Vagas: `Vaga de {função}`.
-- **P11. Seleção do Meu Funil.** `brands.style_library_enabled` (bool, padrão `true`) e `brands.style_library_segment` (text nulo) têm três estados: `NULL` = automático pelo texto de `brands.segment`, id de categoria = escolhido, `'none'` = "Nenhum desses". Na empresa Biblioteca, cada marca leva em `style_library_segment` o ramo que ela serve, e o ramo usa as prontas de **todas** as marcas da Biblioteca com aquele valor. Os ramos oferecidos são os que têm ao menos 1 pronta. A chave só fica ativa com `STYLE_LIBRARY_ENABLED=true`, `STYLE_LIBRARY_WORKSPACE_ID` preenchido e a empresa ≠ a Biblioteca; mal configurada, não faz nada e não derruba a geração. O bloqueio de exclusão vale sempre que o id estiver preenchido.
+- **P11. Seleção do Meu Funil.** **[SUBSTITUÍDA em 17/11 pelas P16–P30 — sem empresa central; ver "Rodada 2" no fim]** `brands.style_library_enabled` (bool, padrão `true`) e `brands.style_library_segment` (text nulo) têm três estados: `NULL` = automático pelo texto de `brands.segment`, id de categoria = escolhido, `'none'` = "Nenhum desses". Na empresa Biblioteca, cada marca leva em `style_library_segment` o ramo que ela serve, e o ramo usa as prontas de **todas** as marcas da Biblioteca com aquele valor. Os ramos oferecidos são os que têm ao menos 1 pronta. A chave só fica ativa com `STYLE_LIBRARY_ENABLED=true`, `STYLE_LIBRARY_WORKSPACE_ID` preenchido e a empresa ≠ a Biblioteca; mal configurada, não faz nada e não derruba a geração. O bloqueio de exclusão vale sempre que o id estiver preenchido.
 - **P12. Textos que o ui.md não traz** (passar pelo ux-designer antes de divulgar):
-  - Bloqueio de exclusão: `"Esta empresa guarda a Seleção do Meu Funil, usada por outras empresas. Ela não pode ser apagada."`
+  - ~~Bloqueio de exclusão~~ (sai em 17/11 com a empresa central, P28).
   - Linha fixa do painel na campanha: `"Pin colado aqui vale só para esta campanha. Pasta ou perfil vale para a marca inteira."`
   - Convite com 1 referência: `"Estilo: seguiu 1 referência sua."`
   - Convite só com a seleção: `"Estilo: seguiu a Seleção do Meu Funil."`, com o mesmo botão.
@@ -1053,3 +1053,163 @@ Fatia 5: ligar o interruptor só na Freela App e comparar o `week.fallback` dos 
 4. **Review Focus.** Os 5 itens têm teste na tarefa dona (1, 1, 2, 3, 13).
 5. **Proporção.** O plano tem cerca de 1.000 linhas, contra 276 do desenho e das telas juntos. O excesso vem do que o desenho delegou (§7): a lista de categorias e os sinônimos, os textos de prompt e de tela, as regras de orçamento e de filtro e o roteiro de subida. Corpos de função não foram escritos; ficaram só assinaturas, testes e esses valores.
 
+---
+
+## Rodada 2 (17/11) — Seleção do Meu Funil automática, em cada empresa
+
+Desenho: Fatia 4 v4 (`…-design.md`, §5.1 com as respostas do Denner de 17/11) e ui.md §3 v4. Substitui as P11 e o bloqueio de exclusão
+da P12. As Tasks 10–12 já construídas (empresa central) são **desfeitas** nas Tasks 17–19; nada delas está em produção.
+
+### Decisões do plano (rodada 2)
+
+- **P16. Catálogo** (`api/src/modules/style-refs/selection-catalog.ts`), montado em 17/11: pastas achadas por WebSearch (domínio
+  pinterest.com), cada uma conferida pelo RSS oficial com o User-Agent da API (200 e ≥ 16 Pins com imagem `i.pinimg.com`) e por uma folha
+  de 12 miniaturas 236x (foto de verdade do ramo). Recusadas: `railma104maria/acai` (artes com texto), `nikxpope09/smoothie-bowl-mood-board`
+  (paletas e infográficos), `jeffzoet/beer-photography` (rótulos e logos), `anjomercado/burger-mood-board` (anúncios de marca),
+  `sarajanegraham/…` (8 Pins), `abhikamble7/kebab-photography` (404). Toda URL na forma `https://www.pinterest.com/<usuario>/<pasta>/`.
+
+  | ramo (id) | pastas (usuário/pasta) |
+  |---|---|
+  | `equipe_vagas` | `dickylesmana/chef-group-photos`, `sarahnathan2710/chef-photoshoot`, `denmar_85/bartender` |
+  | `acai_sorvete` | `stellarfooddiary/acai-bowls-photography`, `amyrosehancock/smoothie-bowl-food-photography` |
+  | `comida_hamburguer` | `abedelkarem/burger-photography`, `tsscreative/burger-mood-board`, `danneville338/burger-photography` |
+  | `comida_churrasco` | `kosherburrito/grilling-photos`, `setarehahmadi137122/kebab-photo`, `illiquid1/food-photography-steak` |
+  | `bebida_bar` | `jswordie/public-houses`, `hixfarmbrewery/beer-photography`, `hb834311/cocktail-bar-photo-shoot` |
+  | `ambiente` | `kcarter1927/menu-photoshoot`, `emmacarava/restaurant-ambiance`, `thegalleryau/fresh-food-interiors` |
+
+  - `SELECTION_BRANCHES` = a ordem acima (é também a prioridade do reconhecimento): uma marca "vagas para bares e restaurantes" cai em
+    `equipe_vagas`, não em `bebida_bar`.
+  - `selectionBranchFor(segment)`: categorias de `subjectCategories(segment)` **mais** os apelidos só de reconhecimento
+    `SEGMENT_ALIASES` (`gastronomia`, `gastronomica`, `gastronomico`, `restaurantes` → `ambiente`), e devolve o primeiro ramo de
+    `SELECTION_BRANCHES` presente. `CATEGORY_SYNONYMS` não muda (ele também ordena as notas, Task 8).
+  - Teste sem rede: cada URL passa em `parsePinterestLink` como `board`; todo ramo é id de `STYLE_CATEGORY_IDS`; 2 ou 3 pastas por ramo; sem
+    URL repetida.
+- **P17. Origem.** `style_ref_sources.origin` e `style_references.origin`: `text NOT NULL DEFAULT 'own'`, CHECK `in ('own','selection')`. A
+  referência herda a origem da pasta no `sync`; envio e Pin colado são sempre `own`.
+- **P18. Seleção ligada** = `STYLE_LIBRARY_ENABLED && STYLE_REFS_PINTEREST_ENABLED` (a Seleção só existe pelo RSS). Igual em
+  `features.style_library` e no serviço. **Desligada = inerte**: nada é criado, renovado, lido nem usado na escolha, e nada é apagado.
+- **P19. Ramo da marca.** `brands.style_library_segment`: `NULL` = automático por `selectionBranchFor(brands.segment)`; id de ramo do
+  catálogo = escolhido; `'none'` = "Nenhum desses". Valor gravado que não é ramo do catálogo = automático. `UpdateBrandDto` aceita só os
+  ramos do catálogo, `'none'` e `null`. `resolveSelectionBranch(brand)` → `{ segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }`.
+- **P20. Reconciliação** (`StyleRefsService.reconcileSelection(ws, brandId)`, idempotente):
+  - Só com a Seleção ligada (P18). Alvo `T` = pastas do ramo resolvido quando `style_library_enabled` e ramo ≠ nulo; senão `T = []`.
+  - Pasta `origin='selection'` da marca fora de `T` sai com as referências dela (linha + arquivo). Isso vale sempre, com ou sem chave.
+  - Pasta de `T` que falta é criada (`origin='selection'`, `created_by = null`, `last_synced_at = null`) **só se a empresa tem chave de IA**
+    (`AiKeysService.get(ws,'openai') || get(ws,'gemini')`; herdada da agência conta, é a mesma que a leitura usa). Colisão no índice único
+    com uma pasta própria igual = fica a própria (não cria).
+  - Grava `brands.style_library_checked_at = now()`.
+  - Gatilhos: (a) `BrandsService.update` quando o corpo traz `segment`, `style_library_enabled` ou `style_library_segment` — erro da
+    reconciliação vai para o log e **não** derruba o `PATCH`; (b) job `style-refs-15min`: `reconcileDueBrands(10)` = marcas com
+    `style_library_checked_at` nulo ou com mais de 6 h, nulas primeiro. Depois de criar pastas, um "chute" em segundo plano (atrás de
+    `autoProcess`, como o `kick` de hoje) sincroniza as pastas novas da marca e lê as pendentes.
+- **P21. Tetos da Seleção.**
+  - `SELECTION_REFS_CAP = 12` referências da Seleção por marca; `SELECTION_PINS_PER_SYNC = 4` por pasta em cada sincronização;
+    `SELECTION_DAILY_NEW = 12` referências da Seleção criadas por marca em 24 h corridas (conta `created_at`) — é a cota diária de leitura.
+  - **A Seleção não gira:** só preenche vaga (até o teto), nunca tira referência antiga para pôr nova.
+  - A Seleção só traz Pins novos quando é útil: a marca tem **menos de 4** próprias prontas sem campanha e a empresa tem chave. Senão o sync
+    só grava `last_synced_at` (sem erro).
+  - Total da marca ≤ 30 (`BRAND_CAP`): a Seleção só usa o espaço livre e nunca tira referência própria. Ao pôr uma própria, `makeRoom` tira
+    primeiro as da Seleção (mais antigas), depois as próprias vindas de pasta, como hoje.
+  - `SOURCE_CAP` (5 pastas) conta só `origin='own'`. Referência da Seleção `failed` sai no início do sync daquela pasta (o Pin fica em
+    `seen_pin_ids` e não volta).
+- **P22. Renovação das pastas no job.** `refreshDueSources(5)`: o vencimento vai no `where` (`last_synced_at` nulo ou com mais de 24 h,
+  nulos primeiro); pastas da Seleção só entram com a Seleção ligada (P18).
+- **P23. Escolha.** `pickNotes` lê as prontas da marca como hoje e separa por `origin`: as próprias vão para `chooseNotes(own, …)`; as da
+  Seleção (sem campanha) entram como `library` só com a Seleção ligada e `style_library_enabled` da marca. Nenhuma consulta sem
+  `workspace_id` = a empresa. O registro por peça (P6) não muda de forma: `style_refs.library` = ids das referências da Seleção da própria
+  empresa.
+- **P24. `GET /style-refs/library`** (read; 404 com a Seleção desligada):
+  `{ segment, segment_label, segment_source, brand_segment, options: [{ id, label }] (ramos do catálogo na ordem de P16), enabled,
+  needs_ai_key, sources_count, count (prontas da Seleção na marca), reading (da Seleção em processing), own_ready, in_use }`, com
+  `in_use = enabled && segment && count > 0 && own_ready < 4`. Sai `descriptions`.
+- **P25. `GET /style-refs`.** `refs[].origin` e `sources[].origin`; `limits.in_brand` passa a contar só as próprias; `limits.in_selection` =
+  referências da Seleção na marca.
+- **P26. Parar pasta da Seleção:** `DELETE /style-refs/sources/:id` numa pasta `origin='selection'` → `400` com o texto do ui.md §3 (a
+  reconciliação a recriaria). Remover uma referência da Seleção continua valendo (o Pin fica em `seen_pin_ids`).
+- **P27. Convite "Estilo: …"** (Estúdio, Aprovações, Pacote do piloto) só aparece com `features.style_library`.
+- **P28. Sai a empresa central:** `STYLE_LIBRARY_WORKSPACE_ID` (`env.validation.ts` + `superRefine`, `api/.env.example`, `docker-compose.yml`,
+  `docs/deploy/.env.prod.example`, testes), `libraryActiveFor`, `libraryFor`, o bloqueio `STYLE_LIBRARY` da exclusão (`workspace-deletion.ts`,
+  `ERR_STYLE_LIBRARY`, o 4º argumento do `WorkspaceDeletionService`), o parágrafo "Biblioteca e os jobs" do contrato §28 e o item do §31.
+- **P29. Migração nova** `20261117120000_style_selection` (aditiva): as duas colunas `origin` (+ CHECK) e `brands.style_library_checked_at
+  timestamptz`. A `20261116122000_style_library` **não é editada** (já aplicada no banco local; o índice parcial dela fica sem uso e é
+  inofensivo).
+- **P30. Textos novos** = ui.md §3 v4, depois da revisão do ux-designer (os textos finais ficam lá; as tarefas copiam de lá).
+
+### Regras desta rodada (além das de sempre)
+
+- Memória: antes de cada comando pesado, `awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo` ≥ 2300; senão esperar 60 s e conferir de
+  novo. Jest **por arquivo**, nunca a pasta inteira. Um subagente por vez; smoke e browser-check só na Task 20, um grupo por vez.
+- O Postgres local sobe para as migrações e para no fim (`docker compose stop postgres`).
+
+### Task 16: Migração `origin` + catálogo de pastas por ramo (sem mudar comportamento)
+
+**Files:** Create `api/prisma/migrations/20261117120000_style_selection/migration.sql`, `api/src/modules/style-refs/selection-catalog.ts`,
+`api/src/modules/style-refs/__tests__/selection-catalog.spec.ts`. Modify `api/prisma/schema.prisma` (`style_ref_sources.origin`,
+`style_references.origin`, `brands.style_library_checked_at`), `style-refs.service.ts` (`store` grava a origem recebida; `sync` repassa a da
+pasta), `__tests__/style-refs.service.spec.ts` (defaults `origin: 'own'` nas duas tabelas e `style_library_checked_at: null` em `brands`).
+
+**Interfaces (Produces):** `SELECTION_CATALOG: Readonly<Partial<Record<StyleCategoryId, readonly string[]>>>`, `SELECTION_BRANCHES:
+readonly StyleCategoryId[]`, `isSelectionBranch(v: unknown): v is StyleCategoryId`, `selectionBranchFor(segment: string | null | undefined):
+StyleCategoryId | null`, `SEGMENT_ALIASES`.
+
+- [ ] Teste que falha (`selection-catalog.spec.ts`): forma do catálogo (P16); `selectionBranchFor`: `'Açaiteria Frutá'` → `acai_sorvete`;
+  `'Hamburgueria do Zé'` → `comida_hamburguer`; `'Espetinho e chopp'` → `comida_churrasco`; `'Vagas para bares e restaurantes'` →
+  `equipe_vagas`; `'Gastronomia contemporânea'` → `ambiente`; `'Restaurante'` → `ambiente`; `'Floricultura'` → `null`; `''`/`null` → `null`.
+- [ ] Migração (comentário com o porquê, P17/P29) e `schema.prisma`; aplicar e gerar (`run-capped 1500 npx prisma migrate deploy` e
+  `… npx prisma generate`; conferir com `npx prisma migrate status`).
+- [ ] Implementar, rodar `selection-catalog.spec.ts` e `style-refs.service.spec.ts` (um por vez). Commit `feat(style-refs): catálogo de pastas
+  da Seleção por ramo e origem das pastas e referências`.
+
+### Task 17: Sai a empresa central; a escolha e a tela leem a Seleção da própria marca
+
+**Files:** `docs/api-contract.md` (§3, §10, §28, §31) **antes**; `style-refs.service.ts` (sem `libraryWs`/`libraryActiveFor`/`libraryFor`;
+`selectionOn()`; `pickNotes` por origem, P23; `library()` com a vista da P24, `needs_ai_key` pelo `AiKeysService` injetado), `style-pick.ts`
+(`resolveSelectionBranch` no lugar de `resolveLibrarySegment`), `brands/dto/brands.dto.ts` (P19), `common/config/env.validation.ts`,
+`api/.env.example`, `docker-compose.yml`, `docs/deploy/.env.prod.example`, `workspaces/{features.service,workspace-deletion,
+workspace-deletion.service}.ts` (P18, P28). Testes: `style-refs.service.spec.ts` (troca o mundo da Biblioteca pelo da própria marca),
+`style-pick.spec.ts`, `brands-dto.spec.ts`, `env-and-guard.spec.ts`, `features.spec.ts`, `workspace-deletion.spec.ts`.
+
+- [ ] Testes que falham, entre eles: própria primeiro e Seleção completando (`used.library` = ids da Seleção **da mesma empresa**);
+  interruptor da marca desligado → só próprias; Seleção desligada (cada uma das duas chaves) → linhas `origin='selection'` não entram e
+  nenhuma consulta extra; "empresa A não lê notas de B": A e B com a **mesma** pasta da Seleção, espião em `findMany`/`count` prova
+  `workspace_id === WS` em toda consulta de A e nenhum id de B em `used`; `library()`: vista da P24 (sem `descriptions`, `needs_ai_key`
+  true/false pelo fake de chaves, `options` = catálogo), 404 com a Seleção desligada, viewer lê, não-membro 403, marca de outra empresa 404;
+  `features.style_library` = as duas chaves; o env não conhece mais `STYLE_LIBRARY_WORKSPACE_ID`; a exclusão não tem mais o bloqueio.
+- [ ] Implementar e rodar cada spec tocado, um por vez. Commit `refactor(style-refs): Seleção do Meu Funil sai da empresa central e passa a
+  ser da própria marca`.
+
+### Task 18: Reconciliação automática, sincronização e tetos da Seleção
+
+**Files:** `docs/api-contract.md` §28 **antes**; `style-refs.service.ts` (`reconcileSelection`, `reconcileDueBrands`, `refreshDueSources`
+P22, `sync` P21, `makeRoom` P21, `SOURCE_CAP` só própria, `list` P25, `removeSource` P26), `style-refs-cron.service.ts` (`tick` =
+reconciliar → renovar → ler), `brands/brands.service.ts` (gatilho da P20; injeta `StyleRefsService`, que é `@Global`), testes
+`style-refs.service.spec.ts` e `brands` (spec que já cobre o `update`, ou um novo `__tests__/brands-selection.spec.ts`).
+
+- [ ] Testes que falham, entre eles: ramo resolvido + chave → cria as pastas do catálogo com `origin='selection'`; sem chave → nada e
+  `needs_ai_key`; desligar / `'none'` / trocar de ramo → saem as pastas e as referências da Seleção (e entram as do ramo novo); Seleção
+  desligada → reconciliação não faz nada (nem apaga); pasta própria igual à do catálogo → fica a própria; `PATCH` com erro na reconciliação
+  ainda responde 200; job pega marca com `checked_at` nulo e não repete antes de 6 h; sync da Seleção: até 4 por pasta, teto 12, cota 12/24 h,
+  não gira, não passa de 30 no total, não tira própria, só com < 4 próprias prontas e com chave; própria nova tira a da Seleção primeiro;
+  6ª pasta própria com 3 da Seleção é aceita; `removeSource` da Seleção → 400; `refreshDueSources` com 200 pastas em dia e 1 vencida acha a
+  vencida; `list` com `origin`, `in_brand` só próprias e `in_selection`.
+- [ ] Implementar e rodar cada spec tocado, um por vez. Commit `feat(style-refs): Seleção do Meu Funil automática em cada marca (pastas do
+  catálogo pelo ramo, com a chave de IA da empresa)`.
+
+### Task 19 (web): painel com a Seleção da própria marca e convite atrás de `features`
+
+**Files:** `web/src/lib/style-refs.ts` + `.test.ts` (textos do ui.md §3 v4; `refOrigin` com a origem; estado "sem chave" e "lendo"),
+`web/src/modules/style-refs/infrastructure/style-refs.api.ts` (`origin` com default `'own'`, vista da P24 com defaults), `web/src/components/
+style-library.tsx` (sem "Ver as descrições"; "Trocar o ramo"; aviso sem chave com link para `/integrations`), `web/src/components/
+style-refs-panel.tsx` (pasta da Seleção sem "Parar", rótulos), `web/src/components/style-invite.tsx` (P27, `useWorkspace` + `useFeatures`),
+`web/scripts/browser-check.mjs` (só se algum texto conferido mudar).
+
+- [ ] Testes que falham (vitest de `lib/style-refs.test.ts`); implementar; rodar o arquivo. Commit `feat(web): Seleção do Meu Funil
+  automática no painel da Marca e convite só com a Seleção ligada`.
+
+### Task 20: Verificação, merge do `fix/texto-cortado-arte`, roteiro e revisão final (coordenador)
+
+Jest por arquivo dos specs tocados nas Tasks 16–19 e dos de sempre (`creative.service`, `media-generation`, `compose`); `tsc` da API e do web
+uma vez cada; lint sem `--fix`; smoke; browser-check grupos 1 (marcas/configuração) e 3 (Estúdio), um por vez. `git merge
+fix/texto-cortado-arte` e de novo os testes de compose, `creative.service` e `media-generation`. Roteiro
+`~/meufunil-deploy/subir-pinterest-automatico.sh`: migração `20261117120000`, filtro `2026111[67]%`, sem `STYLE_LIBRARY_WORKSPACE_ID`,
+notas de como ligar; `bash -n`, sem executar. `code-reviewer-pro` no ramo inteiro e correção de críticos/importantes.
