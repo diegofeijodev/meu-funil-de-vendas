@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 type Row = Record<string, any>;
 
-/** Tabela em memória com o subconjunto do Prisma que os serviços usam (igualdade, `in`, `not`, `lt`/`lte`/`gt`/`gte`, ordenação simples). */
+/** Tabela em memória com o subconjunto do Prisma que os serviços usam (igualdade, `in`, `not`, `lt`/`lte`/`gt`/`gte`, ordenação com `nulls`, `deleteMany`). */
 export class FakeTable {
   rows: Row[] = [];
   constructor(private readonly defaults: () => Row = () => ({})) {}
@@ -12,7 +12,12 @@ export class FakeTable {
       if (k === 'OR') return (v as Row[]).some((w) => this.match(r, w));
       if (v && typeof v === 'object' && !(v instanceof Date)) {
         if ('in' in v) return (v as any).in.includes(r[k]);
-        if ('not' in v) return r[k] !== (v as any).not && (v as any).not !== undefined ? (v as any).not === null ? r[k] != null : r[k] !== (v as any).not : true;
+        // Como o Postgres: `not: 'a'` é `x <> 'a'`, que é nulo (não casa) quando x é nulo; `not: null` é `x IS NOT NULL`.
+        if ('not' in v) {
+          const n = (v as any).not;
+          if (n === undefined) return true;
+          return n === null ? r[k] != null : r[k] != null && r[k] !== n;
+        }
         const cmp = v as { lt?: any; lte?: any; gt?: any; gte?: any };
         if ('lt' in cmp || 'lte' in cmp || 'gt' in cmp || 'gte' in cmp) {
           const x = r[k];
@@ -31,7 +36,13 @@ export class FakeTable {
     if (ob) {
       const [k, d] = Object.entries(ob)[0] as [string, any];
       const dir = typeof d === 'string' ? d : d.sort;
-      out = [...out].sort((x, y) => (x[k] > y[k] ? 1 : x[k] < y[k] ? -1 : 0) * (dir === 'desc' ? -1 : 1));
+      // Postgres: sem `nulls`, nulos por ÚLTIMO em asc e PRIMEIRO em desc.
+      const nulls = (typeof d === 'object' && d.nulls) || (dir === 'desc' ? 'first' : 'last');
+      out = [...out].sort((x, y) => {
+        const xn = x[k] == null, yn = y[k] == null;
+        if (xn || yn) return xn && yn ? 0 : (xn ? 1 : -1) * (nulls === 'first' ? -1 : 1);
+        return (x[k] > y[k] ? 1 : x[k] < y[k] ? -1 : 0) * (dir === 'desc' ? -1 : 1);
+      });
     }
     if (a.distinct) {
       const seen = new Set<string>();
@@ -58,6 +69,12 @@ export class FakeTable {
     const hit = this.rows.filter((x) => this.match(x, where));
     hit.forEach((r) => Object.assign(r, data));
     return { count: hit.length };
+  }
+  async deleteMany({ where }: Row = {}) {
+    const keep = this.rows.filter((x) => !this.match(x, where));
+    const count = this.rows.length - keep.length;
+    this.rows.splice(0, this.rows.length, ...keep);
+    return { count };
   }
   async delete({ where }: Row) {
     const i = this.rows.findIndex((x) => this.match(x, where));
