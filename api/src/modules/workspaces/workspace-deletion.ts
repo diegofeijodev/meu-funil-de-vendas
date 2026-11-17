@@ -7,7 +7,9 @@ import { CHANNEL_CREATE_LEASE_MS } from '../campaigns/campaign-labels';
 export const ERR_ONLY_OWNER_DELETES = 'Só o dono da empresa pode apagá-la.';
 export const ERR_NAME_MISMATCH = 'O nome digitado não confere com o nome da empresa.';
 
-export type BlockerCode = 'CAMPAIGN_BEING_CREATED' | 'LIVE_META_CAMPAIGNS' | 'LIVE_OTHER_AD_CAMPAIGNS' | 'LAST_WORKSPACE';
+export const ERR_STYLE_LIBRARY = 'Esta empresa guarda a Seleção do Meu Funil, usada por outras empresas. Ela não pode ser apagada.';
+
+export type BlockerCode = 'STYLE_LIBRARY' | 'CAMPAIGN_BEING_CREATED' | 'LIVE_META_CAMPAIGNS' | 'LIVE_OTHER_AD_CAMPAIGNS' | 'LAST_WORKSPACE';
 export type BlockerItem = { id: string; name: string };
 export type DeletionBlocker = { code: BlockerCode; message: string; items?: BlockerItem[] };
 
@@ -64,13 +66,14 @@ const names = (items: BlockerItem[]) => items.map((i) => i.name.trim() || 'Campa
 const CHANNEL_NAME: Record<LiveCampaign['channel'], string> = { meta: 'na Meta', google: 'no Google Ads', tiktok: 'no TikTok Ads' };
 
 /**
- * Bloqueios, na ordem em que a tela mostra. `memberships` = em quantas empresas o usuário é membro (qualquer papel), contando esta.
+ * Bloqueios, na ordem em que a tela mostra. Biblioteca da Seleção do Meu Funil (`styleLibrary`): primeiro, sempre. `memberships` = em quantas empresas o usuário é membro (qualquer papel), contando esta.
  * - Campanha sendo criada agora num canal: espere terminar (ela nasce pausada; depois disso não bloqueia mais).
  * - Anúncio publicado e não pausado: apagar a empresa apaga os ids e as credenciais do canal — ninguém mais conseguiria pausar pelo app.
  * - Última empresa: o app não tem tela para "nenhuma empresa".
  */
-export function deletionBlockers(input: { live: LiveCampaign[]; memberships: number }): DeletionBlocker[] {
+export function deletionBlockers(input: { live: LiveCampaign[]; memberships: number; styleLibrary?: boolean }): DeletionBlocker[] {
   const out: DeletionBlocker[] = [];
+  if (input.styleLibrary) out.push({ code: 'STYLE_LIBRARY', message: ERR_STYLE_LIBRARY });
   const creating = input.live.filter((c) => c.state === 'creating');
   if (creating.length) {
     const items = dedupe(creating).map(({ id, name }) => ({ id, name }));

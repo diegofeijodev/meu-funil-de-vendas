@@ -1,5 +1,7 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { ENV } from '../../common/config/env.module';
+import type { Env } from '../../common/config/env.validation';
 import { PrismaService } from '../../common/database/prisma.service';
 import { WorkspaceAccessService } from '../access/access.service';
 import { FilesService } from '../files/files.service';
@@ -72,6 +74,7 @@ export class WorkspaceDeletionService {
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
     private readonly files: FilesService,
+    @Inject(ENV) private readonly env: Pick<Env, 'STYLE_LIBRARY_WORKSPACE_ID'>,
   ) {}
 
   async preview(userId: string, workspaceId: string): Promise<DeletionPreview> {
@@ -142,7 +145,9 @@ export class WorkspaceDeletionService {
 
   private async blockers(db: Db, userId: string, id: string, lock = false): Promise<DeletionBlocker[]> {
     const [rows, memberships] = await Promise.all([lock ? this.lockedCampaigns(db, id) : this.campaignChannels(db, id), db.workspace_members.count({ where: { user_id: userId } })]);
-    return deletionBlockers({ live: liveCampaigns(rows), memberships });
+    // Biblioteca da Seleção do Meu Funil: vale sempre que o id estiver preenchido, com a chave ligada ou não (P11).
+    const lib = (this.env.STYLE_LIBRARY_WORKSPACE_ID ?? '').trim().toLowerCase();
+    return deletionBlockers({ live: liveCampaigns(rows), memberships, styleLibrary: lib !== '' && id.toLowerCase() === lib });
   }
 
   /** Campanhas com algum canal (publicada ou sendo criada), sem trava — a prévia só lê. */

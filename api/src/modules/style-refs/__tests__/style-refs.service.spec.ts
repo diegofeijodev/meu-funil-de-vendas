@@ -517,3 +517,73 @@ describe('StyleRefsService — pickNotes lê só as notas da marca e da campanha
     expect(sem.map((p) => p.row.id)).toEqual([old.id]);
   });
 });
+
+describe('StyleRefsService — GET library (Tarefa 11)', () => {
+  const LIB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const OTHER_WS = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const ENVON = { STYLE_REFS_PINTEREST_ENABLED: true, STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: LIB };
+  const note = (cat: string, assunto: string) => ({ paleta: ['laranja'], composicao: 'x', luz: 'suave', enquadramento: 'y', clima: 'z', evitar: [], categorias: [cat], assunto, acabamento: 'a' });
+
+  async function ready(t: any, ws: string, brand: string, cat: string, n: number) {
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = await t.style_references.create({ data: { workspace_id: ws, brand_id: brand, campaign_id: null, status: 'ready', title: 'Pin secreto', source_url: 'https://pin.it/xyz', style_notes: note(cat, `nota ${i}`) } });
+      out.push(r.id);
+    }
+    return out;
+  }
+
+  async function world(env: Record<string, unknown> = ENVON, own = 1) {
+    const w = await setup({ env });
+    const acai = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Açaí', style_library_segment: 'acai_sorvete' } });
+    const bar = await w.t.brands.create({ data: { workspace_id: LIB, name: 'Bar', style_library_segment: 'bebida_bar' } });
+    await w.t.brands.update({ where: { id: BRAND }, data: { segment: 'Açaiteria Frutá' } });
+    const libAcai = await ready(w.t, LIB, acai.id, 'acai_sorvete', 3);
+    await ready(w.t, LIB, bar.id, 'bebida_bar', 2);
+    await ready(w.t, WS, BRAND, 'acai_sorvete', own);
+    return { ...w, libAcai };
+  }
+
+  it('ramo reconhecido: quantas, descrições só em texto', async () => {
+    const { svc, libAcai } = await world();
+    const view = await svc.library(OWNER, WS, BRAND);
+    expect(view).toMatchObject({ count: 3, segment: 'acai_sorvete', segment_label: 'açaí e sorvete', segment_source: 'auto', brand_segment: 'Açaiteria Frutá', enabled: true, own_ready: 1, in_use: true });
+    expect(view.descriptions).toHaveLength(3);
+    const json = JSON.stringify(view);
+    for (const id of libAcai) expect(json).not.toContain(id);
+    expect(json).not.toContain('http');
+    expect(json).not.toContain('Pin secreto');
+  });
+
+  it('não reconhecido → segment null e as opções com seleção', async () => {
+    const { svc, t } = await world();
+    await t.brands.update({ where: { id: BRAND }, data: { segment: 'Floricultura' } });
+    const view = await svc.library(OWNER, WS, BRAND);
+    expect(view.segment).toBeNull();
+    expect(view.segment_label).toBeNull();
+    expect(view.count).toBe(0);
+    expect(view.in_use).toBe(false);
+    expect(view.options).toEqual([{ id: 'acai_sorvete', label: 'açaí e sorvete' }, { id: 'bebida_bar', label: 'bebida e bar' }]);
+  });
+
+  it('in_use false com 4 próprias e com o interruptor desligado', async () => {
+    const quatro = await world(ENVON, 4);
+    const v4 = await quatro.svc.library(OWNER, WS, BRAND);
+    expect(v4).toMatchObject({ own_ready: 4, count: 3, in_use: false });
+    const off = await world();
+    await off.t.brands.update({ where: { id: BRAND }, data: { style_library_enabled: false } });
+    expect(await off.svc.library(OWNER, WS, BRAND)).toMatchObject({ enabled: false, count: 3, in_use: false });
+  });
+
+  it('chave desligada → 404; viewer lê; não-membro 403; marca de outra empresa 404', async () => {
+    const { svc, t } = await world();
+    expect((await svc.library(VIEWER, WS, BRAND)).count).toBe(3);
+    expect(await status(svc.library('99999999-9999-4999-8999-999999999999', WS, BRAND))).toMatch(/^403/);
+    const outra = await t.brands.create({ data: { workspace_id: OTHER_WS, name: 'B' } });
+    expect(await status(svc.library(OWNER, WS, outra.id))).toMatch(/^404/);
+    const off = await world({ ...ENVON, STYLE_LIBRARY_ENABLED: false });
+    expect(await status(off.svc.library(OWNER, WS, BRAND))).toBe('404:Não encontrado.');
+    const ownLib = await world({ ...ENVON, STYLE_LIBRARY_WORKSPACE_ID: WS });
+    expect(await status(ownLib.svc.library(OWNER, WS, BRAND))).toBe('404:Não encontrado.');
+  });
+});

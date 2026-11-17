@@ -17,7 +17,7 @@ import { FilesService } from '../files/files.service';
 import { EXTERNAL_FETCH, ExternalFetch } from '../media/external-fetch';
 import { ImageService } from '../media/image.service';
 import { isPinImageHost, isPinterestHost, ogImage, parsePinterestLink, parseRss, pinImageFromOembed, rssTitle } from './pinterest';
-import { isStyleCategory, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
+import { isStyleCategory, STYLE_CATEGORY_IDS, STYLE_CATEGORY_LABEL, StyleCategoryId } from './categories';
 import { chooseNotes, PickedNote, PickRow, resolveLibrarySegment } from './style-pick';
 import { MAX_NOTES, normalizeStyleNotes, notesSummary, STYLE_NOTES_PROMPT, STYLE_NOTES_SCHEMA, StyleNotes, StylePick, styleNotesText } from './style-notes';
 
@@ -94,6 +94,12 @@ export type StyleRefView = {
   id: string; source: string; source_url: string | null; title: string | null; status: string; summary: string | null; error: string | null;
   image_url: string | null; campaign_id: string | null; campaign_name: string | null; from_source: boolean; source_title: string | null;
   attempts: number; created_at: Date;
+};
+
+/** Seleção do Meu Funil vista pela empresa (contrato §28): só números, rótulos e resumos em texto — nada que identifique ou leve à referência da Biblioteca. */
+export type StyleLibraryView = {
+  segment: string | null; segment_label: string | null; segment_source: 'auto' | 'chosen' | 'none'; brand_segment: string | null;
+  options: { id: string; label: string }[]; count: number; descriptions: string[]; enabled: boolean; own_ready: number; in_use: boolean;
 };
 
 type ViewNames = { campaigns: Map<string, string>; sources: Map<string, string | null> };
@@ -178,6 +184,30 @@ export class StyleRefsService {
         in_brand: inBrand,
         pinterest: this.pinterestOn,
       },
+    };
+  }
+
+  /** Painel da Seleção do Meu Funil na marca. Chave inativa (ou a própria Biblioteca) = 404 como se a rota não existisse. */
+  async library(userId: string, ws: string, brandId: string): Promise<StyleLibraryView> {
+    await this.access.require(userId, ws, 'read');
+    if (!this.libraryActiveFor(ws)) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Não encontrado.' });
+    const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
+    if (!brand) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Marca não encontrada.' });
+    const { available, resolved, rows } = await this.libraryFor(ws, brand);
+    const ownReady = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId, status: 'ready', campaign_id: null } });
+    const descriptions = rows.map((r) => notesSummary(r.notes)).filter((d): d is string => !!d);
+    const segment = resolved.segment;
+    return {
+      segment,
+      segment_label: segment ? STYLE_CATEGORY_LABEL[segment] : null,
+      segment_source: resolved.source,
+      brand_segment: brand.segment ?? null,
+      options: STYLE_CATEGORY_IDS.filter((id) => available.has(id)).map((id) => ({ id, label: STYLE_CATEGORY_LABEL[id] })),
+      count: rows.length,
+      descriptions,
+      enabled: brand.style_library_enabled === true,
+      own_ready: ownReady,
+      in_use: brand.style_library_enabled === true && !!segment && rows.length > 0 && ownReady < MAX_NOTES,
     };
   }
 

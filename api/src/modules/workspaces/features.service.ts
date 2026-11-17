@@ -9,24 +9,28 @@ import { inWorkspaceList, parseVacancyWorkspaces, parseWorkspaceList } from '../
 import { WorkspaceAccessService } from '../access/access.service';
 import { PilotGate } from '../../common/config/pilot-gate';
 
-export type WorkspaceFeatures = { campaign_intake: boolean; campaign_pilot: boolean; style_refs_pinterest: boolean; vacancy_stories: boolean };
+export type WorkspaceFeatures = { campaign_intake: boolean; campaign_pilot: boolean; style_refs_pinterest: boolean; style_library: boolean; vacancy_stories: boolean };
 
 @Injectable()
 export class FeaturesService {
   private readonly intake: '*' | Set<string>;
   private readonly vacancy: '*' | Set<string>;
   private readonly pinterest: boolean;
+  private readonly libraryOn: boolean;
+  private readonly libraryWs: string;
   private readonly pilot: PilotGate;
 
   constructor(
     private readonly access: WorkspaceAccessService,
     @Inject(ENV)
-    env: Pick<Env, 'NODE_ENV' | 'CAMPAIGN_INTAKE_WORKSPACE_IDS' | 'VACANCY_STORIES_WORKSPACE_IDS' | 'STYLE_REFS_PINTEREST_ENABLED' | 'CAMPAIGN_PILOT_ENABLED' | 'CAMPAIGN_PILOT_WORKSPACE_IDS'>,
+    env: Pick<Env, 'NODE_ENV' | 'CAMPAIGN_INTAKE_WORKSPACE_IDS' | 'VACANCY_STORIES_WORKSPACE_IDS' | 'STYLE_REFS_PINTEREST_ENABLED' | 'STYLE_LIBRARY_ENABLED' | 'STYLE_LIBRARY_WORKSPACE_ID' | 'CAMPAIGN_PILOT_ENABLED' | 'CAMPAIGN_PILOT_WORKSPACE_IDS'>,
   ) {
     this.pilot = new PilotGate(env);
     this.intake = parseWorkspaceList('CAMPAIGN_INTAKE_WORKSPACE_IDS', env.CAMPAIGN_INTAKE_WORKSPACE_IDS, env.NODE_ENV);
     this.vacancy = parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
     this.pinterest = env.STYLE_REFS_PINTEREST_ENABLED === true;
+    this.libraryOn = env.STYLE_LIBRARY_ENABLED === true;
+    this.libraryWs = (env.STYLE_LIBRARY_WORKSPACE_ID ?? '').trim().toLowerCase();
   }
 
   intakeEnabled(workspaceId: string): boolean {
@@ -39,6 +43,8 @@ export class FeaturesService {
       campaign_intake: this.intakeEnabled(workspaceId),
       campaign_pilot: this.pilot.enabled(workspaceId),
       style_refs_pinterest: this.pinterest,
+      // Mesma regra do `StyleRefsService.libraryActiveFor`: chave ligada, id preenchido e a empresa não é a própria Biblioteca.
+      style_library: this.libraryOn && this.libraryWs !== '' && workspaceId.toLowerCase() !== this.libraryWs,
       vacancy_stories: inWorkspaceList(this.vacancy, workspaceId),
     };
   }

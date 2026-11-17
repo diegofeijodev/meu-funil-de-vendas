@@ -171,7 +171,7 @@ function makeDb(state: State, side: 'prisma' | 'tx', log: string[]) {
   };
 }
 
-function setup(opts: { txState?: (s: State) => void; filesFail?: boolean } = {}) {
+function setup(opts: { txState?: (s: State) => void; filesFail?: boolean; libraryWs?: string } = {}) {
   const state = initial();
   const log: string[] = [];
   const prisma: any = makeDb(state, 'prisma', log);
@@ -191,7 +191,7 @@ function setup(opts: { txState?: (s: State) => void; filesFail?: boolean } = {})
       return [`creative-assets/brands/${id}`];
     }),
   };
-  const svc = new WorkspaceDeletionService(prisma, new WorkspaceAccessService(prisma), files as any);
+  const svc = new WorkspaceDeletionService(prisma, new WorkspaceAccessService(prisma), files as any, { STYLE_LIBRARY_WORKSPACE_ID: opts.libraryWs ?? '' } as any);
   return { svc, state, log, files, txOptions };
 }
 
@@ -257,6 +257,30 @@ describe('WorkspaceDeletionService.preview', () => {
     const p = await svc.preview(OWNER, WS);
     expect(p.blockers.map((b) => b.code)).toEqual(['LIVE_META_CAMPAIGNS', 'LAST_WORKSPACE']);
     expect(p.blockers[0].items).toEqual([{ id: live.id, name: 'Black Friday' }]);
+  });
+});
+
+describe('Biblioteca da Seleção do Meu Funil não pode ser apagada', () => {
+  const MSG = 'Esta empresa guarda a Seleção do Meu Funil, usada por outras empresas. Ela não pode ser apagada.';
+
+  it('puro: bloqueio STYLE_LIBRARY vem antes de LIVE_META_CAMPAIGNS', () => {
+    expect(deletionBlockers({ live: [], memberships: 2, styleLibrary: true })).toEqual([{ code: 'STYLE_LIBRARY', message: MSG }]);
+    const live = liveCampaigns([camp({ name: 'X', meta_campaign_id: 'm', meta_delivery_status: 'ACTIVE' })]);
+    expect(deletionBlockers({ live, memberships: 1, styleLibrary: true }).map((b) => b.code)).toEqual(['STYLE_LIBRARY', 'LIVE_META_CAMPAIGNS', 'LAST_WORKSPACE']);
+    expect(deletionBlockers({ live: [], memberships: 2 })).toEqual([]);
+  });
+
+  it('serviço: com o id = a empresa (qualquer caixa), o preview mostra o bloqueio e o remove dá 409 sem apagar nada', async () => {
+    const { svc, log, files } = setup({ libraryWs: WS.toUpperCase() });
+    expect((await svc.preview(OWNER, WS)).blockers).toEqual([{ code: 'STYLE_LIBRARY', message: MSG }]);
+    expect(await err(svc.remove(OWNER, WS, 'Freela Serviços'))).toBe(`409:STYLE_LIBRARY:${MSG}`);
+    expect(deletes(log)).toEqual([]);
+    expect(files.removeWorkspaceFolders).not.toHaveBeenCalled();
+  });
+
+  it('serviço: id de outra empresa ou vazio não bloqueia', async () => {
+    expect((await setup({ libraryWs: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }).svc.preview(OWNER, WS)).blockers).toEqual([]);
+    expect((await setup().svc.preview(OWNER, WS)).blockers).toEqual([]);
   });
 });
 

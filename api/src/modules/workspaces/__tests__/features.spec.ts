@@ -15,8 +15,8 @@ describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
 
   it('campaign_intake só para as empresas da lista; vacancy_stories pela lista dela; piloto e Pinterest ainda desligados', async () => {
     const f = make({ CAMPAIGN_INTAKE_WORKSPACE_IDS: A, VACANCY_STORIES_WORKSPACE_IDS: B });
-    expect(await f.forWorkspace('u1', A)).toEqual({ campaign_intake: true, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: false });
-    expect(await f.forWorkspace('u1', B)).toEqual({ campaign_intake: false, campaign_pilot: false, style_refs_pinterest: false, vacancy_stories: true });
+    expect(await f.forWorkspace('u1', A)).toEqual({ campaign_intake: true, campaign_pilot: false, style_refs_pinterest: false, style_library: false, vacancy_stories: false });
+    expect(await f.forWorkspace('u1', B)).toEqual({ campaign_intake: false, campaign_pilot: false, style_refs_pinterest: false, style_library: false, vacancy_stories: true });
     expect(f.intakeEnabled(A)).toBe(true);
     expect(f.intakeEnabled(B)).toBe(false);
   });
@@ -25,6 +25,15 @@ describe('FeaturesService (fonte única do "liberado para a empresa")', () => {
     const f = make({ CAMPAIGN_PILOT_ENABLED: true, CAMPAIGN_PILOT_WORKSPACE_IDS: A } as any);
     expect((await f.forWorkspace('u1', A)).campaign_pilot).toBe(true);
     expect((await f.forWorkspace('u1', B)).campaign_pilot).toBe(false);
+  });
+
+  it('style_library só com a flag, o id preenchido e a empresa diferente da Biblioteca (comparação em minúsculas)', async () => {
+    const on = { STYLE_LIBRARY_ENABLED: true, STYLE_LIBRARY_WORKSPACE_ID: A } as any;
+    expect((await make(on).forWorkspace('u1', B)).style_library).toBe(true);
+    expect((await make(on).forWorkspace('u1', A.toUpperCase())).style_library).toBe(false);
+    expect((await make({ ...on, STYLE_LIBRARY_ENABLED: false }).forWorkspace('u1', B)).style_library).toBe(false);
+    expect((await make({ ...on, STYLE_LIBRARY_WORKSPACE_ID: '' }).forWorkspace('u1', B)).style_library).toBe(false);
+    expect((await make({ STYLE_LIBRARY_ENABLED: true } as any).forWorkspace('u1', B)).style_library).toBe(false);
   });
 
   it('qualquer membro lê; quem não é da empresa recebe o erro do acesso', async () => {

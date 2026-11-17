@@ -39,6 +39,12 @@ export class StyleRefsController {
     return this.refs.list(u.id, ws, brandId, campaignParam(campaignId));
   }
 
+  /** Seleção do Meu Funil (contrato §28). Estática: antes das rotas com `:id`. */
+  @Get('library')
+  library(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Param('brandId', ParseUuidPipe) brandId: string) {
+    return this.refs.library(u.id, ws, brandId);
+  }
+
   /** Multipart (campo `file`): JPG/PNG/WEBP até 15 MB; `?campaign_id=` liga à campanha. */
   @Post('upload') @HttpCode(200)
   async upload(
