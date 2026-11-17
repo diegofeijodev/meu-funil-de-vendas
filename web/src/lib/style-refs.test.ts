@@ -10,6 +10,7 @@ import {
   LIBRARY_TEXT,
   libraryLine,
   libraryState,
+  refsPollInterval,
   unrecognizedLine,
   photoLabel,
   refOrigin,
@@ -90,10 +91,25 @@ describe('style-refs', () => {
     expect(libraryState({ enabled: true, in_use: true, own_ready: 1 })).toBe('on');
     expect(libraryState({ enabled: true, in_use: false, own_ready: 4 })).toBe('idle');
     expect(libraryState({ enabled: false, in_use: false, own_ready: 0 })).toBe('off');
+    // in_use=false com menos de 4 próprias (ramo não reconhecido, "Nenhum desses", seleção vazia): não diz "já tem 4 ou mais".
+    expect(libraryState({ enabled: true, in_use: false, own_ready: 1 })).toBe('on');
+    expect(libraryState({ enabled: true, in_use: false, own_ready: 3 })).toBe('on');
+    expect(libraryState({ enabled: false, in_use: true, own_ready: 9 })).toBe('off');
     expect(unrecognizedLine('Floricultura')).toBe('Ainda não temos seleção para "Floricultura". Escolha o ramo mais parecido:');
     expect(unrecognizedLine(null)).toBe('Escolha o ramo mais parecido:');
     expect(styleInvite({ own: [], library: ['x'], brand_id: 'b' })).toEqual({ text: 'Estilo: seguiu a Seleção do Meu Funil.', cta: true, brandId: 'b' });
     expect(styleInvite({ own: [], library: [], brand_id: 'b' })?.text).toBe('Estilo: sem referências.');
     expect(LIBRARY_TEXT.toggle).toBe('Usar a seleção do Meu Funil');
+  });
+});
+
+describe('refsPollInterval', () => {
+  const r = (status: string, attempts: number) => ({ status, attempts }) as never;
+  it('5 s com leitura inicial; 60 s só com tentativas espaçadas; nada sem processing', () => {
+    expect(refsPollInterval(undefined)).toBe(false);
+    expect(refsPollInterval([r('ready', 0), r('failed', 3)])).toBe(false);
+    expect(refsPollInterval([r('processing', 0)])).toBe(5000);
+    expect(refsPollInterval([r('processing', 2), r('processing', 0)])).toBe(5000);
+    expect(refsPollInterval([r('processing', 2), r('ready', 0)])).toBe(60000);
   });
 });

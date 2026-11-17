@@ -30,6 +30,7 @@ import {
   seeAllLabel,
   stopSourceQuestion,
   visibleRefs,
+  refsPollInterval,
 } from "@/lib/style-refs";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
@@ -53,8 +54,8 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: key,
     queryFn: () => listStyleRefs(workspaceId, brandId, campaignId),
-    // Enquanto alguma está "Lendo o estilo…", confere de novo a cada 5 s.
-    refetchInterval: (q) => (q.state.data?.refs.some((r) => r.status === "processing") ? 5000 : false),
+    // "Lendo o estilo…" (1ª leitura): 5 s; só tentativas espaçadas: 60 s; nenhuma lendo: sem conferência.
+    refetchInterval: (q) => refsPollInterval(q.state.data?.refs),
   });
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState<string | null>(null);

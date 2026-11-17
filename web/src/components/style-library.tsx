@@ -65,7 +65,7 @@ export function StyleLibrary({ workspaceId, brandId, canEdit }: { workspaceId: s
           className="mt-0.5"
         />
       </div>
-      <p className="text-sm text-muted-foreground" aria-live="polite">{LIBRARY_TEXT[state]}</p>
+      <p className="text-sm text-muted-foreground">{LIBRARY_TEXT[state]}</p>
 
       {resolved ? (
         <div className="space-y-2">

@@ -154,7 +154,19 @@ export const libraryLine = (label: string, n: number): string =>
 
 export function libraryState(v: { enabled: boolean; in_use: boolean; own_ready: number }): "on" | "idle" | "off" {
   if (!v.enabled) return "off";
-  return v.in_use ? "on" : "idle";
+  if (v.in_use) return "on";
+  // Sem uso agora: "idle" só quando é porque já há 4+ próprias; ramo não reconhecido / "Nenhum desses" / seleção vazia = "on".
+  return v.own_ready >= 4 ? "idle" : "on";
+}
+
+/**
+ * Intervalo da conferência da lista (ms) ou `false`. 5 s só enquanto alguma está lendo pela 1ª vez (attempts 0);
+ * em tentativas espaçadas (attempts > 0, até ~3h30) 60 s, para não renovar as URLs assinadas das miniaturas a toda hora.
+ */
+export function refsPollInterval(refs: Pick<StyleRefLike, "status" | "attempts">[] | undefined): number | false {
+  const processing = (refs ?? []).filter((r) => r.status === "processing");
+  if (processing.length === 0) return false;
+  return processing.some((r) => (r.attempts ?? 0) === 0) ? 5000 : 60000;
 }
 
 export const unrecognizedLine = (brandSegment: string | null): string =>
