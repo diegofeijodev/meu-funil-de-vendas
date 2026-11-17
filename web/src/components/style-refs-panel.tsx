@@ -68,7 +68,8 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
     queryKey: key,
     queryFn: () => listStyleRefs(workspaceId, brandId, campaignId),
     // "Lendo o estilo…" (1ª leitura): 5 s; só tentativas espaçadas: 60 s; nenhuma lendo: sem conferência.
-    refetchInterval: (q) => refsPollInterval(q.state.data?.refs),
+    // Na Marca (`below`) só as próprias contam: a Seleção é acompanhada pela vista do bloco, e refazer a lista a cada 5 s renova as miniaturas.
+    refetchInterval: (q) => refsPollInterval(selection === "below" ? q.state.data?.refs.filter((r) => r.origin !== "selection") : q.state.data?.refs),
   });
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -241,7 +242,7 @@ export function StyleRefsPanel({ workspaceId, brandId, campaignId, canEdit, star
         </div>
       )}
       {!!data && !refs.length && !sources.length && (
-        <p className="text-sm text-muted-foreground">{selection !== "none" && hasSelection ? SELECTION_TEXT.emptyWithSelection : PANEL_TEXT.empty}</p>
+        <p className="text-sm text-muted-foreground">{selection !== "none" && selRefs.length > 0 ? SELECTION_TEXT.emptyWithSelection : PANEL_TEXT.empty}</p>
       )}
 
       {!!sources.length && (

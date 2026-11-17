@@ -243,6 +243,7 @@ export function StyleSelection({ workspaceId, brandId, canEdit }: { workspaceId:
         markChanged();
         toast.success(SELECTION_TEXT.onToast);
       } else {
+        setPickerOpen(false); // a lista de ramos não fica aberta numa Seleção desligada
         hideCurrentSelection();
         toast.success(hadRefs ? SELECTION_TEXT.offWithRefsToast : SELECTION_TEXT.offToast);
       }

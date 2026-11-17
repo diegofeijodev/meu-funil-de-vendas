@@ -32,6 +32,10 @@ mf_api_env() {
   # stories das vagas: vitrine falsa do Freela (fake-providers, 3097) e todas as empresas liberadas ('*' só fora de produção)
   export FREELA_PUBLIC_API_URL=${FREELA_PUBLIC_API_URL:-http://127.0.0.1:3097/freela}
   export VACANCY_STORIES_WORKSPACE_IDS="${VACANCY_STORIES_WORKSPACE_IDS:-*}"
+  # Seleção do Meu Funil (Pinterest automático): DESLIGADA por padrão, para não mudar as outras checagens. Ligar = exportar as DUAS
+  # (STYLE_REFS_PINTEREST_ENABLED=true STYLE_LIBRARY_ENABLED=true) e usar só empresa SEM chave de IA (a pilha não tem Pinterest falso).
+  export STYLE_LIBRARY_ENABLED=${STYLE_LIBRARY_ENABLED:-false}
+  export STYLE_REFS_PINTEREST_ENABLED=${STYLE_REFS_PINTEREST_ENABLED:-false}
   export SCHEDULER_ENABLED=false   # jobs rodam só pelas rotas /api/public/cron/* (uma instância, sem agendador no teste)
 }
 

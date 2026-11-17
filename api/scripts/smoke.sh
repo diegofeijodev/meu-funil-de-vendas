@@ -1285,6 +1285,26 @@ PSQL "DELETE FROM oauth_states WHERE workspace_id IN ('$WID','$NID')" >/dev/null
 [ -n "$FGPID" ] && kill "$FGPID" 2>/dev/null
 check "limpeza Task 6: sem tokens de cron, heartbeats nem states pendentes" "0,0,0" "$(PSQL "SELECT count(*) FROM cron_tokens WHERE name='ads'"),$(PSQL "SELECT count(*) FROM cron_heartbeats WHERE name LIKE 'ads-%' AND last_run_at >= '$T6'"),$(PSQL "SELECT count(*) FROM oauth_states WHERE workspace_id IN ('$WID','$NID')")"
 
+echo "── Seleção do Meu Funil (Pinterest automático; depende de STYLE_LIBRARY_ENABLED + STYLE_REFS_PINTEREST_ENABLED) ──"
+# A empresa do smoke ainda não tem chave de IA própria aqui (as chaves só são salvas na seção seguinte e removidas no fim dela), então a
+# Seleção NUNCA cria pasta nem lê nada: sem Pinterest falso na pilha, esta seção não pode ir à rede.
+SELB=$API/v1/workspaces/$WID/brands/$BID
+SLIB=$(curl -s $API/v1/workspaces/$WID/features -H "$H" | jq -r .style_library)
+if [ "$SLIB" = "true" ]; then
+  LIB=$(curl -s $SELB/style-refs/library -H "$H")
+  check "seleção ligada: library → 6 ramos, enabled, precisa de chave de IA própria" "6,true,true" "$(echo "$LIB" | jq -r '[(.options|length),.enabled,.needs_ai_key]|join(",")')"
+  check "seleção: sem chave nada foi criado (sources_count 0, count 0, reading 0)" "0,0,0" "$(echo "$LIB" | jq -r '[.sources_count,.count,.reading]|join(",")')"
+  check "seleção: PATCH ramo 'none' → 200 e a vista dá segment_source none" "200,none" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $SELB -H "$H" -H "$J" -d '{"style_library_segment":"none"}'),$(curl -s $SELB/style-refs/library -H "$H" | jq -r .segment_source)"
+  check "seleção: PATCH null → volta ao automático" "auto" "$(curl -s -X PATCH $SELB -H "$H" -H "$J" -d '{"style_library_segment":null}' >/dev/null; curl -s $SELB/style-refs/library -H "$H" | jq -r .segment_source)"
+  check "seleção: ramo fora do catálogo → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $SELB -H "$H" -H "$J" -d '{"style_library_segment":"beleza"}')"
+  sleep 2 # a reconciliação do PATCH roda em segundo plano
+  SLST=$(curl -s $SELB/style-refs -H "$H")
+  check "seleção: sem chave, nenhuma pasta nem referência da Seleção (lista e vista)" "0,0,0,0" "$(echo "$SLST" | jq -r '[([.refs[]|select(.origin=="selection")]|length),([.sources[]|select(.origin=="selection")]|length),.limits.in_selection]|join(",")'),$(curl -s $SELB/style-refs/library -H "$H" | jq -r .sources_count)"
+  check "seleção: estranho não lê a vista (403)" "403" "$(curl -s -o /dev/null -w '%{http_code}' $SELB/style-refs/library -H "$HD")"
+else
+  check "seleção desligada: GET /features diz style_library false e library → 404" "false,404" "$SLIB,$(curl -s -o /dev/null -w '%{http_code}' $SELB/style-refs/library -H "$H")"
+fi
+
 echo "── Task 9a: Integrações (chaves de IA, diagnóstico, histórico de publicações) ──"
 AK=$API/v1/ai-keys
 OKEY="sk-fake-good-0123456789abcdefWXYZ"

@@ -641,6 +641,71 @@ try {
   check('guia visual: contador da marca', tem(txtEstilo, '0 de 30 referências nesta marca.'));
   check('guia visual: botão Enviar imagem', tem(txtEstilo, 'Enviar imagem'));
 
+  // Seleção do Meu Funil (ui.md §3): o bloco só existe com `features.style_library` (STYLE_LIBRARY_ENABLED + STYLE_REFS_PINTEREST_ENABLED).
+  // Sem Pinterest falso na pilha, a empresa do teste tem de estar SEM chave de IA: a reconciliação então nunca cria pasta nem vai à rede.
+  const brandId = brandUrl.split('/').pop();
+  const featSel = await apiCall('GET', `/v1/workspaces/${wsId}/features`);
+  const selecaoOn = featSel.body?.style_library === true;
+  if (!selecaoOn) {
+    check('seleção desligada: o bloco "Seleção do Meu Funil" NÃO aparece no Guia visual', !tem(txtEstilo, 'Seleção do Meu Funil'));
+  } else {
+    const libSel = await apiCall('GET', `/v1/workspaces/${wsId}/brands/${brandId}/style-refs/library`);
+    if (!libSel.body?.needs_ai_key) {
+      ko('seleção: a empresa do teste tem chave de IA (a pilha não tem Pinterest falso; suba só com empresa sem chave)');
+    } else {
+      await page.getByRole('heading', { name: 'Seleção do Meu Funil' }).waitFor({ timeout: 15000 });
+      const EXPLICACAO = 'Quando você tem menos de 4 referências suas, o Meu Funil põe sozinho nesta marca referências de pastas públicas do Pinterest do seu ramo, escolhidas pela nossa equipe. Cada uma é lida uma vez com a chave de IA da empresa (em Integrações), e isso gasta crédito dela. São no máximo 12 por vez, e as suas vêm sempre primeiro.';
+      const ESTADO7 = 'Falta a chave de IA da empresa. A seleção usa essa chave para ler as referências. Cadastre uma chave do ChatGPT ou do Gemini em Integrações; até lá, a seleção não traz nada novo.';
+      const OPCOES = ['Açaí e sorvete', 'Hamburgueria e lanches', 'Churrasco e espetinho', 'Bar e bebidas', 'Restaurante', 'Vagas e equipe', 'Nenhum desses'];
+      const interruptor = page.getByRole('switch', { name: 'Usar a Seleção do Meu Funil nesta marca' });
+      await interruptor.waitFor({ timeout: 15000 });
+      const txtSel = await corpo();
+      check('seleção: título e explicação fixa', tem(txtSel, 'Seleção do Meu Funil') && txtSel.includes(EXPLICACAO));
+      check('seleção: interruptor ligado e a dica "Liga e desliga na hora, sem precisar salvar."', (await interruptor.getAttribute('aria-checked')) === 'true' && tem(txtSel, 'Liga e desliga na hora, sem precisar salvar.'));
+      // Segmento "Segmento check" não é de nenhum ramo: estado 5 e a lista já aberta (1ª escolha, sem "Cancelar")
+      check('seleção: estado 5 (ramo não reconhecido) com a frase de não gastar a chave', tem(txtSel, 'Ainda não temos seleção para “Segmento check”. Escolha o ramo mais parecido com o seu negócio:') && tem(txtSel, 'Até você escolher, a seleção não traz nada nem gasta a chave de IA.'));
+      for (const o of OPCOES) check(`seleção: opção "${o}" na lista da 1ª escolha`, (await page.getByRole('radio', { name: o, exact: true }).count()) === 1);
+      // 1ª escolha: Restaurante → toast e estado 7 (falta a chave) com [Abrir Integrações]
+      await page.getByRole('radio', { name: 'Restaurante', exact: true }).click();
+      await page.getByRole('button', { name: 'Usar este ramo' }).click();
+      await page.getByText('Ramo escolhido: Restaurante.').waitFor({ timeout: 15000 });
+      ok('seleção: toast "Ramo escolhido: Restaurante."');
+      await page.getByText(ESTADO7).waitFor({ timeout: 15000 });
+      check('seleção: estado 7 (falta a chave de IA da empresa) para o dono', true);
+      check('seleção: estado 7 tem [Abrir Integrações] apontando para /integrations', (await page.getByRole('link', { name: 'Abrir Integrações' }).getAttribute('href')) === '/integrations');
+      check('seleção: nenhuma pasta nem referência da seleção foi criada sem chave', (await apiCall('GET', `/v1/workspaces/${wsId}/brands/${brandId}/style-refs/library`)).body?.sources_count === 0);
+      // [Trocar o ramo]: lista na própria tela, aria-expanded, 6 opções + "Nenhum desses"
+      const trocar = page.getByRole('button', { name: 'Trocar o ramo' });
+      check('seleção: [Trocar o ramo] fechado (aria-expanded=false)', (await trocar.getAttribute('aria-expanded')) === 'false');
+      await trocar.click();
+      check('seleção: [Trocar o ramo] aberto (aria-expanded=true)', (await trocar.getAttribute('aria-expanded')) === 'true');
+      await page.getByText('Escolha o ramo mais parecido com o seu negócio:').first().waitFor({ timeout: 10000 });
+      check('seleção: a lista abre com as 6 opções + "Nenhum desses" e o ramo atual marcado', (await page.getByRole('radio').count()) === 7 && (await page.getByText('Restaurante (atual)').count()) === 1);
+      // "Nenhum desses" → [Ficar sem seleção] → toast da §3.4 e estado 4
+      await page.getByRole('radio', { name: 'Nenhum desses', exact: true }).click();
+      await page.getByRole('button', { name: 'Ficar sem seleção' }).click();
+      await page.getByText('Pronto. A seleção não traz referências para esta marca.').waitFor({ timeout: 15000 });
+      ok('seleção: toast "Pronto. A seleção não traz referências para esta marca."');
+      await page.getByText('Ligada, mas sem ramo: você escolheu “Nenhum desses”, então a seleção não traz referências. Escolha um ramo ou desligue a seleção.').waitFor({ timeout: 15000 });
+      check('seleção: estado 4 (sem ramo) com [Escolher o ramo]', (await page.getByRole('button', { name: 'Escolher o ramo' }).count()) === 1);
+      // abrir a lista e desligar o interruptor (sem referências da seleção: direto, sem confirmação) fecha a lista
+      const escolher = page.getByRole('button', { name: 'Escolher o ramo' });
+      await escolher.click();
+      check('seleção: [Escolher o ramo] aberto (aria-expanded=true)', (await escolher.getAttribute('aria-expanded')) === 'true');
+      await interruptor.click();
+      await page.getByText('Seleção desligada.', { exact: true }).waitFor({ timeout: 15000 });
+      ok('seleção: desligar sem referências da seleção = direto, toast "Seleção desligada."');
+      await page.getByText('Desligada. As artes seguem só as suas referências.').waitFor({ timeout: 15000 });
+      check('seleção: desligada = estado 3 e a lista de ramos fechou', (await interruptor.getAttribute('aria-checked')) === 'false' && (await page.getByRole('radio').count()) === 0);
+      await interruptor.click();
+      await page.getByText('Seleção ligada.', { exact: true }).waitFor({ timeout: 15000 });
+      ok('seleção: religar mostra o toast "Seleção ligada."');
+      check('seleção: religada (aria-checked=true)', (await interruptor.getAttribute('aria-checked')) === 'true');
+      // devolve a marca ao automático (a marca é apagada logo depois, mas deixa o estado limpo)
+      await apiCall('PATCH', `/v1/workspaces/${wsId}/brands/${brandId}`, { style_library_segment: null });
+    }
+  }
+
   // lista: cartão com segmento, contagens e exclusão pelo diálogo
   await page.goto(`${BASE}/brands`);
   const cartao = page.locator('a[href^="/brands/"]', { hasText: marca });

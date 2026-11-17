@@ -448,7 +448,10 @@ export class StyleRefsService implements OnModuleDestroy {
    * chave de IA. Uma pasta própria igual à do catálogo fica como está. Grava `style_library_checked_at`.
    */
   reconcileSelection(ws: string, brandId: string): Promise<{ created: number; removed: number }> {
-    return this.queue.run(this.queueKey(ws, brandId), () => this.reconcileNow(ws, brandId));
+    return this.queue.run(this.queueKey(ws, brandId), async () => {
+      const { created, removed } = await this.reconcileNow(ws, brandId);
+      return { created, removed };
+    });
   }
 
   /** Ajuste em segundo plano: devolve na hora; erro vai para o log (nunca rejeição solta). */
@@ -466,7 +469,20 @@ export class StyleRefsService implements OnModuleDestroy {
       take: limit,
       select: { id: true, workspace_id: true },
     })) as { id: string; workspace_id: string }[];
-    for (const b of due) await this.reconcileSelection(b.workspace_id, b.id).catch((e) => this.logger.warn(`Seleção da marca ${b.id}: ${(e as Error).message}`));
+    for (const b of due) {
+      // Uma marca de cada vez, e o `sync` das pastas novas dela dentro da rodada (pela fila da marca): sem rajada de chutes em paralelo na virada da chave.
+      // A leitura das pendentes fica com o `processPending` do fim da rodada.
+      try {
+        const { made } = await this.queue.run(this.queueKey(b.workspace_id, b.id), () => this.reconcileNow(b.workspace_id, b.id, false));
+        if (this.autoProcess && made.length) {
+          await this.queue.run(this.queueKey(b.workspace_id, b.id), async () => {
+            for (const s of made) await this.syncIfDue(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
+          });
+        }
+      } catch (e) {
+        this.logger.warn(`Seleção da marca ${b.id}: ${(e as Error).message}`);
+      }
+    }
     return due.length;
   }
 
@@ -485,8 +501,9 @@ export class StyleRefsService implements OnModuleDestroy {
     await this.whenIdle();
   }
 
-  private async reconcileNow(ws: string, brandId: string): Promise<{ created: number; removed: number }> {
-    const none = { created: 0, removed: 0 };
+  /** `kick = false` (job): não solta o chute em segundo plano; devolve as pastas criadas em `made` para o chamador sincronizar na vez dele. */
+  private async reconcileNow(ws: string, brandId: string, kick = true): Promise<{ created: number; removed: number; made: SourceRow[] }> {
+    const none = { created: 0, removed: 0, made: [] as SourceRow[] };
     if (!this.selectionOn()) return none;
     const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: { segment: true, style_library_enabled: true, style_library_segment: true } });
     if (!brand) return none;
@@ -522,8 +539,8 @@ export class StyleRefsService implements OnModuleDestroy {
         }
       }
     }
-    if (made.length) this.kickSelection(ws, brandId, made);
-    return { created: made.length, removed };
+    if (made.length && kick) this.kickSelection(ws, brandId, made);
+    return { created: made.length, removed, made };
   }
 
   /** Chave de IA da empresa (a herdada da agência conta: é a mesma que a leitura usa). */
@@ -638,7 +655,7 @@ export class StyleRefsService implements OnModuleDestroy {
         .run(this.queueKey(ws, brandId), async () => {
           for (const s of sources) await this.syncIfDue(s).catch((e) => this.logger.warn(`pasta ${s.id}: ${(e as Error).message}`));
         })
-        .then(() => this.processPending(PINS_PER_SYNC))
+        .then(() => this.processPending(SELECTION_MAX)) // as até 12 da Seleção de uma vez: nenhuma fica esperando o job
         .catch((e) => this.logger.warn(`Seleção da marca ${brandId}: ${(e as Error).message}`)),
     );
   }
@@ -895,7 +912,8 @@ export class StyleRefsService implements OnModuleDestroy {
     const ws = source.workspace_id;
     const brandId = source.brand_id;
     const folder = { id: source.id, workspace_id: ws };
-    const stamp = () => this.prisma.style_ref_sources.updateMany({ where: folder, data: { last_synced_at: new Date() } });
+    // Sem ida ao Pinterest nada de novo falhou: o erro de outro dia não fica de pé numa pasta que está só cheia/parada.
+    const stamp = () => this.prisma.style_ref_sources.updateMany({ where: folder, data: { last_synced_at: new Date(), last_error: null } });
     // 1. marca de hoje (a reconciliação tira a pasta se ela sumiu ou foi desligada).
     const brand = await this.prisma.brands.findFirst({ where: { id: brandId, workspace_id: ws }, select: QUOTA_SELECT });
     if (!brand || brand.style_library_enabled !== true) {

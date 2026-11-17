@@ -371,6 +371,16 @@ describe('Seleção — reconciliação (reconcileSelection)', () => {
     expect(w.ai.json).toHaveBeenCalled(); // processPending leu as pendentes
   });
 
+  it('I1: o chute da Seleção lê as pendentes com o teto da Seleção (12), não com o das 8 do sync próprio', async () => {
+    const w = await world(KEY, 0, 0);
+    w.svc.autoProcess = true;
+    const read = jest.spyOn(w.svc, 'processPending').mockResolvedValue(0);
+    await w.svc.reconcileSelection(WS, BRAND);
+    await w.svc.whenIdle();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(12);
+  });
+
   it('sem nada criado, o chute não roda (nenhuma ida ao Pinterest)', async () => {
     const w = await world({ env: ON }, 0, 0);
     w.svc.autoProcess = true;
@@ -424,6 +434,34 @@ describe('Seleção — gatilhos (reconcileSoon, reconcileDueBrands, markSelecti
     // a marca da empresa B também foi reconciliada, com o workspace_id da própria linha (a chave falsa vale para todas)
     expect(w.t.style_ref_sources.rows.filter((s) => s.workspace_id === OTHER_WS).length).toBeGreaterThan(0);
     expect(w.t.style_ref_sources.rows.filter((s) => s.workspace_id === OTHER_WS).every((s) => s.brand_id === OTHER_BRAND)).toBe(true);
+  });
+
+  it('I2: no job, 3 marcas vencidas sincronizam as pastas novas UMA marca de cada vez (nada de chutes em paralelo)', async () => {
+    const w = await world(KEY, 0, 0);
+    for (const id of ['dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee']) {
+      await w.t.brands.create({ data: { id, workspace_id: WS, name: id.slice(0, 4), segment: 'Açaiteria Frutá' } });
+    }
+    w.svc.autoProcess = true;
+    jest.spyOn(w.svc, 'processPending').mockResolvedValue(0);
+    let running = 0;
+    let peak = 0;
+    const synced: string[] = [];
+    (w.svc as any).sync = async (row: { brand_id: string }) => {
+      running++;
+      peak = Math.max(peak, running);
+      synced.push(row.brand_id);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return 0;
+    };
+    expect(await w.svc.reconcileDueBrands()).toBe(3);
+    // o job esperou o sync de cada marca (nada ficou para depois do retorno) e nunca houve dois ao mesmo tempo
+    expect(running).toBe(0);
+    expect(synced).toHaveLength(6); // 3 marcas × 2 pastas
+    expect(peak).toBe(1);
+    expect(new Set(synced).size).toBe(3);
+    // e o chute em segundo plano não foi solto pelo job
+    expect(w.fetch).not.toHaveBeenCalled();
   });
 
   it('reconcileDueBrands sem Seleção: 0 e nada muda', async () => {
@@ -803,6 +841,14 @@ describe('Seleção — sincronização da pasta (18b)', () => {
     expect(rows.filter((r) => r.origin === 'selection')).toHaveLength(2);
     expect(rows.filter((r) => r.origin === 'own').map((r) => r.id).sort()).toEqual([...own].sort());
     expect(rows).toHaveLength(30);
+  });
+
+  it('sync sem vaga (não vai ao Pinterest) não deixa um last_error antigo de pé', async () => {
+    const w = await world(KEY, 4, 0);
+    const a = await folder(w, feed(w, 'a'), 'selection', 0, { last_error: 'Esta pasta não respondeu agora.' });
+    await w.svc.refreshDueSources(5);
+    expect(rssCalls(w)).toEqual([]);
+    expect(w.t.style_ref_sources.rows.find((s) => s.id === a.src.id)!.last_error).toBeNull();
   });
 
   it('só quando útil: com 4 próprias prontas, ou 3 prontas + 1 lendo, não busca o RSS', async () => {
