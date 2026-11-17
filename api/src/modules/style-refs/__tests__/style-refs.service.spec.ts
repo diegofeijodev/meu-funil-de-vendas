@@ -474,7 +474,7 @@ describe('StyleRefsService — Seleção do Meu Funil (Fatia 4)', () => {
     expect(svc.libraryActiveFor(LIB)).toBe(false);
     expect(svc.libraryActiveFor(WS)).toBe(true);
     const libBrand = t.brands.rows.find((b: any) => b.name === 'Açaí');
-    const pick = (await svc.loadStyleNotes(LIB, libBrand.id, null, 'açaí'))!;
+    const pick = (await svc.loadStyleNotes(LIB, libBrand!.id, null, 'açaí'))!;
     expect(pick.used.library).toEqual([]);
   });
   it('erro ao ler a Biblioteca → segue só com as próprias', async () => {

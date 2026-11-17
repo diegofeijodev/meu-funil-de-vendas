@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Image as ImageIcon, Images, Clapperboard, CircleDot, Film } from "lucide-react";
 import { getIgAccount, listIgPosts } from "@/modules/instagram/infrastructure/instagram.api";
 import { cn } from "@/lib/utils";
+import type { StyleRecordLike } from "@/lib/style-refs";
 
 export type IgPost = {
   id: string;
@@ -35,6 +36,8 @@ export type IgPost = {
   run_id?: string | null;
   /** Origem do post; `"vacancy"` = story automático de vaga. */
   source?: string | null;
+  /** Referências de estilo usadas na arte (Pinterest automático). */
+  style_refs?: StyleRecordLike | null;
 };
 
 export const FORMATS: Record<

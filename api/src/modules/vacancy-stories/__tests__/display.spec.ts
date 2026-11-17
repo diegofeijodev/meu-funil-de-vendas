@@ -23,7 +23,7 @@ const vac = (o: Partial<FreelaVacancy> = {}): FreelaVacancy => ({
 const settings = (o: Partial<SettingsRow> = {}): SettingsRow => ({
   workspace_id: WS_A, brand_id: null, enabled: true, enabled_at: new Date('2026-10-29T09:00:00Z'), enabled_by: null, template_asset_id: uuid(),
   template_texts: [], template_bg: null, template_landscape: false, cities: [], daily_cap: 10, window_start: '08:00', window_end: '21:00',
-  min_lead_minutes: 120, vendor: 'openai', auto_publish: false, last_poll_at: null, last_poll_ok_at: null, last_poll_error: null,
+  min_lead_minutes: 120, vendor: 'openai', auto_publish: false, style_refs_enabled: false, last_poll_at: null, last_poll_ok_at: null, last_poll_error: null,
   recent_cities: [], preview: {}, ai_error: null, ai_error_at: null, created_at: NOW, updated_at: NOW, ...o,
 });
 
