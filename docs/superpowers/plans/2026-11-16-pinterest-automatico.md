@@ -1087,7 +1087,7 @@ da P12. As Tasks 10–12 já construídas (empresa central) são **desfeitas** n
 - **P17. Origem.** `style_ref_sources.origin` e `style_references.origin`: `text NOT NULL DEFAULT 'own'`, CHECK `in ('own','selection')`. A
   referência herda a origem da pasta no `sync`; envio e Pin colado são sempre `own`.
 - **P18. Seleção ligada** = `STYLE_LIBRARY_ENABLED && STYLE_REFS_PINTEREST_ENABLED` (a Seleção só existe pelo RSS). Igual em
-  `features.style_library` e no serviço. **Desligada = inerte**: nada é criado, renovado, lido nem usado na escolha, e nada é apagado.
+  `features.style_library` e no serviço. **Desligada = inerte**: nada é criado, renovado, lido nem usado na escolha, e nada é apagado. Exceção (Ruling R12): abrir espaço para uma própria tira primeiro as da Seleção.
 - **P19. Ramo da marca.** `brands.style_library_segment`: `NULL` = automático por `selectionBranchFor(brands.segment)`; id de ramo do
   catálogo = escolhido; `'none'` = "Nenhum desses". Valor gravado que não é ramo do catálogo = automático. `UpdateBrandDto` aceita só os
   ramos do catálogo, `'none'` e `null`. `resolveSelectionBranch(brand)` → `{ segment: StyleCategoryId | null; source: 'auto' | 'chosen' | 'none' }`.

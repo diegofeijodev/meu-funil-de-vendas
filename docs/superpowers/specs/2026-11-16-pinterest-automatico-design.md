@@ -146,7 +146,8 @@ Reescrita depois das respostas do Denner em 17/11 (§5.1): **não existe mais em
   rodada (é o que pega a chave cadastrada depois em Integrações e a marca nova).
 - **Desligar, "Nenhum desses" ou trocar de ramo** tira as pastas da Seleção e as referências delas; na troca, entram as do ramo novo. O ramo
   reconhecido **pode ser trocado na tela** (fecha o ponto que ficou aberto em 16/11). Chave do servidor desligada = **inerte**: nada é
-  criado, renovado, lido nem usado, e nada é apagado (religar retoma).
+  criado, renovado, lido nem usado, e a máquina da Seleção não apaga nada (religar retoma). Exceção (Ruling R12): para pôr
+  uma referência própria com a marca cheia, as da Seleção (escondidas e sem uso) saem primeiro.
 - **Própria sempre antes.** Na escolha das notas a Seleção só completa as vagas que as próprias não ocuparam (como em 16/11). As pastas da
   Seleção não contam no limite de 5 pastas próprias; a Seleção tem teto próprio e nunca tira referência própria do teto de 30 da marca
   (a própria tira a da Seleção primeiro). A Seleção só busca Pins novos enquanto é útil (a marca tem menos de 4 próprias) e não gira:
@@ -228,4 +229,10 @@ migrações aditivas e roteiro de subida no padrão de `~/meufunil-deploy/`.
   o "automático" pedido; a tela diz que gasta) e 8 importantes (não dizia que é automático nem que custa, estados faltando, quem pode agir,
   rádio que gravava a cada toque, desligar sem confirmar, promessas de prazo, agrupamento, região viva). Textos finais no ui.md §3; pedidos à
   API no plano (P34–P38).
+- 17/11 construção (Tasks 16–20, cada uma com implementador e revisor novos) e code-reviewer-pro no ramo: "pronto com correções para
+  LIGAR" (subir com a chave desligada é seguro); 3 importantes corrigidos na onda final (lista da Marca refeita a cada 5 s pelas
+  referências da Seleção; job disparando até 10 sincronizações em paralelo; Seleção ligada nunca exercitada — smoke e browser-check
+  ganharam checagens com ela ligada, sem rede). Decisões de quem coordenou: R9 (Task 18 em duas), R10 (18a e 18b sobem juntas), R11 (o
+  freio da leitura em curso só vale para leitura esperando nova tentativa), R12 (a exceção acima). Não exercitado ainda: criar pasta com
+  chave, sincronizar, cota e leitura contra Postgres e Pinterest reais — a primeira empresa ligada em produção é o primeiro teste real.
 
