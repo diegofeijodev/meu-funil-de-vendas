@@ -168,6 +168,22 @@ describe('StyleRefsService — Pinterest', () => {
     expect(t.style_references.rows.every((r) => r.source_id === t.style_ref_sources.rows[0]!.id && r.campaign_id === null)).toBe(true);
   });
 
+  it('lista da marca: nome da campanha, título da pasta, tentativa e quantas cada pasta tem', async () => {
+    const { t, svc, routes, image } = await setup();
+    routes.set('https://www.pinterest.com/foodnetwork/5-star-recipes.rss', () => new Response(RSS, { status: 200, headers: { 'content-type': 'application/rss+xml' } }));
+    routes.set('https://i.pinimg.com/736x/dc/b0/fb/dcb0fb8eefbe6f3549ee942c86557393.jpg', image);
+    routes.set('https://i.pinimg.com/736x/9a/95/b6/9a95b6ef9aa358907c5947e6f80eb86f.jpg', image);
+    await svc.upload(OWNER, WS, BRAND, { bytes: await png(), mime: 'image/png' }, CAMP);
+    await svc.addPinterest(OWNER, WS, BRAND, 'https://www.pinterest.com/foodnetwork/5-star-recipes/');
+    expect(t.style_references.rows).toHaveLength(3);
+    const l = await svc.list(VIEWER, WS, BRAND);
+    expect(l.refs.find((r) => r.campaign_id === CAMP)).toMatchObject({ campaign_name: 'Jundiaí', source_title: null, attempts: 0 });
+    expect(l.refs.filter((r) => r.from_source)).toHaveLength(2);
+    expect(l.refs.filter((r) => r.from_source).every((r) => r.source_title === '5 Star Recipes' && r.campaign_name === null)).toBe(true);
+    expect(l.sources[0]).toMatchObject({ title: '5 Star Recipes', refs_count: 2 });
+    expect(l.limits).toMatchObject({ in_brand: 3, brand: 30, campaign: 8 });
+  });
+
   it('RSS fora do ar: a fonte guarda o erro e as referências antigas continuam; Pinterest desligado → 404', async () => {
     const { t, svc, routes, image } = await setup();
     routes.set('https://www.pinterest.com/foodnetwork/5-star-recipes.rss', () => new Response(RSS, { status: 200 }));

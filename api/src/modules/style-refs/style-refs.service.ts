@@ -82,8 +82,11 @@ type RefRow = {
 
 export type StyleRefView = {
   id: string; source: string; source_url: string | null; title: string | null; status: string; summary: string | null; error: string | null;
-  image_url: string | null; campaign_id: string | null; from_source: boolean; created_at: Date;
+  image_url: string | null; campaign_id: string | null; campaign_name: string | null; from_source: boolean; source_title: string | null;
+  attempts: number; created_at: Date;
 };
+
+type ViewNames = { campaigns: Map<string, string>; sources: Map<string, string | null> };
 
 /** JPEG ≤ 1024 px. Lança se não for JPG/PNG (o tipo é conferido pelo conteúdo, não pelo nome; o decodificador do servidor não lê WEBP). */
 async function shrink(images: ImageService, bytes: Uint8Array): Promise<Uint8Array> {
@@ -140,13 +143,18 @@ export class StyleRefsService {
       take: BRAND_CAP + CAMPAIGN_CAP,
     })) as RefRow[];
     const sources = await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, brand_id: brandId }, orderBy: { created_at: 'asc' } });
+    const names: ViewNames = { campaigns: await this.campaignNames(ws, rows), sources: new Map(sources.map((s) => [s.id, s.title])) };
+    const perSource = new Map<string, number>();
+    for (const r of rows) if (r.source_id) perSource.set(r.source_id, (perSource.get(r.source_id) ?? 0) + 1);
+    const inBrand = await this.prisma.style_references.count({ where: { workspace_id: ws, brand_id: brandId } });
     return {
-      refs: rows.map((r) => this.view(r)),
-      sources: sources.map((s) => ({ id: s.id, url: s.url, title: s.title, last_synced_at: s.last_synced_at, last_error: s.last_error })),
+      refs: rows.map((r) => this.view(r, names)),
+      sources: sources.map((s) => ({ id: s.id, url: s.url, title: s.title, last_synced_at: s.last_synced_at, last_error: s.last_error, refs_count: perSource.get(s.id) ?? 0 })),
       limits: {
         campaign: CAMPAIGN_CAP,
         brand: BRAND_CAP,
         in_campaign: campaignId ? rows.filter((r) => r.campaign_id === campaignId).length : 0,
+        in_brand: inBrand,
         pinterest: this.pinterestOn,
       },
     };
@@ -181,7 +189,7 @@ export class StyleRefsService {
     await this.makeRoom(ws, brandId, campaignId ?? null, 1, true);
     const row = await this.store(ws, brandId, { campaignId: campaignId ?? null, source: 'upload', createdBy: userId }, jpeg);
     this.kick();
-    return this.view(row);
+    return this.view(row, await this.namesFor(ws, [row]));
   }
 
   /** Pin (1 referência) ou pasta/perfil (vira fonte acompanhada + até 8 Pins agora; o job renova a cada 24 h). */
@@ -204,7 +212,7 @@ export class StyleRefsService {
       await this.makeRoom(ws, brandId, campaignId ?? null, 1, true);
       const row = await this.store(ws, brandId, { campaignId: campaignId ?? null, source: 'pinterest', sourceUrl: link.url, pinId: link.pinId, createdBy: userId }, jpeg);
       this.kick();
-      return { kind: 'pin' as const, added: 1, refs: [this.view(row)] };
+      return { kind: 'pin' as const, added: 1, refs: [this.view(row, await this.namesFor(ws, [row]))] };
     }
 
     let source = await this.prisma.style_ref_sources.findFirst({ where: { workspace_id: ws, brand_id: brandId, rss_url: link.rssUrl } });
@@ -316,7 +324,21 @@ export class StyleRefsService {
     setTimeout(() => void this.processPending(PINS_PER_SYNC).catch((e) => this.logger.warn(`ler estilo: ${(e as Error).message}`)), 0);
   }
 
-  private view(r: RefRow): StyleRefView {
+  /** Nome das campanhas das linhas (sempre no workspace). */
+  private async campaignNames(ws: string, rows: RefRow[]): Promise<Map<string, string>> {
+    const ids = [...new Set(rows.map((r) => r.campaign_id).filter((x): x is string => !!x))];
+    if (!ids.length) return new Map();
+    const cs = await this.prisma.campaigns.findMany({ where: { workspace_id: ws, id: { in: ids } }, select: { id: true, name: true } });
+    return new Map(cs.map((c) => [c.id, c.name as string]));
+  }
+
+  private async namesFor(ws: string, rows: RefRow[]): Promise<ViewNames> {
+    const ids = [...new Set(rows.map((r) => r.source_id).filter((x): x is string => !!x))];
+    const srcs = ids.length ? await this.prisma.style_ref_sources.findMany({ where: { workspace_id: ws, id: { in: ids } } }) : [];
+    return { campaigns: await this.campaignNames(ws, rows), sources: new Map(srcs.map((s) => [s.id, s.title])) };
+  }
+
+  private view(r: RefRow, names: ViewNames): StyleRefView {
     return {
       id: r.id,
       source: r.source,
@@ -328,7 +350,10 @@ export class StyleRefsService {
       // Só para a tela e por pouco tempo: a imagem de terceiro não fica circulando (a lista é buscada de novo ao abrir).
       image_url: r.storage_path ? this.files.signedUrl(BUCKET, r.storage_path, VIEW_URL_TTL_S) : null,
       campaign_id: r.campaign_id,
+      campaign_name: r.campaign_id ? names.campaigns.get(r.campaign_id) ?? null : null,
       from_source: !!r.source_id,
+      source_title: r.source_id ? names.sources.get(r.source_id) ?? null : null,
+      attempts: r.attempts ?? 0,
       created_at: r.created_at,
     };
   }
