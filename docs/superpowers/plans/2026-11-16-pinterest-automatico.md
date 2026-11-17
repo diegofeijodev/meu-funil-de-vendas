@@ -1185,6 +1185,33 @@ da P12. As Tasks 10–12 já construídas (empresa central) são **desfeitas** n
 - **Tasks:** a migração da Task 16 leva também `style_selection_day`/`style_selection_reads`; o `FakeTable` (P32) entra na Task 16; P31 e P26′
   entram na Task 18; P22′ (as duas consultas) na Task 18.
 
+### Revisão do ux-designer (17/11) — incorporada (textos finais no ui.md §3, revisado)
+
+- **P34. Vista `GET /style-refs/library` (troca a P24):** `{ segment, segment_label, segment_source, brand_segment, options: [{ id, label }],
+  enabled, needs_ai_key, ai_credit: null | 'no_credit' | 'daily_limit', daily_left, sources_count, count, reading, own_ready, in_use }`.
+  `ai_credit` vem do `AiCreditAlertsService.status(ws)` (o motivo do 1º provedor em alerta; `null` sem alerta). `daily_left` = `12 −
+  style_selection_reads` (dia de hoje) ou 12. `own_ready` conta as próprias prontas **e** em `processing` sem campanha (a mesma régua do
+  "útil" da P21′). Sai `descriptions`.
+- **P35. Rótulos e ordem de tela da Seleção** (no catálogo, `SELECTION_OPTIONS`): "Açaí e sorvete" (`acai_sorvete`), "Hamburgueria e lanches"
+  (`comida_hamburguer`), "Churrasco e espetinho" (`comida_churrasco`), "Bar e bebidas" (`bebida_bar`), "Restaurante" (`ambiente`), "Vagas e equipe"
+  (`equipe_vagas`), nesta ordem. `options[].label` e `segment_label` usam esses rótulos. A prioridade do reconhecimento (P16) não muda.
+- **P36. Colar algo que já veio da Seleção** (P26′) devolve `promoted: true` (pasta: `{ kind, added, promoted }`; Pin: o item + `promoted`).
+  O `400` de parar pasta da Seleção tem `code: 'SELECTION_SOURCE'` e a mensagem do ui.md §3.9.
+- **P37. Chave cadastrada em Integrações** (`integrations/ai-keys-actions.service.ts`, ao gravar uma chave) põe as marcas da empresa e das que
+  herdam dela (`ai_inherit_from`) na frente da fila: `brands.style_library_checked_at = null` (só banco; erro vai para o log e não derruba a
+  gravação da chave).
+- **P38. Tela** (Tasks 19–20): pastas e referências da Seleção ficam **dentro** do bloco "Seleção do Meu Funil", abaixo do interruptor; a
+  lista de cima mostra só as próprias ("Suas pastas acompanhadas", "Suas referências"); estados 1–12 da §3.3; troca de ramo com
+  [Usar este ramo] (tocar só marca); confirmação ao desligar com referências; a tela esconde na hora as referências da Seleção ao desligar
+  ou trocar; região viva única na seção "Estilo das artes" da Marca; conferência da vista a cada 10 s por até 10 min nos estados 10b/11/12
+  com `reading` > 0; "Abrir Integrações" só para dono ou administrador (`useWorkspace().role`). Convite misto na §5.
+- **Fica com o dono:** `brands.style_library_enabled` nasce `true` (automático, como o dono pediu) — ao ligar a chave do servidor, toda marca
+  com chave de IA e menos de 4 próprias passa a gastar até 12 leituras por dia (o ui.md §3.2 diz isso na tela). Estimativa de custo em reais
+  não entra (sem fonte).
+- **Tasks:** a Task 19 vira duas: **Task 19** (web) = textos/regras puras (`lib/style-refs.ts`), esquemas da API, painel de cima só com as
+  próprias e convite (§5 + P27); **Task 20** (web) = bloco da Seleção (estados, ramo, ligar/desligar, lista da Seleção, região viva,
+  conferência). A verificação passa a ser a **Task 21**. A Task 17 já entrega a vista da P34; a Task 18 entrega P36 e P37.
+
 ### Regras desta rodada (além das de sempre)
 
 - Memória: antes de cada comando pesado, `awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo` ≥ 2300; senão esperar 60 s e conferir de
@@ -1256,9 +1283,9 @@ style-refs-panel.tsx` (pasta da Seleção sem "Parar", rótulos), `web/src/compo
 - [ ] Testes que falham (vitest de `lib/style-refs.test.ts`); implementar; rodar o arquivo. Commit `feat(web): Seleção do Meu Funil
   automática no painel da Marca e convite só com a Seleção ligada`.
 
-### Task 20: Verificação, merge do `fix/texto-cortado-arte`, roteiro e revisão final (coordenador)
+### Task 21: Verificação, merge do `fix/texto-cortado-arte`, roteiro e revisão final (coordenador)
 
-Jest por arquivo dos specs tocados nas Tasks 16–19 e dos de sempre (`creative.service`, `media-generation`, `compose`); `tsc` da API e do web
+Jest por arquivo dos specs tocados nas Tasks 16–20 e dos de sempre (`creative.service`, `media-generation`, `compose`); `tsc` da API e do web
 uma vez cada; lint sem `--fix`; smoke; browser-check grupos 1 (marcas/configuração) e 3 (Estúdio), um por vez. `git merge
 fix/texto-cortado-arte` e de novo os testes de compose, `creative.service` e `media-generation`. Roteiro
 `~/meufunil-deploy/subir-pinterest-automatico.sh`: migração `20261117120000`, filtro `~ '^2026111[67]'`, sem `STYLE_LIBRARY_WORKSPACE_ID`,

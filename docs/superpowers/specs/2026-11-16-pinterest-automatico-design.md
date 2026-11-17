@@ -224,3 +224,8 @@ migrações aditivas e roteiro de subida no padrão de `~/meufunil-deploy/`.
   pasta/Pin da Seleção, corridas, fila de leitura única, Seleção desligada ainda lida, `makeRoom` apagando própria, cota burlável, gatilho
   em todo "Salvar", `FakeTable` que deixa teste passar sem testar). Incorporados no plano (P20′–P33). Não adotado: catálogo de Pins fixos
   (a ordem do dono é pasta acompanhada pelo RSS; com a vaga decidida antes do RSS, pasta cheia não gera chamada).
+- 17/11 ux-designer (Fatia 4 v4): 1 bloqueante para o dono (a Seleção nasce ligada e gasta a chave sem a empresa pedir — fica ligada por ser
+  o "automático" pedido; a tela diz que gasta) e 8 importantes (não dizia que é automático nem que custa, estados faltando, quem pode agir,
+  rádio que gravava a cada toque, desligar sem confirmar, promessas de prazo, agrupamento, região viva). Textos finais no ui.md §3; pedidos à
+  API no plano (P34–P38).
+
