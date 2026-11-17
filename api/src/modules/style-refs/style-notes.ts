@@ -62,7 +62,7 @@ export const STYLE_NOTES_PROMPT = [
   '- clima: a sensação que passa;',
   `- categorias: de 1 a 3 destes códigos, os que dizem o assunto da imagem: ${CATEGORY_LIST};`,
   '- assunto: o que a imagem mostra, em até 6 palavras, sem marca nem nome;',
-  '- acabamento: até 300 letras sobre superfície, tipo de fundo, profundidade de campo e textura (não descreva onde ficam os elementos nem as pessoas);',
+  '- acabamento: até 300 letras sobre superfície, tipo de fundo, profundidade de campo e textura (não descreva onde ficam os elementos nem as pessoas; sem texto, letreiro, marca, nome nem logotipo);',
   '- evitar: até 3 coisas que destoariam desse estilo.',
 ].join('\n');
 

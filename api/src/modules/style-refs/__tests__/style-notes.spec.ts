@@ -24,6 +24,8 @@ describe('notas de estilo v2', () => {
   it('o prompt pede os campos novos no TEXTO (a chave própria não recebe o schema) e lista os ids', () => {
     for (const w of ['categorias', 'assunto', 'acabamento', ...STYLE_CATEGORY_IDS]) expect(STYLE_NOTES_PROMPT).toContain(w);
     expect(STYLE_NOTES_SCHEMA.required).toEqual(expect.arrayContaining(['categorias', 'assunto', 'acabamento']));
+    const linha = STYLE_NOTES_PROMPT.split('\n').find((l) => l.startsWith('- acabamento'))!;
+    expect(linha).toContain('sem texto, letreiro, marca, nome nem logotipo');
   });
   it('linha no teto: ≤ 600, mantém assunto e acabamento; só as partes de menor prioridade saem', () => {
     const l = noteLine(1, FULL, { labels: ['hambúrguer e lanches', 'bebida e bar'] });
