@@ -8,6 +8,7 @@ import { errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
+import { PublishBlockService } from './publish-block.service';
 import { ProductionService } from './production.service';
 
 export const CRON_TASKS = ['queue', 'publish', 'media', 'metrics', 'weekly', 'optimize', 'account'] as const;
@@ -29,14 +30,17 @@ export class InstagramCronService implements OnModuleInit {
     private readonly metrics: MetricsService,
     private readonly account: AccountService,
     private readonly production: ProductionService,
+    private readonly publishBlock: PublishBlockService,
   ) {}
 
   /** `queue`: conclui mídias assíncronas pendentes + fila de publicação. `publish` = alias de `queue`. */
   private async queue() {
+    // R8: a conferência do bloqueio de publicação vem antes da fila (um fechamento já deixa a fila publicar nesta rodada).
+    const publishBlock = await this.publishBlock.checkDue().catch((e) => ({ error: errText(e) }));
     // A fila de publicação vem primeiro: concluir vídeos (ffmpeg + crítico + refação) pode levar minutos e não pode atrasar o horário.
     const queue = await this.publishing.runPublishingQueue();
     const pendingMedia = await this.mediaGen.pollPendingMedia().catch((e) => ({ error: errText(e) }));
-    return { pendingMedia, queue };
+    return { publishBlock, pendingMedia, queue };
   }
 
   /** `media`: calendário automático (lotes, reescrita, agendar, regras) + produção antecipada das programações + piloto dos planos. */

@@ -268,6 +268,7 @@ import { PostContextService } from '../post-context.service';
 import { ProductionService, rankProductionCandidates } from '../production.service';
 import { OVERDUE_MS } from '../ig-types';
 import { PublishOriginGuard } from '../origin-guards';
+import { PublishBlockService } from '../publish-block.service';
 
 export const ART = {
   subject: 's', scene: 'c', composition: 'x', lighting: 'l', camera: '50mm', style: 'foto', color_palette: ['#fff'], mood: 'm', text_in_image: 'none', negative: 'blurry',
@@ -294,7 +295,7 @@ export const VIDEO_DIR = {
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 
 /** `guards`: guarda de origem falsa (`PUBLISH_ORIGIN_GUARDS`) injetada no `PublishingService` e no `AutopilotService`. */
-export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | null } = {}) {
+export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | null; probeCloses?: boolean } = {}) {
   /** Respostas da IA por nome do schema (`ig_calendar`, `ig_caption`, `ig_pillars`, `ig_auto_calendar`). */
   const aiJson: Record<string, (req: any) => any> = {};
   const ai = {
@@ -369,5 +370,6 @@ export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | nul
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
-  return { ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext, images, quality, conform };
+  const publishBlock = new PublishBlockService(w.store, w.graph, { IG_PUBLISH_PROBE_CLOSES: opts.probeCloses === true });
+  return { publishBlock, ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext, images, quality, conform };
 }

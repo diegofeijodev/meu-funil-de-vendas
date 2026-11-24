@@ -60,6 +60,8 @@ export class AccountService {
         connected_at: new Date(),
       };
       await this.prisma.instagram_accounts.upsert({ where: { workspace_id: workspaceId }, create: { workspace_id: workspaceId, ...row }, update: row });
+      // R9: reconectar fecha o bloqueio de publicação de propósito (o upsert não mexe nas colunas dele) e zera as falhas.
+      await this.store.closePublishBlock(workspaceId, 'reconnect');
       return { ok: true, username: row.username, igUserId: igId };
     } catch (e) {
       await this.prisma.instagram_accounts.upsert({

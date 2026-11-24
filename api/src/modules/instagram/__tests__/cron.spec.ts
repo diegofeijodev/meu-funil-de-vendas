@@ -55,21 +55,22 @@ function cronParts() {
   const autopilot = { autopilotTick: fn('autopilotTick', { media: 0 }), runWeeklyAutopilot: fn('runWeeklyAutopilot'), runOptimizer: fn('runOptimizer') };
   const metrics = { collectDueMetrics: fn('collectDueMetrics', 3), learnFromTopPosts: fn('learnFromTopPosts', { added: 0 }), collectAllAccountInsights: fn('collectAllAccountInsights') };
   const production = { productionTick: fn('productionTick', { started: 0 }) };
+  const publishBlock = { checkDue: fn('checkDue', { checked: 0, unblocked: 0 }) };
   const w = igWorld();
   const registry = new SchedulerRegistry();
   const scheduler = new SchedulerService(registry, w.prisma, { SCHEDULER_ENABLED: false });
-  const svc = new InstagramCronService(scheduler, mediaGen as any, publishing as any, autoCalendar as any, autopilot as any, metrics as any, {} as any, production as any);
-  return { svc, calls, w, scheduler, mediaGen, publishing, autopilot, metrics, production };
+  const svc = new InstagramCronService(scheduler, mediaGen as any, publishing as any, autoCalendar as any, autopilot as any, metrics as any, {} as any, production as any, publishBlock as any);
+  return { svc, calls, w, scheduler, mediaGen, publishing, autopilot, metrics, production, publishBlock };
 }
 
 describe('InstagramCronService.run (tarefas do server.md §5.2)', () => {
   it('queue: mídias assíncronas + fila de publicação (e "publish" é o mesmo)', async () => {
     const { svc, calls } = cronParts();
-    expect(await svc.run('queue')).toEqual({ pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
-    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
+    expect(await svc.run('queue')).toEqual({ publishBlock: { checked: 0, unblocked: 0 }, pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
+    expect(calls).toEqual(['checkDue', 'runPublishingQueue', 'pollPendingMedia']); // sonda do bloqueio, depois a fila de publicação: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     calls.length = 0;
     await svc.run('publish');
-    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
+    expect(calls).toEqual(['checkDue', 'runPublishingQueue', 'pollPendingMedia']); // sonda do bloqueio, depois a fila de publicação: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
   });
 
   it('media: calendário automático e depois o piloto; metrics; weekly; optimize; account', async () => {
@@ -85,8 +86,8 @@ describe('InstagramCronService.run (tarefas do server.md §5.2)', () => {
   it('sem tarefa: queue + media + metrics (compatibilidade)', async () => {
     const { svc, calls } = cronParts();
     const out = await svc.run();
-    expect(Object.keys(out)).toEqual(['pendingMedia', 'queue', 'autoCalendar', 'production', 'autopilot', 'metrics', 'learning']);
-    expect(calls).toHaveLength(7);
+    expect(Object.keys(out)).toEqual(['publishBlock', 'pendingMedia', 'queue', 'autoCalendar', 'production', 'autopilot', 'metrics', 'learning']);
+    expect(calls).toHaveLength(8);
   });
 
   it('um passo que quebra não derruba a tarefa (erro vira { error } no resultado)', async () => {
@@ -124,7 +125,7 @@ describe('jobs do agendador (db.md §6, em UTC, atrás de SCHEDULER_ENABLED)', (
     const { svc, scheduler, w, calls } = cronParts();
     svc.onModuleInit();
     expect(await scheduler.run('instagram-queue-5min')).toBe(true);
-    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
+    expect(calls).toEqual(['checkDue', 'runPublishingQueue', 'pollPendingMedia']); // sonda do bloqueio, depois a fila de publicação: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'instagram-queue', last_status: 'ok' });
     await scheduler.run('instagram-optimizer-monday');
     expect(w.t['cron_heartbeats']!.rows.map((r) => r.name)).toEqual(['instagram-queue', 'instagram-optimize']);
@@ -149,8 +150,8 @@ describe('POST /api/public/cron/instagram', () => {
 
   it('com o token: roda a tarefa e grava o heartbeat DEPOIS (ok); erro grava "error" e propaga', async () => {
     const { c, w, calls, mediaGen } = ctrl();
-    expect(await c.run('tok-ig', { task: 'queue' })).toEqual({ pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
-    expect(calls).toEqual(['runPublishingQueue', 'pollPendingMedia']); // a fila de publicação primeiro: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
+    expect(await c.run('tok-ig', { task: 'queue' })).toEqual({ publishBlock: { checked: 0, unblocked: 0 }, pendingMedia: [], queue: [{ job: '1', status: 'done' }] });
+    expect(calls).toEqual(['checkDue', 'runPublishingQueue', 'pollPendingMedia']); // sonda do bloqueio, depois a fila de publicação: o poller (vídeo + ffmpeg + crítico) não atrasa o horário
     expect(w.t['cron_heartbeats']!.rows[0]).toMatchObject({ name: 'instagram-queue', last_status: 'ok' });
     await c.run('tok-ig', { task: 'publish' });
     await c.run('tok-ig', {});

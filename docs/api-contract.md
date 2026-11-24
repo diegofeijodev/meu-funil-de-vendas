@@ -467,6 +467,7 @@ Os laços do navegador (`drive()` do calendário: ≤ 40 × `fill-auto-calendar`
 | rota | resposta |
 |---|---|
 | `GET /instagram-account` | linha de `instagram_accounts` (sem token — ele nunca é gravado aqui) ou `{}` quando não há conta |
+| `POST /instagram-account/publish-check` (write, 24/11/2026) | "Já corrigi — testar agora" da faixa de publicação parada (§22.6): roda a sonda na hora → `200 { ok: true, unblocked: boolean, probe: "active"\|"log_only", message }`. Sem bloqueio aberto → `{ unblocked: true, message: "A publicação está funcionando." }` sem chamar a Meta. Mais de 1 a cada 60 s por empresa → `409 { error: { code: "PUBLISH_CHECK_TOO_SOON", message: "Espere um minuto para testar de novo." } }`. Motivo `token` → `422 { error: { code: "PUBLISH_NEEDS_RECONNECT", message: "Reconecte o Instagram em Instagram → Visão geral." } }`. Mensagens: fechou `"Tudo certo: a Meta voltou a aceitar publicações. Os posts que esperavam saem nos próximos minutos."`; recusada `"A Meta ainda não deu a permissão de publicar. Confira o passo acima e tente de novo."`; só registro `"A conferência foi registrada. Para voltar a publicar agora, reconecte o Instagram em Instagram → Visão geral."`; rede `"Não conseguimos falar com a Meta agora. Tente de novo em alguns minutos."` |
 | `GET /ig-posts` | `ig_posts[]` por `scheduled_at` asc (sem data por último). Colunas novas (05/10/2026): `objective_link`, `pillar`, `persona`, `product_id` (FK `products`, `ON DELETE SET NULL`), `funnel_stage`, `review_reason`, `review_score` (number). Produção automática (05/10/2026): `review_attempts` (int, reescritas da IA no modo `publish`) e `failure_kind` (`media\|publish\|null`, CHECK `ig_posts_failure_kind_check`: falha de publicação não refaz a mídia). Status possíveis: `idea\|generating\|ready\|pending_approval\|approved\|scheduled\|publishing\|published\|failed\|cancelled\|needs_review` (CHECK `ig_posts_status_check`). `style_refs` (jsonb \| null, 16/11/2026) = `{ own: uuid[], library: uuid[], brand_id }`, as referências de estilo que o diretor seguiu; `null` = peça anterior, prompt escrito à mão ou mídia trocada pela pessoa (envio ou Biblioteca de mídia, em qualquer post); gravado só pelo servidor |
 | `GET /ig-posts/pending-count` | `{ count }` de `pending_approval` **+ `needs_review`** — exceto o `needs_review` do modo `publish` (`automation 'publish'`), que a IA reescreve sozinha — selo do menu (`["ig-pending-badge", ws]`, 120 s) |
 | `PATCH /ig-posts/:id` `{ caption?(≤5000), hashtags?[≤30], cta?(≤500), scheduled_at?(ISO com fuso\|null), creative_brief?{} }` | linha atualizada. **Só esses campos** (`status`/`media` não são editáveis → `400 VALIDATION_ERROR`). O `pending_job` de `creative_brief` é do servidor (id do job do provedor): o cliente não o define nem apaga; idem `creative_brief.vacancy` (story de vaga). Story de vaga: `scheduled_at` diferente do atual → `400 "O horário dos stories de vagas segue os Ajustes da aba Vagas."`. `style_refs` também não é aceito (`400 VALIDATION_ERROR`). Post de outra empresa/malformado `404 "Post não encontrado."` |
@@ -543,6 +544,30 @@ O heartbeat (`instagram-<task>`, `instagram-all`) é gravado **depois** (o prot�
 processado/em processamento (< 10 min) não repete; `failed` ou preso > 10 min é reprocessado. Cada evento vira lead (`source instagram_dm|instagram_comment`, `instagram_id`), conversa (`phone = ig:<igsid>`, janela de 24 h), mensagem e interação;
 descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; palavra-chave de comentário envia DM privada + resposta pública (`crm_integrations.config.keywords`). **Cadências, agente SDR e compreensão de áudio/imagem são da Task 8** — entram pelo ponto de extensão
 `CRM_CHANNEL_HOOKS` (`startCadence`, `stopCadences`, `runSdr`, `describeMedia`); sem ele o canal grava tudo e não responde sozinho. `WebhookLedgerService` (`webhooks/`) é o mesmo ledger/assinatura que os webhooks de WhatsApp e Lead Ads usarão.
+
+### 22.6 Bloqueio de publicação (24/11/2026; desenho `2026-11-24-vagas-clt-link-design.md` §2.1)
+
+- **Classificação (R1):** só a criação do container (`POST /{ig}/media`) e o `POST /{ig}/media_publish`, pelo código da Meta: 10 ou 200–299 =
+  permissão (`PublishPermissionError`); 190 = token (caminho de sempre). `content_publishing_limit` e `permalink` engolem os erros.
+- **Estado (1 por empresa, `instagram_accounts`):** `publish_block_reason` (`permission`\|`token`\|null = publicando), `publish_block_message`,
+  `publish_blocked_at` (início do bloqueio aberto ou do último), `publish_block_last_at`, `publish_block_failures`, `publish_next_check_at`,
+  `publish_checked_at`, `publish_unblocked_at`, `publish_quota_total` (P1, §22.7), `publish_quota_checked_at`. Aberturas e fechamentos ficam em
+  `ig_autopilot_events` (um por abertura: "Publicação parada: a Meta recusou por falta de permissão."; fechamento: "A Meta voltou a aceitar
+  publicações ({como})."). Token vencido grava o motivo `token` (sem conferência; só a reconexão fecha).
+- **Fila (R3/R4):** recusa por permissão → job `pending` com as mesmas tentativas, `run_at` = próxima conferência entre agora + 5 min e
+  agora + 60 min; post volta `scheduled` no mesmo horário com `last_error = "Esperando o Instagram voltar a aceitar as publicações desta
+  empresa."`. Empresa bloqueada: os jobs vencidos dela são adiados em lote antes de escolher os 4 da rodada (sem chamar a Meta, sem tentativa);
+  post mais de 12 h depois do horário → job e post `failed` (`failure_kind 'publish'`) com "Não foi publicado: a Meta recusou as publicações
+  desta empresa entre {20/11 às 8h30} e {21/11 às 9h}.". **Publicar agora** com a recusa: o erro da Meta volta em `{ ok:false, error }`; story
+  de vaga e post de programação ficam `ready` com o aviso, post manual `failed` com o aviso.
+- **Fechamento (R9):** publicação que deu certo, reconexão (`connect-instagram-account` com sucesso), sonda ou botão (só com
+  `IG_PUBLISH_PROBE_CLOSES=true`). Só publicação e reconexão zeram as falhas. Ao fechar, os jobs pendentes adiados cujo post já passou do horário
+  voltam para agora.
+- **Sonda (R8):** no job `instagram-queue-5min`, antes da fila: empresas com motivo `permission` e `publish_next_check_at` vencida.
+  `GET /me/permissions` (+ `content_publishing_limit?fields=config,quota_usage`, só registro); o que voltou vai para o log do servidor (sem
+  token). `instagram_content_publish` `granted` → fecha (modo `active`) ou só empurra a conferência (modo `log_only`, padrão); ausente ou
+  recusada → falha + 1 e a próxima espera (1 h, 3 h, 6 h, 12 h, 24 h); erro de rede → +1 h sem contar falha; 190 → vira bloqueio de token.
+- **Isolamento:** tudo é por empresa; o bloqueio de A nunca adia a fila nem pausa o gerador de B.
 
 ## 23. Meta Ads, gestor de tráfego, Google/TikTok Ads, Performance e Insights
 

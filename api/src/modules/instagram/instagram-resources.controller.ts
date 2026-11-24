@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ParseUuidPipe } from '../../common/ids/uuid';
 import { WorkspaceAccessGuard } from '../access/workspace-access.guard';
 import { CreateIgPlanDto, IgEventsQueryDto, IgInsightsQueryDto, IgPlansQueryDto, PatchIgPlanDto, PatchIgPostDto } from './instagram.dto';
 import { InstagramResourcesService } from './instagram-resources.service';
 import { InstagramActionsService } from './instagram-actions.service';
+import { PublishBlockService } from './publish-block.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -21,11 +22,18 @@ export class InstagramResourcesController {
   constructor(
     private readonly res: InstagramResourcesService,
     private readonly actions: InstagramActionsService,
+    private readonly publishBlock: PublishBlockService,
   ) {}
 
   @Get('instagram-account')
   account(@Param('workspaceId', ParseUuidPipe) ws: string) {
     return this.res.account(ws).then((a) => a ?? {});
+  }
+
+  /** "Já corrigi — testar agora" da faixa de publicação parada (escrita; 1 por minuto; motivo token = 422). */
+  @Post('instagram-account/publish-check') @HttpCode(200)
+  publishCheck(@Param('workspaceId', ParseUuidPipe) ws: string) {
+    return this.publishBlock.checkNow(ws);
   }
 
   @Get('ig-posts')

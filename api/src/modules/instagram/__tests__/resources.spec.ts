@@ -112,7 +112,7 @@ describe('flags do plano exigem manage (publicar sem revisão)', () => {
   it('marketing edita o resto mas não auto_publish/requires_approval; owner e admin podem', async () => {
     const w = igWorld();
     const s = igServices(w);
-    const ctrl = new InstagramResourcesController(s.resources, s.actions);
+    const ctrl = new InstagramResourcesController(s.resources, s.actions, s.publishBlock);
     const plan = await s.resources.createPlan(WS_A, { name: 'P' } as any);
     const msg = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e: any) { return `${e.getStatus()}:${e.getResponse().message}`; } };
     const asMkt = { id: MARKETING } as any;

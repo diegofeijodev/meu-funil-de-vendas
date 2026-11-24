@@ -172,6 +172,12 @@ const envSchema = z
     STYLE_REFS_PINTEREST_ENABLED: bool('false'),
     /** Seleção do Meu Funil automática em cada marca (pastas do catálogo pelo ramo, lidas com a chave de IA da empresa). Depende de STYLE_REFS_PINTEREST_ENABLED. */
     STYLE_LIBRARY_ENABLED: bool('false'),
+    /**
+     * Bloqueio de publicação do Instagram (24/11/2026): `true` = a sonda (`GET /me/permissions`, automática e pelo botão) FECHA o bloqueio
+     * quando a Meta diz `granted`. `false` (padrão) = modo só registro (F0-5 b): a sonda só grava no log; o bloqueio fecha com uma
+     * publicação que deu certo ou com a reconexão do Instagram.
+     */
+    IG_PUBLISH_PROBE_CLOSES: bool('false'),
     /** Piloto do estrategista (Fatia 3): chave geral. Com ela desligada, as rotas do piloto respondem 404 e o job não roda. */
     CAMPAIGN_PILOT_ENABLED: bool('false'),
     /** Ids (uuid) das empresas com o piloto, separados por vírgula. `*` só em development/test. */

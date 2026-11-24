@@ -24,6 +24,7 @@ import { MediaGenerationService } from './media-generation.service';
 import { META_FETCH, MetaConfigService, MetaFetch, MetaGraphClient } from './meta-graph';
 import { MetricsService } from './metrics.service';
 import { PublishingService } from './publishing.service';
+import { PublishBlockService } from './publish-block.service';
 import { PostContextService } from './post-context.service';
 
 @Module({
@@ -40,6 +41,7 @@ import { PostContextService } from './post-context.service';
     ContentStrategyService,
     PostContextService,
     PublishingService,
+    PublishBlockService,
     MediaGenerationService,
     MetricsService,
     AccountService,
