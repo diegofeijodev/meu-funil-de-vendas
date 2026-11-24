@@ -38,6 +38,7 @@ const art = (over: Partial<ArtResult> = {}): ArtResult => ({
   vendorLabel: 'ChatGPT (OpenAI)',
   origin: { source: 'chatgpt', provider: 'chatgpt' },
   styleRefs: null,
+  qr: null,
   ...over,
 });
 

@@ -101,12 +101,12 @@ export class PublishBlockService {
     const r = await this.probe(workspaceId);
     const open = { workspace_id: workspaceId, publish_block_reason: 'permission' };
     await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { publish_checked_at: now } });
-    if (r.kind === 'token') {
-      // Token morto descoberto pela sonda: a fila adiada nunca o descobriria (R4).
-      await this.store.handleTokenExpired(workspaceId, r.message);
-      return 'token';
-    }
-    if (r.kind === 'error') {
+    if (r.kind !== 'ok') {
+      if (r.kind === 'token') {
+        // Token morto descoberto pela sonda: a fila adiada nunca o descobriria (R4).
+        await this.store.handleTokenExpired(workspaceId, r.message);
+        return 'token';
+      }
       await this.prisma.instagram_accounts.updateMany({ where: open, data: { publish_next_check_at: new Date(now.getTime() + NETWORK_RETRY_MS) } });
       return 'error';
     }
