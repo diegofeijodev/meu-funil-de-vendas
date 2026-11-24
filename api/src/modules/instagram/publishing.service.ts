@@ -5,6 +5,7 @@ import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, 
 import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient } from './meta-graph';
+import { toPublishError } from './publish-block';
 import { dateIssues } from './content-strategy';
 import { normalizeHashtags } from './normalize';
 import { CAMPAIGN_FINISHED } from '../campaigns/campaign-labels';
@@ -442,9 +443,18 @@ export class PublishingService implements OnModuleInit {
     return { media_type: 'STORIES', [video ? 'video_url' : 'image_url']: media[0].url };
   }
 
+  /** Chamada do caminho de publicação (container e `media_publish`): a recusa por permissão sai como `PublishPermissionError` (R1). */
+  private async publishCall<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      throw toPublishError(e);
+    }
+  }
+
   /** Cria um container; com `saveTo`, grava o id no post antes do polling (a próxima execução retoma dele). */
   private async createContainer(ws: string, ig: string, params: Record<string, unknown>, saveTo?: string): Promise<string> {
-    const id = (await this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params })).id;
+    const id = (await this.publishCall(() => this.graph.graph<{ id: string }>(ws, `/${ig}/media`, { method: 'POST', params }))).id;
     if (saveTo) await this.store.patchPost(saveTo, { ig_creation_id: id });
     return id;
   }
@@ -453,7 +463,7 @@ export class PublishingService implements OnModuleInit {
     // Imagens também passam por processamento na Meta: espera o container ficar FINISHED (se ainda não esperou).
     if (!ready) await this.waitContainer(ws, creationId, deadline, lease);
     await lease.renew();
-    const published = await this.graph.graph<{ id: string }>(ws, `/${ig}/media_publish`, { method: 'POST', params: { creation_id: creationId } });
+    const published = await this.publishCall(() => this.graph.graph<{ id: string }>(ws, `/${ig}/media_publish`, { method: 'POST', params: { creation_id: creationId } }));
     const info = await this.graph.graph<{ permalink?: string }>(ws, `/${published.id}`, { params: { fields: 'permalink' } }).catch(() => ({ permalink: undefined }));
     await this.store.patchPost(postId, {
       status: 'published',

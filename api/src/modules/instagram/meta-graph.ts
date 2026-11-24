@@ -38,6 +38,12 @@ export class MetaError extends Error {
   }
 }
 
+/**
+ * A Meta recusou a PUBLICAÇÃO por falta de permissão (código 10 ou 200–299) ao criar o container ou no `media_publish` (R1 do
+ * desenho de 24/11): abre o bloqueio de publicação da empresa em vez de gastar tentativas. Só o caminho de publicação lança esta classe.
+ */
+export class PublishPermissionError extends MetaError {}
+
 /** Traduz os erros mais comuns da Meta para português claro (mensagens do protótipo). */
 export function translateMetaError(err: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string }): string {
   const code = err.code;
