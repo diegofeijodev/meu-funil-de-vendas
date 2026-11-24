@@ -49,7 +49,8 @@ describe('ProductionService.candidates (consulta real)', () => {
     expect(sql).toMatch(/p\.lease_until IS NULL OR p\.lease_until < \$::timestamptz/);
     expect(sql).toMatch(/ORDER BY late DESC, x\.scheduled_at ASC/);
     // Sem Instagram conectado o criativo só é feito dentro da meta (24 h): nada de gastar com 48 h de antecedência para quem não publica.
-    expect(sql).toMatch(/AND \(p\.scheduled_at <= \$::timestamptz\s+OR EXISTS \(SELECT 1 FROM instagram_accounts a WHERE a\.workspace_id = p\.workspace_id AND a\.status = 'connected' AND a\.ig_user_id IS NOT NULL\)\)/);
+    // R7 (24/11/2026): conta com a publicação bloqueada pela Meta conta como não conectada.
+    expect(sql).toMatch(/AND \(p\.scheduled_at <= \$::timestamptz\s+OR EXISTS \(SELECT 1 FROM instagram_accounts a WHERE a\.workspace_id = p\.workspace_id AND a\.status = 'connected' AND a\.ig_user_id IS NOT NULL\s+AND a\.publish_block_reason IS NULL\)\)/);
     expect(values).toEqual(['2099-01-02T12:00:00.000Z', '2099-01-01T00:00:00.000Z', '2099-01-03T12:00:00.000Z', '2099-01-02T12:00:00.000Z', '2099-01-01T12:00:00.000Z', 3]);
   });
 });

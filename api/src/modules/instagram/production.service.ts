@@ -54,7 +54,7 @@ export class ProductionService {
 
   /**
    * Rodízio NA consulta: ROW_NUMBER() por empresa (1 post cada, o mais próximo); atrasados para a meta primeiro; lease livre.
-   * Empresa sem Instagram conectado só entra dentro da meta (24 h): o criativo fica pronto (a tela promete isso), mas sem gastar com
+   * Empresa sem Instagram conectado — ou com a publicação bloqueada pela Meta (R7) — só entra dentro da meta (24 h): o criativo fica pronto (a tela promete isso), mas sem gastar com
    * 48 h de antecedência — nem ocupar a vaga de quem publica — enquanto a conta pode nunca conectar.
    */
   async candidates(now = new Date()): Promise<ProductionCandidate[]> {
@@ -72,7 +72,8 @@ export class ProductionService {
              AND p.scheduled_at > ${since}::timestamptz
              AND p.scheduled_at <= ${until}::timestamptz
              AND (p.scheduled_at <= ${target}::timestamptz
-                  OR EXISTS (SELECT 1 FROM instagram_accounts a WHERE a.workspace_id = p.workspace_id AND a.status = 'connected' AND a.ig_user_id IS NOT NULL))
+                  OR EXISTS (SELECT 1 FROM instagram_accounts a WHERE a.workspace_id = p.workspace_id AND a.status = 'connected' AND a.ig_user_id IS NOT NULL
+                                AND a.publish_block_reason IS NULL))
              AND (p.lease_until IS NULL OR p.lease_until < ${now.toISOString()}::timestamptz)
         ) x
        WHERE x.rn = 1

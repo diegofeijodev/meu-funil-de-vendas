@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { addDays } from '../../common/time/dates';
-import { DONT_POST_REASON, MAX_REDOS, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { PUBLISH_BLOCKED_MSG } from '../instagram/ig-types';
+import { DONT_POST_REASON, MAX_REDOS, PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { approveUntil, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
 import { cleanEstablishment, cleanFunction, formatMoney, formatWhen, hourLabel, isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
 import { SKIP } from './vacancy-triage';
@@ -20,6 +21,8 @@ export type Display =
   | 'generating'
   | 'waiting_window'
   | 'waiting_cap'
+  | 'paused'
+  | 'paused_ready'
   | 'to_approve'
   | 'ready'
   | 'live'
@@ -54,7 +57,7 @@ export type DisplayResult = {
  * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `igFull` = sem espaço no
  * limite de publicações da Meta.
  */
-export type DisplayContext = { capFull?: boolean; igFull?: boolean };
+export type DisplayContext = { capFull?: boolean; igFull?: boolean; publishBlocked?: boolean };
 
 export type StoryCan = { approve: boolean; dont_post: boolean; post_now: boolean; create_anyway: boolean; redo: boolean; retry: boolean };
 
@@ -113,6 +116,8 @@ const LABEL = {
   generating: 'Criando a arte',
   waiting_window: 'Esperando o horário',
   waiting_cap: 'Esperando a vez',
+  paused: 'Esperando o Instagram voltar',
+  paused_ready: 'Pronto, esperando o Instagram voltar',
   to_approve: 'Esperando sua aprovação',
   ready_no_time: 'Pronto para ir ao ar',
   was_live: 'Ficou 24 h no ar',
@@ -184,6 +189,11 @@ const aiAttempts = (log: unknown) => asLog(log).filter((a) => a?.kind === 'ai').
 export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): DisplayResult {
   const out = (display: Display, label: string, support: string | null = null, reason: string | null = null, approve_until: Date | null = null, wait_kind: WaitKind | null = null) =>
     ({ display, label, support, reason, approve_until, wait_kind }) as DisplayResult;
+  const paused = (display: 'paused' | 'paused_ready', support: string) => out(display, LABEL[display], support);
+  // P7: parado pelo bloqueio de publicação (só enquanto ele está aberto; depois volta à situação normal).
+  if (ctx.publishBlocked && ROW_QUEUED.includes(row.status) && row.status !== 'generating' && row.wait_reason === PUBLISH_BLOCKED_WAIT) {
+    return paused('paused', 'A arte é criada quando a Meta voltar a aceitar publicações. Se a vaga começar antes, ela fica de fora.');
+  }
   switch (row.status) {
     case 'new':
       return out('queued', LABEL.queued, row.wait_reason);
@@ -207,6 +217,7 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
   switch (post.status) {
     case 'pending_approval': {
       const until = approveUntil(row.starts_at, s);
+      if (ctx.publishBlocked) return out('to_approve', LABEL.to_approve, 'Pode aprovar: ele espera o Instagram voltar para ir ao ar.', null, until);
       return out('to_approve', LABEL.to_approve, `Aprove até ${untilLabel(until, now)}. Depois disso não dá tempo de divulgar.`, null, until);
     }
     case 'published': {
@@ -217,6 +228,10 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
       return out('cancelled', LABEL.cancelled, null, row.skip_reason ?? (post.rejection_reason ? DONT_POST_REASON : post.last_error));
     case 'failed':
       return out('failed', LABEL.failed, null, post.last_error ? `O Instagram recusou a publicação: ${noPeriod(post.last_error)}.` : 'O Instagram recusou a publicação.');
+  }
+  if (ctx.publishBlocked && LATER.includes(post.status) && post.last_error === PUBLISH_BLOCKED_MSG) {
+    const deadline = new Date(row.starts_at.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS);
+    return paused('paused_ready', `Vai ao ar quando a Meta voltar a aceitar publicações, se ainda der tempo: até ${untilLabel(deadline, now)}.`);
   }
   const at = post.scheduled_at;
   if (LATER.includes(post.status) && at && at.getTime() > now.getTime()) {
@@ -232,14 +247,15 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
 }
 
 /** Botões de cada situação (UI §4). Postar agora, criar mesmo assim, refazer e tentar de novo exigem a função ligada. */
-export function canOf(row: StoryRow, post: StoryPost | null, d: Display, s: SettingsRow, now: Date): StoryCan {
+export function canOf(row: StoryRow, post: StoryPost | null, d: Display, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryCan {
   const on = s.enabled;
   const unpublished = row.status === 'handed_off' && !!post && POST_UNPUBLISHED.includes(post.status);
   return {
     // A4: só até o prazo de aprovação; depois dele a expiração cancela o story (na próxima rodada do job).
     approve: d === 'to_approve' && now.getTime() < approveUntil(row.starts_at, s).getTime(),
     dont_post: ROW_QUEUED.includes(row.status) ? row.status !== 'generating' : unpublished,
-    post_now: on && (d === 'waiting_window' || d === 'waiting_cap'),
+    // P7: com a publicação bloqueada, "Postar agora" chamaria a Meta, falharia e reabriria o bloqueio: some.
+    post_now: on && !ctx.publishBlocked && (d === 'waiting_window' || d === 'waiting_cap'),
     // R30: some se a vaga não tem como virar story (fechada, sem valor, sem cidade, ou já dentro da antecedência + 15 min de folga).
     create_anyway:
       on && (d === 'skipped' || d === 'cancelled') && canRevive(row, post) && !NO_REVIVE.includes(row.skip_reason ?? '') &&
@@ -338,7 +354,7 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     check_unread: checkUnread(row, post),
     fallback_kind: row.status === 'handed_off' && row.used_fallback && !ownArt(post) ? fallbackKindOf(row.attempts_log) : null,
     wait_kind: d.wait_kind,
-    can: canOf(row, post, d.display, s, now),
+    can: canOf(row, post, d.display, s, now, ctx),
   };
 }
 

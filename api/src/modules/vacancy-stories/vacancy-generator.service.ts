@@ -14,7 +14,7 @@ import { loadBadges } from './vacancy-art';
 import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
-import { VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { photoPrompt, photoReadPrompt, photoStyleLines } from './vacancy-prompts';
 import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
 import { forcedTriage, triage } from './vacancy-triage';
@@ -23,8 +23,7 @@ import { FIELD_LABELS, READ_SCHEMA } from './vacancy-verify';
 
 /** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
 export const NO_ACCOUNT_WAIT = 'Esperando o Instagram ser reconectado para criar a arte.';
-/** A Meta está recusando as publicações da empresa (bloqueio aberto, R5): a linha espera sem gastar IA. */
-export const PUBLISH_BLOCKED_WAIT = 'Esperando o Instagram voltar a aceitar publicações para criar a arte.';
+export { PUBLISH_BLOCKED_WAIT } from './vacancy-reasons';
 /** `handOff` perdeu a linha (desligaram no meio): nada foi entregue. */
 export const HANDOFF_LOST = 'lost';
 
@@ -200,15 +199,20 @@ export class VacancyGeneratorService {
       orderBy: { starts_at: 'asc' },
       take: 100,
     });
-    const live = new Map<string, boolean>();
+    // Sem conta conectada → espera a reconexão; conta com a publicação bloqueada (R5) → espera o bloqueio fechar. Nos dois, nada de IA.
+    const live = new Map<string, string | null>();
     const free = (id: string) => ({ id, status: { in: QUEUE }, ...leaseFree(now) });
     for (const row of due) {
       if (out.started >= PER_TICK) break;
       const ws = row.workspace_id;
       const s = active.get(ws)!;
-      if (!live.has(ws)) live.set(ws, !!(await this.store.liveAccount(ws)));
-      if (!live.get(ws)) {
-        if (row.wait_reason !== NO_ACCOUNT_WAIT) await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { wait_reason: NO_ACCOUNT_WAIT } });
+      if (!live.has(ws)) {
+        const acc = await this.store.liveAccount(ws);
+        live.set(ws, !acc ? NO_ACCOUNT_WAIT : acc.publish_block_reason ? PUBLISH_BLOCKED_WAIT : null);
+      }
+      const wait = live.get(ws);
+      if (wait) {
+        if (row.wait_reason !== wait) await this.prisma.vacancy_stories.updateMany({ where: free(row.id), data: { wait_reason: wait } });
         continue;
       }
       const capUntil = this.hooks.capacityWait ? await this.hooks.capacityWait(row, s, now) : null;

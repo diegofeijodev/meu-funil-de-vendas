@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { OriginUnavailable } from '../instagram/ig-store.service';
-import type { PostRow } from '../instagram/ig-types';
+import { PUBLISH_BLOCKED_MSG, type PostRow } from '../instagram/ig-types';
 import type { PublishOriginGuard } from '../instagram/origin-guards';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import {
+  blockedExpireReason,
   leadDeadline,
   MAX_REDOS,
   tooCloseReason,
@@ -52,7 +53,13 @@ export class VacancyGuardService implements PublishOriginGuard {
     };
     const s = await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { min_lead_minutes: true } });
     const lead = s?.min_lead_minutes ?? 120;
+    // R5: post parado pelo bloqueio de publicação que perdeu o prazo → o motivo diz que o Instagram recusava (desde o início do bloqueio).
+    const blockedSince = post.last_error === PUBLISH_BLOCKED_MSG
+      ? (await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: ws }, select: { publish_blocked_at: true } }))?.publish_blocked_at ?? null
+      : null;
     const timing = (startsAt: Date): string | null => {
+      const late = startsAt.getTime() <= at.getTime() || startsAt.getTime() - at.getTime() < lead * MIN;
+      if (late && blockedSince) return blockedExpireReason(startsAt, blockedSince);
       if (startsAt.getTime() <= at.getTime()) return VACANCY_STARTED_REASON;
       if (startsAt.getTime() - at.getTime() < lead * MIN) return tooCloseReason(startsAt, leadDeadline(startsAt, lead));
       return null;

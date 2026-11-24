@@ -3,7 +3,7 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { addDays } from '../../common/time/dates';
 import { UserError } from '../media/user-error';
 import { IgStore, errText } from '../instagram/ig-store.service';
-import { NO_ACCOUNT_MSG, TOKEN_EXPIRED_POST_MSG } from '../instagram/ig-types';
+import { NO_ACCOUNT_MSG, PUBLISH_BLOCKED_MSG, TOKEN_EXPIRED_POST_MSG } from '../instagram/ig-types';
 import { PublishingService } from '../instagram/publishing.service';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
@@ -227,9 +227,17 @@ export class VacancySchedulerService implements OnModuleInit {
       await this.prisma.$transaction((tx) => holdForApproval(tx, ws, post));
       return 'needs_approval';
     }
-    if (!(await this.store.liveAccount(ws))) {
+    const acc = await this.store.liveAccount(ws);
+    if (!acc) {
       if (post.last_error !== NO_ACCOUNT_MSG && post.last_error !== TOKEN_EXPIRED_POST_MSG) {
         await this.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: post.status }, data: { last_error: NO_ACCOUNT_MSG } });
+      }
+      return 'no_account';
+    }
+    // R6: com a publicação bloqueada, o post fica como está (pronto) com o aviso; a reconciliação da rodada o agenda quando fechar.
+    if (acc.publish_block_reason) {
+      if (post.last_error !== PUBLISH_BLOCKED_MSG) {
+        await this.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: post.status }, data: { last_error: PUBLISH_BLOCKED_MSG } });
       }
       return 'no_account';
     }

@@ -259,7 +259,7 @@ export class VacancyActionsService {
   private async context(ws: string, s: SettingsRow, now: Date): Promise<DisplayContext> {
     const c = await countVacancyStoriesOnDay(this.prisma, ws, todaySp(now));
     const ig = await this.scheduler.igRoom(ws, now);
-    return { capFull: c.posted + c.scheduled >= s.daily_cap, igFull: ig.room <= 0 };
+    return { capFull: c.posted + c.scheduled >= s.daily_cap, igFull: ig.room <= 0, publishBlocked: (await this.prisma.instagram_accounts.count({ where: { workspace_id: ws, publish_block_reason: { not: null } } })) > 0 };
   }
 }
 

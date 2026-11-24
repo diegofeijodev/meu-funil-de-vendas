@@ -23,6 +23,9 @@ const fromAt = (d: Date, ref: Date) => (sameDay(d, ref) ? `a partir das ${hourOf
 /** "08:00" → "8h". */
 const hhmm = (s: string) => hourLabel(Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5)));
 
+/** A Meta está recusando as publicações da empresa (bloqueio aberto, R5): a linha espera sem gastar IA. */
+export const PUBLISH_BLOCKED_WAIT = 'Esperando o Instagram voltar a aceitar publicações para criar a arte.';
+
 /** Marca de `wait_reason` da linha que espera a vez (limite do dia); a tela mostra "Esperando a vez". */
 export const WAIT_CAP = 'cap';
 
@@ -67,6 +70,13 @@ export const spacingReason = (startsAt: Date, deadline: Date) =>
 /** A linha/post esperou a vez (limite do dia) e não coube antes do início ("1 story de vaga" no singular — R40/M2). */
 export const capWaitReason = (cap: number, startsAt: Date) =>
   `Não coube no máximo de ${cap === 1 ? '1 story de vaga' : `${cap} stories de vagas`} por dia antes do início da vaga (${fullAt(startsAt)}).`;
+
+/**
+ * R5 — a vaga perdeu o prazo enquanto a Meta recusava as publicações da empresa (linha esperando o bloqueio, ou post parado por ele que a
+ * expiração ou a guarda cancelaram). Nunca o `tooCloseReason` genérico nesses casos.
+ */
+export const blockedExpireReason = (startsAt: Date, since: Date) =>
+  `Não foi ao ar: o Instagram recusava as publicações desta empresa desde ${fullAt(since)}, e a vaga começa ${sameDay(startsAt, since) ? `às ${hourOf(startsAt)}` : fullAt(startsAt)}.`;
 
 /** Post que esperava aprovação e o prazo de aprovação (`approveUntil`) passou. */
 export const noApprovalReason = (deadline: Date, startsAt: Date) =>
