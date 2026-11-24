@@ -17,6 +17,38 @@ export type FreelaVacancy = {
   isUpcoming?: boolean;
 };
 
+/** Vaga fixa (CLT) da vitrine pública do Freela (`GET /v1/fixed-jobs/public/*`, ADR-028 do Freela): nunca traz contato nem endereço. */
+export type FreelaFixedJob = {
+  id: string;
+  title: string;
+  role: string;
+  category: string | null;
+  companyName: string | null;
+  /** Nome canônico de `shared.cities` (nunca pedaço do endereço) e a UF; null quando o Freela não achou. */
+  city: string | null;
+  uf: string | null;
+  salary: { minInCents: number; maxInCents: number } | null;
+  workSchedule: string | null;
+  workScheduleSlots: { day: string; start: string; end: string }[];
+  benefits: string[];
+  description: string | null;
+  publishedAt: string;
+  expiresAt: string | null;
+};
+
+/** Fonte da linha da fila (`vacancy_stories.source`). */
+export type VacancySourceId = 'freela' | 'freela_clt';
+
+/** Campos da arte "Vaga fixa CLT" (UI §3.4): null = o cartão sai. */
+export type CltFields = {
+  cargo: string;
+  empresa: string | null;
+  salario: string;
+  escala: string | null;
+  cidade: string | null;
+  beneficios: string | null;
+};
+
 export type ExpectedValues = {
   cents: number;
   day: number;

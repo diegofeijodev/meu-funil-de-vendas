@@ -4,6 +4,11 @@ const HHMM = /^\d{2}:\d{2}$/;
 const HHMM_MSG = 'Use um horário como 08:00.';
 export const LEAD_OPTIONS = [60, 120, 240, 360] as const;
 export const VENDORS = ['openai', 'gemini'] as const;
+/** Vagas fixas (CLT): opções do retroativo (CHECK do banco). */
+export const CLT_BACKLOG_OPTIONS = [0, 7, 14, 30] as const;
+/** Tipo de vaga na tela e nas rotas (`kind`): diária (`source = 'freela'`) ou vaga fixa (`source = 'freela_clt'`). */
+export const STORY_KINDS = ['diaria', 'clt'] as const;
+export type StoryKind = (typeof STORY_KINDS)[number];
 
 /** `PATCH …/vacancy-stories/settings`. Sem default: campo ausente = não muda. Ligar/desligar e postar sozinho têm rotas próprias. */
 export class UpdateVacancySettingsDto {
@@ -14,11 +19,17 @@ export class UpdateVacancySettingsDto {
   @IsOptional() @IsIn(LEAD_OPTIONS) min_lead_minutes?: (typeof LEAD_OPTIONS)[number];
   @IsOptional() @IsIn(VENDORS) vendor?: (typeof VENDORS)[number];
   @IsOptional() @IsBoolean() style_refs_enabled?: boolean;
+  /** Vagas fixas (CLT): máximo por dia, próprio (1–10). */
+  @IsOptional() @IsInt() @Min(1) @Max(10) clt_daily_cap?: number;
+  /** Vagas fixas (CLT): retroativo ao ligar (0, 7, 14 ou 30 dias). */
+  @IsOptional() @IsIn(CLT_BACKLOG_OPTIONS) clt_backlog_days?: (typeof CLT_BACKLOG_OPTIONS)[number];
 }
 
 /** `POST …/vacancy-stories/preview`. `qr` sem padrão: ausente = como antes (QR só se ele já está ligado). */
 export class StartPreviewDto {
   @IsOptional() @IsBoolean() qr?: boolean;
+  /** Vagas fixas (25/11/2026): `clt` = prévia da arte "Vaga fixa CLT". Ausente = diária. */
+  @IsOptional() @IsIn(STORY_KINDS) kind?: StoryKind;
 }
 
 /** `POST …/vacancy-stories/qr` (dono/admin): ligar exige uma prévia com QR conferida. */
@@ -40,6 +51,8 @@ export type StoryFeedback = (typeof STORY_FEEDBACKS)[number];
 /** `GET …/vacancy-stories/stories?filter=`. Ausente = todas. */
 export class ListStoriesQuery {
   @IsOptional() @IsIn(STORY_FILTERS) filter?: StoryFilter;
+  /** Ausente = os dois tipos. */
+  @IsOptional() @IsIn(STORY_KINDS) kind?: StoryKind;
 }
 
 /** `POST …/vacancy-stories/stories/:id/dont-post`. Sem motivo obrigatório (D6); o feedback vem dos chips, numa 2ª chamada. */
