@@ -10,7 +10,8 @@ import { loadBadges } from '../vacancy-art';
 import { composeBaseArt, loadBaseFonts } from '../vacancy-base-art';
 import { VacancyGeneratorService } from '../vacancy-generator.service';
 import { VacancyPreviewService } from '../vacancy-preview.service';
-import { planQr, QR_BOX, QR_CHECK_WIDTH, vacancyLink, verifyQrPixels } from '../vacancy-qr';
+import { drawQr, planQr, QR_BOX, QR_CHECK_WIDTH, vacancyLink, verifyQrPixels } from '../vacancy-qr';
+import { randomUUID } from 'node:crypto';
 import type { FreelaVacancy, VacancyFields } from '../vacancy-types';
 import { vacancyWorld, type VacancyWorld } from './world';
 
@@ -95,6 +96,24 @@ describe('arte COM QR: lida pelo jsqr e pela conferência do sistema (JPEG q92 e
   it('a conferência compara com a matriz da URL certa: outra URL no mesmo lugar não passa', async () => {
     const other = planQr(`https://freelaservicos.com.br/vagas/${uuid()}?o=ig`)!;
     expect(await verifyQrPixels(images, bytes, other)).toBe(false);
+  });
+});
+
+describe('conferência sem falso negativo (8 links aleatórios)', () => {
+  it('sempre que o jsqr lê a 720 px, a conferência do sistema também aprova (e todos são lidos)', async () => {
+    let read = 0;
+    for (let i = 0; i < 8; i++) {
+      const url = vacancyLink(randomUUID())!;
+      const p = planQr(url)!;
+      expect(p).toMatchObject({ count: 37, ecl: 'M', module: 4 });
+      const cv = images.blank(1080, 1920, 0x111111ff);
+      drawQr(cv, p);
+      const jpg = await images.encode(cv, false, 92);
+      const got = await readQr(jpg, QR_CHECK_WIDTH);
+      if (got === url) read++;
+      if (got === url) expect(await verifyQrPixels(images, jpg, p)).toBe(true);
+    }
+    expect(read).toBe(8);
   });
 });
 

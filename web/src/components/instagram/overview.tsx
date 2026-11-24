@@ -64,6 +64,8 @@ export function IgOverview({
       qc.invalidateQueries({ queryKey: ["ig-account", workspaceId] });
       if (r.ok) {
         setPicking(false);
+        // Reconectar fecha o bloqueio de publicação (24/11/2026): a faixa vermelha some sem esperar o ciclo de 5 min.
+        qc.invalidateQueries({ queryKey: ["health-alerts", workspaceId] });
         qc.invalidateQueries({ queryKey: ["ig-posts", workspaceId] });
         qc.invalidateQueries({ queryKey: ["ig-metrics", workspaceId] });
         toast.success(`Instagram @${r.username} conectado.`);
@@ -154,7 +156,8 @@ export function IgOverview({
             <div className="flex flex-wrap gap-2">
               <Button onClick={loadOptions} disabled={opts.isPending || m.isPending}>
                 {(opts.isPending || m.isPending) && <Loader2 className="size-4 animate-spin" />}
-                {account?.status === "connected" ? "Trocar conta" : "Conectar Instagram"}
+                {/* Com a publicação bloqueada, a faixa vermelha manda para cá com "reconectar o Instagram": o botão diz o mesmo. */}
+                {account?.status === "connected" ? (account.publish_block_reason ? "Reconectar o Instagram" : "Trocar conta") : "Conectar Instagram"}
               </Button>
               {account?.status === "connected" && (
                 <Button variant="outline" onClick={() => imp.mutate()} disabled={imp.isPending}>

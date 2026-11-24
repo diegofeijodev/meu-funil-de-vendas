@@ -29,7 +29,8 @@ import {
   type InstagramFailAlert,
   type PublishingAlert,
 } from "@/lib/health-alerts";
-import { Link, useLocation, useNavigate } from "@/lib/router";
+import { usePathname } from "next/navigation";
+import { Link, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace";
 import { useFeatures } from "@/modules/features/infrastructure/features.api";
@@ -49,7 +50,7 @@ export function HealthAlertsBanner() {
   const { workspaceId, canEdit } = useWorkspace();
   const { data } = useHealthAlerts(workspaceId);
   const { data: features } = useFeatures(workspaceId);
-  const { pathname } = useLocation();
+  const pathname = usePathname();
   // "Voltou" fica verde no lugar até "Fechar" ou até mudar de tela (UI §1.3 C), mesmo depois de a API parar de devolver o bloqueio.
   const [backOn, setBackOn] = useState<string | null>(null);
   const back = backOn !== null && backOn === `${workspaceId}${pathname}`;
