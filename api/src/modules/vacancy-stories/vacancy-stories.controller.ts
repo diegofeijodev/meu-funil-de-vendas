@@ -84,7 +84,7 @@ export class VacancyStoriesController {
 
   @Get('stories')
   list(@Param('workspaceId', ParseUuidPipe) ws: string, @Query() q: ListStoriesQuery) {
-    return this.actions.list(ws, q.filter ?? 'all');
+    return this.actions.list(ws, q.filter ?? 'all', q.kind);
   }
 
   @Get('stories/:id')

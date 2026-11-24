@@ -5,19 +5,8 @@ import { OriginUnavailable } from '../instagram/ig-store.service';
 import { PUBLISH_BLOCKED_MSG, type PostRow } from '../instagram/ig-types';
 import type { PublishOriginGuard } from '../instagram/origin-guards';
 import { FeedDownError, VacancyFeedClient } from './vacancy-feed';
-import {
-  blockedExpireReason,
-  leadDeadline,
-  MAX_REDOS,
-  tooCloseReason,
-  VACANCY_CHANGED_REASON,
-  VACANCY_CHANGED_TOO_OFTEN,
-  VACANCY_CLOSED_REASON,
-  VACANCY_STARTED_REASON,
-  VACANCY_UNVERIFIABLE,
-} from './vacancy-reasons';
-import { fingerprint } from './vacancy-text';
-import type { FreelaVacancy } from './vacancy-types';
+import { leadDeadline, MAX_REDOS, VACANCY_CHANGED_REASON, VACANCY_CHANGED_TOO_OFTEN, VACANCY_UNVERIFIABLE } from './vacancy-reasons';
+import { sourceOf, sourceOfPost, type SourceItem } from './vacancy-sources';
 
 const MIN = 60_000;
 
@@ -45,6 +34,8 @@ export class VacancyGuardService implements PublishOriginGuard {
     const brief = post.creative_brief?.vacancy as { external_id?: string; starts_at?: string; fingerprint?: string } | undefined;
     const externalId = row?.external_id ?? brief?.external_id;
     if (!externalId) return VACANCY_UNVERIFIABLE;
+    // Porta por fonte: diária (vitrine de vagas) ou vaga fixa (vitrine de vagas fixas, V9) — pela linha, senão pelo `kind` do post.
+    const src = row ? sourceOf(row.source) : sourceOfPost(post);
     // Grava o motivo na linha só se ela ainda é a deste post (condicional: duas checagens ao mesmo tempo não se atropelam).
     const ours = row ? { id: row.id, workspace_id: ws, ig_post_id: post.id, status: 'handed_off' } : null;
     const block = async (reason: string) => {
@@ -52,16 +43,16 @@ export class VacancyGuardService implements PublishOriginGuard {
       return reason;
     };
     const s = await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { min_lead_minutes: true } });
-    const lead = s?.min_lead_minutes ?? 120;
+    const lead = src.lead(s);
     // R5: post parado pelo bloqueio de publicação que perdeu o prazo → o motivo diz que o Instagram recusava (desde o início do bloqueio).
     const blockedSince = post.last_error === PUBLISH_BLOCKED_MSG
       ? (await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: ws }, select: { publish_blocked_at: true } }))?.publish_blocked_at ?? null
       : null;
     const timing = (startsAt: Date): string | null => {
       const late = startsAt.getTime() <= at.getTime() || startsAt.getTime() - at.getTime() < lead * MIN;
-      if (late && blockedSince) return blockedExpireReason(startsAt, blockedSince);
-      if (startsAt.getTime() <= at.getTime()) return VACANCY_STARTED_REASON;
-      if (startsAt.getTime() - at.getTime() < lead * MIN) return tooCloseReason(startsAt, leadDeadline(startsAt, lead));
+      if (late && blockedSince) return src.reasons.blockedExpire(startsAt, blockedSince);
+      if (startsAt.getTime() <= at.getTime()) return src.reasons.started;
+      if (startsAt.getTime() - at.getTime() < lead * MIN) return src.reasons.tooClose(startsAt, leadDeadline(startsAt, lead));
       return null;
     };
 
@@ -69,18 +60,18 @@ export class VacancyGuardService implements PublishOriginGuard {
     const stored = row?.starts_at ?? (brief?.starts_at ? new Date(brief.starts_at) : null);
     const known = stored && !Number.isNaN(stored.getTime()) ? stored : null;
 
-    let v: FreelaVacancy | null;
+    let v: SourceItem | null;
     try {
-      v = await this.feed.byId(externalId);
+      v = await src.byId(this.feed, externalId);
     } catch (e) {
       if (!(e instanceof FeedDownError)) throw e;
       const early = known ? timing(known) : null;
       if (early) return block(early);
       throw new OriginUnavailable(e.message);
     }
-    if (!v) return block(VACANCY_CLOSED_REASON);
+    if (!v) return block(src.reasons.closed);
 
-    const fp = fingerprint(v);
+    const fp = src.fingerprint(v);
     if (fp !== (brief?.fingerprint ?? row?.fingerprint)) {
       if (!ours || !row) return VACANCY_CHANGED_REASON;
       if (row.redo_count >= MAX_REDOS) {
@@ -91,7 +82,7 @@ export class VacancyGuardService implements PublishOriginGuard {
       await this.prisma.vacancy_stories.updateMany({
         where: ours,
         data: {
-          status: 'new', ig_post_id: null, snapshot: v as unknown as Prisma.InputJsonValue, fingerprint: fp, starts_at: new Date(v.startTime),
+          status: 'new', ig_post_id: null, snapshot: v as unknown as Prisma.InputJsonValue, fingerprint: fp, starts_at: src.startsAt(v),
           redo_count: { increment: 1 }, mismatch_attempts: 0, skip_reason: null, wait_reason: null, next_attempt_at: null, not_before: null,
           lease_until: null,
         },
@@ -99,8 +90,8 @@ export class VacancyGuardService implements PublishOriginGuard {
       return VACANCY_CHANGED_REASON;
     }
 
-    // Começou ou em cima da hora, pela data VIVA da vitrine.
-    const late = timing(new Date(v.startTime));
+    // Começou ou em cima da hora (CLT: prazo para divulgar passado), pela data VIVA da vitrine.
+    const late = timing(src.startsAt(v));
     return late ? block(late) : null;
   }
 

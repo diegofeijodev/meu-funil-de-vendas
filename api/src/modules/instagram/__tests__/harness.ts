@@ -41,12 +41,16 @@ export class IgTable {
     return Object.entries(where).every(([k, v]) => {
       if (k === 'OR') return (v as Row[]).some((w) => this.match(r, w));
       if (k === 'AND') return (v as Row[]).every((w) => this.match(r, w));
+      if (k === 'NOT') return !(Array.isArray(v) ? (v as Row[]).some((w) => this.match(r, w)) : this.match(r, v as Row));
       const rel = this.relations[k];
       if (rel && v && typeof v === 'object') {
         const kids = rel.table.rows.filter((x) => x[rel.fk] === r.id);
         const ok = (w: Row) => kids.filter((x) => rel.table.match(x, w));
         if ('none' in v) return ok(v.none).length === 0;
         if ('some' in v) return ok(v.some).length > 0;
+        // relação 1:1 (`{ is | isNot: where | null }`)
+        if ('is' in v) return v.is === null ? kids.length === 0 : ok(v.is).length > 0;
+        if ('isNot' in v) return v.isNot === null ? kids.length > 0 : ok(v.isNot).length === 0;
       }
       if (v && typeof v === 'object' && 'path' in v) {
         const got = (v.path as string[]).reduce((o: any, p: string) => o?.[p], r[k]);
@@ -200,6 +204,7 @@ export function igWorld() {
     brand_assets: new IgTable(() => ({ kind: 'photo' })),
   };
   t.ig_posts!.relations['publishing_jobs'] = { table: t.publishing_jobs!, fk: 'ig_post_id' };
+  t.ig_posts!.relations['vacancy_story'] = { table: t.vacancy_stories!, fk: 'ig_post_id' };
   const prisma: any = { ...t, workspace_members: memMembers, $transaction: async (ops: Promise<unknown>[] | ((tx: any) => Promise<unknown>)) => {
       if (typeof ops !== 'function') return Promise.all(ops);
       // callback: desfaz as escritas se lançar (como o banco)

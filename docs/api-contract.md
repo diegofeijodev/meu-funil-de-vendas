@@ -852,7 +852,7 @@ CltSettingsView = {
   (`/disable`, ou a arte modelo apagada) não toca a CLT.
 - `GET …/stories?filter=&kind=diaria|clt` (ausente = as duas); cada item ganha `kind: 'diaria' | 'clt'` e `promote_until` (CLT: o
   "divulgar até"; diária: `null`). Linha CLT: `funcao` = cargo (sem "CLT" no fim), `estabelecimento` = empresa limpa, `valor` = salário
-  ("R$ 1.874,32", "R$ 2.000 a R$ 2.500"; a tela acrescenta "/mês"), `quando` = "Vaga fixa · divulgar até 24/12", `cidade` = "Jundiaí – SP" ou
+  ("R$ 1.874,32", "R$ 2.000 a R$ 2.500"; a tela acrescenta "/mês"), `quando` = "divulgar até 24/12", `cidade` = "Jundiaí – SP" ou
   `null`, `freela_url` = página pública da vaga fixa ou `null` enquanto `FREELA_FIXED_JOB_PAGE_URL` estiver vazia (diária: sempre string).
 - `POST …/preview` aceita `{ kind: 'clt' }` (sem padrão): prévia da arte "Vaga fixa CLT" com a vaga fixa mais recente que serve (com
   salário, sem "teste") ou a de exemplo; não exige arte modelo. `preview.kind = 'clt'`; uma prévia CLT **não** destrava o QR das diárias.

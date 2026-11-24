@@ -12,10 +12,9 @@ import { VacancyGate } from './vacancy-gate.service';
 import { DONT_POST_REASON, MAX_REDOS, WAIT_CAP } from './vacancy-reasons';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import type { StoryFeedback, StoryFilter } from './vacancy-stories.dto';
-import { fingerprint } from './vacancy-text';
-import { forcedTriage } from './vacancy-triage';
-import type { FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
+import { sourceOf, sourceOfKind, type SourceItem } from './vacancy-sources';
+import type { StoryFeedback, StoryFilter, StoryKind } from './vacancy-stories.dto';
+import type { SettingsRow, StoryRow } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
 const LIST_SIZE = 100;
@@ -25,8 +24,7 @@ const MSG = {
   notFound: 'Não achamos este story. Ele pode ter sido apagado; atualize a tela.',
   /** A tela estava velha: o story mudou de situação entre a lista e o toque (ou a ação não vale para ela). */
   stale: 'A situação deste story mudou enquanto você olhava. Já atualizamos a tela; confira e tente de novo.',
-  off: 'Ligue os stories das vagas para usar esta ação.',
-  closed: 'A vaga não está mais aberta no Freela.',
+  // "Ligue os stories…" e "A vaga não está mais aberta…" vêm da porta por fonte (diária ou vaga fixa).
   redoCap: `A arte desta vaga já foi refeita ${MAX_REDOS} vezes, o máximo. Aprove, toque em Não postar ou envie a sua própria arte pelo editor.`,
   /** "Postar agora" sem Instagram conectado (A6). */
   noAccount: 'O Instagram está desconectado. Reconecte em Visão geral e tente de novo.',
@@ -70,12 +68,16 @@ export class VacancyActionsService {
     private readonly scheduler: VacancySchedulerService,
   ) {}
 
-  /** As 100 linhas mais novas (filtro aplicado depois: `live` = no ar agora; `not_posted` = pulada, cancelada ou falhou). */
-  async list(ws: string, filter: StoryFilter = 'all'): Promise<StoryView[]> {
+  /**
+   * As 100 linhas mais novas (filtro aplicado depois: `live` = no ar agora; `not_posted` = pulada, cancelada ou falhou). `kind` = só as
+   * diárias ou só as vagas fixas (ausente = as duas).
+   */
+  async list(ws: string, filter: StoryFilter = 'all', kind?: StoryKind): Promise<StoryView[]> {
     this.gate.assert(ws);
     const now = new Date(this.now());
     const s = await this.settings.get(ws);
-    const rows = await this.prisma.vacancy_stories.findMany({ where: { workspace_id: ws }, orderBy: { created_at: 'desc' }, take: LIST_SIZE });
+    const bySource = kind ? { source: sourceOfKind(kind).id } : {};
+    const rows = await this.prisma.vacancy_stories.findMany({ where: { workspace_id: ws, ...bySource }, orderBy: { created_at: 'desc' }, take: LIST_SIZE });
     const ids = rows.map((r) => r.ig_post_id).filter((x): x is string => !!x);
     const posts = new Map<string, StoryPost>(
       ids.length ? (await this.prisma.ig_posts.findMany({ where: { id: { in: ids }, workspace_id: ws } })).map((p): [string, StoryPost] => [p.id, p]) : [],
@@ -144,7 +146,7 @@ export class VacancyActionsService {
     const now = new Date(this.now());
     const { row, post } = await this.load(ws, id);
     const s = await this.settings.get(ws);
-    if (!s.enabled) throw bad(MSG.off);
+    if (!sourceOf(row.source).on(s)) throw bad(sourceOf(row.source).reasons.actionOff);
     const d = displayOf(row, post, s, now, await this.context(ws, s, now));
     if (d.display !== 'waiting_window' && d.display !== 'waiting_cap') throw bad(MSG.stale);
     if (post) {
@@ -174,23 +176,24 @@ export class VacancyActionsService {
     const now = new Date(this.now());
     const { row, post } = await this.load(ws, id);
     const s = await this.settings.get(ws);
-    if (!s.enabled) throw bad(MSG.off);
+    const src = sourceOf(row.source);
+    if (!src.on(s)) throw bad(src.reasons.actionOff);
     if (!canRevive(row, post)) throw bad(MSG.stale);
-    let v: FreelaVacancy | null;
+    let v: SourceItem | null;
     try {
-      v = await this.feed.byId(row.external_id);
+      v = await src.byId(this.feed, row.external_id);
     } catch (e) {
       if (e instanceof FeedDownError) throw bad(ORIGIN_UNAVAILABLE_MSG);
       throw e;
     }
-    if (!v) throw bad(MSG.closed);
+    if (!v) throw bad(src.reasons.actionClosed);
     // Mesma regra que o gerador aplica à linha `forced` (R30).
-    const t = forcedTriage(v, s, now);
+    const t = src.forcedTriage(v, s, now);
     if (t.status === 'skipped') throw bad(t.reason);
-    const startsAt = new Date(v.startTime);
+    const startsAt = src.startsAt(v);
     const r = await this.prisma.vacancy_stories.updateMany({
       where: { id, workspace_id: ws, status: row.status, ig_post_id: row.ig_post_id },
-      data: { ...REQUEUE, forced: true, snapshot: json(v), fingerprint: fingerprint(v), starts_at: startsAt },
+      data: { ...REQUEUE, forced: true, snapshot: json(v), fingerprint: src.fingerprint(v), starts_at: startsAt },
     });
     if (!r.count) throw bad(MSG.stale);
     await this.activity.log(ws, userId, 'vacancy_stories.create_anyway', 'vacancy_stories', { story_id: id, external_id: row.external_id });
@@ -206,7 +209,7 @@ export class VacancyActionsService {
     await this.access.require(userId, ws, 'write');
     const { row, post } = await this.load(ws, id);
     const s = await this.settings.get(ws);
-    if (!s.enabled) throw bad(MSG.off);
+    if (!sourceOf(row.source).on(s)) throw bad(sourceOf(row.source).reasons.actionOff);
     let ok: boolean;
     if (row.status === 'failed') {
       ok = (await this.prisma.vacancy_stories.updateMany({ where: { id, workspace_id: ws, status: 'failed' }, data: REQUEUE })).count > 0;
@@ -258,9 +261,14 @@ export class VacancyActionsService {
    */
   private async context(ws: string, s: SettingsRow, now: Date): Promise<DisplayContext> {
     const c = await countVacancyStoriesOnDay(this.prisma, ws, todaySp(now));
+    const clt = await countVacancyStoriesOnDay(this.prisma, ws, todaySp(now), undefined, 'freela_clt');
     const ig = await this.scheduler.igRoom(ws, now);
     const acc = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: ws }, select: { publish_block_reason: true, publish_quota_total: true } });
-    return { capFull: c.posted + c.scheduled >= s.daily_cap, igFull: ig.room <= 0, publishBlocked: !!acc?.publish_block_reason, quota: acc?.publish_quota_total ?? 25 };
+    return {
+      capFull: c.posted + c.scheduled >= s.daily_cap, igFull: ig.room <= 0, publishBlocked: !!acc?.publish_block_reason, quota: acc?.publish_quota_total ?? 25,
+      cltCapFull: clt.posted + clt.scheduled >= sourceOfKind('clt').cap(s),
+      cltPage: (id) => this.feed.fixedJobPage(id),
+    };
   }
 }
 

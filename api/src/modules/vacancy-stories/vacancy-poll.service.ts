@@ -5,8 +5,9 @@ import { countCities, FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { PUBLISH_BLOCKED_MSG } from '../instagram/ig-types';
-import { blockedExpireReason, capWaitReason, leadDeadline, noApprovalReason, PUBLISH_BLOCKED_WAIT, tooCloseReason, VACANCY_STARTED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { leadDeadline, PUBLISH_BLOCKED_WAIT, WAIT_CAP } from './vacancy-reasons';
 import { approveUntil } from './vacancy-slots';
+import { sourceOf, timingOf } from './vacancy-sources';
 import { fingerprint } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
@@ -94,7 +95,6 @@ export class VacancyPollService {
    */
   async expireDue(now = new Date()): Promise<number> {
     const settings = new Map((await this.prisma.vacancy_story_settings.findMany({})).map((s) => [s.workspace_id, s]));
-    const lead = (ws: string) => (settings.get(ws)?.min_lead_minutes ?? 120) * MIN;
     // R5: início do bloqueio de publicação (aberto ou o último) de cada empresa, para o motivo "recusava desde…".
     const since = new Map(
       (await this.prisma.instagram_accounts.findMany({ where: { publish_blocked_at: { not: null } }, select: { workspace_id: true, publish_blocked_at: true } }))
@@ -106,14 +106,16 @@ export class VacancyPollService {
       where: { OR: [{ status: { in: ['new', 'waiting'] } }, { status: 'generating', ...leaseFree(now) }] },
     });
     for (const r of queued) {
-      if (r.starts_at.getTime() - now.getTime() >= lead(r.workspace_id)) continue;
+      // Por tipo (porta): antecedência, limite e textos da diária ou da vaga fixa (CLT: antecedência 0, o prazo é o "divulgar até").
+      const src = sourceOf(r.source);
       const s = settings.get(r.workspace_id);
+      if (r.starts_at.getTime() - now.getTime() >= src.lead(s) * MIN) continue;
       const blockedSince = r.wait_reason === PUBLISH_BLOCKED_WAIT ? since.get(r.workspace_id) : undefined;
       const reason = blockedSince
-        ? blockedExpireReason(r.starts_at, blockedSince)
+        ? src.reasons.blockedExpire(r.starts_at, blockedSince)
         : r.wait_reason === WAIT_CAP
-          ? capWaitReason(s?.daily_cap ?? 10, r.starts_at)
-          : tooCloseReason(r.starts_at, leadDeadline(r.starts_at, s?.min_lead_minutes ?? 120));
+          ? src.reasons.capWait(src.cap(s), r.starts_at)
+          : src.reasons.tooClose(r.starts_at, leadDeadline(r.starts_at, src.lead(s)));
       // Condicional ao estado lido: se o gerador pegou a linha entre a leitura e aqui, ela segue.
       const got = await this.prisma.vacancy_stories.updateMany({
         where: { id: r.id, AND: [{ OR: [{ status: { in: ['new', 'waiting'] } }, { status: 'generating', ...leaseFree(now) }] }] },
@@ -127,9 +129,10 @@ export class VacancyPollService {
       const rows = await this.prisma.vacancy_stories.findMany({ where: { ig_post_id: { in: pending.map((p) => p.id) } } });
       for (const r of rows) {
         if (!r.ig_post_id) continue;
-        const until = approveUntil(r.starts_at, settings.get(r.workspace_id) ?? DEFAULT_TIMING);
+        const src = sourceOf(r.source);
+        const until = approveUntil(r.starts_at, timingOf(src, settings.get(r.workspace_id) ?? DEFAULT_TIMING));
         if (until.getTime() > now.getTime()) continue;
-        n += await this.cancelPost(r.workspace_id, r.ig_post_id, r.id, ['pending_approval'], noApprovalReason(until, r.starts_at));
+        n += await this.cancelPost(r.workspace_id, r.ig_post_id, r.id, ['pending_approval'], src.reasons.noApproval(until, r.starts_at));
       }
     }
 
@@ -142,7 +145,8 @@ export class VacancyPollService {
         if (!r.ig_post_id) continue;
         // R5: parado pelo bloqueio → o motivo diz que o Instagram recusava, não só que a vaga começou.
         const blockedSince = blockedPost.has(r.ig_post_id) ? since.get(r.workspace_id) : undefined;
-        n += await this.cancelPost(r.workspace_id, r.ig_post_id, r.id, LATER, blockedSince ? blockedExpireReason(r.starts_at, blockedSince) : VACANCY_STARTED_REASON);
+        const src = sourceOf(r.source);
+        n += await this.cancelPost(r.workspace_id, r.ig_post_id, r.id, LATER, blockedSince ? src.reasons.blockedExpire(r.starts_at, blockedSince) : src.reasons.started);
       }
     }
     return n;
@@ -168,13 +172,16 @@ export class VacancyPollService {
     return r.count;
   }
 
-  /** Ligada mas sem arte modelo (a marca apagou o arquivo): desliga como o botão (cancela fila, posts não publicados e jobs) e registra a atividade. */
+  /**
+   * Ligada mas sem arte modelo (a marca apagou o arquivo): desliga as DIÁRIAS como o botão (cancela fila, posts não publicados e jobs) e
+   * registra a atividade. As vagas fixas não usam a arte modelo e seguem como estão.
+   */
   async disableOrphans(): Promise<number> {
     const orphans = await this.prisma.vacancy_story_settings.findMany({ where: { enabled: true, template_asset_id: null } });
     let n = 0;
     for (const s of orphans) {
       try {
-        await this.settings.turnOff(s.workspace_id, null, { reason: 'arte modelo apagada' });
+        await this.settings.turnOff(s.workspace_id, null, { reason: 'arte modelo apagada' }, 'freela');
       } catch (e) {
         this.logger.error(`[vagas] ${s.workspace_id}: desligar falhou: ${e instanceof Error ? e.message : String(e)}`);
         continue;

@@ -1,11 +1,13 @@
 import type { Prisma } from '@prisma/client';
 import { addDays } from '../../common/time/dates';
 import { PUBLISH_BLOCKED_MSG } from '../instagram/ig-types';
-import { DONT_POST_REASON, MAX_REDOS, PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { CLT_SKIP, cltCityLabel, cltRole, cltSalary } from './vacancy-clt';
+import { CLT_CLOSED_REASON, dayMonth as dayMonthOf, DONT_POST_REASON, MAX_REDOS, PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
 import { approveUntil, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
+import { sourceOf, timingOf } from './vacancy-sources';
 import { cleanEstablishment, cleanFunction, formatMoney, formatWhen, hourLabel, isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
 import { SKIP } from './vacancy-triage';
-import type { AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
+import type { AttemptLog, FieldCheck, FieldKey, FreelaFixedJob, FreelaVacancy, SettingsRow, StoryRow } from './vacancy-types';
 import { FIELD_LABELS } from './vacancy-verify';
 
 /** Prazo de aprovação (mora em `vacancy-slots`: a expiração e a geração também usam). */
@@ -57,7 +59,16 @@ export type DisplayResult = {
  * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `igFull` = sem espaço no
  * limite de publicações da Meta.
  */
-export type DisplayContext = { capFull?: boolean; igFull?: boolean; publishBlocked?: boolean; quota?: number };
+export type DisplayContext = {
+  capFull?: boolean;
+  igFull?: boolean;
+  publishBlocked?: boolean;
+  quota?: number;
+  /** Vagas fixas: o limite de hoje DELAS está cheio (ausente = cheio). */
+  cltCapFull?: boolean;
+  /** Vagas fixas: a página pública da vaga fixa (`FREELA_FIXED_JOB_PAGE_URL`); null = sem o link "Abrir a vaga fixa no site". */
+  cltPage?: (id: string) => string | null;
+};
 
 export type StoryCan = { approve: boolean; dont_post: boolean; post_now: boolean; create_anyway: boolean; redo: boolean; retry: boolean };
 
@@ -88,7 +99,11 @@ export type StoryView = {
   redo_count: number;
   ig_post_id: string | null;
   is_test: boolean;
-  freela_url: string;
+  /** Página pública da vaga no site do Freela; vaga fixa sem a página no ar = null. */
+  freela_url: string | null;
+  /** Vagas fixas (25/11/2026): o tipo da linha e, na CLT, o "divulgar até" (diária: null). */
+  kind: 'diaria' | 'clt';
+  promote_until: Date | null;
   /** §2.5 (24/11/2026): o link que o QR da arte abre; null = arte sem QR. */
   qr_url: string | null;
   /** R29: a mídia veio de "Enviar minha própria" — ninguém conferiu a arte. */
@@ -135,7 +150,7 @@ export const POST_UNPUBLISHED = ['pending_approval', 'approved', 'ready', 'sched
 /** Linhas que "Criar story mesmo assim" traz de volta (e a entregue cujo post foi cancelado). */
 const ROW_REVIVABLE = ['skipped', 'cancelled', 'expired'];
 /** Motivos que "Criar story mesmo assim" não desfaz (R30): a vaga continua sem como virar story. */
-const NO_REVIVE = [VACANCY_CLOSED_REASON, SKIP.noValue, SKIP.noCity];
+const NO_REVIVE = [VACANCY_CLOSED_REASON, SKIP.noValue, SKIP.noCity, CLT_CLOSED_REASON, CLT_SKIP.noSalary];
 const LATER = ['approved', 'ready', 'scheduled'];
 
 // ------------------------------------------------------------------ horários (Brasília)
@@ -171,6 +186,12 @@ function capSupport(cap: number, at: Date, now: Date): string {
   return `O máximo de hoje (${cap}) já está preenchido. Vai ao ar ${atLabel(at, now)}, se ainda der tempo de divulgar.`;
 }
 
+/** Vagas fixas (UI §4.4): "Hoje já foram 2 vagas fixas (o máximo por dia). Vai ao ar amanhã às 8h, se o prazo para divulgar ainda não tiver terminado." */
+function cltCapSupport(cap: number, at: Date, now: Date): string {
+  const done = cap === 1 ? 'Hoje já foi 1 vaga fixa' : `Hoje já foram ${cap} vagas fixas`;
+  return `${done} (o máximo por dia). Vai ao ar ${atLabel(at, now)}, se o prazo para divulgar ainda não tiver terminado.`;
+}
+
 /** B4: espera pelo limite de publicações da Meta (não pelo limite do dia). */
 function igSupport(at: Date, now: Date, quota = 25): string {
   return `A conta está perto do limite do Instagram (${quota} publicações em 24 h, somando os posts normais). Vai ao ar ${atLabel(at, now)}.`;
@@ -191,6 +212,11 @@ const aiAttempts = (log: unknown) => asLog(log).filter((a) => a?.kind === 'ai').
 export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): DisplayResult {
   const out = (display: Display, label: string, support: string | null = null, reason: string | null = null, approve_until: Date | null = null, wait_kind: WaitKind | null = null) =>
     ({ display, label, support, reason, approve_until, wait_kind }) as DisplayResult;
+  // Porta por fonte: limite, antecedência e textos da diária ou da vaga fixa (CLT: limite próprio, antecedência 0).
+  const src = sourceOf(row.source);
+  const clt = src.id === 'freela_clt';
+  const capText = (at: Date) => (clt ? cltCapSupport(src.cap(s), at, now) : capSupport(s.daily_cap, at, now));
+  const capFull = clt ? ctx.cltCapFull : ctx.capFull;
   const paused = (display: 'paused' | 'paused_ready', support: string) => out(display, LABEL[display], support);
   // P7: parado pelo bloqueio de publicação (só enquanto ele está aberto; depois volta à situação normal).
   if (ctx.publishBlocked && ROW_QUEUED.includes(row.status) && row.status !== 'generating' && row.wait_reason === PUBLISH_BLOCKED_WAIT) {
@@ -202,7 +228,7 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     case 'waiting': {
       if (row.wait_reason !== WAIT_CAP) return out('queued', LABEL.queued, row.wait_reason);
       const at = row.not_before ?? windowStartOn(addDays(spDay(now), 1), s.window_start);
-      return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now), null, null, 'cap');
+      return out('waiting_cap', LABEL.waiting_cap, capText(at), null, null, 'cap');
     }
     case 'generating':
       return out('generating', LABEL.generating, `Tentativa ${Math.min(AI_TRIES, row.mismatch_attempts + 1)} de ${AI_TRIES}`);
@@ -218,8 +244,9 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
   if (!post) return out('cancelled', LABEL.cancelled, null, row.skip_reason);
   switch (post.status) {
     case 'pending_approval': {
-      const until = approveUntil(row.starts_at, s);
+      const until = approveUntil(row.starts_at, timingOf(src, s));
       if (ctx.publishBlocked) return out('to_approve', LABEL.to_approve, 'Pode aprovar: ele espera o Instagram voltar para ir ao ar.', null, until);
+      if (clt) return out('to_approve', LABEL.to_approve, `Aprove até ${untilLabel(until, now)}. Depois disso o prazo para divulgar termina.`, null, until);
       return out('to_approve', LABEL.to_approve, `Aprove até ${untilLabel(until, now)}. Depois disso não dá tempo de divulgar.`, null, until);
     }
     case 'published': {
@@ -232,14 +259,14 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
       return out('failed', LABEL.failed, null, post.last_error ? `O Instagram recusou a publicação: ${noPeriod(post.last_error)}.` : 'O Instagram recusou a publicação.');
   }
   if (ctx.publishBlocked && LATER.includes(post.status) && post.last_error === PUBLISH_BLOCKED_MSG) {
-    const deadline = new Date(row.starts_at.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS);
+    const deadline = new Date(row.starts_at.getTime() - src.lead(s) * MIN - PUBLISH_SLACK_MS);
     return paused('paused_ready', `Vai ao ar quando a Meta voltar a aceitar publicações, se ainda der tempo: até ${untilLabel(deadline, now)}.`);
   }
   const at = post.scheduled_at;
   if (LATER.includes(post.status) && at && at.getTime() > now.getTime()) {
     const otherDay = spDay(at) !== spDay(now);
     const open = inWindow(now, s);
-    if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now), null, null, 'cap');
+    if (otherDay && open && capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capText(at), null, null, 'cap');
     if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now, ctx.quota), null, null, 'instagram');
     // Janela aberta e mesmo assim outro dia: foram os 15 min entre stories que empurraram.
     if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`, null, null, open ? 'spacing' : 'window');
@@ -250,18 +277,19 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
 
 /** Botões de cada situação (UI §4). Postar agora, criar mesmo assim, refazer e tentar de novo exigem a função ligada. */
 export function canOf(row: StoryRow, post: StoryPost | null, d: Display, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryCan {
-  const on = s.enabled;
+  const src = sourceOf(row.source);
+  const on = src.on(s);
   const unpublished = row.status === 'handed_off' && !!post && POST_UNPUBLISHED.includes(post.status);
   return {
     // A4: só até o prazo de aprovação; depois dele a expiração cancela o story (na próxima rodada do job).
-    approve: d === 'to_approve' && now.getTime() < approveUntil(row.starts_at, s).getTime(),
+    approve: d === 'to_approve' && now.getTime() < approveUntil(row.starts_at, timingOf(src, s)).getTime(),
     dont_post: ROW_QUEUED.includes(row.status) ? row.status !== 'generating' : unpublished,
     // P7: com a publicação bloqueada, "Postar agora" chamaria a Meta, falharia e reabriria o bloqueio: some.
     post_now: on && !ctx.publishBlocked && (d === 'waiting_window' || d === 'waiting_cap'),
     // R30: some se a vaga não tem como virar story (fechada, sem valor, sem cidade, ou já dentro da antecedência + 15 min de folga).
     create_anyway:
       on && (d === 'skipped' || d === 'cancelled') && canRevive(row, post) && !NO_REVIVE.includes(row.skip_reason ?? '') &&
-      row.starts_at.getTime() - s.min_lead_minutes * MIN - PUBLISH_SLACK_MS > now.getTime(),
+      row.starts_at.getTime() - src.lead(s) * MIN - PUBLISH_SLACK_MS > now.getTime(),
     redo: on && unpublished && row.redo_count < MAX_REDOS,
     retry: on && (row.status === 'failed' || (row.status === 'handed_off' && post?.status === 'failed')),
   };
@@ -320,9 +348,10 @@ function whenOf(row: StoryRow): { day: string; horario: string } {
 
 export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryView {
   const d = displayOf(row, post, s, now, ctx);
+  const media = (Array.isArray(post?.media) ? (post!.media as unknown as { url?: string | null }[]) : [])[0]?.url ?? null;
+  if (sourceOf(row.source).id === 'freela_clt') return cltStoryView(row, post, s, now, ctx, d, media);
   const v = snap(row);
   const when = whenOf(row);
-  const media = (Array.isArray(post?.media) ? (post!.media as unknown as { url?: string | null }[]) : [])[0]?.url ?? null;
   const city = (v.city ?? '').trim();
   return {
     id: row.id,
@@ -351,6 +380,8 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     ig_post_id: row.ig_post_id,
     is_test: isTestText(v.contractorName) || isTestText(v.title),
     freela_url: `${FREELA_VACANCY_URL}${encodeURIComponent(row.external_id)}`,
+    kind: 'diaria',
+    promote_until: null,
     qr_url: ((post?.creative_brief as { vacancy?: { qr_url?: unknown } } | null)?.vacancy?.qr_url as string | undefined) ?? null,
     own_art: ownArt(post),
     check_alert: checkAlert(row, post),
@@ -367,6 +398,7 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
  * tentativa ficam em `attempts_log`. Antes da entrega, ou com a arte trocada por "Enviar minha própria" (R29): vazia.
  */
 export function storyChecks(row: StoryRow, post: StoryPost | null): FieldCheck[] {
+  if (sourceOf(row.source).id === 'freela_clt') return cltChecks(row, post);
   const v = snap(row);
   if (row.status !== 'handed_off' || !post || !v.startTime || !v.endTime || ownArt(post)) return [];
   const f = vacancyFields(v as FreelaVacancy);
@@ -396,7 +428,73 @@ export function ownArt(post: StoryPost | null): boolean {
 
 export function storyDetail(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext = {}): StoryDetail {
   const view = storyView(row, post, s, now, ctx);
+  if (view.kind === 'clt') {
+    // UI §3.6: "Story de vaga fixa: Atendente, R$ 1.874,32 por mês, São Paulo – SP, Spoleto Shopping Anália Franco."
+    const alt = `Story de vaga fixa: ${[view.funcao, view.valor ? `${view.valor} por mês` : null, view.cidade, view.estabelecimento].filter(Boolean).join(', ')}.`;
+    return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt };
+  }
   const when = whenOf(row);
   const alt = `Story: ${[view.funcao, view.valor, when.day, when.horario, view.cidade].filter(Boolean).join(', ')}`;
   return { ...view, checks: storyChecks(row, post), attempts_log: asLog(row.attempts_log), alt };
+}
+
+// ------------------------------------------------------------------ vagas fixas (CLT)
+
+const cltSnap = (row: StoryRow) => (row.snapshot ?? {}) as unknown as Partial<FreelaFixedJob>;
+
+/** Linha de vaga fixa na tela (UI §4.4): "{Cargo} · {Empresa}" e "{salário}/mês · {Cidade – UF} · divulgar até {24/12}". */
+function cltStoryView(row: StoryRow, post: StoryPost | null, s: SettingsRow, now: Date, ctx: DisplayContext, d: DisplayResult, media: string | null): StoryView {
+  const v = cltSnap(row);
+  return {
+    id: row.id,
+    external_id: row.external_id,
+    status: row.status,
+    display: d.display,
+    label: d.label,
+    support: d.support,
+    reason: d.reason,
+    funcao: cltRole({ title: v.title ?? '', role: v.role ?? '' }),
+    estabelecimento: cleanEstablishment(v.companyName ?? null),
+    contractor_name: v.companyName ?? null,
+    valor: cltSalary(v.salary ?? null),
+    quando: `divulgar até ${dayMonthOf(row.starts_at)}`,
+    cidade: cltCityLabel({ city: v.city ?? null, uf: v.uf ?? null }),
+    starts_at: row.starts_at,
+    approve_until: d.approve_until,
+    scheduled_at: post?.scheduled_at ?? null,
+    published_at: post?.published_at ?? null,
+    permalink: post?.ig_permalink ?? null,
+    thumb_url: media,
+    media_url: media,
+    attempts: aiAttempts(row.attempts_log),
+    used_fallback: row.used_fallback,
+    redo_count: row.redo_count,
+    ig_post_id: row.ig_post_id,
+    is_test: isTestText(v.companyName) || isTestText(v.title) || isTestText(v.role),
+    freela_url: ctx.cltPage?.(row.external_id) ?? null,
+    kind: 'clt',
+    promote_until: row.starts_at,
+    qr_url: ((post?.creative_brief as { vacancy?: { qr_url?: unknown } } | null)?.vacancy?.qr_url as string | undefined) ?? null,
+    own_art: ownArt(post),
+    check_alert: checkAlert(row, post),
+    check_unread: checkUnread(row, post),
+    fallback_kind: row.status === 'handed_off' && row.used_fallback && !ownArt(post) ? fallbackKindOf(row.attempts_log) : null,
+    wait_kind: d.wait_kind,
+    can: canOf(row, post, d.display, s, now, ctx),
+  };
+}
+
+/** "Confira com a vaga" da vaga fixa: cargo, salário por mês, cidade e empresa (os que existem); todos escritos pelo sistema. */
+function cltChecks(row: StoryRow, post: StoryPost | null): FieldCheck[] {
+  const v = cltSnap(row);
+  if (row.status !== 'handed_off' || !post || ownArt(post) || !v.role) return [];
+  const ok = new Set(briefOf(post)?.checked_fields ?? []);
+  const all = row.used_fallback || briefOf(post)?.used_fallback === true;
+  const rows: [FieldKey, string, string | null][] = [
+    ['funcao', 'cargo', cltRole({ title: v.title ?? '', role: v.role })],
+    ['valor', 'salário por mês', cltSalary(v.salary ?? null)],
+    ['cidade', 'cidade', cltCityLabel({ city: v.city ?? null, uf: v.uf ?? null })],
+    ['estabelecimento', 'empresa', cleanEstablishment(v.companyName ?? null)],
+  ];
+  return rows.filter(([, , e]) => e != null).map(([key, label, e]) => ({ key, label, ok: all || ok.has(key), read: null, expected: e }));
 }

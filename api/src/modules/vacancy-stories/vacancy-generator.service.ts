@@ -12,15 +12,18 @@ import { AssetsService, MEDIA_BUCKET, type MediaAsset } from '../media/assets.se
 import { ImageService } from '../media/image.service';
 import { bad, errMessage } from '../media/user-error';
 import { loadBadges } from './vacancy-art';
-import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
+import { composeBaseArt, loadBaseFonts, type BaseFonts } from './vacancy-base-art';
+import { cltDeadline, cltFields } from './vacancy-clt';
+import { composeCltArt } from './vacancy-clt-art';
+import { sourceOf, type SourceItem } from './vacancy-sources';
+import type { Badges } from './vacancy-art';
 import { planQr, vacancyLink, verifyQrPixels, type QrPlan } from './vacancy-qr';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
-import { PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
+import { PUBLISH_BLOCKED_WAIT, WAIT_CAP } from './vacancy-reasons';
 import { photoPrompt, photoReadPrompt, photoStyleLines } from './vacancy-prompts';
-import { fingerprint, shortDay, vacancyFields } from './vacancy-text';
-import { forcedTriage, triage } from './vacancy-triage';
-import type { ArtCheck, ArtRead, AttemptLog, FieldCheck, FieldKey, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
+import { shortDay, vacancyFields } from './vacancy-text';
+import type { ArtCheck, ArtRead, AttemptLog, CltFields, FieldCheck, FieldKey, FreelaFixedJob, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
 import { FIELD_LABELS, READ_SCHEMA } from './vacancy-verify';
 
 /** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
@@ -70,6 +73,20 @@ function systemFields(f: VacancyFields): FieldCheck[] {
   const one = (key: FieldKey, v: string | null): FieldCheck => ({ key, label: FIELD_LABELS[key], ok: true, read: v, expected: v });
   return [one('funcao', f.funcao), one('estabelecimento', f.estabelecimento), one('cidade', f.cidade), one('valor', f.valor), one('data', f.data), one('inicio', hour), one('fim', hour)];
 }
+
+/** Vagas fixas: os campos da arte CLT, todos escritos pelo sistema (a tela de Aprovações diz "✓ Conferido: cargo, salário, cidade"). */
+function cltSystemFields(f: CltFields): FieldCheck[] {
+  const one = (key: FieldKey, label: string, v: string): FieldCheck => ({ key, label, ok: true, read: v, expected: v });
+  return [
+    one('funcao', 'cargo', f.cargo),
+    one('valor', 'salário por mês', f.salario),
+    ...(f.cidade ? [one('cidade', 'cidade', f.cidade)] : []),
+    ...(f.empresa ? [one('estabelecimento', 'empresa', f.empresa)] : []),
+  ];
+}
+
+/** Desenho da arte com a foto (ou sem): a peça que muda entre a diária e a vaga fixa. */
+type Composer = (a: { photo: Uint8Array | null; logo: Uint8Array | null; badges: Badges; fonts: BaseFonts; qr: QrPlan | null }) => Promise<Uint8Array>;
 
 /** Textos que a leitura achou na foto e que a reprovam: qualquer bloco com 3+ letras ou dígitos (placa, fachada, logo, uniforme). */
 export function photoTexts(read: ArtRead): string[] {
@@ -197,8 +214,9 @@ export class VacancyGeneratorService {
    */
   async generateDue(now = new Date()): Promise<{ started: number; handed: number; waiting: number; cancelled: number }> {
     const out = { started: 0, handed: 0, waiting: 0, cancelled: 0 };
+    // Empresa ativa = diárias OU vagas fixas ligadas; cada linha confere o interruptor do seu tipo (porta por fonte).
     const active = new Map(
-      (await this.prisma.vacancy_story_settings.findMany({ where: { enabled: true } }))
+      (await this.prisma.vacancy_story_settings.findMany({ where: { OR: [{ enabled: true }, { clt_enabled: true }] } }))
         .filter((s) => this.gate.allowed(s.workspace_id))
         .map((s) => [s.workspace_id, s]),
     );
@@ -219,10 +237,15 @@ export class VacancyGeneratorService {
     // Sem conta conectada → espera a reconexão; conta com a publicação bloqueada (R5) → espera o bloqueio fechar. Nos dois, nada de IA.
     const live = new Map<string, string | null>();
     const free = (id: string) => ({ id, status: { in: QUEUE }, ...leaseFree(now) });
-    for (const row of due) {
+    // Diárias primeiro, na ordem do início (prazo de horas, V7); depois as vagas fixas, das mais novas para as mais velhas (retroativo em gotas).
+    const clt = (r: StoryRow) => sourceOf(r.source).id === 'freela_clt';
+    const published = (r: StoryRow) => Date.parse(String((r.snapshot as { publishedAt?: unknown } | null)?.publishedAt ?? '')) || 0;
+    const ordered = [...due.filter((r) => !clt(r)), ...due.filter(clt).sort((a, b) => published(b) - published(a))];
+    for (const row of ordered) {
       if (out.started >= PER_TICK) break;
       const ws = row.workspace_id;
       const s = active.get(ws)!;
+      if (!sourceOf(row.source).on(s)) continue;
       if (!live.has(ws)) {
         const acc = await this.store.liveAccount(ws);
         live.set(ws, !acc ? NO_ACCOUNT_WAIT : acc.publish_block_reason ? PUBLISH_BLOCKED_WAIT : null);
@@ -264,41 +287,46 @@ export class VacancyGeneratorService {
 
   /** Uma linha com o lease na mão. `LeaseLost` (renovação perdida) sobe para o `generateDue`, que conta como perdida. */
   private async generateOne(row: StoryRow, lease: RowLease, s: SettingsRow, now: Date): Promise<Outcome> {
-    let v: FreelaVacancy | null;
+    // Porta por fonte: diária (vitrine de vagas) ou vaga fixa (vitrine de vagas fixas).
+    const src = sourceOf(row.source);
+    let v: SourceItem | null;
     try {
-      v = await this.feed.byId(row.external_id);
+      v = await src.byId(this.feed, row.external_id);
     } catch (e) {
       // Vitrine fora do ar: não é culpa da vaga nem da IA — volta a esperar, sem gastar nada.
       this.logger.warn(`[vagas] ${row.workspace_id}: vitrine fora ao conferir ${row.external_id}: ${e instanceof Error ? e.message : String(e)}`);
       return (await lease.write({ status: 'waiting', lease_until: null, next_attempt_at: new Date(now.getTime() + RETRY_MS) })) ? 'waiting' : 'lost';
     }
-    if (!v) return (await lease.write({ status: 'cancelled', skip_reason: VACANCY_CLOSED_REASON, lease_until: null })) ? 'cancelled' : 'lost';
-    const fp = fingerprint(v);
+    if (!v) return (await lease.write({ status: 'cancelled', skip_reason: src.reasons.closed, lease_until: null })) ? 'cancelled' : 'lost';
+    const fp = src.fingerprint(v);
     if (fp !== row.fingerprint) {
       // A vaga mudou desde a triagem: a arte sai com os dados novos.
-      const starts = new Date(v.startTime);
+      const starts = src.startsAt(v);
       if (!(await lease.write({ snapshot: json(v), fingerprint: fp, starts_at: starts }))) return 'lost';
       row = { ...row, snapshot: v as unknown as StoryRow['snapshot'], fingerprint: fp, starts_at: starts };
     }
     // C1: a triagem roda de novo na vaga VIVA (valor apagado, cidade fora da lista, "teste" no nome, em cima da hora). A linha `forced`
     // ("Criar story mesmo assim", R30) só confere valor, cidade e antecedência.
-    const t = row.forced ? forcedTriage(v, s, now) : triage(v, s, now);
+    const t = row.forced ? src.forcedTriage(v, s, now) : src.triage(v, s, now);
     if (t.status === 'skipped') return (await lease.write({ status: 'skipped', skip_reason: t.reason, lease_until: null })) ? 'cancelled' : 'lost';
     // A4: sem como ir ao ar (prazo de aprovação passado, ou nenhum horário livre a tempo) → não gera a arte.
     const late = await this.hooks.beforeGenerate?.(row, s, now);
     if (late) return (await lease.write({ status: 'expired', skip_reason: late, lease_until: null })) ? 'cancelled' : 'lost';
-    // §2.3: com o QR ligado, o link da vaga vai no rodapé (id que não vira link = arte sem QR e aviso no log).
-    const qrUrl = s.qr_enabled ? vacancyLink(v.id) : null;
-    if (s.qr_enabled && !qrUrl) this.logger.warn(`[vagas] ${row.workspace_id}: vaga ${v.id} sem id de link (não é UUID); a arte sai sem QR.`);
+    // §2.3: com o QR ligado, o link da vaga vai no rodapé (id que não vira link = arte sem QR e aviso no log). Vaga fixa: só com a página
+    // pública da vaga fixa no ar (`FREELA_FIXED_JOB_PAGE_URL`).
+    const isClt = src.id === 'freela_clt';
+    const qrUrl = s.qr_enabled ? (isClt ? this.feed.fixedJobQrLink(v.id) : vacancyLink(v.id)) : null;
+    if (s.qr_enabled && !qrUrl) {
+      this.logger.warn(`[vagas] ${row.workspace_id}: vaga ${v.id} sem link (${isClt ? 'página da vaga fixa fora do ar ou id que não é UUID' : 'não é UUID'}); a arte sai sem QR.`);
+    }
     let art: ArtResult;
     try {
       // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado) e, na arte da tentativa n ≤ 3,
       // grava n − 1 em `mismatch_attempts` (R28: as anteriores foram reprovadas; os passos da reserva não mexem — fica em 2).
-      art = await this.makeArt(
-        row.workspace_id, s, vacancyFields(v),
-        (step, n) => lease.renew(step === 'art' && n <= AI_TRIES ? { mismatch_attempts: n - 1 } : {}),
-        { qrUrl },
-      );
+      const onStep = (step: 'art' | 'check', n: number) => lease.renew(step === 'art' && n <= AI_TRIES ? { mismatch_attempts: n - 1 } : {});
+      art = isClt
+        ? await this.makeCltArt(row.workspace_id, s, cltFields(v as FreelaFixedJob), onStep, { qrUrl })
+        : await this.makeArt(row.workspace_id, s, vacancyFields(v as FreelaVacancy), onStep, { qrUrl });
     } catch (e) {
       if (!(e instanceof ArtAiError)) throw e;
       return (await this.recordAiError(row, lease, e, now)) ? 'waiting' : 'lost';
@@ -346,6 +374,30 @@ export class VacancyGeneratorService {
     onStep?: (step: 'art' | 'check', attempt: number) => Promise<void>,
     o: { qrUrl?: string | null } = {},
   ): Promise<ArtResult> {
+    return this.artWithPhoto(ws, s, f.funcao, systemFields(f), (a) => composeBaseArt(this.images, { fields: f, ...a }), onStep, o);
+  }
+
+  /** Vagas fixas (CLT): a mesma foto da IA para o cargo e a mesma conferência; a arte "Vaga fixa CLT" (`composeCltArt`). */
+  async makeCltArt(
+    ws: string,
+    s: SettingsRow,
+    f: CltFields,
+    onStep?: (step: 'art' | 'check', attempt: number) => Promise<void>,
+    o: { qrUrl?: string | null } = {},
+  ): Promise<ArtResult> {
+    return this.artWithPhoto(ws, s, f.cargo, cltSystemFields(f), (a) => composeCltArt(this.images, { fields: f, ...a }), onStep, o);
+  }
+
+  /** O corpo comum das duas artes: foto da IA (até 2 tentativas, leitura às cegas) e o desenho do sistema por cima. */
+  private async artWithPhoto(
+    ws: string,
+    s: SettingsRow,
+    role: string,
+    fields: FieldCheck[],
+    compose: Composer,
+    onStep?: (step: 'art' | 'check', attempt: number) => Promise<void>,
+    o: { qrUrl?: string | null } = {},
+  ): Promise<ArtResult> {
     const qr = o.qrUrl ? planQr(o.qrUrl) : null;
     if (o.qrUrl && !qr) this.logger.warn(`[vagas] ${ws}: o link da vaga não cabe no QR com módulo de 4 px (${o.qrUrl.length} caracteres); a arte sai sem QR.`);
     const vendor: AiVendor = s.vendor === 'gemini' ? 'gemini' : 'openai';
@@ -355,10 +407,9 @@ export class VacancyGeneratorService {
     const attempts: AttemptLog[] = [];
     const log = (n: number, kind: AttemptLog['kind'], ok: boolean, forbidden: string[], error?: string) =>
       attempts.push({ n, at: new Date().toISOString(), kind, ok, wrong: [], forbidden: forbidden.map((x) => x.slice(0, 120)), ...(error ? { error } : {}) });
-    // Os textos são escritos pelo sistema a partir da vaga: todos os campos estão certos por construção.
-    const fields = systemFields(f);
+    // Os textos são escritos pelo sistema a partir da vaga: todos os campos estão certos por construção (`fields`).
     // Fatia 5: só com o interruptor da empresa ligado; a 1ª tentativa leva as frases de estilo, a 2ª vai como sempre (sem notas).
-    const style = s.style_refs_enabled ? await this.refs.loadPhotoStyle(ws, s.brand_id, `Vaga de ${f.funcao}`) : null;
+    const style = s.style_refs_enabled ? await this.refs.loadPhotoStyle(ws, s.brand_id, `Vaga de ${role}`) : null;
     const lines = style ? photoStyleLines(style.style) : [];
     // P4: sem crédito há pouco → a arte sai sem foto sem chamar a IA (a tentativa fica registrada com o motivo, e o aviso vermelho segue).
     const noCredit = await this.recentNoCredit(ws, vendor);
@@ -368,7 +419,7 @@ export class VacancyGeneratorService {
       await onStep?.('art', n);
       let photo: Uint8Array;
       try {
-        photo = (await this.ai.image(ws, { prompt: n === 1 ? photoPrompt(f.funcao, lines) : photoPrompt(f.funcao), aspectRatio: '1:1', vendor, strict: true })).bytes;
+        photo = (await this.ai.image(ws, { prompt: n === 1 ? photoPrompt(role, lines) : photoPrompt(role), aspectRatio: '1:1', vendor, strict: true })).bytes;
       } catch (e) {
         log(n, 'ai', false, [], this.aiMessage(ws, e));
         break; // IA fora (chave, crédito, queda): não insiste; a arte sai sem foto
@@ -383,7 +434,7 @@ export class VacancyGeneratorService {
       }
       log(n, 'ai', found.length === 0, found);
       if (found.length === 0) {
-        const bytes = await composeBaseArt(this.images, { fields: f, photo, logo, badges, fonts, qr });
+        const bytes = await compose({ photo, logo, badges, fonts, qr });
         const check: ArtCheck = { ok: true, fields, forbidden: [], hint: null };
         return {
           bytes, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin,
@@ -392,7 +443,7 @@ export class VacancyGeneratorService {
       }
     }
 
-    const bytes = await composeBaseArt(this.images, { fields: f, photo: null, logo, badges, fonts, qr });
+    const bytes = await compose({ photo: null, logo, badges, fonts, qr });
     log(AI_TRIES + 1, 'fallback_plain', true, []);
     return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin, styleRefs: null, qr };
   }
@@ -455,13 +506,21 @@ export class VacancyGeneratorService {
    * marca a linha `handed_off`. Se a linha deixou de ser nossa (desligaram no meio), desfaz tudo, apaga a mídia e devolve `'lost'`.
    * Devolve o id do post; depois chama o gancho `afterHandOff` (Task 10).
    */
-  async handOff(row: StoryRow, s: SettingsRow, art: ArtResult, v: FreelaVacancy): Promise<string> {
+  async handOff(row: StoryRow, s: SettingsRow, art: ArtResult, v: SourceItem): Promise<string> {
     const ws = row.workspace_id;
     const ours = { id: row.id, workspace_id: ws, status: 'generating', lease_until: row.lease_until };
     // Atalho: desligaram durante a geração → nem salva a mídia.
     if (!row.lease_until || !(await this.prisma.vacancy_stories.count({ where: ours }))) return HANDOFF_LOST;
-    const f = vacancyFields(v);
-    const theme = `Vaga · ${f.funcao} · ${f.estabelecimento ?? f.cidade} · ${shortDay(v.startTime)}`;
+    const src = sourceOf(row.source);
+    const isClt = src.id === 'freela_clt';
+    let theme: string;
+    if (isClt) {
+      const c = cltFields(v as FreelaFixedJob);
+      theme = ['Vaga fixa', c.cargo, c.empresa ?? c.cidade].filter(Boolean).join(' · ');
+    } else {
+      const f = vacancyFields(v as FreelaVacancy);
+      theme = `Vaga · ${f.funcao} · ${f.estabelecimento ?? f.cidade} · ${shortDay((v as FreelaVacancy).startTime)}`;
+    }
     // O modo pode ter mudado durante a geração: vale o de agora. Reserva que a leitura reprovou (texto proibido, R22) ou que a leitura
     // nem conseguiu conferir (erro na última leitura, T9) nunca vai ao ar sozinha: espera aprovação mesmo no modo "postar sozinho".
     const autoMode = (await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws }, select: { auto_publish: true } }))?.auto_publish ?? s.auto_publish;
@@ -480,9 +539,12 @@ export class VacancyGeneratorService {
     // a leitura nem conseguiu ler, `check_unread` (a tela diz que a conferência não leu a arte, também no lugar do "✓ Conferido").
     const alert = art.usedFallback && !art.check.ok && art.check.forbidden.length ? art.check.forbidden : null;
     const vacancy = {
-      story_id: row.id, external_id: row.external_id, fingerprint: fingerprint(v), requires_approval: !auto,
+      story_id: row.id, external_id: row.external_id, fingerprint: src.fingerprint(v), requires_approval: !auto,
       checked_fields: art.check.fields.filter((x) => x.ok).map((x) => x.key), attempts: aiTries, used_fallback: art.usedFallback,
-      check_alert: alert, check_unread: unread, starts_at: v.startTime,
+      check_alert: alert, check_unread: unread,
+      // Vaga fixa: `kind` (a agenda, a guarda, a contagem e a tela leem) e `starts_at` = o "divulgar até".
+      starts_at: isClt ? cltDeadline(v as FreelaFixedJob).toISOString() : (v as FreelaVacancy).startTime,
+      ...(isClt ? { kind: 'clt' } : {}),
       // §2.5: o link que o QR da arte abre (a tela mostra "Com QR" e "O QR abre: …"); null = arte sem QR.
       qr_url: art.qr?.url ?? null,
     };

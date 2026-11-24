@@ -9,9 +9,10 @@ import { VacancyGate } from './vacancy-gate.service';
 import { VacancyGeneratorService } from './vacancy-generator.service';
 import { holdForApproval } from './vacancy-approval';
 import { VacancyGuardService } from './vacancy-guard.service';
-import { capWaitReason, igLimitReason, leadDeadline, spacingReason, tooCloseReason, windowReason } from './vacancy-reasons';
+import { leadDeadline } from './vacancy-reasons';
 import { approveUntil, nextWindowSlot, PUBLISH_SLACK_MS, spDay, windowStartOn } from './vacancy-slots';
-import type { SettingsRow, StoryRow } from './vacancy-types';
+import { SOURCES, sourceOf, sourceOfPost, timingOf } from './vacancy-sources';
+import type { SettingsRow, StoryRow, VacancySourceId } from './vacancy-types';
 import { countVacancyStoriesOnDay } from './vacancy-usage';
 
 const MIN = 60_000;
@@ -26,7 +27,6 @@ const MAX_DAYS = 14;
 const SCHEDULABLE = ['approved', 'ready', 'scheduled', 'failed'];
 const MSG = {
   published: 'Este story já foi publicado.',
-  off: 'Os stories das vagas estão desligados nesta empresa.',
 };
 
 export type SlotPlan = { at: Date; waitingFor: 'none' | 'window' | 'cap' | 'ig_limit' } | { expire: string };
@@ -66,10 +66,13 @@ export class VacancySchedulerService implements OnModuleInit {
     this.generator.hooks.beforeGenerate = (row, s, now) => this.generationBlock(row, s, now);
   }
 
-  /** Stories de vaga do dia `day` (Brasília) contra o limite do dia; `exceptPostId` = o post que está sendo agendado. */
-  async capacityFor(ws: string, s: SettingsRow, day: string, exceptPostId?: string): Promise<{ used: number; cap: number }> {
-    const c = await countVacancyStoriesOnDay(this.prisma, ws, day, exceptPostId);
-    return { used: c.posted + c.scheduled, cap: s.daily_cap };
+  /**
+   * Stories de vaga do tipo `kind` do dia `day` (Brasília) contra o limite do dia DESSE tipo (diárias: `daily_cap`; vagas fixas:
+   * `clt_daily_cap`); `exceptPostId` = o post que está sendo agendado.
+   */
+  async capacityFor(ws: string, s: SettingsRow, day: string, exceptPostId?: string, kind: VacancySourceId = 'freela'): Promise<{ used: number; cap: number }> {
+    const c = await countVacancyStoriesOnDay(this.prisma, ws, day, exceptPostId, kind);
+    return { used: c.posted + c.scheduled, cap: SOURCES[kind].cap(s) };
   }
 
   /**
@@ -135,8 +138,11 @@ export class VacancySchedulerService implements OnModuleInit {
    * motivo verdadeiro (A5/R23): já não daria tempo nem agora, a janela só abre depois do prazo, o espaço da Meta só libera depois,
    * os 15 min entre stories empurraram para depois, ou o limite do dia. `postId` = o post sendo agendado (não conta contra ele mesmo).
    */
-  async planSlot(ws: string, s: SettingsRow, startsAt: Date, now: Date, o: { force?: boolean; postId?: string } = {}): Promise<SlotPlan> {
+  async planSlot(ws: string, s: SettingsRow, startsAt: Date, now: Date, o: { force?: boolean; postId?: string; kind?: VacancySourceId } = {}): Promise<SlotPlan> {
     if (o.force) return { at: new Date(now.getTime() + MIN), waitingFor: 'none' };
+    // Porta por fonte: limite e antecedência do tipo (vaga fixa: antecedência 0 até o "divulgar até"); janela, espaço e Meta compartilhados.
+    const src = SOURCES[o.kind ?? 'freela'];
+    const leadMin = src.lead(s);
     const taken = await this.vacancyTimes(ws, new Date(now.getTime() - SPACING_MIN * MIN), o.postId);
     const free = (from: Date) => this.freeSlot(s, from, taken);
     const opens = nextWindowSlot({ now, windowStart: s.window_start, windowEnd: s.window_end, after: null, spacingMin: SPACING_MIN });
@@ -150,11 +156,11 @@ export class VacancySchedulerService implements OnModuleInit {
     }
 
     // Antecedência + folga da fila (R26): o story precisa sair com a antecedência medida na hora REAL da publicação.
-    const lead = s.min_lead_minutes * MIN + PUBLISH_SLACK_MS;
+    const lead = leadMin * MIN + PUBLISH_SLACK_MS;
     const late = (t: Date) => t.getTime() + lead > startsAt.getTime();
-    const capFull = { expire: capWaitReason(s.daily_cap, startsAt) };
+    const capFull = { expire: src.reasons.capWait(src.cap(s), startsAt) };
     for (let i = 0; ; i++) {
-      const { used, cap } = await this.capacityFor(ws, s, spDay(at), o.postId);
+      const { used, cap } = await this.capacityFor(ws, s, spDay(at), o.postId, src.id);
       if (used < cap) break;
       if (i >= MAX_DAYS) return capFull;
       // Dia cheio: a folga a partir do início da janela do dia seguinte.
@@ -163,12 +169,12 @@ export class VacancySchedulerService implements OnModuleInit {
       if (late(at)) return capFull;
     }
     if (!late(at)) return { at, waitingFor };
-    const deadline = leadDeadline(startsAt, s.min_lead_minutes, true);
-    if (late(new Date(now.getTime() + MIN))) return { expire: tooCloseReason(startsAt, deadline) };
-    if (late(opens)) return { expire: windowReason(startsAt, deadline, s.window_start, s.window_end) };
+    const deadline = leadDeadline(startsAt, leadMin, true);
+    if (late(new Date(now.getTime() + MIN))) return { expire: src.reasons.tooClose(startsAt, deadline) };
+    if (late(opens)) return { expire: src.reasons.window(startsAt, deadline, s.window_start, s.window_end) };
     // R40/M1: o espaço da Meta só é o motivo quando ele libera depois do prazo; antes disso foram os 15 min (ou a janela) que empurraram.
-    if (waitingFor === 'ig_limit' && ig.freesAt && late(ig.freesAt)) return { expire: igLimitReason(startsAt, deadline, ig.freesAt) };
-    return { expire: spacingReason(startsAt, deadline) };
+    if (waitingFor === 'ig_limit' && ig.freesAt && late(ig.freesAt)) return { expire: src.reasons.igLimit(startsAt, deadline, ig.freesAt) };
+    return { expire: src.reasons.spacing(startsAt, deadline) };
   }
 
   /**
@@ -177,12 +183,13 @@ export class VacancySchedulerService implements OnModuleInit {
    */
   async capacityWait(row: StoryRow, s: SettingsRow, now: Date): Promise<Date | null> {
     if (row.post_now) return null;
+    const src = sourceOf(row.source);
     let at = nextWindowSlot({ now, windowStart: s.window_start, windowEnd: s.window_end, after: null, spacingMin: SPACING_MIN });
     for (let i = 0; i <= MAX_DAYS; i++) {
-      const { used, cap } = await this.capacityFor(row.workspace_id, s, spDay(at));
+      const { used, cap } = await this.capacityFor(row.workspace_id, s, spDay(at), undefined, src.id);
       if (used < cap) return i === 0 ? null : at;
       at = windowStartOn(addDays(spDay(at), 1), s.window_start);
-      if (at.getTime() + s.min_lead_minutes * MIN + PUBLISH_SLACK_MS > row.starts_at.getTime()) return at;
+      if (at.getTime() + src.lead(s) * MIN + PUBLISH_SLACK_MS > row.starts_at.getTime()) return at;
     }
     return at;
   }
@@ -192,11 +199,12 @@ export class VacancySchedulerService implements OnModuleInit {
    * "Eu aprovo", o prazo de aprovação já passou (com "Postar agora" o `planSlot` não expira) → o motivo da antecedência com esse prazo.
    */
   async generationBlock(row: StoryRow, s: SettingsRow, now: Date): Promise<string | null> {
-    const plan = await this.planSlot(row.workspace_id, s, row.starts_at, now, { force: row.post_now });
+    const src = sourceOf(row.source);
+    const plan = await this.planSlot(row.workspace_id, s, row.starts_at, now, { force: row.post_now, kind: src.id });
     if ('expire' in plan) return plan.expire;
     if (!s.auto_publish) {
-      const until = approveUntil(row.starts_at, s);
-      if (until.getTime() <= now.getTime()) return tooCloseReason(row.starts_at, until);
+      const until = approveUntil(row.starts_at, timingOf(src, s));
+      if (until.getTime() <= now.getTime()) return src.reasons.tooClose(row.starts_at, until);
     }
     return null;
   }
@@ -218,9 +226,10 @@ export class VacancySchedulerService implements OnModuleInit {
     // Mesmas mensagens do `schedulePost`, antes de qualquer escrita (o cancelamento por prazo também só vale para post agendável).
     if (!SCHEDULABLE.includes(post.status)) throw new UserError('O post precisa estar aprovado para ser agendado.');
     if (needsApproval(post)) throw new UserError('Este post exige aprovação antes de agendar.');
-    // I1: empresa desligada ou fora da lista não agenda (a aprovação pelo editor também passa por aqui).
+    // I1: empresa (ou o tipo do post: diária ou vaga fixa) desligada ou fora da lista não agenda (a aprovação pelo editor também passa por aqui).
+    const src = sourceOfPost(post);
     const s = this.gate.allowed(ws) ? await this.prisma.vacancy_story_settings.findUnique({ where: { workspace_id: ws } }) : null;
-    if (!s?.enabled) throw new UserError(MSG.off);
+    if (!s || !src.on(s)) throw new UserError(src.reasons.off);
     // R39: "Eu aprovo" vale na hora de agendar — a entrega que leu "postar sozinho" logo antes da troca (ou um agendado sem job que
     // sobrou) não fura: o que ninguém aprovou volta para "Para aprovar" em vez de ir para a agenda.
     if (!s.auto_publish && !post.approved_at) {
@@ -244,7 +253,7 @@ export class VacancySchedulerService implements OnModuleInit {
     const row = await this.prisma.vacancy_stories.findFirst({ where: { ig_post_id: postId, workspace_id: ws } });
     const startsAt = row?.starts_at ?? new Date(briefOf(post)?.starts_at ?? NaN);
     if (Number.isNaN(startsAt.getTime())) throw new Error(`story de vaga ${postId} sem início da vaga`);
-    const plan = await this.planSlot(ws, s, startsAt, now, { force: o.force || !!row?.post_now, postId });
+    const plan = await this.planSlot(ws, s, startsAt, now, { force: o.force || !!row?.post_now, postId, kind: src.id });
     if ('expire' in plan) {
       await this.prisma.$transaction(async (tx) => {
         const got = await tx.ig_posts.updateMany({ where: { id: postId, workspace_id: ws, status: { in: SCHEDULABLE } }, data: { status: 'cancelled' } });
@@ -276,9 +285,13 @@ export class VacancySchedulerService implements OnModuleInit {
    */
   async tick(now = new Date(this.now())): Promise<{ approved: number; reconciled: number }> {
     const out = { approved: 0, reconciled: 0 };
-    const active = (await this.prisma.vacancy_story_settings.findMany({ where: { enabled: true }, select: { workspace_id: true } }))
-      .map((s) => s.workspace_id)
-      .filter((ws) => this.gate.allowed(ws));
+    // Empresa ativa = diárias OU vagas fixas ligadas; cada post confere o interruptor do seu tipo (abaixo).
+    const settings = new Map(
+      (await this.prisma.vacancy_story_settings.findMany({ where: { OR: [{ enabled: true }, { clt_enabled: true }] } }))
+        .filter((s) => this.gate.allowed(s.workspace_id))
+        .map((s) => [s.workspace_id, s]),
+    );
+    const active = [...settings.keys()];
     if (!active.length) return out;
     const posts = await this.prisma.ig_posts.findMany({
       where: {
@@ -295,6 +308,7 @@ export class VacancySchedulerService implements OnModuleInit {
     const startOf = (p: (typeof posts)[number]) => Date.parse(briefOf(p)?.starts_at ?? '') || Infinity;
     for (const p of [...posts].sort((a, b) => startOf(a) - startOf(b))) {
       if (needsApproval(p)) continue;
+      if (!sourceOfPost(p).on(settings.get(p.workspace_id))) continue;
       try {
         const r = await this.schedule(p.workspace_id, p.id, {}, now);
         if (r === 'scheduled') out[p.status === 'approved' ? 'approved' : 'reconciled']++;

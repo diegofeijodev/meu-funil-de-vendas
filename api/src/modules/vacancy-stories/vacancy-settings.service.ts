@@ -16,10 +16,11 @@ import { VacancyGate } from './vacancy-gate.service';
 import { templateReadPrompt } from './vacancy-prompts';
 import { LEAD_OPTIONS, UpdateVacancySettingsDto, VENDORS } from './vacancy-stories.dto';
 import { previewForView } from './vacancy-preview-state';
-import { DISABLED_REASON, DONT_POST_REASON } from './vacancy-reasons';
+import { DONT_POST_REASON } from './vacancy-reasons';
+import { SOURCES } from './vacancy-sources';
 import { norm } from './vacancy-text';
-import type { FreelaVacancy, SettingsRow } from './vacancy-types';
-import { countVacancyStoriesOnDay } from './vacancy-usage';
+import type { FreelaVacancy, SettingsRow, VacancySourceId } from './vacancy-types';
+import { countVacancyStoriesOnDay, postKindFilter } from './vacancy-usage';
 import { TEMPLATE_TEXTS_SCHEMA } from './vacancy-verify';
 
 const BUCKET = 'creative-assets';
@@ -279,14 +280,22 @@ export class VacancySettingsService {
     return { ok: true, cancelled };
   }
 
-  /** Desliga e cancela (sem checar acesso): usado pelo botão (`disable`) e pelo job quando a arte modelo some. Devolve linhas + posts cancelados. */
-  async turnOff(workspaceId: string, actorId: string | null, meta: Record<string, unknown> = {}): Promise<number> {
+  /**
+   * Desliga um tipo e cancela o que é DELE (sem checar acesso): diárias (`freela`, o padrão — botão `disable` e o job quando a arte modelo
+   * some) ou vagas fixas (`freela_clt`, botão `clt/disable`). O outro tipo não é tocado. Devolve linhas + posts cancelados.
+   */
+  async turnOff(workspaceId: string, actorId: string | null, meta: Record<string, unknown> = {}, kind: VacancySourceId = 'freela'): Promise<number> {
+    const src = SOURCES[kind];
+    const reason = src.reasons.disabled;
     const cancelled = await this.prisma.$transaction(async (tx) => {
       const rows = await tx.vacancy_stories.updateMany({
-        where: { workspace_id: workspaceId, status: { in: QUEUED } },
-        data: { status: 'cancelled', skip_reason: DISABLED_REASON, lease_until: null },
+        where: { workspace_id: workspaceId, status: { in: QUEUED }, ...(kind === 'freela_clt' ? { source: 'freela_clt' } : { NOT: { source: 'freela_clt' } }) },
+        data: { status: 'cancelled', skip_reason: reason, lease_until: null },
       });
-      const open = await tx.ig_posts.findMany({ where: { workspace_id: workspaceId, source: 'vacancy', status: { in: UNPUBLISHED } }, select: { id: true } });
+      const open = await tx.ig_posts.findMany({
+        where: { workspace_id: workspaceId, source: 'vacancy', status: { in: UNPUBLISHED }, ...postKindFilter(kind) },
+        select: { id: true },
+      });
       let posts = 0;
       if (open.length) {
         const ids = open.map((p) => p.id);
@@ -295,13 +304,13 @@ export class VacancySettingsService {
         const done = (await tx.ig_posts.findMany({ where: { id: { in: ids }, workspace_id: workspaceId, status: 'cancelled' }, select: { id: true } })).map((p) => p.id);
         if (done.length) {
           await tx.publishing_jobs.updateMany({ where: { ig_post_id: { in: done }, workspace_id: workspaceId, status: 'pending' }, data: { status: 'cancelled', locked_at: null } });
-          await tx.vacancy_stories.updateMany({ where: { workspace_id: workspaceId, ig_post_id: { in: done } }, data: { skip_reason: DISABLED_REASON } });
+          await tx.vacancy_stories.updateMany({ where: { workspace_id: workspaceId, ig_post_id: { in: done } }, data: { skip_reason: reason } });
         }
       }
-      await tx.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { enabled: false } });
+      await tx.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: kind === 'freela_clt' ? { clt_enabled: false } : { enabled: false } });
       return rows.count + posts;
     });
-    await this.activity.log(workspaceId, actorId, 'vacancy_stories.disable', 'vacancy_stories', { cancelled, ...meta });
+    await this.activity.log(workspaceId, actorId, kind === 'freela_clt' ? 'vacancy_stories.clt_disable' : 'vacancy_stories.disable', 'vacancy_stories', { cancelled, ...meta });
     return cancelled;
   }
 
