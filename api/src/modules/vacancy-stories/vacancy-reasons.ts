@@ -81,3 +81,39 @@ export const blockedExpireReason = (startsAt: Date, since: Date) =>
 /** Post que esperava aprovação e o prazo de aprovação (`approveUntil`) passou. */
 export const noApprovalReason = (deadline: Date, startsAt: Date) =>
   `Ninguém aprovou a tempo. O prazo era ${fullAt(deadline)}; a vaga começa ${sameDay(startsAt, deadline) ? `às ${hourOf(startsAt)}` : fullAt(startsAt)}.`;
+
+// ------------------------------------------------------------------ vagas fixas (CLT, 25/11/2026; desenho §2.4.3, UI §4.4)
+// Na CLT, `starts_at` da linha é o "divulgar até" (mín(expiresAt, publishedAt + 30 dias)) e a antecedência é 0.
+
+const two = (n: number) => String(n).padStart(2, '0');
+/** "24/12" (Brasília). */
+export const dayMonth = (d: Date) => {
+  const p = spParts(d.toISOString());
+  return `${two(p.day)}/${two(p.month)}`;
+};
+
+export const CLT_DISABLED_REASON = 'Os stories das vagas fixas foram desligados.';
+export const CLT_CLOSED_REASON = 'A vaga fixa foi fechada ou venceu no Freela.';
+export const CLT_STARTED_REASON = 'O prazo para divulgar esta vaga fixa terminou antes de ir ao ar.';
+
+/** O "divulgar até" já passou (triagem, expiração da fila, guarda e "Criar story mesmo assim"). */
+export const cltDeadlineReason = (deadline: Date) => `O prazo para divulgar esta vaga fixa terminou em ${dayMonth(deadline)}.`;
+
+/** A linha esperou a vez (limite próprio das vagas fixas) e o prazo para divulgar terminou. */
+export const cltCapWaitReason = (cap: number, deadline: Date) =>
+  `Não coube no máximo de ${cap === 1 ? '1 story de vaga fixa' : `${cap} stories de vagas fixas`} por dia até ${dayMonth(deadline)}.`;
+
+/** P19: perdeu o prazo enquanto a Meta recusava as publicações da empresa. */
+export const cltBlockedExpireReason = (deadline: Date, since: Date) =>
+  `Não foi ao ar: o Instagram recusava as publicações desta empresa desde ${fullAt(since)}, e o prazo para divulgar esta vaga fixa terminou em ${dayMonth(deadline)}.`;
+
+/** Esperava aprovação e o prazo de aprovação passou. */
+export const cltNoApprovalReason = (until: Date) => `Ninguém aprovou a tempo. O prazo era ${dayMonth(until)}.`;
+
+/** "O prazo para divulgar esta vaga fixa vai até Qua, 24/12 às 14h" (sem o ponto final) — introdução dos motivos da agenda. */
+const cltIntro = (deadline: Date) => `O prazo para divulgar esta vaga fixa vai até ${fullAt(deadline)}`;
+export const cltWindowReason = (deadline: Date, windowStart: string, windowEnd: string) =>
+  `${cltIntro(deadline)}, e o seu horário para postar (${hhmm(windowStart)} às ${hhmm(windowEnd)}) só abre depois.`;
+export const cltIgLimitReason = (deadline: Date, freesAt: Date) =>
+  `${cltIntro(deadline)}, mas a conta só tem espaço no Instagram ${fromAt(freesAt, deadline)}.`;
+export const cltSpacingReason = (deadline: Date) => `${cltIntro(deadline)}, e os horários até lá já têm outros stories de vagas.`;

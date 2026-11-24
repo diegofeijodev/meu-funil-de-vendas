@@ -9,6 +9,7 @@ import { RGB, fillPolys, flatten, parseFont, rect } from '../creative/compose';
 import { ImageService, Img } from '../media/image.service';
 import { Badges, FOOTER_LINE1, FOOTER_LINE2, STORY_H, STORY_W, fitWrapped } from './vacancy-art';
 import { drawQr, QR_BOX, type QrPlan } from './vacancy-qr';
+import { clipText } from './vacancy-text';
 
 /** 3ª linha do rodapé com QR (UI 24/11 §2.4: a loja vem antes; o QR é o "ou"). */
 export const FOOTER_LINE3_QR = 'ou leia o QR para ver a vaga';
@@ -143,14 +144,8 @@ function icon(img: Img, kind: IconKind, cx: number, cy: number, r: number, fg: R
   }
 }
 
-/** Corta em `max` caracteres na última palavra inteira, com reticências. */
-export function clip(s: string, max: number): string {
-  const t = s.replace(/\s+/g, ' ').trim();
-  if (t.length <= max) return t;
-  const cut = t.slice(0, max);
-  const sp = cut.lastIndexOf(' ');
-  return `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\-–]+$/, '')}…`;
-}
+/** Corta em `max` caracteres na última palavra inteira, com reticências (mora em `vacancy-text`: a CLT também usa). */
+export const clip = clipText;
 
 type Card = { icon: IconKind; dark?: boolean; filled?: boolean; cols: { label: string; value: string; big?: boolean; lines?: number }[] };
 

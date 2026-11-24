@@ -161,6 +161,15 @@ export function cityMatches(city: string | null, cities: string[]): boolean {
   return cities.some((x) => norm(x) === c);
 }
 
+/** Corta em `max` caracteres na última palavra inteira, com reticências. */
+export function clipText(s: string, max: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(' ');
+  return `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\-–]+$/, '')}…`;
+}
+
 export function leadLabel(minutes: number): string {
   return `${Math.round(minutes / 60)} h`;
 }
