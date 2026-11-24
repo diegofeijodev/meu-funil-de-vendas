@@ -1008,3 +1008,24 @@ geometria, este desenho vence em regra, e ponto que pede dado vira campo na API.
   evento `reschedule` (info), não falha.
 - **P23 volta a existir:** com a sonda fechando de verdade, "reabriu depois da conferência" pode acontecer (container aceito e `media_publish`
   recusado). A frase da UI §1.4 continua pendente.
+
+## 13. Decisões da implementação (Fase 3, 24/11/2026)
+
+Trocam o §2.4.3, o §3 e a UI §3.5/§4.2 onde diferem.
+
+- **Cidade (decisão do dono, 24/11):** vaga fixa sem cidade sai **sem o cartão Cidade** (não "não vira story"). Com a lista de cidades da empresa
+  preenchida, pula com "A vaga fixa não tem cidade para conferir com a sua lista."; com a lista vazia, sai. "Criar story mesmo assim" passa.
+- **Migração:** `20261125122000_vacancy_clt` (logo depois das da Fase 1); `clt_backlog_days` com padrão **14** (decisão do dono), não 0; o CHECK
+  de `vacancy_stories.source` entra `NOT VALID` (a F0-7 não foi rodada; a subida não falha por linha antiga).
+- **Consulta:** a vitrine CLT roda dentro de `pollAll` (o cron mantém as etapas; `poll.clt` só com CLT ligada). Uma chamada com `limit=100`.
+- **Ordem da geração:** diárias primeiro (na ordem do início), depois as vagas fixas, **das mais novas para as mais velhas** (o `starts_at` da CLT
+  é o "divulgar até", e ordenar por ele poria as mais velhas primeiro).
+- **QR da CLT:** reaproveita `qr_enabled` e só existe com `FREELA_FIXED_JOB_PAGE_URL` (a página pública do site ainda estava em PR); o mesmo valor
+  dá o link "Abrir a vaga fixa no site". A prévia CLT (`{ kind: 'clt' }`) não destrava o QR das diárias.
+- **Arte:** as peças da arte das diárias foram exportadas sem mudar um byte (hashes fixados no teste). Benefício que é cabeçalho, salário repetido
+  ou "PJ" sai (dados reais de 24/11). Cargo com a 1ª letra maiúscula.
+- **Religar a CLT** devolve à fila as vagas fixas que o "desligar" tirou antes de virar story e ainda no prazo (são poucas: com os dados de 24/11,
+  1 vaga cai nos 14 dias).
+- **Fora desta fase:** P11 (contagens antes de ligar; a tela usa o texto sem números) e P12 (cidades das vagas fixas no `recent_cities`).
+- **Dados reais (GET público de 24/11, só leitura):** 51/51 passam no formato; os dias dos horários vêm em português ("Segunda"…); com o
+  retroativo de 14 dias entra 1 vaga (sem empresa e sem cidade); 9 de 51 ainda estão no prazo de 30 dias.

@@ -864,6 +864,9 @@ CltSettingsView = {
   → "O prazo para divulgar esta vaga fixa terminou antes de ir ao ar."; guarda com 404 → "A vaga fixa foi fechada ou venceu no Freela.";
   ninguém aprovou → "Ninguém aprovou a tempo. O prazo era {dd/mm}."; bloqueio (P19) → "Não foi ao ar: o Instagram recusava as publicações
   desta empresa desde {…}, e o prazo para divulgar esta vaga fixa terminou em {dd/mm}.".
+- Cron (`POST /api/public/cron/vacancy-stories` e o job `vacancy-stories-10min`): as etapas são as mesmas; com alguma empresa com as vagas
+  fixas ligadas, `poll` ganha `clt: { workspaces, inserted, skipped, error? }` (a queda da vitrine CLT também marca a rodada como falha).
+- Desligar e religar a CLT: as vagas fixas que o "desligar" tirou da fila antes de virar story (sem post) e ainda no prazo voltam para a fila.
 - QR da CLT: só com `qr_enabled` **e** `FREELA_FIXED_JOB_PAGE_URL` (ex.: `https://freelaservicos.com.br/vagas-fixas/`); o link é
   `{url}{id}?o=ig`. Variável vazia = arte CLT sem QR (a página pública ainda não está no ar).
 

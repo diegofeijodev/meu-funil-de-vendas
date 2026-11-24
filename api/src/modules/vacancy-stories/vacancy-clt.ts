@@ -66,7 +66,7 @@ const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** Cargo da arte e da lista: o título limpo (até 40 caracteres), senão o cargo do Freela. */
 export function cltRole(v: Pick<FreelaFixedJob, 'title' | 'role'>): string {
   const t = stripClt(scrub(v.title));
-  if (t && t.length <= 40) return t;
+  if (t && t.length <= 40) return capFirst(t);
   const r = stripClt(scrub(v.role));
   return capFirst((r || t).slice(0, 40).trim());
 }
@@ -111,12 +111,18 @@ export function cltSchedule(v: Pick<FreelaFixedJob, 'workSchedule' | 'workSchedu
   return text ? clipText(text, 44) : null;
 }
 
+/**
+ * Itens que não são benefício (dados reais de 24/11): cabeçalhos ("Benefícios da empresa", "Benefícios & Diferenciais:*"), o salário
+ * repetido ("Salário", "Salário: R$ 2.300,00", "Salário + comissão…") e o regime ("PJ" numa vaga fixa).
+ */
+const NOT_BENEFIT = /^(benef[ií]cios?\b|sal[áa]rio\b|pj$)/i;
+
 /** Benefícios: até 4 itens unidos por " · ", no máximo 80 caracteres; nenhum → null. */
 export function cltBenefits(list: string[] | null | undefined): string | null {
   const out: string[] = [];
   for (const raw of list ?? []) {
-    const b = raw.replace(/\s+/g, ' ').trim();
-    if (!b || out.length >= 4) continue;
+    const b = raw.replace(/\s+/g, ' ').replace(/[\s:*]+$/, '').trim();
+    if (!b || NOT_BENEFIT.test(b) || out.length >= 4) continue;
     if ([...out, b].join(' · ').length > 80) break;
     out.push(b);
   }

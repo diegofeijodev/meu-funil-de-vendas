@@ -88,6 +88,15 @@ describe('vagas fixas — campos da arte (M14; UI §3.4, P13)', () => {
     expect(cltBenefits([])).toBeNull();
   });
 
+  it('dados reais de 24/11: cabeçalho, salário repetido e "PJ" não são benefício; cargo em minúsculas ganha a 1ª maiúscula', () => {
+    expect(cltBenefits(['Benefícios da empresa', 'Salário', 'rateio de gorjeta', 'VT'])).toBe('rateio de gorjeta · VT');
+    expect(cltBenefits(['Benefícios & Diferenciais:*', 'Salário: R$ 2.300,00'])).toBeNull();
+    expect(cltBenefits(['Salário + comissão(média R$4.000,00)', 'VT'])).toBe('VT');
+    expect(cltBenefits(['PJ'])).toBeNull();
+    expect(cltBenefits(['Cesta básica', 'Vale-transporte'])).toBe('Cesta básica · Vale-transporte');
+    expect(cltRole({ title: 'cozinheiro escala 12x36', role: 'cozinheiro' })).toBe('Cozinheiro escala 12x36');
+  });
+
   it('cidade "Jundiaí – SP"; sem UF só a cidade; sem cidade null; empresa limpa como nas diárias', () => {
     expect(cltCityLabel({ city: 'Jundiaí', uf: 'sp' })).toBe('Jundiaí – SP');
     expect(cltCityLabel({ city: 'Jundiaí', uf: null })).toBe('Jundiaí');

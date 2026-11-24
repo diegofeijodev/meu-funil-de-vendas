@@ -169,7 +169,9 @@ function ConfirmStory({
 }) {
   let text = { title: "", description: "", confirm: "", cancel: "" };
   if (confirm?.kind === "post_now") {
-    text = postNowDialog(confirm.story, settings, new Date());
+    // Vaga fixa: o máximo do dia é o dela (o bloco `clt`), não o das diárias.
+    const day = confirm.story.kind === "clt" && settings.clt ? { ...settings, today: settings.clt.today } : settings;
+    text = postNowDialog(confirm.story, day, new Date());
   } else if (confirm) {
     text = {
       title: "Criar story numa vaga de teste?",

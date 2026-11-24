@@ -320,13 +320,20 @@ export class VacancySettingsService {
     const s = await this.get(workspaceId);
     const brandId = await this.templateBrand(workspaceId, s.brand_id, MSG.cltNoBrand);
     if (!s.clt_enabled) {
+      const now = new Date();
       const r = await this.prisma.vacancy_story_settings.updateMany({
         where: { workspace_id: workspaceId, clt_enabled: false },
-        data: { clt_enabled: true, clt_enabled_at: new Date(), clt_enabled_by: userId, ...(s.brand_id !== brandId ? { brand_id: brandId } : {}) },
+        data: { clt_enabled: true, clt_enabled_at: now, clt_enabled_by: userId, ...(s.brand_id !== brandId ? { brand_id: brandId } : {}) },
       });
       if (r.count) {
+        // Vagas fixas são poucas: as que o "desligar" tirou da fila antes de virar story (sem post) e ainda no prazo voltam (a geração
+        // confere a vaga viva de novo). O que já tinha virado post continua cancelado.
+        const revived = await this.prisma.vacancy_stories.updateMany({
+          where: { workspace_id: workspaceId, source: 'freela_clt', status: 'cancelled', skip_reason: SOURCES.freela_clt.reasons.disabled, ig_post_id: null, starts_at: { gt: now } },
+          data: { status: 'new', skip_reason: null, lease_until: null, next_attempt_at: null, not_before: null, wait_reason: null },
+        });
         await this.activity.log(workspaceId, userId, 'vacancy_stories.clt_enable', 'vacancy_stories', {
-          daily_cap: s.clt_daily_cap, backlog_days: s.clt_backlog_days, auto_publish: s.auto_publish,
+          daily_cap: s.clt_daily_cap, backlog_days: s.clt_backlog_days, auto_publish: s.auto_publish, revived: revived.count,
         });
       }
     }

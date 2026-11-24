@@ -127,6 +127,23 @@ describe('Ajustes das vagas fixas (M18)', () => {
     expect(t.row()).toMatchObject({ clt_enabled: true, enabled: false });
   });
 
+  it('desligar e religar: a vaga fixa que saiu da fila sem virar story (e ainda no prazo) volta; a que virou post não', async () => {
+    const t = await setup({ settings: { clt_enabled: true, clt_enabled_at: NOW } });
+    w.brand();
+    const queued = await t.cltRow(job());
+    const late = await t.cltRow(job({ publishedAt: new Date(NOW.getTime() - 40 * DAY).toISOString() }));
+    const pc = t.post('clt');
+    const delivered = await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: 'x9', snapshot: {}, fingerprint: 'f', starts_at: new Date(NOW.getTime() + DAY), status: 'handed_off', ig_post_id: pc.id } });
+    await w.settings.cltDisable(OWNER, WS_A);
+    await w.settings.cltEnable(OWNER, WS_A);
+    const r = (id: string) => w.t['vacancy_stories']!.rows.find((x) => x.id === id)!;
+    expect(r(queued.id)).toMatchObject({ status: 'new', skip_reason: null });
+    expect(r(late.id)).toMatchObject({ status: 'cancelled', skip_reason: CLT_DISABLED_REASON });
+    expect(r(delivered.id).status).toBe('handed_off');
+    expect(w.t['ig_posts']!.rows.find((x) => x.id === pc.id)!.status).toBe('cancelled');
+    expect(w.t['activity_logs']!.rows.find((x) => x.action === 'vacancy_stories.clt_enable')!.metadata).toMatchObject({ revived: 1 });
+  });
+
   it('arte modelo apagada desliga só as diárias (a CLT não usa a arte modelo)', async () => {
     const t = await setup({ settings: { template_asset_id: null, clt_enabled: true, clt_enabled_at: NOW } });
     const poll = new VacancyPollService(w.prisma, w.feedClient, w.gate, w.settings);
