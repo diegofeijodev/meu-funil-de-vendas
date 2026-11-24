@@ -24,7 +24,8 @@ function sampleOf(v: Record<string, unknown> | null) {
 /** "Gerar prévia com uma vaga real": custo, andamento (sai da tela e volta), resultado com a conferência. */
 export function PreviewCard({ workspaceId, settings, canEdit }: { workspaceId: string; settings: VacancySettings; canEdit: boolean }) {
   const qc = useQueryClient();
-  const p = settings.preview;
+  // A prévia da vaga fixa aparece no cartão das vagas fixas, não aqui.
+  const p = settings.preview.kind === "clt" ? ({ ...settings.preview, run_id: undefined, status: undefined } as typeof settings.preview) : settings.preview;
   const running = p.status === "running";
   const key = vacancySettingsKey(workspaceId);
 

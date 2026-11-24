@@ -318,12 +318,12 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
               <h3 className="border-t border-border pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{CLT_TEXT.groupClt}</h3>
               <Field title={CLT_TEXT.capTitle} hint={cltCapHint(s.publish_quota)}>
                 <div className="flex items-center gap-3">
-                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir" disabled={disabled || cltCap <= 1}
+                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir o máximo das vagas fixas" disabled={disabled || cltCap <= 1}
                     onClick={() => set("clt_daily_cap", Math.max(1, cltCap - 1))}>
                     <Minus />
                   </Button>
                   <output className="min-w-8 text-center text-lg font-semibold tabular-nums" aria-live="polite">{cltCap}</output>
-                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Aumentar" disabled={disabled || cltCap >= 10}
+                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Aumentar o máximo das vagas fixas" disabled={disabled || cltCap >= 10}
                     onClick={() => set("clt_daily_cap", Math.min(10, cltCap + 1))}>
                     <Plus />
                   </Button>

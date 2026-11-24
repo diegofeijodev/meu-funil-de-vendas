@@ -82,7 +82,8 @@ EMAIL2="smoke2$SUF@meufunil.local"
 S2=$(curl -s -X POST $API/v1/auth/signup -H "$J" -d "{\"email\":\"$EMAIL2\",\"password\":\"segredo1\",\"full_name\":\"Viewer\",\"company_name\":\"Empresa Viewer\"}")
 HV="Authorization: Bearer $(echo "$S2" | jq -r .access_token)"
 VID=$(echo "$S2" | jq -r .user.id)
-PSQL() { docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtA -c "$1"; }
+# MF_PG_CONTAINER: outro contêiner (ex.: o Postgres descartável quando a rede do Docker do projeto não responde). Padrão = o do compose.
+PSQL() { docker exec "${MF_PG_CONTAINER:-meu-funil-postgres}" psql -U meufunil -d meufunil -qtA -c "$1"; }
 PSQL "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES ('$WID','$VID','viewer')" >/dev/null
 check "viewer é membro do workspace" "viewer" "$(curl -s $API/v1/workspaces -H "$HV" | jq -r --arg w "$WID" '.[] | select(.workspace_id==$w) | .role')"
 
@@ -1408,6 +1409,21 @@ check "vagas: StoryView traz check_unread (R40/M3; false antes da entrega)" "fal
 check "vagas: stories?filter=not_posted → 2 (teste e sem valor), com os motivos" "2|A vaga não tem valor informado.|Parece vaga de teste: o nome da empresa tem “teste”." "$(curl -s "$VS/stories?filter=not_posted" -H "$H" | jq -r '[length] + ([.[].reason] | sort) | join("|")')"
 DIS=$(curl -s -w '\n%{http_code}' -X POST $VS/disable -H "$H" -H "$J" -d '{}')
 check "vagas: desligar → 200 { ok: true }, desligado" "200,true,false" "$(echo "$DIS" | tail -1),$(echo "$DIS" | head -1 | jq -r .ok),$(curl -s $VS/settings -H "$H" | jq -r .enabled)"
+# 25/11/2026: vagas fixas (CLT) — 2ª fonte, interruptor e limite próprios; as diárias (desligadas acima) não mudam.
+check "vagas/CLT: settings com o bloco clt desligado, limite 2, retroativo 14, marca ok, sem página (QR)" "false,2,14,true,false" "$(curl -s $VS/settings -H "$H" | jq -r '.clt|"\(.enabled),\(.daily_cap),\(.backlog_days),\(.has_brand),\(.qr_available)"')"
+check "vagas/CLT: estranho não liga (403); PATCH clt_daily_cap 11 → 400; clt_backlog_days 5 → 400" "403,400,400" "$(cc POST $VS/clt/enable "$HD" '{}'),$(cc PATCH $VS/settings "$H" '{"clt_daily_cap":11}'),$(cc PATCH $VS/settings "$H" '{"clt_backlog_days":5}')"
+check "vagas/CLT: PATCH clt_daily_cap 3 → salvo; ligar → 200, ligada, diárias seguem desligadas" "3,200,true,false" "$(cs PATCH $VS/settings "$H" '{"clt_daily_cap":3}' | jq -r .clt.daily_cap),$(cc POST $VS/clt/enable "$H" '{}'),$(curl -s $VS/settings -H "$H" | jq -r '"\(.clt.enabled),\(.enabled)"')"
+VC2=$(curl -s -X POST $VCRON -H "x-cron-secret: $VTOK" -H "$J" -d '{}')
+check "vagas/CLT: o cron consulta a vitrine CLT (dentro de poll) sem erro" "true,false" "$(echo "$VC2" | jq -r '"\(.poll.clt.workspaces >= 1),\(.poll.clt|has("error"))"')"
+check "vagas/CLT: kind=clt → 2 linhas kind clt (a sem salário pulada com o motivo); kind=diaria → as 3 de antes; sem kind → 5" "2,clt,1,3,5" "$(curl -s "$VS/stories?kind=clt" -H "$H" | jq -r '"\(length),\([.[].kind]|unique|join("+")),\([.[]|select(.reason=="A vaga fixa não tem salário informado.")]|length)"'),$(curl -s "$VS/stories?kind=diaria" -H "$H" | jq length),$(curl -s "$VS/stories" -H "$H" | jq length)"
+check "vagas/CLT: kind inválido → 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' "$VS/stories?kind=xx" -H "$H")"
+# Contagem do dia por tipo (filtro de relação → EXISTS no Postgres): um post de vaga ligado à linha CLT conta na CLT, não nas diárias.
+PCLT=$(PSQL "INSERT INTO ig_posts(workspace_id,format,source,status,scheduled_at,creative_brief) VALUES ('$W26','story_image','vacancy','scheduled',now()+interval '1 minute','{\"vacancy\":{\"kind\":\"clt\"}}') RETURNING id" | head -1)
+PSQL "UPDATE vacancy_stories SET status='handed_off', ig_post_id='$PCLT' WHERE workspace_id='$W26' AND source='freela_clt' AND external_id='c0000000-0000-4000-8000-000000000001'" >/dev/null
+check "vagas/CLT: post ligado à linha CLT conta em clt.today (1) e não em today das diárias (0)" "0,1" "$(curl -s $VS/settings -H "$H" | jq -r '"\(.today.scheduled),\(.clt.today.scheduled)"')"
+CDIS=$(curl -s -X POST $VS/clt/disable -H "$H" -H "$J" -d '{}')
+check "vagas/CLT: desligar → cancela só o que é CLT (o post) e desliga; nenhuma linha diária mudou" "true,1,false,cancelled,0" "$(echo "$CDIS" | jq -r .ok),$(echo "$CDIS" | jq -r .cancelled),$(curl -s $VS/settings -H "$H" | jq -r .clt.enabled),$(PSQL "SELECT status FROM ig_posts WHERE id='$PCLT'"),$(PSQL "SELECT count(*) FROM vacancy_stories WHERE workspace_id='$W26' AND source='freela' AND skip_reason='Os stories das vagas fixas foram desligados.'")"
+check "vagas/CLT: atividades clt_enable e clt_disable gravadas" "1,1" "$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$W26' AND action='vacancy_stories.clt_enable'"),$(PSQL "SELECT count(*) FROM activity_logs WHERE workspace_id='$W26' AND action='vacancy_stories.clt_disable'")"
 [ -n "${KV:-}" ] && curl -s -o /dev/null -X DELETE "$API/v1/workspaces/$W26/files?key=$KV" -H "$H"
 PSQL "DELETE FROM cron_tokens WHERE name='vacancy-stories' AND token='$VTOK'" >/dev/null
 PSQL "DELETE FROM cron_heartbeats WHERE name='vacancy-stories' AND last_run_at >= '$TV'" >/dev/null

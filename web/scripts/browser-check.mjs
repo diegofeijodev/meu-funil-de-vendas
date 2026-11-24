@@ -350,7 +350,7 @@ const apiCall = (method, p, body) =>
     [API, method, p, body ?? null],
   );
 const igPsql = (sql) => {
-  try { return execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtA -c "${sql.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); } catch { return ''; }
+  try { return execSync(`docker exec ${process.env.MF_PG_CONTAINER || 'meu-funil-postgres'} psql -U meufunil -d meufunil -qtA -c "${sql.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); } catch { return ''; }
 };
 let wsId = null; // empresa demo (definida logo depois do login)
 let aiLive = false; // a API fala com o gateway de IA falso?
@@ -1041,7 +1041,7 @@ try {
   // limpeza: a mrc leva campanhas/estratégias/cópias/pedidos (cascade); sobra só o plano do Instagram (mrc SetNull)
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${mrc.id}`);
   try {
-    execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM ig_content_plans WHERE name LIKE 'Instagram · Campanha Check %'"`, { stdio: 'ignore' });
+    execSync(`docker exec ${process.env.MF_PG_CONTAINER || 'meu-funil-postgres'} psql -U meufunil -d meufunil -qtc "DELETE FROM ig_content_plans WHERE name LIKE 'Instagram · Campanha Check %'"`, { stdio: 'ignore' });
   } catch { /* sem docker: o plano de teste fica (rascunho) */ }
   });
 
@@ -1252,7 +1252,7 @@ try {
   if (todas.length) await apiCall('POST', '/v1/media/delete-media-assets', { workspaceId: wsId, assetIds: todas.slice(0, 200) });
   await apiCall('DELETE', `/v1/workspaces/${wsId}/brands/${brandS.id}`);
   try {
-    execSync(`docker exec meu-funil-postgres psql -U meufunil -d meufunil -qtc "DELETE FROM creative_generation_jobs WHERE prompt LIKE 'Prompt check %'; DELETE FROM creatives WHERE title IN ('Criativo Check','upload-check'); DELETE FROM ig_posts WHERE creative_brief->>'from_library' IS NOT NULL AND theme='upload-check'"`, { stdio: 'ignore' });
+    execSync(`docker exec ${process.env.MF_PG_CONTAINER || 'meu-funil-postgres'} psql -U meufunil -d meufunil -qtc "DELETE FROM creative_generation_jobs WHERE prompt LIKE 'Prompt check %'; DELETE FROM creatives WHERE title IN ('Criativo Check','upload-check'); DELETE FROM ig_posts WHERE creative_brief->>'from_library' IS NOT NULL AND theme='upload-check'"`, { stdio: 'ignore' });
   } catch { /* sem docker: sobram jobs/posts de teste */ }
   });
 
@@ -1735,9 +1735,11 @@ try {
   await ajustes.waitFor({ timeout: 15000 });
   if ((await ajustes.getAttribute('aria-expanded')) !== 'true') await ajustes.click();
   const corpoAjustes = page.locator('#vac-settings-body');
-  await corpoAjustes.getByText('Máximo de stories de vagas por dia').waitFor({ timeout: 15000 });
+  // 25/11/2026: com as vagas fixas, o máximo das diárias ganha o nome próprio e o das fixas tem o seu contador (rótulos distintos).
+  await corpoAjustes.getByText('Máximo de stories de diárias por dia').waitFor({ timeout: 15000 });
+  check('vagas: Ajustes agrupados (Para diárias e vagas fixas · Só diárias · Só vagas fixas)', (await corpoAjustes.getByText('Só vagas fixas (CLT)').count()) === 1 && (await corpoAjustes.getByText('Máximo de stories de vagas fixas por dia').count()) === 1);
   const capAntes = salva.daily_cap;
-  await corpoAjustes.getByRole('button', { name: 'Aumentar' }).click();
+  await corpoAjustes.getByRole('button', { name: 'Aumentar', exact: true }).click();
   await corpoAjustes.getByRole('button', { name: 'Salvar ajustes' }).click();
   await page.getByText('Ajustes salvos.').waitFor({ timeout: 15000 });
   const depois = (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body;
@@ -1751,6 +1753,28 @@ try {
   await page.getByRole('button', { name: 'Continuar aprovando' }).click();
   await page.getByText('Postar sem sua aprovação?').waitFor({ state: 'hidden', timeout: 15000 });
   check('vagas: "Postar sozinho" abre a confirmação e "Continuar aprovando" mantém a aprovação', (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body?.auto_publish === false);
+
+  // 25/11/2026: vagas fixas (CLT) — cartão próprio: ligar pelo diálogo (dono), a lista ganha o filtro "Tipo", desligar pelo diálogo.
+  const cltCard = page.locator('[data-vac-section="clt"]');
+  await cltCard.getByText('Postar as vagas fixas (CLT) nos stories').waitFor({ timeout: 15000 });
+  check(
+    'vagas/CLT: cartão desligado com "O que vai entrar" (sem cidade no texto: decisão de 24/11)',
+    (await cltCard.getByText('Desligado. Nenhuma vaga fixa vira story agora.').count()) > 0 &&
+      (await cltCard.getByText(/Entram as vagas fixas novas e as dos últimos 14 dias, até 2 por dia\..*Sem salário também não\./).count()) > 0,
+  );
+  await cltCard.getByRole('switch').click();
+  await page.getByText('Ligar os stories das vagas fixas?').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Ligar vagas fixas' }).click();
+  await page.getByText('Stories das vagas fixas ligados.').waitFor({ timeout: 15000 });
+  const cltOn = (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body;
+  check('vagas/CLT: ligada pela tela; as diárias não mudaram', cltOn?.clt?.enabled === true && cltOn?.enabled === salva.enabled, JSON.stringify(cltOn?.clt));
+  await page.locator('[data-vac-section="arrived"]').getByRole('button', { name: 'Fixas (CLT)' }).waitFor({ timeout: 15000 });
+  ok('vagas/CLT: a lista ganhou o filtro "Tipo" (Todas · Diárias · Fixas (CLT))');
+  await cltCard.getByRole('switch').click();
+  await page.getByText('Desligar os stories das vagas fixas?').waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Desligar vagas fixas' }).click();
+  await page.getByText('Stories das vagas fixas desligados.').waitFor({ timeout: 15000 });
+  check('vagas/CLT: desligada pela tela', (await apiCall('GET', `/v1/workspaces/${wsId}/vacancy-stories/settings`)).body?.clt?.enabled === false);
 
   // R40/M4: "Não postar" e sair da página dentro dos 6 s do Desfazer → o `pagehide` manda a chamada já, com `fetch(..., { keepalive })`
   // e o bearer, de outra origem (web 3025 → API 3015: com preflight). A prova é o banco: a linha fica cancelada com "Você escolheu não

@@ -119,6 +119,8 @@ mf_peak_mb() { # pico de memória do cgroup atual (scope do run-capped), se leg�
 }
 
 mf_postgres_up() {
+  # MF_PG_CONTAINER (Postgres descartável, com DATABASE_URL exportado para ele): só confere que está de pé.
+  if [ -n "${MF_PG_CONTAINER:-}" ]; then docker exec "$MF_PG_CONTAINER" pg_isready -U meufunil >/dev/null 2>&1; return; fi
   if ! docker ps --format '{{.Names}}' | grep -qx meu-funil-postgres; then
     ( cd "$MF_ROOT" && docker compose up -d postgres )
     for _ in $(seq 30); do docker exec meu-funil-postgres pg_isready -U meufunil >/dev/null 2>&1 && return 0; sleep 1; done

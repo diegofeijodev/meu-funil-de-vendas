@@ -52,6 +52,12 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
   devolve o post ao estado de antes, sem `failed`). Recusa de tentativa anterior ao fechamento é ignorada. Limite da Meta = `publish_quota_total` (1–100, ou 25).
 - **QR da vaga na arte** (24/11/2026, contrato §26): `vacancy_story_settings.qr_enabled` (desligado; `POST …/vacancy-stories/qr`, manage, só liga com prévia
   `{ qr: true }` conferida por `verifyQrPixels`). `qrcode-generator` é dependência de produção; `jsqr` é só de teste. Sem QR o rodapé é byte a byte o de antes.
+- **Vagas fixas (CLT) nos stories** (25/11/2026, contrato §26 "Vagas fixas (CLT)"): 2ª fonte da mesma fila (`vacancy_stories.source = 'freela_clt'`, post
+  `source = 'vacancy'` com `creative_brief.vacancy.kind = 'clt'`), vitrine `…/v1/fixed-jobs/public/{recent,:id}`. Uma porta por fonte (`vacancy-sources.ts`,
+  camada leve; a arte fica no gerador): interruptor, limite (`clt_daily_cap`, 2) e retroativo (`clt_backlog_days`, 14) próprios; `starts_at` = "divulgar até"
+  (mín(vencimento, publicação + 30 dias)), antecedência 0. Contagem do dia por tipo pela LINHA ligada ao post (`postKindFilter`; posts sem linha = diária).
+  Desligar um tipo não toca o outro. Arte `vacancy-clt-art.ts` com as peças exportadas da das diárias (hashes fixados). QR da CLT só com
+  `FREELA_FIXED_JOB_PAGE_URL` (vazia = página pública fora do ar). Sem salário pula; sem cidade sai sem o cartão (com lista de cidades, pula).
 - **Migração do Lovable** (06/10/2026): importador avulso `api/src/scripts/import-lovable/` (não sobe o Nest; `main.ts` = CLI), exportação em `api/scripts/lovable-export/`
   (SQL `export_meufunil`, `pull.mjs`, prompts), runbook `docs/migracao-lovable.md`. Testes ponta a ponta: `scripts/import-lovable-e2e.sh` (Postgres local, banco
   `meufunil_import_e2e`) e `scripts/lovable-export/pull-e2e.sh`. Nunca rodar contra o banco `meufunil` fora do runbook.

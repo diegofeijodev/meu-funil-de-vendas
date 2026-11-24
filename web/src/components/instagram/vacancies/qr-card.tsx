@@ -36,7 +36,8 @@ export function QrCard({ workspaceId, settings, canEdit, canManage }: { workspac
   const qc = useQueryClient();
   const key = vacancySettingsKey(workspaceId);
   const s = settings;
-  const p = s.preview;
+  // A prévia da vaga fixa (`kind: 'clt'`) não conta para o QR das diárias (a API também não aceita).
+  const p = s.preview.kind === "clt" ? ({ ...s.preview, status: undefined, qr: null } as typeof s.preview) : s.preview;
   const running = p.status === "running";
   const result = qrPreviewResult({ status: p.status, sample: p.sample, qr: p.qr, vacancy: p.vacancy });
   const readOk = !!result?.ok;
