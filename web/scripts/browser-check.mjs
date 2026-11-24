@@ -1651,6 +1651,75 @@ try {
   check('vagas: aba Vagas ativa em ?tab=vagas', (await page.getByRole('tab', { name: /Vagas/ }).getAttribute('aria-selected')) === 'true');
   // Repetições (revisão final): a primeira vez não mostra mais o interruptor travado — ele só aparece com a arte modelo.
   check('vagas: primeira vez com os 3 passos e sem o interruptor travado', tem(await corpo(), 'Envie a arte modelo') && (await page.locator('#vac-first-switch').count()) === 0);
+
+  // ── Publicação parada (revisão de 24/11): o bloqueio aberto no banco de teste DESENHA a faixa vermelha; "Já corrigi — testar agora"
+  // cria um story de teste na Graph falsa (sem publicar) e a faixa fica verde. Conta e credenciais da Meta só durante este passo.
+  {
+    const GB = 'http://127.0.0.1:3098';
+    const IGB = 'bc-ig-bloqueio';
+    const bT0 = igPsql('SELECT now()');
+    const metaAntes = new Set(igPsql(`SELECT string_agg(key, ',') FROM app_credentials WHERE workspace_id='${wsId}' AND key LIKE 'META_%'`).split(',').filter(Boolean));
+    // conta que já existia: guarda status, id e nome para devolver no fim
+    const contaAntes = igPsql(`SELECT coalesce(status,'') || '|' || coalesce(ig_user_id,'') || '|' || coalesce(username,'') FROM instagram_accounts WHERE workspace_id='${wsId}'`);
+    const desfazBloqueio = () => {
+      const limpa = `publish_block_reason=NULL, publish_block_message=NULL, publish_next_check_at=NULL, publish_checked_at=NULL`;
+      if (contaAntes) {
+        const [st, ig, un] = contaAntes.split('|');
+        igPsql(`UPDATE instagram_accounts SET ${limpa}, status=NULLIF('${st}',''), ig_user_id=NULLIF('${ig}',''), username=NULLIF('${un}','') WHERE workspace_id='${wsId}'`);
+      } else {
+        igPsql(`DELETE FROM instagram_accounts WHERE workspace_id='${wsId}' AND ig_user_id='${IGB}'`);
+      }
+      for (const k of ['META_APP_ID', 'META_APP_SECRET', 'META_SYSTEM_USER_TOKEN', 'META_AD_ACCOUNT_ID', 'META_PAGE_ID', 'META_INSTAGRAM_ACCOUNT_ID', 'META_TOKEN_SOURCE', 'META_TOKEN_EXPIRES_AT']) {
+        if (!metaAntes.has(k)) igPsql(`DELETE FROM app_credentials WHERE workspace_id='${wsId}' AND key='${k}'`);
+      }
+      igPsql(`DELETE FROM ig_autopilot_events WHERE workspace_id='${wsId}' AND message LIKE 'A Meta voltou a aceitar publicações%' AND created_at >= '${bT0}'`);
+    };
+    limpezas.push(desfazBloqueio);
+    if (!metaAntes.has('META_SYSTEM_USER_TOKEN')) {
+      await apiCall('POST', '/v1/meta/meta-ads-save-credentials', { workspaceId: wsId, appId: 'app-check-1', appSecret: 'smoke-meta-secret', systemUserToken: 'CHECK-SYSTEM-USER-TOKEN-0123456789', adAccountId: 'act_1001', pageId: '2002', instagramId: '3003' });
+    }
+    if (!contaAntes) igPsql(`INSERT INTO instagram_accounts(workspace_id, ig_user_id, username, status) VALUES ('${wsId}', '${IGB}', 'bcbloqueio', 'connected')`);
+    igPsql(
+      `UPDATE instagram_accounts SET status='connected', ig_user_id='${IGB}', username='bcbloqueio', publish_block_reason='permission', publish_block_message='(#10) Application does not have permission for this action', publish_blocked_at=now() - interval '2 hours', publish_block_last_at=now() - interval '1 hour', publish_block_failures=1, publish_next_check_at=now() + interval '1 hour', publish_checked_at=NULL WHERE workspace_id='${wsId}'`,
+    );
+    await page.goto(`${BASE}/instagram?tab=vagas`);
+    const faixa = page.locator('#publishing-alert');
+    await faixa.getByRole('heading', { name: 'O Instagram parou de aceitar as publicações' }).waitFor({ timeout: 30000 });
+    const testar = faixa.getByRole('button', { name: 'Já corrigi — testar agora' });
+    const txtFaixa = await faixa.innerText();
+    check(
+      'publicação parada: faixa vermelha DESENHADA (título, a conta, a próxima conferência e "Já corrigi — testar agora" habilitado)',
+      /destructive/.test((await faixa.getAttribute('class')) ?? '') && tem(txtFaixa, 'a Meta recusa tudo o que o Meu Funil tenta publicar no @bcbloqueio') &&
+        tem(txtFaixa, 'Também conferimos sozinhos. Próxima conferência:') && (await testar.isVisible()) && (await testar.isEnabled()),
+      txtFaixa.slice(0, 300),
+    );
+    const shot = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../.cache/bc-faixa-publicacao-parada.png');
+    await faixa.screenshot({ path: shot }).catch(() => undefined);
+    console.log(`  (faixa vermelha salva em ${shot})`);
+    await faixa.getByRole('button', { name: 'Como resolver (5 passos)' }).click();
+    check('publicação parada: os 5 passos abrem no lugar e o 5º manda testar agora', tem(await faixa.innerText(), 'Volte aqui e toque em Já corrigi — testar agora.'));
+    const graphNoAr = await fetch(`${GB}/__log`).then((r) => r.ok, () => false);
+    if (!graphNoAr) {
+      console.log('  (sem a Graph falsa na 3098: o clique em "testar agora" ficou de fora)');
+    } else {
+      await fetch(`${GB}/__reset`, { method: 'POST' });
+      await testar.click();
+      const verde = page.locator('section[role="status"]').filter({ hasText: 'A permissão de publicar voltou' });
+      await verde.waitFor({ timeout: 30000 });
+      const log = await fetch(`${GB}/__log`).then((r) => r.json());
+      const sonda = log.filter((e) => e.method === 'POST' && e.path === `/${IGB}/media`);
+      const alerta = (await apiCall('GET', `/v1/workspaces/${wsId}/health-alerts`)).body;
+      check(
+        'publicação parada: "testar agora" criou 1 story de teste (JPEG baixado da API) SEM publicar; a faixa ficou verde e o bloqueio fechou',
+        sonda.length === 1 && sonda[0].params.media_type === 'STORIES' && sonda[0].image?.jpeg === true && !log.some((e) => String(e.path).endsWith('/media_publish')) &&
+          tem(await verde.innerText(), 'As publicações voltaram.') && alerta?.publishing === null,
+        JSON.stringify({ sonda: sonda.map((e) => ({ params: e.params, image: e.image })), publishing: alerta?.publishing }).slice(0, 400),
+      );
+      await verde.getByRole('button', { name: 'Fechar' }).click();
+    }
+    desfazBloqueio();
+  }
+
   if (!aiLive) {
     console.log('  (sem gateway de IA: envio da arte modelo pulado — a leitura dos textos precisa da IA)');
     return;
