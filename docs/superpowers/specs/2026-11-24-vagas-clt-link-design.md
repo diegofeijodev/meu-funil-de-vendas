@@ -30,8 +30,8 @@ de fora, e todas foram fechadas, canceladas ou apagadas minutos depois de criada
   dizendo que a publicação parou e o que fazer. Enquanto isso:
   - o sistema **para de criar artes**, para não gastar IA à toa;
   - os posts esperam sem queimar tentativas.
-- **Tudo volta sozinho** em qualquer destes casos: o sistema confere de hora em hora, você clica em "Já corrigi — testar agora", você reconecta
-  o Instagram, ou uma publicação dá certo.
+- **Tudo volta sozinho** em qualquer destes casos: o sistema confere sozinho (1 h depois da recusa, e depois a cada 3, 6, 12 e no máximo
+  24 h), você clica em "Já corrigi — testar agora", você reconecta o Instagram, ou uma publicação dá certo.
 - O limite de publicações da Meta, hoje fixo em 25 por dia no código, passa a ser o número que a própria Meta informar (hoje, 50).
 - Sugestão: subir o máximo de stories de vaga por dia de 10 para 15. É um ajuste na tela; a conta está na §2.2.
 - **Link da vaga:** a API do Instagram não deixa pôr a figurinha de link no story. O substituto proposto tem duas partes:
@@ -106,9 +106,16 @@ lacunas abaixo existem nos dois casos.
 | D. Bloqueio com 3 estados (normal → bloqueado → testando → normal) | Como C, mas depois da sonda só **1** publicação passa e o gerador faz no máximo 1 arte até ela dar certo | Desperdício máximo de 1 arte por tentativa | Mais um estado na fila, no gerador e na tela |
 
 **Recomendação: C**, com a troca para D condicionada à Fase 0 (F0-5). Se `GET /me/permissions` com o token da Freela App mostrar hoje
-`instagram_content_publish` sem `granted`, a sonda distingue os dois casos e C basta: o falso "liberado" fica raro e o custo dele é limitado
-(até 2 artes por rodada até a 1ª recusa, e a conferência seguinte espera mais: 1 h, 3 h, 6 h, 12 h, 24 h). Se a permissão aparecer
-`granted` mesmo com o #10 acontecendo, a sonda não serve para decidir e o D entra.
+`instagram_content_publish` sem `granted`, a sonda distingue os dois casos e C basta: o falso "liberado" fica raro.
+
+O custo do falso "liberado" é limitado:
+- **Por ciclo:** a 1ª publicação sai em até ≈ 15 min (rodada da agenda de 10 min + fila de 5 min). Até lá, o gerador faz no máximo 2 linhas
+  por rodada, ou seja, ≈ 4 artes por falso "liberado".
+- **Entre ciclos:** a contagem de falhas **não zera** quando quem fecha é a sonda (R9), então a conferência seguinte espera mais: 1 h, 3 h,
+  6 h, 12 h e 24 h.
+- **No pior caso:** ≈ 4 artes × 5 ciclos no 1º dia (≈ 20) e depois ≈ 4 por dia.
+
+Se a permissão aparecer `granted` mesmo com o #10 acontecendo, a sonda não serve para decidir e o D entra.
 
 **Regras do bloqueio (C)**
 
@@ -124,9 +131,15 @@ lacunas abaixo existem nos dois casos.
   - registra **um** evento em `ig_autopilot_events` por abertura (não por falha): "Publicação parada: a Meta recusou por falta de permissão.";
   - `handleTokenExpired` passa a gravar também `reason = 'token'`, sem sonda.
 - **R3 — O post que falhou não gasta tentativa.**
-  - O job volta para `pending` com `run_at = mín(publish_next_check_at, agora + 60 min)` e `attempts` igual.
-  - O post volta para `scheduled` **sem mudar `scheduled_at`**, com `last_error = PUBLISH_BLOCKED_MSG`.
-  - Vale nos dois caminhos: a fila e o "Publicar agora". No "Publicar agora", o erro continua indo para o toast.
+  - **Pela fila:**
+    - o job volta para `pending` com `run_at = mín(publish_next_check_at, agora + 60 min)` e `attempts` igual;
+    - o post volta para `scheduled` **sem mudar `scheduled_at`**, com `last_error = PUBLISH_BLOCKED_MSG`.
+  - **Pelo "Publicar agora"** (não há job: o `claim` cancela os pendentes nesse caminho). O bloqueio abre do mesmo jeito e o erro vai para o
+    toast. O post termina assim:
+    - story de vaga e post da programação (`run_id`) → `ready` com `PUBLISH_BLOCKED_MSG`; a reconciliação os agenda depois que o bloqueio
+      fechar;
+    - post manual → `failed` com `PUBLISH_BLOCKED_MSG` e `failure_kind = 'publish'`. Quem clicou vê o motivo e publica de novo depois; nada
+      fica `scheduled` sem job.
 - **R4 — Fila com a empresa bloqueada.** Antes do `claim`, o job é adiado como no R3, sem chamar a Meta.
   - Se o post passou do horário em mais de `OVERDUE_MS` (12 h, a constante que já existe), o job vira `failed` e o post vira `failed` com
     `failure_kind = 'publish'` e a mensagem "Não foi publicado: a Meta recusou as publicações desta empresa entre {início} e {agora}.".
@@ -135,7 +148,16 @@ lacunas abaixo existem nos dois casos.
 - **R5 — Gerador das vagas.**
   - `IgStore.publishAccount(ws)` = `liveAccount(ws)` **e** sem `publish_block_reason`.
   - `generateDue` usa `publishAccount` no lugar de `liveAccount`.
-  - Bloqueado: a linha espera com `wait_reason = PUBLISH_BLOCKED_WAIT`, nenhuma IA é chamada, e a expiração por antecedência continua como hoje.
+  - Bloqueado: a linha espera com `wait_reason = PUBLISH_BLOCKED_WAIT` e nenhuma IA é chamada.
+  - **Motivo claro ao expirar.** A expiração por antecedência continua, mas com motivo próprio (`blockedExpireReason(startsAt, since)` em
+    `vacancy-reasons.ts`): "Não foi ao ar: o Instagram recusava as publicações desta empresa desde {dia às hora}, e a vaga começa {dia às
+    hora}."
+  - Esse motivo vale em três casos:
+    - linha com `wait_reason = PUBLISH_BLOCKED_WAIT` no `expireDue`;
+    - post cancelado pelo T10 com `last_error = PUBLISH_BLOCKED_MSG`;
+    - post cancelado pela guarda com `last_error = PUBLISH_BLOCKED_MSG`.
+
+    Nunca o `tooCloseReason` genérico. O teste fica no M5.
 - **R6 — Agenda das vagas.** `VacancySchedulerService.schedule` trata o bloqueio como `'no_account'`: o post fica `ready` com
   `last_error = PUBLISH_BLOCKED_MSG`, e a reconciliação da rodada o agenda quando o bloqueio fecha.
 - **R7 — Produção automática (posts normais).** No filtro "48 h com Instagram conectado / 24 h sem" (`production.service.ts`, `EXISTS … status =
@@ -154,7 +176,9 @@ lacunas abaixo existem nos dois casos.
   - botão "Já corrigi — testar agora" com sonda ok.
 
   Ao fechar:
-  - grava `publish_unblocked_at = now` e zera motivo, mensagem, `blocked_at`, falhas e próxima conferência;
+  - grava `publish_unblocked_at = now` e zera motivo, mensagem, `blocked_at` e próxima conferência;
+  - **as falhas só zeram com prova real** (publicação que deu certo ou reconexão). Quando quem fecha é a sonda ou o botão, `publish_block_failures`
+    fica, e um novo bloqueio continua a escada de esperas (é o que limita o falso "liberado");
   - registra o evento "A Meta voltou a aceitar publicações ({como})";
   - antecipa para agora os jobs pendentes da empresa adiados pelo bloqueio (`run_at > now` e post com `scheduled_at <= now`).
 - **R10 — Faixa.** `GET …/health-alerts` ganha `publishing` (§4.2), com faixa vermelha. Enquanto `publishing` existir, a faixa amarela de
@@ -172,8 +196,8 @@ há dado de foto ruim (os chips "Foto estranha" podem ser contados na F0-2 antes
 |---|---|---|---|
 | P1 | Limite da Meta | F8 e F9: 25 fixo no código; a Meta informa 50 | Pedir `fields=config,quota_usage`. Guardar `quota_total` em `instagram_accounts.publish_quota_total` só quando `quota_duration = 86400` e o valor for inteiro entre 1 e 1000. Usar `publish_quota_total ?? 25` no guardrail local, na comparação com `quota_usage` e no `igRoom` da agenda das vagas. A folga de 5 para posts normais (`IG_RESERVE`) continua |
 | P2 | Máximo de stories de vaga por dia (`daily_cap`) | F4: corte em 4 dos 21 dias (04 a 24/11); média ≈ 12 vagas por dia que entraram (248 ÷ 21; pode incluir puladas) | **15** para a Freela App, na tela (sem código), conferido pela F0-3 (p90 das vagas elegíveis por dia). Se o p90 passar de 15, usar 20 (o teto atual do CHECK). Conta de que cabe: 15 × 15 min de espaço = 3 h 45 min dos 13 h da janela 08–21h; na Meta, 15 diárias + 2 CLT + 5 de folga = 22 dos 50, sobrando 28 para posts normais |
-| P3 | Espaço de 15 min entre stories de vaga (`SPACING_MIN`) | Num lote publicado à tarde, a antecedência de 120 min + 15 min de folga deixa poucas vagas de horário (exemplo: vaga às 19h, lote às 16h → horários 16h00, 16h15, 16h30 e 16h45 → 4 stories; as outras expiram com `spacingReason`) | **Medir antes** (F0-2 agrupa os motivos). Se `spacingReason` for relevante, baixar para 10 min. A fila aguenta: 4 jobs por rodada de 5 min = 48 por hora |
-| P4 | Pedir foto à IA sem crédito | F3: o aviso de sem crédito foi regravado até 23/11, ou seja, a foto é pedida (e recusada) a cada story | Em `makeArt`: com aviso `no_credit` aberto para o fornecedor escolhido **e** `settings.ai_error_at` há menos de 60 min, vai direto para a arte sem foto, sem chamar a IA. Uma tentativa por hora continua indo, senão o aviso nunca se apaga (`recovered` só roda numa chamada que deu certo). Prioridade baixa: recusa por falta de crédito não custa dinheiro |
+| P3 | Espaço de 15 min entre stories de vaga (`SPACING_MIN`) | Num lote publicado à tarde, a antecedência de 120 min + 15 min de folga deixa poucos horários. Exemplo: vaga às 19h, lote às 16h → prazo 16h45 (19h − 2 h − 15 min) → horários 16h01 (agora + 1 min), 16h16 e 16h31; o próximo (16h46) já passa do prazo → 3 stories, e as outras expiram com `spacingReason` | **Medir antes** (F0-2 agrupa os motivos). Se `spacingReason` for relevante, baixar para 10 min. A fila aguenta: 4 jobs por rodada de 5 min = 48 por hora |
+| P4 | Pedir foto à IA sem crédito | F3: o aviso de sem crédito foi regravado até 23/11, ou seja, a foto é pedida (e recusada) a cada story | Em `makeArt`: com aviso `no_credit` aberto para o fornecedor escolhido **e** `last_at` desse aviso (`ai_credit_alerts.last_at`, lido por `AiCreditAlertsService.status`) há menos de 60 min, vai direto para a arte sem foto, sem chamar a IA. Não usar `settings.ai_error_at`: o `generateOne` o regrava a cada story com erro e o `handOff` o apaga, então ele não mede "última recusa". Uma tentativa por hora continua indo, senão o aviso nunca se apaga (`recovered` só roda numa chamada que deu certo). Prioridade baixa: recusa por falta de crédito não custa dinheiro |
 | P5 | Vagas gêmeas (lote da mesma empresa, mesma função, horário, valor e cidade) | Pendência de 10/11 ("vagas repetidas gastam o teto de 10 por dia"); o Freela tem "lote de vagas" desde 11/11 | **Medir antes** (F0-4). Se mais de 15% das elegíveis forem gêmeas, pular as gêmeas da mesma rodada com o motivo "Igual a outra vaga que já tem story (mesma empresa, função, horário e valor)". Fora deste lote |
 
 **Por que não mexer em mais:** `PER_TICK = 2` (até 12 artes por hora, 156 nos 13 h da janela) não é gargalo. A antecedência de 120 min é decisão
@@ -194,7 +218,9 @@ do dono. A janela 08–21h nunca apareceu como motivo nos dados citados.
 **Recomendação.**
 - **Agora:**
   - link na bio, que o Diego troca à mão, apontando para `https://www.freelaservicos.com.br/?utm_source=instagram&utm_medium=bio#vagas`. O
-    Instagram aceita até 5 links na bio, então o da loja pode ficar junto;
+    Instagram aceita até 5 links na bio, e só o **primeiro** aparece direto (os outros ficam atrás de um toque). Por isso o das vagas deve ser
+    o 1º; o da loja pode ficar junto. Conferido em 24/11 na ajuda da Meta e na imprensa de abril/2023. Também conferido: link na legenda do
+    feed não é clicável.
   - QR code na arte, como **opção na tela, desligada por padrão**, ligada só depois que o Diego aprovar numa prévia (pergunta 1).
 - **Depois:** o "Responda VAGA e receba o link" no Direct, quando as permissões da Meta estiverem em ordem (fora deste lote).
 
@@ -256,8 +282,8 @@ Não lê `bares_restaurantes.contractors`. Por isso a cidade **não** cai para a
 é pior que nenhuma, o mesmo princípio do comentário de `toPublicVacancy`. Como é adição a uma capacidade do Kernel, o texto de ADR está na §11.
 
 **Rotas** (controller próprio, **sem** `JwtAuthGuard`, em `src/shared/fixed-jobs/http/public-fixed-jobs.controller.ts`, `@Controller('v1/fixed-jobs/public')`):
-- `GET /v1/fixed-jobs/public/recent?limit=`: padrão 8, teto 50 (há 52 abertas, F13, e o Meu Funil precisa ver o retroativo inteiro numa
-  chamada). Ordena por `createdAt desc`.
+- `GET /v1/fixed-jobs/public/recent?limit=`: padrão 8, teto 100 (há 52 abertas, F13; com folga, o Meu Funil vê todas as abertas numa
+  chamada só, inclusive o retroativo). Ordena por `createdAt desc`.
 - `GET /v1/fixed-jobs/public/:id` (`ParseUUIDPipe`, declarada **depois** de `recent`) → 404 se não existe, está `CLOSED`, venceu
   (`expiresAt <= now`) ou o dono está inativo.
 
@@ -282,6 +308,8 @@ Ficam **fora de propósito:** `contactEmail`, `contactPhone`, `applicationInstru
   1. Tenta `parseLocationCityUf(location)` → (trecho, UF).
   2. Testa os **sufixos** do trecho, da última palavra para trás, até 4 palavras ("Jundiaí", "Centro Jundiaí", …). Vale o mais longo que casar,
      sem acento e sem maiúsculas, com `cities.name` **e** `cities.state = UF`.
+     **Exceção:** se a palavra logo antes do sufixo achado for de logradouro (rua, r., av., avenida, alameda, travessa, estrada, rodovia,
+     praça), o resultado é `null`. "Rua Santo André - SP" é uma rua, não a cidade de Santo André.
   3. Sem UF: o texto inteiro só vale se for exatamente um nome que exista uma única vez na tabela (exemplo: "Campinas").
   4. Senão, `city = null` e `uf = null`.
 
@@ -307,7 +335,8 @@ Ficam **fora de propósito:** `contactEmail`, `contactPhone`, `applicationInstru
   - `workSchedule`: `CONTACT_LIKE` → `null`; corte em 80 caracteres.
   - `workScheduleSlots`: só itens `{ day, start, end }` com `day` de até 20 letras e horários `^\d{2}:\d{2}$`, no máximo 7.
 - **Benefícios (`publicBenefits`).**
-  - Divide por quebra de linha, `;`, `,`, `•`, `·`, `|` ou " - ".
+  - Divide por quebra de linha, `;`, `•`, `·`, `|`, " - " ou vírgula **que não esteja entre dígitos** (`(?<!\d),(?!\d)`), para "R$ 1.200,00"
+    não virar dois itens.
   - Cada item: tira espaços e cai fora se tiver `CONTACT_LIKE` ou `STREET_LIKE`, se estiver vazio ou se passar de 40 caracteres.
   - Tira repetidos e fica com no máximo 6.
   - **Defesa:** se o texto inteiro casar com `CONTACT_LIKE` mas nenhum item tiver caído por contato (a divisão partiu o telefone), devolve `[]`.
@@ -337,10 +366,12 @@ Ficam **fora de propósito:** `contactEmail`, `contactPhone`, `applicationInstru
 - cidade:
   - "Rua das Flores 120 Centro Jundiaí - SP" → "Jundiaí"/"SP";
   - "Shopping Rio - RJ, Av. X 100, Jundiaí - SP" → "Jundiaí";
+  - "Rua Santo André - SP" → `null` (canário: rua com nome de cidade);
   - texto sem cidade conhecida → `null`;
+- benefícios: "Vale-refeição R$ 1.200,00, VT" → `["Vale-refeição R$ 1.200,00", "VT"]`;
 - empresa: "66.699.088 DENNER…" → `null`; "GENILSON … 26385530850" → `null`;
 - `CLOSED`, vencida e dono inativo: fora da lista e 404 no `:id`;
-- `limit` padrão 8 e teto 50;
+- `limit` padrão 8 e teto 100;
 - `/public/recent` não é capturada pelo `:id` (teste do controller).
 
 #### 2.4.2 No site (freela-web-v2): página pública da vaga fixa
@@ -389,6 +420,21 @@ a versão CLT, escolhida pelo `source` da linha ou por `creative_brief.vacancy.k
 | `vacancy-display.ts` `whenOf` (`shortDay`, `formatWhen`) e `snap` (presume `FreelaVacancy`) | "Qua, 29/10 · 11h30 às 21h" | "Vaga fixa · divulgar até {dd/mm}"; `snap` decide o tipo pelo `source` |
 | `handOff` (`theme` com `shortDay(v.startTime)`) | "Vaga · Função · Loja · Sáb 29/10" | "Vaga fixa · Cargo · Empresa" |
 
+**Onde `enabled` é lido e o que muda com o interruptor próprio da CLT.** Regra geral:
+- **empresa ativa** = `enabled OR clt_enabled`;
+- **linha ativa** = `enabled` para `source = 'freela'` e `clt_enabled` para `source = 'freela_clt'`.
+
+| Leitor | Hoje | Com a CLT |
+|---|---|---|
+| `VacancyGeneratorService.generateDue` (`findMany({ enabled: true })`) | só empresas com diárias ligadas | empresas ativas; cada linha confere o interruptor do seu tipo |
+| `VacancyPollService.activeSettings` / `pollAll` | `enabled: true` | consulta das diárias para `enabled`; consulta CLT para `clt_enabled` (chamadas e erros separados) |
+| `VacancySchedulerService.tick` (`enabled: true`) | idem | empresas ativas; o post é conferido pelo interruptor do seu tipo (`creative_brief.vacancy.kind`) |
+| `VacancySchedulerService.schedule` (`MSG.off` se `!s.enabled`) | recusa post com as diárias desligadas | confere o interruptor do tipo do post; texto CLT: "Os stories das vagas fixas estão desligados nesta empresa." |
+| `VacancySettingsService.turnOff` | cancela toda linha da fila e todo post `source='vacancy'` não publicado | recebe o `kind`: diárias cancelam só linhas `freela` e posts **sem** `vacancy_story.source = 'freela_clt'`; CLT cancela só os seus |
+| `VacancyPollService.disableOrphans` (arte modelo apagada) | desliga tudo | desliga **só as diárias** (a CLT não usa a arte modelo) |
+| `VacancySettingsService.enable` | exige arte modelo | `clt/enable` não exige arte modelo; se `brand_id` for nulo, grava a marca mais antiga da empresa (`templateBrand`), e sem marca responde `400 "Cadastre uma marca em Marcas antes de ligar."` (a logo vem dela) |
+| `view` (`enabled`, `today`) | só diárias | ganha o bloco `clt` (§4.2) |
+
 **Uma porta por fonte.** `vacancy-stories/vacancy-sources.ts` com `SOURCES: Record<'freela' | 'freela_clt', VacancySource>`:
 - `byId(feed, id)`, `fingerprint`, `triage`, `forcedTriage`, `fields`, `compose`, `theme`, `deadline`;
 - `reasons`, com os textos da tabela acima.
@@ -403,7 +449,7 @@ O filtro de relação do Prisma vira `EXISTS`, sem a armadilha do `NOT` em camin
 antigos). Os posts de antes deste lote continuam contando como diária.
 
 **Consulta.**
-- `pollAll` faz uma segunda chamada (`feed.recentClt()` → `/v1/fixed-jobs/public/recent?limit=50`), **com o seu próprio try/catch**, só se
+- `pollAll` faz uma segunda chamada (`feed.recentClt()` → `/v1/fixed-jobs/public/recent?limit=100`), **com o seu próprio try/catch**, só se
   alguma empresa tiver `clt_enabled`.
 - O erro vai para `clt_last_poll_error`, sem sujar o `last_poll_error` das diárias.
 - Fora do ar uma das duas, a outra segue.
@@ -486,7 +532,7 @@ só o estado atual.
 ### 4.1 API do Freela (novo; `docs/api-contracts.md` + Swagger)
 
 - `GET /v1/fixed-jobs/public/recent?limit=` (sem autenticação) → `200 { data: PublicFixedJob[] }`, podendo vir vazia. `limit` é inteiro de 1
-  a 50 (padrão 8); um valor inválido vale o padrão, como na vitrine.
+  a 100 (padrão 8); um valor inválido vale o padrão, como na vitrine.
 - `GET /v1/fixed-jobs/public/:id` (sem autenticação) → `200 { data: PublicFixedJob }`, `404` (inexistente, fechada, vencida ou dono inativo)
   ou `400` (id não é UUID).
 - `PublicFixedJob`: como em §2.4.1. Nunca traz contato, `location` cru, coordenada, `applicationInstructions` nem id do dono.
@@ -682,12 +728,16 @@ Responsivo no celular, em uma coluna.
   FROM vacancy_stories WHERE workspace_id = '7309ae62-15c2-48d3-8990-4dbe75a29c4e' AND created_at >= '2026-11-04' AND status <> 'skipped';
   ```
 
-- **F0-5. Meta** (leitura, com o token do usuário do sistema da Freela App). O token também aparece no Business, em Usuários do sistema.
-  - `curl "https://graph.facebook.com/v24.0/me/permissions?access_token=…"`: é `instagram_content_publish` `granted`?
-  - `curl "https://graph.facebook.com/v24.0/{ig-user-id}/content_publishing_limit?fields=config,quota_usage&access_token=…&appsecret_proof=…"`:
-    devolve `quota_total` 50? Dá #10?
+- **F0-5. Meta** (leitura). O token da Freela App está **no cofre do Meu Funil, cifrado** (`META_SYSTEM_USER_TOKEN` da empresa → global →
+  env; `MetaConfigService`). O Business não mostra um token já gerado. Dois caminhos:
+  - (a) se o dono guardou o token quando o gerou:
+    - `curl "https://graph.facebook.com/v24.0/me/permissions?access_token=…"`: é `instagram_content_publish` `granted`?
+    - `curl "https://graph.facebook.com/v24.0/{ig-user-id}/content_publishing_limit?fields=config,quota_usage&access_token=…&appsecret_proof=…"`:
+      devolve `quota_total` 50? Dá #10?
+  - (b) senão, o M4 sobe primeiro com a sonda em **modo só registro**: o botão e a conferência automática gravam no log do servidor o que as
+    duas chamadas devolveram (sem o token) e **não** fecham o bloqueio. Um dia depois, o log decide.
 
-  Decide C ou D (§2.1) e confirma o P1.
+  Esta verificação decide C ou D (§2.1) e confirma o P1. O fechamento pela sonda só é ligado depois dela.
 - **F0-6. CLT** (banco do Freela, schema `shared`).
 
   ```sql
@@ -722,21 +772,25 @@ Responsivo no celular, em uma coluna.
   - Arquivos: `publishing.service.ts` (`runPublishingQueue`, `publishInstagramPost`, `finishPublish`); `ig-store.service.ts` (`handleTokenExpired`
     grava `reason = 'token'`).
   - Testes (Graph falsa): o #10 abre o bloqueio, o job volta `pending` com as mesmas tentativas, e o post fica `scheduled` com `scheduled_at` igual.
-    Com a empresa bloqueada, o job é adiado sem chamar a Meta. Com mais de 12 h, `failed` com o texto. O sucesso fecha e antecipa os adiados. O
-    "Publicar agora" com #10 abre o bloqueio e o erro vai para a resposta. Empresa B não é afetada.
+    Com a empresa bloqueada, o job é adiado sem chamar a Meta. Com mais de 12 h, `failed` com o texto. O sucesso fecha, zera as falhas e
+    antecipa os adiados; o fechamento pela sonda **mantém** as falhas. O "Publicar agora" com #10 abre o bloqueio, o erro vai para a resposta,
+    e o post termina `ready` (vaga ou programação) ou `failed` (manual), nunca `scheduled` sem job. Empresa B não é afetada.
   - Pronto: testes da fila existentes verdes + os novos.
 - **M4. Sonda, reconexão e botão** (R8 e R9).
   - Arquivos: `instagram/publish-block.service.ts` (`checkDue`, `checkNow`); `instagram-cron.service.ts` (chama `checkDue` no `queue`);
     `account.service.ts` (`connectInner` fecha o bloqueio); `instagram.controller.ts` + `instagram-actions.service.ts`
     (`POST …/instagram-account/publish-check`, write, 1 a cada 60 s).
   - Testes: `granted` fecha; ausente soma falha e respeita a espera; erro de rede +1 h; `token` → 422; 409 em menos de 60 s; não-membro 403;
-    empresa A × B.
+    empresa A × B; modo só registro (F0-5 b) não fecha.
   - Pronto: rota no contrato §22.
 - **M5. Gerador, agenda e produção respeitam o bloqueio** (R5, R6 e R7).
   - Arquivos: `vacancy-generator.service.ts` (`generateDue` com `publishAccount`); `vacancy-scheduler.service.ts` (`schedule`);
     `production.service.ts` (o `EXISTS` passa a exigir `publish_block_reason IS NULL`).
-  - Testes: bloqueado → nenhuma chamada ao `AiService` fake e linha com `PUBLISH_BLOCKED_WAIT`; `ready` não agenda; ao fechar, a rodada agenda;
-    a expiração por antecedência continua.
+  - Testes:
+    - bloqueado → nenhuma chamada ao `AiService` fake e linha com `PUBLISH_BLOCKED_WAIT`;
+    - `ready` não agenda;
+    - ao fechar, a rodada agenda;
+    - a linha que expira durante o bloqueio e o post cancelado (T10 e guarda) gravam `blockedExpireReason`, nunca o `tooCloseReason`.
   - Pronto: `jest` de `vacancy-stories` e de `instagram` verdes.
 - **M6. Faixa** (R10).
   - Arquivos: `health-alerts/health-alerts.service.ts` (`publishing`, contagem amarela depois de `publish_unblocked_at`);
@@ -786,7 +840,7 @@ Responsivo no celular, em uma coluna.
   - Testes: ordem das rotas; 404; 400 de UUID; sem autenticação.
 - **A6. Subida.**
   - Um deploy por vez.
-  - Depois: `curl /v1/fixed-jobs/public/recent?limit=50 | grep -E '@|[0-9]{4}-?[0-9]{4}|Rua |Av\.'` tem de sair vazio.
+  - Depois: `curl /v1/fixed-jobs/public/recent?limit=100 | grep -E '@|[0-9]{4}-?[0-9]{4}|Rua |Av\.'` tem de sair vazio.
   - Pronto: as 52 da F0-6 conferidas, com cidade e empresa como esperado.
 
 ### Fase 2b: site (`freela-web-v2`, yarn; nunca `gh pr merge`, o dono faz o merge)
@@ -822,9 +876,11 @@ Responsivo no celular, em uma coluna.
     e `vacancy-guard.service.ts` (`cltById`).
   - Testes: 52 vagas no retroativo → 2 por dia; diária antes da CLT no mesmo horário; a guarda cancela a CLT fechada; os posts antigos contam
     como diária.
-- **M18. Rotas.**
-  - `clt/enable`, `clt/disable` (manage), PATCH e `kind` na lista; `vacancy-settings.service.ts` (`turnOff` só da CLT).
-  - Testes: viewer 403; A×B; desligar a CLT não toca diária.
+- **M18. Rotas e interruptores.**
+  - `clt/enable`, `clt/disable` (manage), PATCH e `kind` na lista; `vacancy-settings.service.ts` (`turnOff(kind)`), `vacancy-poll.service.ts`
+    (`disableOrphans` só das diárias); todos os leitores de `enabled` da tabela da §2.4.3.
+  - Testes: viewer 403; A×B; desligar a CLT não toca diária e vice-versa; arte modelo apagada não desliga a CLT; diárias desligadas com CLT
+    ligada → o gerador e a agenda seguem só para a CLT; `clt/enable` sem marca → 400.
 - **M19. Telas.** `settings-panel.tsx` (seção CLT), `stories-list.tsx` (chips e selo) e `story-detail.tsx` (sem data e hora), em `vitest`.
 - **M20.** Contrato §26 e `CLAUDE.md`. Revisão do `software-architect` e do `ux-designer` antes de subir.
 
@@ -849,7 +905,7 @@ O texto do endereço (`location`) é livre e pode ter rua; a cidade do cadastro 
 
 **Decisão.**
 - Controller sem autenticação `v1/fixed-jobs/public` dentro da capacidade `src/shared/fixed-jobs/` (já listada no ADR-003), com
-  `GET recent` (teto 50) e `GET :id`.
+  `GET recent` (teto 100) e `GET :id`.
 - Lê só o schema `shared`: `fixed_job_posts`, `users` (dono ativo) e `cities`.
 - Campos por lista de permissão (`PUBLIC_FIXED_JOB_SELECT`).
 - Contato, `location` cru, coordenadas, instruções de candidatura e id do dono nunca saem.
