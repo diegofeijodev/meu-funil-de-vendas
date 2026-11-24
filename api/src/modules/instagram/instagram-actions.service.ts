@@ -7,13 +7,14 @@ import { AutoCalendarService } from './auto-calendar.service';
 import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
 import { ApproveAutoStrategyDto, CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
-import { Engine, PUBLISH_BLOCKED_MSG } from './ig-types';
+import { Engine, PUBLISH_NOW_BLOCKED_MSG } from './ig-types';
 import { PublishPermissionError } from './meta-graph';
 import { ClaimRefused, IgStore, OriginUnavailable, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
 import { VACANCY_NOT_PENDING_MSG, VACANCY_SCHEDULE_MSG } from './origin-guards';
 import { PublishingService } from './publishing.service';
+import { PUBLISH_CHECK_MSG, PublishBlockService } from './publish-block.service';
 import { computeSlots } from './slots';
 
 /** "Publicar agora" num story de vaga com a vitrine do Freela fora do ar. */
@@ -37,6 +38,7 @@ export class InstagramActionsService {
     private readonly metrics: MetricsService,
     private readonly autopilot: AutopilotService,
     private readonly auto: AutoCalendarService,
+    private readonly publishBlock: PublishBlockService,
   ) {}
 
   /** Autoriza escrita ANTES de ler o corpo (upload multipart). */
@@ -142,6 +144,12 @@ export class InstagramActionsService {
   async publishInstagramPost(userId: string, workspaceId: string, postId: string) {
     await this.access.require(userId, workspaceId, 'write');
     const before = await this.store.getPost(postId, workspaceId);
+    // Com o bloqueio aberto por permissão, "Publicar agora" é um teste: uma tentativa real por clique, no máximo 1 por minuto por empresa
+    // (a mesma vez do botão "testar agora"). Cedo demais: nada muda no post e a Meta não é chamada.
+    const block = await this.store.publishBlock(workspaceId);
+    if (block?.publish_block_reason === 'permission' && !(await this.publishBlock.reserveAttempt(workspaceId))) {
+      return { ok: false as const, sandbox: false, error: PUBLISH_CHECK_MSG.tooSoon };
+    }
     try {
       return await this.publishing.publishInstagramPost(postId, workspaceId);
     } catch (e) {
@@ -154,14 +162,10 @@ export class InstagramActionsService {
         return { ok: false as const, sandbox: false, error: ORIGIN_UNAVAILABLE_MSG };
       }
       if (e instanceof PublishPermissionError) {
-        // R3: o bloqueio já foi aberto e o erro da Meta vai para o toast. Não há job (o claim cancelou os pendentes), então nada fica
-        // "agendado" sem job: story de vaga e post da programação voltam para "pronto" (a agenda os retoma quando o bloqueio fechar);
-        // post manual termina "falhou" com o motivo, e quem clicou publica de novo depois.
-        const auto = before.source === 'vacancy' || !!before.run_id;
-        await this.store.patchPost(postId, auto
-          ? { status: 'ready', last_error: PUBLISH_BLOCKED_MSG, ig_creation_id: null }
-          : { status: 'failed', last_error: PUBLISH_BLOCKED_MSG, failure_kind: 'publish', ig_creation_id: null });
-        return { ok: false as const, sandbox: false, error: msg };
+        // O bloqueio já foi aberto e o post e os jobs dele já voltaram ao estado de antes (`PublishingService`): o clique foi um teste.
+        // Conta para o minuto de espera (um 2º clique logo depois, mesmo no clique que descobriu o bloqueio, não chama a Meta de novo).
+        await this.publishBlock.noteAttempt(workspaceId);
+        return { ok: false as const, sandbox: false, error: PUBLISH_NOW_BLOCKED_MSG };
       }
       await this.store.patchPost(postId, { status: 'failed', last_error: msg, failure_kind: 'publish' });
       return { ok: false as const, sandbox: false, error: msg };

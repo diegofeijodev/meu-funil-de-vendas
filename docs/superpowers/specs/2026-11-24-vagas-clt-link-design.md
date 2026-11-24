@@ -989,3 +989,21 @@ geometria, este desenho vence em regra, e ponto que pede dado vira campo na API.
 - P23 (frase "reabriu depois da conferência") e o "liberar um job por conferência" (P5): quando a F0-5 decidir C ou D e o fechamento pela sonda for ligado.
 - P18: "Salvar credenciais" só com o token (hoje exige os 5 campos).
 - O site (`/vagas/[id]`) pode ler `o=ig` como origem Instagram quando quiser; o link do QR já funciona sem isso.
+
+**Revisão de código da Fase 1 (24/11, decisões do orquestrador; troca o "modo só registro" acima)**
+- **Sonda real.** A conferência (job e botão) cria um container de story (`POST /{ig}/media`, `media_type=STORIES`, JPEG 1080 × 1920 de uma cor
+  em `creative-assets/system/publish-probe.jpg`, URL assinada de 1 h) e nunca chama `media_publish`. Criar container exige
+  `instagram_content_publish` e tem limite próprio (400 em 24 h); a escada 1/3/6/12/24 h gasta poucos. Container criado fecha o bloqueio
+  ("conferência"/"botão": as falhas continuam, prova real só publicação e reconexão); #10/#200–299 = falha + 1; 190 = token; erro passageiro =
+  +1 h sem falha (sem isso uma URL quebrada sondaria a cada 5 min e gastaria o limite de containers). JPEG porque a Meta só aceita JPEG em
+  story (PNG cairia em "erro passageiro" para sempre). Saíram `GET /me/permissions`, `IG_PUBLISH_PROBE_CLOSES` e o campo `probe` (estado E da UI).
+- **Publicar agora** com o bloqueio aberto = teste: 1 a cada 60 s por empresa (junto com o botão, `publish_checked_at`); deu certo fecha;
+  recusa por permissão devolve o post ao estado de antes (status, `last_error`, `failure_kind` e os jobs que o clique tirou da fila), sem
+  `failed` e sem tentativa (troca o R3 "post manual → failed").
+- **Corrida:** `openPublishBlock` recebe o início da tentativa e ignora a recusa se `publish_unblocked_at` for posterior.
+- **P1:** `quota_total` só de 1 a 100 (a Meta já citou 50 e 100); o log registra a mudança e o número ignorado.
+- **R4:** job sem post (ou post sem horário) expira 12 h depois da criação do job (o `run_at` muda a cada adiamento e não serve de relógio).
+- **R9:** ao fechar, os adiados voltam em grupos de 4 a cada 5 min (a vazão da fila), na ordem do horário do post; `RateLimited` na fila vira
+  evento `reschedule` (info), não falha.
+- **P23 volta a existir:** com a sonda fechando de verdade, "reabriu depois da conferência" pode acontecer (container aceito e `media_publish`
+  recusado). A frase da UI §1.4 continua pendente.

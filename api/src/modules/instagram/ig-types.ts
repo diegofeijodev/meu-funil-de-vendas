@@ -39,6 +39,8 @@ export const NO_ACCOUNT_MSG = 'Conecte o Instagram para publicar.';
  * aviso, sem gastar tentativa, e sai sozinho quando o bloqueio fechar (a faixa conta os posts com ele).
  */
 export const PUBLISH_BLOCKED_MSG = 'Esperando o Instagram voltar a aceitar as publicações desta empresa.';
+/** "Publicar agora" com o bloqueio aberto e a Meta recusando de novo: nada foi publicado e o post voltou ao estado de antes (toast). */
+export const PUBLISH_NOW_BLOCKED_MSG = 'A Meta ainda recusa as publicações desta empresa. O post voltou para onde estava; veja o aviso vermelho no topo.';
 /** Post da programação que estava na fila quando o token venceu: volta para "pronto" com este aviso. */
 export const TOKEN_EXPIRED_POST_MSG = 'Token da Meta expirado: reconecte o Instagram para publicar.';
 

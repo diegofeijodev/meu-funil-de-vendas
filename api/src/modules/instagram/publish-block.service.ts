@@ -103,6 +103,11 @@ export class PublishBlockService {
     return got.count > 0;
   }
 
+  /** Marca uma tentativa real que a Meta recusou (conta para o minuto de espera do botão e do "Publicar agora"). */
+  async noteAttempt(workspaceId: string, now = new Date()) {
+    await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { publish_checked_at: now } });
+  }
+
   /**
    * Botão "Já corrigi — testar agora" (`POST …/instagram-account/publish-check`, escrita). Sem bloqueio → "funcionando" sem chamar a Meta;
    * motivo `token` → 422 (só a reconexão resolve); mais de uma tentativa por minuto → 409. Continua bloqueado → `next_check_at` diz a
@@ -126,7 +131,7 @@ export class PublishBlockService {
   private async check(workspaceId: string, how: Extract<PublishUnblockHow, 'probe' | 'button'>, now: Date): Promise<Outcome> {
     const r = await this.probe(workspaceId);
     const open = { workspace_id: workspaceId, publish_block_reason: 'permission' };
-    await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { publish_checked_at: now } });
+    await this.noteAttempt(workspaceId, now);
     if (r.kind === 'ok') {
       await this.store.closePublishBlock(workspaceId, how, now);
       return 'unblocked';

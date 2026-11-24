@@ -1,5 +1,5 @@
 import { MetaError } from '../meta-graph';
-import { PUBLISH_BLOCKED_MSG, TOKEN_EXPIRED_POST_MSG } from '../ig-types';
+import { PUBLISH_BLOCKED_MSG, PUBLISH_NOW_BLOCKED_MSG, TOKEN_EXPIRED_POST_MSG } from '../ig-types';
 import { PublishingService } from '../publishing.service';
 import { useVirtualClock } from '../../../common/__tests__/virtual-clock';
 import { WS_B } from '../../media/__tests__/mem';
@@ -10,6 +10,7 @@ const H = 3600e3;
 const MIN = 60e3;
 const IG_A = 'ig-a';
 const IG_B = 'ig-b';
+const err = async (p: Promise<unknown>) => p.then(() => null, (e) => e);
 const PERM = () => new MetaError('(#10) Requires instagram_content_publish permission', 10);
 
 /** Mundo com A e B conectadas; `denyA` = a Meta recusa a criação de container de A por permissão. */
@@ -193,32 +194,70 @@ describe('fila com o bloqueio de publicação (R3, R4, R11)', () => {
   });
 });
 
-describe('"Publicar agora" com #10 (R3: nunca agendado sem job)', () => {
-  function actions(source: string, over: Record<string, unknown> = {}) {
-    const s = setup({ denyA: true });
+describe('"Publicar agora" com o bloqueio: um TESTE manual (uma tentativa real por clique)', () => {
+  function actions(source: string, over: Record<string, unknown> = {}, o: { denyA?: boolean } = { denyA: true }) {
+    const s = setup(o);
     const svcs = igServices(s.w, { guards: { blockReason: async () => null } as any });
     // os serviços do harness usam a mesma Graph falsa: a recusa vale para eles também
     const p = seedPost(s.w, { workspace_id: WS, source, ...over });
     return { ...s, svcs, p };
   }
 
-  it('post manual: falhou com o aviso, o erro da Meta vai para a resposta e o bloqueio abre', async () => {
-    const { svcs, p, acc, w } = actions('app');
+  it('post manual agendado: a recusa abre o bloqueio e o post VOLTA ao estado de antes (sem failed, sem tentativa); o job volta como estava', async () => {
+    const at = new Date(Date.now() + 2 * H);
+    const { svcs, p, acc, w, job } = actions('app', { status: 'scheduled', scheduled_at: at, last_error: null, retry_count: 0 });
+    const j = job(p, { attempts: 1, run_at: at });
     const r = await svcs.actions.publishInstagramPost(w.OWNER, WS, p.id);
-    expect(r).toMatchObject({ ok: false });
-    expect((r as any).error).toMatch(/permiss/i);
-    expect(p).toMatchObject({ status: 'failed', last_error: PUBLISH_BLOCKED_MSG, failure_kind: 'publish' });
-    expect(acc(WS).publish_block_reason).toBe('permission');
-    expect(w.t['publishing_jobs']!.rows.filter((j) => j.ig_post_id === p.id && j.status === 'pending')).toHaveLength(0);
+    expect(r).toEqual({ ok: false, sandbox: false, error: PUBLISH_NOW_BLOCKED_MSG });
+    expect(p).toMatchObject({ status: 'scheduled', scheduled_at: at, last_error: null, retry_count: 0 });
+    expect(p.failure_kind ?? null).toBeNull();
+    expect(p.ig_creation_id ?? null).toBeNull();
+    expect(j).toMatchObject({ status: 'pending', attempts: 1, run_at: at });
+    expect(acc(WS)).toMatchObject({ publish_block_reason: 'permission', publish_block_failures: 1 });
   });
 
-  it('story de vaga e post da programação: voltam para "pronto" com o aviso (a agenda retoma quando fechar)', async () => {
-    const v = actions('vacancy', { format: 'story_image', creative_brief: { vacancy: { requires_approval: false } } });
-    expect(await v.svcs.actions.publishInstagramPost(v.w.OWNER, WS, v.p.id)).toMatchObject({ ok: false });
-    expect(v.p).toMatchObject({ status: 'ready', last_error: PUBLISH_BLOCKED_MSG });
+  it('post aprovado sem job e post que já tinha falhado: cada um volta como estava', async () => {
+    const a = actions('app', { status: 'approved' });
+    expect(await a.svcs.actions.publishInstagramPost(a.w.OWNER, WS, a.p.id)).toMatchObject({ ok: false, error: PUBLISH_NOW_BLOCKED_MSG });
+    expect(a.p).toMatchObject({ status: 'approved' });
+    expect(a.p.last_error ?? null).toBeNull();
 
-    const run = actions('app', { run_id: uuid() });
+    const f = actions('app', { status: 'failed', last_error: 'A Meta respondeu com erro: outro', failure_kind: 'publish' });
+    expect(await f.svcs.actions.publishInstagramPost(f.w.OWNER, WS, f.p.id)).toMatchObject({ ok: false, error: PUBLISH_NOW_BLOCKED_MSG });
+    expect(f.p).toMatchObject({ status: 'failed', last_error: 'A Meta respondeu com erro: outro', failure_kind: 'publish' });
+  });
+
+  it('story de vaga e post da programação prontos: voltam para "pronto" (a agenda retoma quando fechar)', async () => {
+    const v = actions('vacancy', { status: 'ready', format: 'story_image', creative_brief: { vacancy: { requires_approval: false } } });
+    expect(await v.svcs.actions.publishInstagramPost(v.w.OWNER, WS, v.p.id)).toMatchObject({ ok: false });
+    expect(v.p.status).toBe('ready');
+
+    const run = actions('app', { status: 'ready', run_id: uuid() });
     expect(await run.svcs.actions.publishInstagramPost(run.w.OWNER, WS, run.p.id)).toMatchObject({ ok: false });
-    expect(run.p).toMatchObject({ status: 'ready', last_error: PUBLISH_BLOCKED_MSG });
+    expect(run.p.status).toBe('ready');
+  });
+
+  it('trava: com o bloqueio aberto, 1 tentativa por minuto (junto com o botão); a 2ª não chama a Meta nem mexe no post', async () => {
+    const { svcs, p, acc, w, containers } = actions('app', { status: 'approved' });
+    await svcs.actions.publishInstagramPost(w.OWNER, WS, p.id);
+    expect(containers(IG_A)).toBe(1);
+    const r = await svcs.actions.publishInstagramPost(w.OWNER, WS, p.id);
+    expect(r).toEqual({ ok: false, sandbox: false, error: 'Espere um minuto para testar de novo.' });
+    expect(containers(IG_A)).toBe(1);
+    expect(p.status).toBe('approved');
+    // passou o minuto: tenta de novo de verdade
+    acc(WS).publish_checked_at = new Date(Date.now() - 61e3);
+    await svcs.actions.publishInstagramPost(w.OWNER, WS, p.id);
+    expect(containers(IG_A)).toBe(2);
+    // o botão "testar agora" divide a mesma vez
+    expect((await err(svcs.publishBlock.checkNow(WS))).getStatus()).toBe(409);
+  });
+
+  it('com o bloqueio aberto e a Meta aceitando: publica e fecha o bloqueio', async () => {
+    const { svcs, p, acc, w } = actions('app', { status: 'approved' }, {});
+    await w.store.openPublishBlock(WS, 'permission', '(#10)');
+    expect(await svcs.actions.publishInstagramPost(w.OWNER, WS, p.id)).toMatchObject({ ok: true });
+    expect(p.status).toBe('published');
+    expect(acc(WS)).toMatchObject({ publish_block_reason: null, publish_block_failures: 0 });
   });
 });

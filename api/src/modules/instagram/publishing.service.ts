@@ -241,7 +241,7 @@ export class PublishingService implements OnModuleInit {
    * mesmo tempo. Pega: status publicável, OU `publishing` com lease livre (nunca pego/vencido = o processo anterior morreu ou a fila
    * voltou depois do ContainerPending; o container já criado é retomado). `publishing` com lease vivo = outro processo está publicando.
    */
-  private async claim(postId: string, workspaceId: string, resume: boolean): Promise<PostLease> {
+  private async claim(postId: string, workspaceId: string, resume: boolean): Promise<{ lease: PostLease; cancelled: string[] }> {
     const lease = await this.store.claimLease(
       postId,
       workspaceId,
@@ -259,23 +259,26 @@ export class PublishingService implements OnModuleInit {
       // post (o "publicar agora" não grava failed); a fila trata como guardrail.
       throw new ClaimRefused('Post não aprovado — publicação bloqueada.');
     }
-    // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha).
+    // "publicar agora": os jobs pendentes do post saem da fila (a fila só se retoma sozinha). Os ids voltam para quem chamou: se a Meta
+    // recusar por permissão, o "Publicar agora" foi só um teste e eles voltam para a fila como estavam.
+    let cancelled: string[] = [];
     if (!resume) {
       try {
-        await this.prisma.publishing_jobs.updateMany({ where: { ig_post_id: postId, status: 'pending' }, data: { status: 'cancelled' } });
+        cancelled = (await this.prisma.publishing_jobs.findMany({ where: { ig_post_id: postId, status: 'pending' }, select: { id: true } })).map((j) => j.id);
+        if (cancelled.length) await this.prisma.publishing_jobs.updateMany({ where: { id: { in: cancelled }, status: 'pending' }, data: { status: 'cancelled' } });
       } catch (e) {
         await lease.release();
         throw e;
       }
     }
-    return lease;
+    return { lease, cancelled };
   }
 
   async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean; jobId?: string } = {}): Promise<PublishResult> {
     // Relógio real (o mesmo do `closePublishBlock`): uma recusa desta tentativa só reabre o bloqueio se ele não fechou depois deste instante.
     const startedAt = new Date();
     const post = await this.store.getPost(postId, workspaceId);
-    const lease = await this.claim(postId, post.workspace_id, !!opts.fromQueue);
+    const { lease, cancelled } = await this.claim(postId, post.workspace_id, !!opts.fromQueue);
     // Pela fila: cada renovação do lease também renova a trava do job (esperas de nova tentativa não deixam a trava vencer).
     const jobId = opts.jobId;
     if (jobId) lease.afterRenew = () => this.prisma.publishing_jobs.updateMany({ where: { id: jobId, status: 'running' }, data: { locked_at: new Date() } });
@@ -287,11 +290,25 @@ export class PublishingService implements OnModuleInit {
         await this.store
           .openPublishBlock(post.workspace_id, 'permission', errText(e), { attemptStartedAt: startedAt })
           .catch((err) => this.logger.error(`[instagram] bloqueio não gravado (${post.workspace_id}): ${errText(err)}`));
+        if (!opts.fromQueue) await this.undoPublishNow(post, cancelled).catch((err) => this.logger.error(`[instagram] post ${postId} não voltou ao estado de antes: ${errText(err)}`));
       }
       throw e;
     } finally {
       await lease.release();
     }
+  }
+
+  /**
+   * "Publicar agora" recusado por permissão (com o bloqueio, ele é um teste): nada foi publicado, então o post volta ao estado de antes
+   * (status, aviso e tipo de falha; sem container) e os jobs que o clique tirou da fila voltam como estavam (mesmo horário e tentativas; com
+   * o bloqueio aberto a fila os adia). Nunca `failed` por causa do teste.
+   */
+  private async undoPublishNow(before: PostRow, cancelled: string[]) {
+    await this.prisma.ig_posts.updateMany({
+      where: { id: before.id, workspace_id: before.workspace_id, status: 'publishing' },
+      data: { status: before.status, last_error: before.last_error ?? null, failure_kind: before.failure_kind ?? null, ig_creation_id: null },
+    });
+    if (cancelled.length) await this.prisma.publishing_jobs.updateMany({ where: { id: { in: cancelled }, status: 'cancelled' }, data: { status: 'pending' } });
   }
 
   /**

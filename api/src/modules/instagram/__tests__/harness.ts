@@ -370,11 +370,12 @@ export function igServices(w: IgWorld, opts: { guards?: PublishOriginGuard | nul
     );
     return rankProductionCandidates(rows as any[], { now, perTick: p.perTick, targetHours: p.targetHours });
   };
-  const actions = new InstagramActionsService(w.access, w.store, account, content, mediaGen, publishing, metrics, autopilot, auto);
+
   const resources = new InstagramResourcesService(w.store, auto);
   const hooks = { startCadence: jest.fn(async () => undefined), stopCadences: jest.fn(async () => 0), runSdr: jest.fn(async () => null) as jest.Mock, describeMedia: jest.fn(async () => null) };
   const inbound = new InboundService(w.prisma, w.graph, hooks as any);
   const files = opts.files ?? new FilesService({ UPLOADS_DIR: path.join(tmpdir(), 'mf-ig-harness'), JWT_SECRET: 'segredo-de-teste-16+', PUBLIC_URL: 'http://api.test', FILES_SIGNING_SECRET: undefined } as any);
   const publishBlock = new PublishBlockService(w.store, w.graph, files);
+  const actions = new InstagramActionsService(w.access, w.store, account, content, mediaGen, publishing, metrics, autopilot, auto, publishBlock);
   return { publishBlock, ai, aiJson, contentStrategy, provider, providers, refs, pipeline, extras, assets, strategist, http, content, publishing, mediaGen, metrics, account, auto, autopilot, actions, resources, inbound, hooks, production, postContext, images, quality, conform };
 }

@@ -46,8 +46,10 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
   A leitura da arte é às cegas e vê só o quadro cortado em y < 1360 (o rodapé com os selos é do sistema). Contrato §26.
 - **Bloqueio de publicação do Instagram** (24/11/2026, contrato §22.6): recusa da Meta por permissão (#10/#200–299, só no container e no `media_publish`) ou token (190)
   abre o bloqueio da empresa em `instagram_accounts.publish_block_*`: a fila adia sem gastar tentativa (em lote, antes dos 4 da rodada), o gerador das vagas e a
-  produção não criam arte, e a faixa vermelha (`health-alerts.publishing`) aparece. Fecham: publicação que deu certo, reconexão e — só com `IG_PUBLISH_PROBE_CLOSES=true`
-  — a sonda `GET /me/permissions` (job `instagram-queue-5min` e `POST …/instagram-account/publish-check`). Limite da Meta = `publish_quota_total` (ou 25).
+  produção não criam arte, e a faixa vermelha (`health-alerts.publishing`) aparece. Fecham: publicação que deu certo, reconexão e a sonda REAL — cria um container
+  de story (`POST /{ig}/media`, JPEG `creative-assets/system/publish-probe.jpg` por URL assinada) e nunca chama `media_publish` (job `instagram-queue-5min` na
+  escada 1/3/6/12/24 h e `POST …/instagram-account/publish-check`). "Publicar agora" com o bloqueio aberto é um teste (1 a cada 60 s junto com o botão; a recusa
+  devolve o post ao estado de antes, sem `failed`). Recusa de tentativa anterior ao fechamento é ignorada. Limite da Meta = `publish_quota_total` (1–100, ou 25).
 - **QR da vaga na arte** (24/11/2026, contrato §26): `vacancy_story_settings.qr_enabled` (desligado; `POST …/vacancy-stories/qr`, manage, só liga com prévia
   `{ qr: true }` conferida por `verifyQrPixels`). `qrcode-generator` é dependência de produção; `jsqr` é só de teste. Sem QR o rodapé é byte a byte o de antes.
 - **Migração do Lovable** (06/10/2026): importador avulso `api/src/scripts/import-lovable/` (não sobe o Nest; `main.ts` = CLI), exportação em `api/scripts/lovable-export/`
