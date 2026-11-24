@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { UserError } from '../media/user-error';
-import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, PUBLISH_BLOCKED_MSG, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
+import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, PUBLISH_BLOCKED_MSG, QUEUE_PER_ROUND, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
@@ -537,25 +537,29 @@ export class PublishingService implements OnModuleInit {
     for (const b of blocked) {
       const jobs = await this.prisma.publishing_jobs.findMany({
         where: { workspace_id: b.workspace_id, channel: 'instagram_organic', status: 'pending', run_at: { lte: now } },
-        select: { id: true, ig_post_id: true, log: true },
+        select: { id: true, ig_post_id: true, log: true, created_at: true },
       });
       for (const job of jobs) await this.deferJob(job, b, now);
     }
     return new Set(blocked.map((b) => b.workspace_id));
   }
 
-  /** Adia um job de empresa bloqueada (ou o encerra, se o post passou do horário em mais de 12 h). Condicional: só job ainda `pending`. */
+  /**
+   * Adia um job de empresa bloqueada, ou o encerra se passou do prazo: 12 h depois do horário do post (job sem post ou post sem horário: 12 h
+   * depois da criação do job — o `run_at` não serve, ele muda a cada adiamento). Condicional: só job ainda `pending`.
+   */
   private async deferJob(
-    job: { id: string; ig_post_id: string | null; log: string | null },
+    job: { id: string; ig_post_id: string | null; log: string | null; created_at?: Date | null },
     b: { workspace_id: string; publish_next_check_at: Date | null; publish_blocked_at: Date | null },
     now: Date,
   ) {
     const post = job.ig_post_id ? await this.prisma.ig_posts.findFirst({ where: { id: job.ig_post_id, workspace_id: b.workspace_id }, select: { id: true, status: true, scheduled_at: true, plan_id: true } }) : null;
     const line = (t: string) => `${job.log ?? ''}\n[${now.toISOString()}] ${t}`.trim();
-    if (post?.scheduled_at && now.getTime() - post.scheduled_at.getTime() > OVERDUE_MS) {
-      const msg = blockedOverdueMessage(b.publish_blocked_at ?? post.scheduled_at, now);
+    const due = post?.scheduled_at ?? job.created_at ?? null;
+    if (due && now.getTime() - due.getTime() > OVERDUE_MS) {
+      const msg = blockedOverdueMessage(b.publish_blocked_at ?? due, now);
       const got = await this.prisma.publishing_jobs.updateMany({ where: { id: job.id, status: 'pending' }, data: { status: 'failed', locked_at: null, log: line(msg) } });
-      if (!got.count) return;
+      if (!got.count || !post) return;
       await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { in: ['scheduled', 'publishing'] } }, data: { status: 'failed', last_error: msg, failure_kind: 'publish', ig_creation_id: null } });
       await this.store.logEvent({ workspace_id: b.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'failure', level: 'error', message: msg });
       return;
@@ -579,8 +583,8 @@ export class PublishingService implements OnModuleInit {
       where: { channel: 'instagram_organic', status: 'pending', run_at: { lte: now }, ...(blockedWs.size ? { workspace_id: { notIn: [...blockedWs] } } : {}) },
       orderBy: { run_at: 'asc' },
       // Poucos por execução: cada publicação pode levar até ~40 s de processamento na Meta.
-      take: 4,
-      select: { id: true, workspace_id: true, ig_post_id: true, attempts: true, log: true },
+      take: QUEUE_PER_ROUND,
+      select: { id: true, workspace_id: true, ig_post_id: true, attempts: true, log: true, created_at: true },
     });
 
     const results: { job: string; status: string; error?: string }[] = [];
@@ -704,9 +708,12 @@ export class PublishingService implements OnModuleInit {
             workspace_id: post.workspace_id,
             plan_id: post.plan_id,
             post_id: post.id,
-            kind: blocked ? 'guardrail' : 'failure',
-            level: retry ? 'warn' : 'error',
-            message: retry
+            // Limite de publicações atingido não é falha do post: ele só vai mais tarde (sem tentativa).
+            kind: rate ? 'reschedule' : blocked ? 'guardrail' : 'failure',
+            level: rate ? 'info' : retry ? 'warn' : 'error',
+            message: rate
+              ? `${withPeriod(msg)} Vai ao ar às ${hhmmSp(new Date(Date.now() + delay))}.`
+              : retry
               ? `Não foi possível publicar: ${withPeriod(msg)} Vamos tentar de novo às ${hhmmSp(new Date(Date.now() + delay))}.`
               : !blocked && !tokenExpired && attempts >= MAX_ATTEMPTS
                 ? `Não foi possível publicar depois de ${attempts} tentativas: ${withPeriod(msg)} Abra o post no calendário e clique em Publicar agora para tentar de novo.`

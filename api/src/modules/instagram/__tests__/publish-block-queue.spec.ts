@@ -77,6 +77,23 @@ describe('fila com o bloqueio de publicação (R3, R4, R11)', () => {
     expect(acc(WS).publish_block_reason).toBe('permission');
   });
 
+  it('empresa bloqueada: job sem post (ou post sem horário) expira 12 h depois da CRIAÇÃO do job (o run_at muda a cada adiamento)', async () => {
+    const { w, svc, containers, job } = setup();
+    await w.store.openPublishBlock(WS, 'permission', '(#10)', { now: new Date('2026-11-20T11:30:00Z') });
+    const orphanOld = job({ id: null, workspace_id: WS }, { ig_post_id: null, created_at: new Date(Date.now() - 13 * H) });
+    const orphanNew = job({ id: null, workspace_id: WS }, { ig_post_id: null, created_at: new Date(Date.now() - 1 * H) });
+    const noTime = seedPost(w, { workspace_id: WS, status: 'scheduled', scheduled_at: null });
+    const jNoTime = job(noTime, { created_at: new Date(Date.now() - 13 * H) });
+    await svc.runPublishingQueue();
+    expect(containers(IG_A)).toBe(0);
+    expect(orphanOld.status).toBe('failed');
+    expect(orphanOld.log).toMatch(/Não foi publicado: a Meta recusou as publicações desta empresa entre 20\/11 às 8h30 e /);
+    expect(orphanNew).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(orphanNew.run_at.getTime()).toBeGreaterThan(Date.now());
+    expect(jNoTime.status).toBe('failed');
+    expect(noTime).toMatchObject({ status: 'failed', failure_kind: 'publish' });
+  });
+
   it('R11: A bloqueada com 6 jobs vencidos não ocupa a vez de B (que publica na mesma rodada)', async () => {
     const { w, svc, containers, job } = setup();
     await w.store.openPublishBlock(WS, 'permission', '(#10)');
@@ -115,6 +132,31 @@ describe('fila com o bloqueio de publicação (R3, R4, R11)', () => {
     expect(acc(WS).publish_unblocked_at).toBeInstanceOf(Date);
     expect(jw.run_at.getTime()).toBeLessThanOrEqual(Date.now());
     expect(w.t['ig_autopilot_events']!.rows.map((e) => e.message)).toContain('A Meta voltou a aceitar publicações (uma publicação deu certo).');
+  });
+
+  it('ao fechar, os adiados voltam em escalonamento (4 por rodada de 5 min, na ordem do horário do post)', async () => {
+    const { w, job } = setup();
+    await w.store.openPublishBlock(WS, 'permission', '(#10)');
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      job(seedPost(w, { workspace_id: WS, status: 'scheduled', scheduled_at: new Date(Date.now() - (60 - i) * MIN), last_error: PUBLISH_BLOCKED_MSG }), { run_at: new Date(Date.now() + 40 * MIN) }),
+    );
+    const now = new Date();
+    await w.store.closePublishBlock(WS, 'reconnect', now);
+    // Os 10 posts estão em ordem de horário (o 1º é o mais antigo).
+    expect(jobs.map((j) => (j.run_at.getTime() - now.getTime()) / MIN)).toEqual([0, 0, 0, 0, 5, 5, 5, 5, 10, 10]);
+  });
+
+  it('limite de publicações (RateLimited) não é falha do post: evento de reagendamento, sem tentativa', async () => {
+    const { w, svc, job } = setup();
+    w.respond((path) => (path.endsWith('/content_publishing_limit') ? { data: [{ quota_usage: 25 }] } : undefined));
+    const p = seedPost(w, { workspace_id: WS, status: 'scheduled', scheduled_at: new Date(Date.now() - MIN), retry_count: 0 });
+    const j = job(p, { attempts: 1 });
+    expect(await svc.runPublishingQueue()).toEqual([expect.objectContaining({ job: j.id, status: 'retry' })]);
+    expect(j).toMatchObject({ status: 'pending', attempts: 1 });
+    expect(p).toMatchObject({ status: 'scheduled', retry_count: 0 });
+    const ev = w.t['ig_autopilot_events']!.rows;
+    expect(ev).toEqual([expect.objectContaining({ kind: 'reschedule', level: 'info' })]);
+    expect(ev[0].message).toMatch(/^Limite de 25 publicações em 24h atingido\. Vai ao ar às \d{2}h\d{2}\.$/);
   });
 
   it('corrida: a Meta recusa uma tentativa que começou antes de o bloqueio fechar → não reabre; o job volta em 5 min, sem tentativa e sem o aviso', async () => {

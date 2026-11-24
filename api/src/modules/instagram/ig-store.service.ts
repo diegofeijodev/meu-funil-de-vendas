@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { notFound } from '../media/user-error';
-import { AutopilotEventKind, PostRow, TOKEN_EXPIRED_POST_MSG } from './ig-types';
+import { AutopilotEventKind, PostRow, QUEUE_PER_ROUND, QUEUE_ROUND_MS, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { nextCheckDelay, type PublishBlockReason } from './publish-block';
 
 /** Limite de publicações em 24 h quando a Meta não informou o dela (`publish_quota_total` nulo). */
@@ -207,8 +207,10 @@ export class IgStore {
 
   /**
    * R9 — fecha o bloqueio: zera motivo, mensagem e próxima conferência e grava `publish_unblocked_at`. As falhas só zeram com prova real
-   * (`publish` ou `reconnect`); fechado pela sonda/botão, um novo bloqueio continua a escada de esperas. Registra o evento e antecipa para
-   * agora os jobs pendentes da empresa que o bloqueio adiou (post agendado para um horário que já passou). `false` = não havia bloqueio.
+   * (`publish` ou `reconnect`); fechado pela sonda/botão, um novo bloqueio continua a escada de esperas. Registra o evento e antecipa os jobs
+   * pendentes da empresa que o bloqueio adiou (post agendado para um horário que já passou), em escalonamento na ordem do horário do post: 4
+   * agora, os 4 seguintes na próxima rodada da fila e assim por diante (a vazão da fila; a empresa não toma a vez das outras de uma vez).
+   * `false` = não havia bloqueio.
    */
   async closePublishBlock(workspaceId: string, how: PublishUnblockHow, now = new Date()): Promise<boolean> {
     const proof = how === 'publish' || how === 'reconnect';
@@ -222,12 +224,21 @@ export class IgStore {
       return false;
     }
     await this.logEvent({ workspace_id: workspaceId, kind: 'guardrail', message: publishUnblockedMessage(how) });
-    const due = await this.prisma.ig_posts.findMany({ where: { workspace_id: workspaceId, status: 'scheduled', scheduled_at: { lte: now } }, select: { id: true } });
-    if (due.length) {
-      await this.prisma.publishing_jobs.updateMany({
-        where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending', run_at: { gt: now }, ig_post_id: { in: due.map((p) => p.id) } },
-        data: { run_at: now },
-      });
+    const due = await this.prisma.ig_posts.findMany({
+      where: { workspace_id: workspaceId, status: 'scheduled', scheduled_at: { lte: now } },
+      orderBy: { scheduled_at: 'asc' },
+      select: { id: true },
+    });
+    if (!due.length) return true;
+    const jobs = await this.prisma.publishing_jobs.findMany({
+      where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending', run_at: { gt: now }, ig_post_id: { in: due.map((p) => p.id) } },
+      select: { id: true, ig_post_id: true },
+    });
+    const order = new Map(due.map((p, i) => [p.id, i]));
+    jobs.sort((a, b) => (order.get(a.ig_post_id!) ?? 0) - (order.get(b.ig_post_id!) ?? 0));
+    for (const [i, j] of jobs.entries()) {
+      const runAt = new Date(now.getTime() + Math.floor(i / QUEUE_PER_ROUND) * QUEUE_ROUND_MS);
+      await this.prisma.publishing_jobs.updateMany({ where: { id: j.id, status: 'pending' }, data: { run_at: runAt } });
     }
     return true;
   }

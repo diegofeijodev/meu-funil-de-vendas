@@ -29,6 +29,9 @@ export const SKIP_PREFIX = 'Pulado automaticamente: ';
 export const isSkipped = (p: { status: string; last_error?: string | null }) => p.status === 'cancelled' && !!p.last_error?.startsWith(SKIP_PREFIX);
 /** Atraso máximo para publicar um post da programação; passou disso, o modo "publish" pula o horário. */
 export const OVERDUE_MS = 12 * 3600e3;
+/** Vazão da fila de publicação: até 4 jobs por rodada do job `instagram-queue-5min` (cada publicação pode levar ~40 s na Meta). */
+export const QUEUE_PER_ROUND = 4;
+export const QUEUE_ROUND_MS = 5 * 60e3;
 /** Post da programação sem conta conectada: fica pronto com este aviso e é agendado sozinho quando a conta conectar. */
 export const NO_ACCOUNT_MSG = 'Conecte o Instagram para publicar.';
 /**
