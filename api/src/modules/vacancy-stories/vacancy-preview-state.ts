@@ -28,6 +28,8 @@ export type PreviewState = {
    * ou o link não coube: a arte saiu sem QR); `read_ok` = o sistema conferiu o QR na arte final, reduzida a 720 px. Ausente = sem QR.
    */
   qr?: { url: string | null; read_ok: boolean } | null;
+  /** Vagas fixas (25/11/2026): prévia da arte "Vaga fixa CLT"; ausente = diária. */
+  kind?: 'clt';
 };
 
 /** Prévia `running` há mais que isso travou (a API reiniciou no meio): a tela mostra falha e um novo pedido sobrescreve (D15). */

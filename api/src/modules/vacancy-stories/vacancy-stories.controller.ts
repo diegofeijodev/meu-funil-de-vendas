@@ -56,6 +56,17 @@ export class VacancyStoriesController {
     return this.settings.setAutoPublish(u.id, ws, dto.auto_publish);
   }
 
+  /** Vagas fixas (CLT, 25/11/2026): interruptor próprio, dono/admin; ligar exige marca (400), não a arte modelo. */
+  @Post('clt/enable') @HttpCode(200) @RequireAccess('manage')
+  cltEnable(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string) {
+    return this.settings.cltEnable(u.id, ws);
+  }
+
+  @Post('clt/disable') @HttpCode(200) @RequireAccess('manage')
+  cltDisable(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string) {
+    return this.settings.cltDisable(u.id, ws);
+  }
+
   /** QR da vaga na arte (24/11/2026, P4): dono/admin; ligar exige prévia com QR conferida (422 "Gere uma prévia com o QR para poder ligar."). */
   @Post('qr') @HttpCode(200) @RequireAccess('manage')
   qr(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: QrDto) {
@@ -79,7 +90,7 @@ export class VacancyStoriesController {
   /** Prévia em segundo plano (o andamento fica em `settings.preview`); 409 se outra está em andamento. */
   @Post('preview') @HttpCode(200)
   startPreview(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto?: StartPreviewDto) {
-    return this.preview.start(u.id, ws, { qr: dto?.qr });
+    return this.preview.start(u.id, ws, { qr: dto?.qr, kind: dto?.kind });
   }
 
   @Get('stories')

@@ -14,9 +14,11 @@ import { PREVIEW_STALE_MS, type PreviewState } from './vacancy-preview-state';
 import { vacancyLink } from './vacancy-qr';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
-import type { FreelaVacancy, SettingsRow } from './vacancy-types';
+import { cltFields } from './vacancy-clt';
+import type { FreelaFixedJob, FreelaVacancy, SettingsRow } from './vacancy-types';
 
 export const PREVIEW_TITLE = 'Prévia · story de vaga';
+export const CLT_PREVIEW_TITLE = 'Prévia · story de vaga fixa';
 const AI_TRIES = 3;
 const MSG = {
   running: 'Já existe uma prévia sendo criada.',
@@ -35,6 +37,21 @@ export function sampleVacancy(now: Date): FreelaVacancy {
     startTime: new Date(`${day}T18:00:00-03:00`).toISOString(), endTime: new Date(`${day}T23:00:00-03:00`).toISOString(),
     amountInCents: 15000, contractorName: null, publishedAt: now.toISOString(), isUpcoming: true,
   };
+}
+
+/** Vaga fixa de exemplo quando a vitrine CLT não tem nenhuma que sirva (ou está fora): Atendente, R$ 1.874,32, São Paulo – SP. */
+export function sampleFixedJob(now: Date): FreelaFixedJob {
+  return {
+    id: 'exemplo', title: 'Atendente', role: 'atendente', category: null, companyName: null, city: 'São Paulo', uf: 'SP',
+    salary: { minInCents: 187432, maxInCents: 187432 }, workSchedule: '6x1, 10h às 18h20', workScheduleSlots: [],
+    benefits: ['Vale-transporte', 'Refeição no local'], description: null, publishedAt: now.toISOString(), expiresAt: null,
+  };
+}
+
+/** A vaga fixa mais recente da vitrine com salário e sem cara de teste. */
+export function previewFixedJob(list: FreelaFixedJob[]): FreelaFixedJob | null {
+  const ok = list.filter((v) => !!v.salary && !isTestText(v.companyName) && !isTestText(v.title) && !isTestText(v.role));
+  return ok.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))[0] ?? null;
 }
 
 /** A vaga mais recente da vitrine que ainda vai acontecer, com valor e cidade (e sem cara de teste). */
@@ -71,11 +88,13 @@ export class VacancyPreviewService {
    * Começa a prévia e responde logo. Outra em andamento há menos de 10 min (neste processo ou gravada como `running`) → 409;
    * `running` mais velha que isso travou (a API reiniciou no meio) e é sobrescrita — a rodada velha não grava mais nada (`run_id`).
    */
-  async start(userId: string, ws: string, o: { qr?: boolean } = {}): Promise<{ ok: true }> {
+  async start(userId: string, ws: string, o: { qr?: boolean; kind?: 'diaria' | 'clt' } = {}): Promise<{ ok: true }> {
     this.gate.assert(ws);
     await this.access.require(userId, ws, 'write');
     const s = await this.settings.get(ws);
-    if (!s.template_asset_id) throw bad(MSG.noTemplate);
+    const clt = o.kind === 'clt';
+    // A vaga fixa não usa a arte modelo (a logo vem da marca).
+    if (!clt && !s.template_asset_id) throw bad(MSG.noTemplate);
     // Daqui até reservar a vez não há `await`: dois pedidos ao mesmo tempo não passam juntos.
     const now = this.now();
     const mine = this.running.get(ws);
@@ -91,6 +110,7 @@ export class VacancyPreviewService {
       asset_id: null, checks: [], attempts: [], used_fallback: false, fallback_kind: null, sample: false, vacancy: null, error: null,
       // P2: a prévia leva o QR quando pedido (mesmo com o interruptor desligado) ou quando ele já está ligado.
       qr: o.qr === true || s.qr_enabled ? { url: null, read_ok: false } : null,
+      ...(clt ? { kind: 'clt' as const } : {}),
     };
     try {
       await this.prisma.vacancy_story_settings.update({ where: { workspace_id: ws }, data: { preview: json(state) } });
@@ -128,6 +148,12 @@ export class VacancyPreviewService {
     };
     const finished = () => new Date(this.now()).toISOString();
     try {
+      if (state.kind === 'clt') {
+        await this.runClt(userId, ws, s, state, save);
+        state.finished_at = finished();
+        await save();
+        return;
+      }
       const { v, sample } = await this.pickVacancy(ws);
       const f = vacancyFields(v);
       state.sample = sample;
@@ -162,6 +188,40 @@ export class VacancyPreviewService {
       state.finished_at = finished();
     }
     await save();
+  }
+
+  /** Prévia "Vaga fixa CLT": a vaga fixa mais recente que serve (ou a de exemplo), a arte CLT e o QR só com a página no ar. */
+  private async runClt(userId: string, ws: string, s: SettingsRow, state: PreviewState, save: () => Promise<void>): Promise<void> {
+    let list: FreelaFixedJob[] = [];
+    try {
+      list = await this.feed.recentClt();
+    } catch (e) {
+      this.logger.warn(`[vagas] ${ws}: vitrine CLT fora na prévia, usando a vaga fixa de exemplo: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const found = previewFixedJob(list);
+    const v = found ?? sampleFixedJob(new Date(this.now()));
+    const f = cltFields(v);
+    state.sample = !found;
+    state.vacancy = { funcao: f.cargo, estabelecimento: f.empresa, valor: f.salario, dia: 'Vaga fixa', horario: f.escala ?? '', cidade: f.cidade ?? '' };
+    await save();
+    const art = await this.generator.makeCltArt(
+      ws, s, f,
+      async (step, n) => {
+        state.step = n > AI_TRIES ? 'fallback' : step;
+        state.attempt = Math.min(n, AI_TRIES);
+        await save().catch((e) => this.logger.warn(`[vagas] ${ws}: etapa da prévia não gravada: ${e instanceof Error ? e.message : String(e)}`));
+      },
+      { qrUrl: state.qr ? this.feed.fixedJobQrLink(v.id) : null },
+    );
+    if (state.qr) state.qr = { url: art.qr?.url ?? null, read_ok: art.qr ? await this.generator.verifyQr(art.bytes, art.qr) : false };
+    const asset = await this.assets.ingest({
+      workspaceId: ws, kind: 'image', targetFormat: 'ig_story', normalize: false, source: art.origin.source, provider: art.origin.provider,
+      bytes: art.bytes, mime: 'image/jpeg', title: CLT_PREVIEW_TITLE, brandId: s.brand_id, createdBy: userId,
+    });
+    Object.assign(state, {
+      status: 'done', media_url: asset.url, asset_id: asset.id, checks: art.check.fields, attempts: art.attempts,
+      used_fallback: art.usedFallback, fallback_kind: art.usedFallback ? fallbackKindOf(art.attempts) : null, error: null,
+    } satisfies Partial<PreviewState>);
   }
 
   /** A vaga mais recente da vitrine que serve; nenhuma (ou vitrine fora) → a vaga de exemplo. */

@@ -14,7 +14,8 @@ import { edgeColor } from './vacancy-art';
 import { countCities, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { templateReadPrompt } from './vacancy-prompts';
-import { LEAD_OPTIONS, UpdateVacancySettingsDto, VENDORS } from './vacancy-stories.dto';
+import { CLT_BACKLOG_OPTIONS, LEAD_OPTIONS, UpdateVacancySettingsDto, VENDORS } from './vacancy-stories.dto';
+import { CLT_PROMO_DAYS, cltWatermark } from './vacancy-clt';
 import { previewForView } from './vacancy-preview-state';
 import { DONT_POST_REASON } from './vacancy-reasons';
 import { SOURCES } from './vacancy-sources';
@@ -45,6 +46,9 @@ const MSG = {
   wrongType: 'Esse arquivo não serve. Envie uma imagem PNG ou JPG.',
   tooSmall: 'A imagem é pequena demais. Envie uma arte com pelo menos 600 pixels de largura e de altura.',
   noBrand: 'Cadastre uma marca em Marcas antes de enviar a arte modelo.',
+  cltCap: 'O máximo de stories de vagas fixas por dia vai de 1 a 10.',
+  cltBacklog: 'Escolha só as novas, 7, 14 ou 30 dias.',
+  cltNoBrand: 'Cadastre uma marca em Marcas antes de ligar.',
 };
 /** "A imagem tem 10,6 MB…" — arredonda para cima (10 MB + 1 byte não vira "10,0 MB"). */
 export const tooBigMessage = (bytes: number) =>
@@ -126,7 +130,27 @@ export type VacancySettingsView = {
   style_refs_enabled: boolean;
   style_brand: { id: string; name: string } | null;
   style_refs_in_use: number;
+  /** Vagas fixas (CLT, 25/11/2026; contrato §26 "Vagas fixas (CLT)"). */
+  clt: CltSettingsView;
 };
+
+export type CltSettingsView = {
+  enabled: boolean;
+  enabled_at: Date | null;
+  daily_cap: number;
+  backlog_days: number;
+  /** Marca d'água: `clt_enabled_at − clt_backlog_days` (só as publicadas depois entram). */
+  since: Date | null;
+  promo_days: number;
+  last_poll_at: Date | null;
+  last_poll_ok_at: Date | null;
+  last_poll_error: string | null;
+  today: { posted: number; scheduled: number; cap: number };
+  counts: { ready: number; to_approve: number };
+  has_brand: boolean;
+  qr_available: boolean;
+};
+
 
 /**
  * Ajustes dos stories das vagas (1 linha por empresa, criada com os padrões na 1ª leitura), arte modelo, ligar/desligar e
@@ -165,13 +189,15 @@ export class VacancySettingsService {
   async view(workspaceId: string, now = new Date()): Promise<VacancySettingsView> {
     this.gate.assert(workspaceId);
     const s = await this.get(workspaceId);
-    const vacancyPosts = { workspace_id: workspaceId, source: 'vacancy' };
+    // `counts` e `today` são das DIÁRIAS (o "desligar" delas só mexe nelas); as vagas fixas têm os seus no bloco `clt`.
+    const vacancyPosts = { workspace_id: workspaceId, source: 'vacancy', ...postKindFilter('freela') };
     const [today, account, template, ready, toApprove, recent, week] = await Promise.all([
       countVacancyStoriesOnDay(this.prisma, workspaceId, todaySp(now)),
       this.store.liveAccount(workspaceId),
       this.templateView(s),
       this.prisma.ig_posts.count({ where: { ...vacancyPosts, status: { in: READY } } }),
-      this.prisma.ig_posts.count({ where: { ...vacancyPosts, status: 'pending_approval' } }),
+      // "Para aprovar" junta diárias e vagas fixas (UI §4.1).
+      this.prisma.ig_posts.count({ where: { workspace_id: workspaceId, source: 'vacancy', status: 'pending_approval' } }),
       this.recentOutcomes(workspaceId),
       this.week(workspaceId, now),
     ]);
@@ -197,7 +223,7 @@ export class VacancySettingsService {
       instagram: { connected: !!account, username: account?.username ?? null },
       today: { ...today, cap: s.daily_cap },
       pending_approval: toApprove,
-      counts: { ready, to_approve: toApprove },
+      counts: { ready, to_approve: await this.prisma.ig_posts.count({ where: { ...vacancyPosts, status: 'pending_approval' } }) },
       ai_error: s.ai_error,
       ai_error_at: s.ai_error_at,
       qr_enabled: s.qr_enabled,
@@ -210,6 +236,34 @@ export class VacancySettingsService {
       style_refs_enabled: s.style_refs_enabled,
       style_brand: styleBrand,
       style_refs_in_use: inUse,
+      clt: await this.cltView(workspaceId, s, now),
+    };
+  }
+
+  /** Bloco `clt` dos Ajustes: interruptor, limite, retroativo, consulta, o dia e os prontos/para aprovar SÓ das vagas fixas. */
+  private async cltView(workspaceId: string, s: SettingsRow, now: Date): Promise<CltSettingsView> {
+    const clt = { workspace_id: workspaceId, source: 'vacancy', ...postKindFilter('freela_clt') };
+    const [today, ready, toApprove, brand] = await Promise.all([
+      countVacancyStoriesOnDay(this.prisma, workspaceId, todaySp(now), undefined, 'freela_clt'),
+      this.prisma.ig_posts.count({ where: { ...clt, status: { in: READY } } }),
+      this.prisma.ig_posts.count({ where: { ...clt, status: 'pending_approval' } }),
+      this.prisma.brands.findFirst({ where: { workspace_id: workspaceId }, select: { id: true } }),
+    ]);
+    const cap = s.clt_daily_cap ?? 2;
+    return {
+      enabled: !!s.clt_enabled,
+      enabled_at: s.clt_enabled_at ?? null,
+      daily_cap: cap,
+      backlog_days: s.clt_backlog_days ?? 14,
+      since: cltWatermark({ clt_enabled_at: s.clt_enabled_at ?? null, clt_backlog_days: s.clt_backlog_days ?? 14 }),
+      promo_days: CLT_PROMO_DAYS,
+      last_poll_at: s.clt_last_poll_at ?? null,
+      last_poll_ok_at: s.clt_last_poll_ok_at ?? null,
+      last_poll_error: s.clt_last_poll_error ?? null,
+      today: { ...today, cap },
+      counts: { ready, to_approve: toApprove },
+      has_brand: !!brand,
+      qr_available: !!this.feed.fixedJobPageBase,
     };
   }
 
@@ -237,6 +291,8 @@ export class VacancySettingsService {
     if (dto.daily_cap !== undefined && (!Number.isInteger(dto.daily_cap) || dto.daily_cap < 1 || dto.daily_cap > 20)) throw bad(MSG.cap);
     if (dto.min_lead_minutes !== undefined && !(LEAD_OPTIONS as readonly number[]).includes(dto.min_lead_minutes)) throw bad(MSG.lead);
     if (dto.vendor !== undefined && !(VENDORS as readonly string[]).includes(dto.vendor)) throw bad(MSG.vendor);
+    if (dto.clt_daily_cap !== undefined && (!Number.isInteger(dto.clt_daily_cap) || dto.clt_daily_cap < 1 || dto.clt_daily_cap > 10)) throw bad(MSG.cltCap);
+    if (dto.clt_backlog_days !== undefined && !(CLT_BACKLOG_OPTIONS as readonly number[]).includes(dto.clt_backlog_days)) throw bad(MSG.cltBacklog);
     await this.prisma.vacancy_story_settings.update({
       where: { workspace_id: workspaceId },
       data: {
@@ -247,9 +303,43 @@ export class VacancySettingsService {
         ...(dto.min_lead_minutes !== undefined ? { min_lead_minutes: dto.min_lead_minutes } : {}),
         ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
         ...(dto.style_refs_enabled !== undefined ? { style_refs_enabled: dto.style_refs_enabled } : {}),
+        ...(dto.clt_daily_cap !== undefined ? { clt_daily_cap: dto.clt_daily_cap } : {}),
+        ...(dto.clt_backlog_days !== undefined ? { clt_backlog_days: dto.clt_backlog_days } : {}),
       },
     });
     return this.view(workspaceId);
+  }
+
+  /**
+   * Liga as vagas fixas (dono/admin). Não exige arte modelo; exige marca (a logo da arte vem dela): sem `brand_id` grava a mais antiga da
+   * empresa. `clt_enabled_at` = agora (com o retroativo, a marca d'água recua `clt_backlog_days`). Já ligada = nada muda.
+   */
+  async cltEnable(userId: string, workspaceId: string): Promise<VacancySettingsView> {
+    this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
+    const s = await this.get(workspaceId);
+    const brandId = await this.templateBrand(workspaceId, s.brand_id, MSG.cltNoBrand);
+    if (!s.clt_enabled) {
+      const r = await this.prisma.vacancy_story_settings.updateMany({
+        where: { workspace_id: workspaceId, clt_enabled: false },
+        data: { clt_enabled: true, clt_enabled_at: new Date(), clt_enabled_by: userId, ...(s.brand_id !== brandId ? { brand_id: brandId } : {}) },
+      });
+      if (r.count) {
+        await this.activity.log(workspaceId, userId, 'vacancy_stories.clt_enable', 'vacancy_stories', {
+          daily_cap: s.clt_daily_cap, backlog_days: s.clt_backlog_days, auto_publish: s.auto_publish,
+        });
+      }
+    }
+    return this.view(workspaceId);
+  }
+
+  /** Desliga as vagas fixas (dono/admin): cancela só as linhas e os posts CLT não publicados; as diárias ficam como estão. */
+  async cltDisable(userId: string, workspaceId: string): Promise<{ ok: true; cancelled: number }> {
+    this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
+    await this.get(workspaceId);
+    const cancelled = await this.turnOff(workspaceId, userId, {}, 'freela_clt');
+    return { ok: true, cancelled };
   }
 
   /** Liga (exige a arte modelo). `enabled_at` = agora é a marca d'água: só vagas publicadas depois entram. Já ligado = nada muda. */
@@ -327,8 +417,9 @@ export class VacancySettingsService {
     this.gate.assert(workspaceId);
     await this.access.require(userId, workspaceId, 'manage');
     const s = await this.get(workspaceId);
-    const p = (s.preview ?? {}) as { status?: unknown; qr?: { read_ok?: unknown } | null };
-    if (on && !(p.status === 'done' && p.qr?.read_ok === true)) {
+    const p = (s.preview ?? {}) as { status?: unknown; qr?: { read_ok?: unknown } | null; kind?: unknown };
+    // A prévia da vaga fixa (`kind: 'clt'`) não destrava o QR das diárias.
+    if (on && !(p.status === 'done' && p.qr?.read_ok === true && p.kind !== 'clt')) {
       throw new UnprocessableEntityException({ code: 'QR_PREVIEW_REQUIRED', message: 'Gere uma prévia com o QR para poder ligar.' });
     }
     if (s.qr_enabled !== on) {
@@ -429,14 +520,14 @@ export class VacancySettingsService {
 
   // ------------------------------------------------------------------ helpers
 
-  /** D1: a marca dos ajustes (se ainda for da empresa) ou a mais antiga da empresa. */
-  private async templateBrand(workspaceId: string, current: string | null): Promise<string> {
+  /** D1: a marca dos ajustes (se ainda for da empresa) ou a mais antiga da empresa; nenhuma → 400 com `noBrand`. */
+  private async templateBrand(workspaceId: string, current: string | null, noBrand = MSG.noBrand): Promise<string> {
     if (current) {
       const b = await this.prisma.brands.findFirst({ where: { id: current, workspace_id: workspaceId }, select: { id: true } });
       if (b) return b.id;
     }
     const oldest = await this.prisma.brands.findFirst({ where: { workspace_id: workspaceId }, orderBy: { created_at: 'asc' }, select: { id: true } });
-    if (!oldest) throw bad(MSG.noBrand);
+    if (!oldest) throw bad(noBrand);
     return oldest.id;
   }
 
