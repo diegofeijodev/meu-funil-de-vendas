@@ -979,3 +979,13 @@ geometria, este desenho vence em regra, e ponto que pede dado vira campo na API.
   rodapé é o de hoje, byte a byte (hash da arte fixado no teste antes da mudança).
 - **P21:** ligar o QR não refaz nada; só as artes criadas depois saem com ele.
 - **P19, P22:** fase 3.
+
+**Para depois (Fase 2/3; anotado em 24/11, não resolvido aqui)**
+- P1 (UI): o botão da página pública leva ao login e à lista `/freelancer/vagas-fixas` (`?vaga=<id>`), nunca a `/freelancer/vagas-fixas/<id da vaga>`
+  (decisão do orquestrador).
+- P11 (contagens da CLT antes de ligar), P12 (cidades das vagas fixas no `recent_cities`), P13 (`cltFields`), P14 (rótulo "Salário por mês" no Freela),
+  P15 (404 × erro na página pública), P16 (`JobPosting` sem empresa), P17 (links universais do app), P19 (motivo CLT de expiração no bloqueio),
+  P22 (QR da CLT só com a página do site no ar), D3 (retroativo além de 30 dias).
+- P23 (frase "reabriu depois da conferência") e o "liberar um job por conferência" (P5): quando a F0-5 decidir C ou D e o fechamento pela sonda for ligado.
+- P18: "Salvar credenciais" só com o token (hoje exige os 5 campos).
+- O site (`/vagas/[id]`) pode ler `o=ig` como origem Instagram quando quiser; o link do QR já funciona sem isso.

@@ -44,6 +44,12 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
   `PUBLISH_ORIGIN_GUARDS` do Instagram (servida pelo `VacancyStoriesCoreModule` @Global; injeção `@Optional()` — a subida loga "guarda de origem das
   vagas ativa" no `PublishingService` e no `AutopilotService`, e o smoke confere). Selos oficiais das lojas em `api/assets/badges`: **nunca redesenhar**.
   A leitura da arte é às cegas e vê só o quadro cortado em y < 1360 (o rodapé com os selos é do sistema). Contrato §26.
+- **Bloqueio de publicação do Instagram** (24/11/2026, contrato §22.6): recusa da Meta por permissão (#10/#200–299, só no container e no `media_publish`) ou token (190)
+  abre o bloqueio da empresa em `instagram_accounts.publish_block_*`: a fila adia sem gastar tentativa (em lote, antes dos 4 da rodada), o gerador das vagas e a
+  produção não criam arte, e a faixa vermelha (`health-alerts.publishing`) aparece. Fecham: publicação que deu certo, reconexão e — só com `IG_PUBLISH_PROBE_CLOSES=true`
+  — a sonda `GET /me/permissions` (job `instagram-queue-5min` e `POST …/instagram-account/publish-check`). Limite da Meta = `publish_quota_total` (ou 25).
+- **QR da vaga na arte** (24/11/2026, contrato §26): `vacancy_story_settings.qr_enabled` (desligado; `POST …/vacancy-stories/qr`, manage, só liga com prévia
+  `{ qr: true }` conferida por `verifyQrPixels`). `qrcode-generator` é dependência de produção; `jsqr` é só de teste. Sem QR o rodapé é byte a byte o de antes.
 - **Migração do Lovable** (06/10/2026): importador avulso `api/src/scripts/import-lovable/` (não sobe o Nest; `main.ts` = CLI), exportação em `api/scripts/lovable-export/`
   (SQL `export_meufunil`, `pull.mjs`, prompts), runbook `docs/migracao-lovable.md`. Testes ponta a ponta: `scripts/import-lovable-e2e.sh` (Postgres local, banco
   `meufunil_import_e2e`) e `scripts/lovable-export/pull-e2e.sh`. Nunca rodar contra o banco `meufunil` fora do runbook.
