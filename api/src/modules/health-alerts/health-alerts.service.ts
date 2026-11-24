@@ -1,6 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ENV } from '../../common/config/env.module';
-import type { Env } from '../../common/config/env.validation';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { PUBLISH_BLOCKED_MSG } from '../instagram/ig-types';
 import { PUBLISH_BLOCKED_WAIT } from '../vacancy-stories/vacancy-reasons';
@@ -29,8 +27,6 @@ export type HealthAlerts = {
     message: string | null;
     next_check_at: Date | null;
     waiting: { posts: number; vacancies: number };
-    /** P5: `log_only` = a conferência não fecha o bloqueio (a tela pede a reconexão). */
-    probe: 'active' | 'log_only';
     /** P6: "@usuario" da conta (null = sem nome). */
     username: string | null;
   };
@@ -39,15 +35,10 @@ export type HealthAlerts = {
 /** Faixa de aviso do topo das telas (contrato §30): leitura composta, nada é gravado. */
 @Injectable()
 export class HealthAlertsService {
-  private readonly probe: 'active' | 'log_only';
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiAlerts: AiCreditAlertsService,
-    @Optional() @Inject(ENV) env?: Pick<Env, 'IG_PUBLISH_PROBE_CLOSES'>,
-  ) {
-    this.probe = env?.IG_PUBLISH_PROBE_CLOSES === true ? 'active' : 'log_only';
-  }
+  ) {}
 
   async get(workspaceId: string, now = new Date()): Promise<HealthAlerts> {
     const account = await this.prisma.instagram_accounts.findFirst({
@@ -83,7 +74,6 @@ export class HealthAlertsService {
       message: a.publish_block_message ? a.publish_block_message.slice(0, MAX_ERROR) : null,
       next_check_at: a.publish_block_reason === 'permission' ? a.publish_next_check_at : null,
       waiting: { posts, vacancies },
-      probe: this.probe,
       username: a.username ?? null,
     };
   }

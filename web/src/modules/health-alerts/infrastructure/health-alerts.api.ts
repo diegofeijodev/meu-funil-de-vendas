@@ -26,7 +26,6 @@ const schema = z.object({
       message: z.string().nullable(),
       next_check_at: z.string().nullable(),
       waiting: z.object({ posts: z.number(), vacancies: z.number() }),
-      probe: z.enum(["active", "log_only"]).catch("log_only"),
       username: z.string().nullable(),
     })
     .nullable()
@@ -62,7 +61,7 @@ export function useHealthAlerts(ws: string | null | undefined) {
   });
 }
 
-const checkSchema = z.object({ ok: z.literal(true), unblocked: z.boolean(), probe: z.enum(["active", "log_only"]).catch("log_only"), message: z.string() });
+const checkSchema = z.object({ ok: z.literal(true), unblocked: z.boolean(), message: z.string(), next_check_at: z.string().nullable().catch(null) });
 export type PublishCheckResult = z.infer<typeof checkSchema>;
 
 /** "Já corrigi — testar agora" (contrato §22.1): 409 em menos de 60 s e 422 com token sobem como erro (mensagem da API). */

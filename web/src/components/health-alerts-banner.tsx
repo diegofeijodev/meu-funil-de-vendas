@@ -14,7 +14,6 @@ import {
   OPEN_PUBLISHING_STEPS,
   PUBLISHING_ALERT_ID,
   PUBLISH_BACK,
-  PUBLISH_RECONNECT_LABEL,
   PUBLISH_TEST_ERROR,
   PUBLISH_TEST_LABEL,
   PUBLISH_TESTING,
@@ -172,7 +171,8 @@ function InstagramFailBanner({ ig }: { ig: InstagramFailAlert }) {
 
 /**
  * Faixa vermelha "O Instagram parou de aceitar as publicações" (UI 24/11 §1): curta em todas as telas; os 5 passos abrem no lugar.
- * Permissão: "Já corrigi — testar agora" (quem edita; 1 por minuto). Token e modo só registro: o botão leva à reconexão.
+ * Permissão: "Já corrigi — testar agora" (quem edita; 1 por minuto): a API cria um story de teste na Meta, sem publicar. Token: o botão
+ * leva à reconexão.
  */
 function PublishingBanner({ p, workspaceId, canEdit, onBack }: { p: PublishingAlert; workspaceId: string; canEdit: boolean; onBack: () => void }) {
   const qc = useQueryClient();
@@ -213,7 +213,8 @@ function PublishingBanner({ p, workspaceId, canEdit, onBack }: { p: PublishingAl
         return;
       }
       setBlockedUntil(Date.now() + 60_000);
-      setResult(r.probe === "active" ? stillBlockedText(new Date()) : r.message);
+      setResult(stillBlockedText(new Date(), r.message, r.next_check_at));
+      await qc.invalidateQueries({ queryKey: healthAlertsKey(workspaceId) });
     } catch (e) {
       setResult(apiErrorMessage(e, PUBLISH_TEST_ERROR));
       await qc.invalidateQueries({ queryKey: healthAlertsKey(workspaceId) });
@@ -232,7 +233,7 @@ function PublishingBanner({ p, workspaceId, canEdit, onBack }: { p: PublishingAl
       ) : null
     ) : (
       <Button variant="destructive" className={ACTION} onClick={reconnect}>
-        {t.mode === "token" ? "Reconectar o Instagram" : PUBLISH_RECONNECT_LABEL}
+        Reconectar o Instagram
       </Button>
     );
 

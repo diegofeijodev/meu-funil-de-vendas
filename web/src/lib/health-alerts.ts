@@ -24,8 +24,6 @@ export type PublishingAlert = {
   message: string | null;
   next_check_at: string | null;
   waiting: { posts: number; vacancies: number };
-  /** `log_only` = a conferência só registra (o bloqueio sai com a reconexão ou com uma publicação que deu certo). */
-  probe: "active" | "log_only";
   username: string | null;
 };
 
@@ -243,16 +241,14 @@ export const PUBLISHING_TITLE = "O Instagram parou de aceitar as publicações";
 export const PUBLISHING_ALERT_ID = "publishing-alert";
 export const OPEN_PUBLISHING_STEPS = "mf:open-publishing-steps";
 export const PUBLISH_TEST_LABEL = "Já corrigi — testar agora";
-export const PUBLISH_RECONNECT_LABEL = "Já corrigi — reconectar o Instagram";
 export const PUBLISH_TESTING = "Testando com a Meta…";
 export const META_SYSTEM_USERS_URL = "https://business.facebook.com/settings/system-users";
 
 export type PublishingAlertText = {
-  /** `log_only` = estado E da UI (o botão leva à reconexão). */
-  mode: "permission" | "token" | "log_only";
+  mode: "permission" | "token";
   title: string;
   body: string;
-  /** Linha da conferência automática; null = não aparece (token, só registro ou sem horário). */
+  /** Linha da conferência automática; null = não aparece (token ou sem horário). */
   nextCheck: string | null;
   steps: string[];
   intro: string;
@@ -264,8 +260,7 @@ export function publishingAlertText(p: PublishingAlert, now: Date): PublishingAl
   const who = p.username ? `@${p.username}` : "Instagram desta empresa";
   const since = sinceSp(p.since, now);
   const wait = waitingText(p.waiting);
-  const logOnly = p.reason === "permission" && p.probe === "log_only";
-  const mode = p.reason === "token" ? "token" : logOnly ? "log_only" : "permission";
+  const mode = p.reason === "token" ? "token" : "permission";
   const body =
     p.reason === "token"
       ? `${since}, o acesso do Meu Funil ao ${who} venceu ou foi trocado. Reconecte o Instagram para voltar a publicar. ${wait}`
@@ -288,24 +283,30 @@ export function publishingAlertText(p: PublishingAlert, now: Date): PublishingAl
       "No mesmo usuário, toque em Gerar token. Escolha o app do Meu Funil, validade Nunca, e marque instagram_content_publish junto com as que já estavam marcadas. Copie o token.",
       // P18: "Salvar credenciais" pede os 5 campos (não dá para trocar só o token).
       "No Meu Funil, abra Integrações → Meta Ads (API oficial), cole o token novo em “Token do usuário do sistema”, preencha os outros campos (ID do app, chave secreta, conta de anúncios e Página) e toque em Salvar credenciais.",
-      logOnly ? `Volte aqui e toque em ${PUBLISH_RECONNECT_LABEL}.` : `Volte aqui e toque em ${PUBLISH_TEST_LABEL}.`,
+      `Volte aqui e toque em ${PUBLISH_TEST_LABEL}.`,
     ],
     note: "instagram_content_publish não aparece na lista do passo 3? O app da Meta ainda não tem essa permissão. Fale com quem criou o app (Painel de apps → Permissões).",
   };
 }
 
+/** "Voltou": o teste criou um story de verdade na Meta (sem publicar), então a permissão de publicar voltou. */
 export const PUBLISH_BACK = {
   title: "A permissão de publicar voltou",
-  body: "Os posts que esperavam começam a sair nos próximos minutos, cada um no seu horário, e as vagas voltam a ganhar arte em até 10 minutos. Quando o 1º for ao ar, está confirmado. Se a Meta recusar de novo, o aviso vermelho volta.",
+  body: "As publicações voltaram. Os posts que esperavam começam a sair nos próximos minutos, cada um no seu horário, e as vagas voltam a ganhar arte em até 10 minutos. Se a Meta recusar de novo, o aviso vermelho volta.",
 };
 export const PUBLISH_TEST_ERROR = `Não conseguimos testar agora. Verifique a conexão e toque em ${PUBLISH_TEST_LABEL} de novo.`;
 export const PUBLISH_VIEWER_NOTE = "Só quem pode editar nesta empresa testa a correção. Mostre estes passos a quem administra o Meta Business do Freela.";
 export const PUBLISH_TOKEN_NOTE = "Isso não volta sozinho: só a reconexão resolve.";
 
-/** "Testado às 9h12: … teste de novo a partir das 9h13." (o botão espera 60 s, o limite da API). */
-export function stillBlockedText(testedAt: Date): string {
+/**
+ * "Testado às 9h12. {motivo da API} Teste de novo a partir das 9h13. Próxima conferência automática: hoje às 10h12." (o botão espera 60 s,
+ * o limite da API; a última frase só com `next_check_at`).
+ */
+export function stillBlockedText(testedAt: Date, message: string, nextCheckAt: string | null): string {
   const at = testedAt.toISOString();
-  return `Testado às ${hourSp(at)}: a Meta ainda não deu a permissão de publicar. Confira os passos 2 e 3 e teste de novo a partir das ${hourSp(new Date(testedAt.getTime() + 60_000).toISOString())}.`;
+  const again = hourSp(new Date(testedAt.getTime() + 60_000).toISOString());
+  const next = nextCheckAt ? ` Próxima conferência automática: ${whenSp(nextCheckAt, testedAt)}.` : "";
+  return `Testado às ${hourSp(at)}. ${message.trim()} Teste de novo a partir das ${again}.${next}`;
 }
 
 /** R10: com a publicação parada por permissão, a faixa amarela dos posts que falharam é o mesmo fato e não aparece. */

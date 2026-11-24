@@ -131,7 +131,7 @@ describe('IgStore — estado do bloqueio (R2, R9, R11)', () => {
     expect(await w.store.closePublishBlock(WS_A, 'probe', later(2))).toBe(true);
     expect(acc(w, WS_A)).toMatchObject({ publish_block_reason: null, publish_block_message: null, publish_next_check_at: null, publish_unblocked_at: later(2), publish_block_failures: 2, publish_blocked_at: t0 });
     expect(await w.store.closePublishBlock(WS_A, 'probe', later(3))).toBe(false); // já fechado: nada muda
-    expect(events(w, WS_A)).toEqual(['Publicação parada: a Meta recusou por falta de permissão.', 'A Meta voltou a aceitar publicações (a conferência automática viu a permissão de publicar).']);
+    expect(events(w, WS_A)).toEqual(['Publicação parada: a Meta recusou por falta de permissão.', 'A Meta voltou a aceitar publicações (a conferência automática conseguiu preparar um story de teste).']);
     // Reabrir continua a escada (3ª falha → 6 h) e recomeça o início.
     await w.store.openPublishBlock(WS_A, 'permission', '(#10)', { now: later(4) });
     expect(acc(w, WS_A)).toMatchObject({ publish_block_failures: 3, publish_blocked_at: later(4), publish_next_check_at: later(10) });

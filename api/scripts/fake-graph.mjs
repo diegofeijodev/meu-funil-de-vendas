@@ -101,6 +101,20 @@ const server = createServer((req, res) => {
       return send(res, 404, { error: { message: `GET ${path} não existe na Graph falsa`, code: 100 } });
     }
     // POST
+    // Sonda do bloqueio de publicação do Instagram (24/11/2026): container de story (`media_type=STORIES`), nunca publicado. Como a Meta,
+    // a Graph falsa baixa a `image_url` (precisa ser JPEG) e registra o que veio em `image`; conta terminada em "-recusa" = #10.
+    if (b === 'media' && params.media_type === 'STORIES') {
+      if (a.endsWith('-recusa')) return send(res, 400, { error: { message: '(#10) Application does not have permission for this action', code: 10 } });
+      const failed = () => send(res, 400, { error: { message: 'Media download has failed.: The media could not be fetched from this URI', code: 9004, error_subcode: 2207052 } });
+      return void fetch(String(params.image_url ?? ''), { signal: AbortSignal.timeout(10000) })
+        .then(async (r) => {
+          const buf = Buffer.from(await r.arrayBuffer());
+          entry.image = { status: r.status, type: r.headers.get('content-type') ?? '', bytes: buf.length, jpeg: buf[0] === 0xff && buf[1] === 0xd8 };
+          if (!r.ok || !entry.image.type.startsWith('image/jpeg') || !entry.image.jpeg) return failed();
+          send(res, 200, { id: `17900000000${String(log.length).padStart(4, '0')}` });
+        })
+        .catch(failed);
+    }
     if (b === 'campaigns') return send(res, 200, { id: String(7100000 + ++n.campaign) });
     if (b === 'adsets') return send(res, 200, { id: String(7200000 + ++n.adset) });
     if (b === 'adcreatives') return send(res, 200, { id: String(7300000 + ++n.adcreative) });

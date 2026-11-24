@@ -12,8 +12,8 @@ export type PublishUnblockHow = 'publish' | 'reconnect' | 'probe' | 'button';
 const UNBLOCK_TEXT: Record<PublishUnblockHow, string> = {
   publish: 'uma publicação deu certo',
   reconnect: 'o Instagram foi reconectado',
-  probe: 'a conferência automática viu a permissão de publicar',
-  button: 'o teste pelo botão viu a permissão de publicar',
+  probe: 'a conferência automática conseguiu preparar um story de teste',
+  button: 'o teste pelo botão conseguiu preparar um story de teste',
 };
 export const PUBLISH_BLOCK_OPENED: Record<PublishBlockReason, string> = {
   permission: 'Publicação parada: a Meta recusou por falta de permissão.',

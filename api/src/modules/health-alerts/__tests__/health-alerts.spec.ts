@@ -96,15 +96,15 @@ describe('HealthAlertsController — acesso (qualquer membro lê; estranho 403; 
 describe('HealthAlertsService — publicação parada (R10)', () => {
   const PUBLISH_BLOCKED_MSG = 'Esperando o Instagram voltar a aceitar as publicações desta empresa.';
   const WAIT = 'Esperando o Instagram voltar a aceitar publicações para criar a arte.';
-  function world(probeCloses?: boolean) {
+  function world() {
     const t = setup();
-    const svc = new HealthAlertsService(t.prisma, { status: async () => null } as any, probeCloses === undefined ? undefined : { IG_PUBLISH_PROBE_CLOSES: probeCloses });
+    const svc = new HealthAlertsService(t.prisma, { status: async () => null } as any);
     const account = (ws: string, over: Record<string, unknown>) => t.prisma.instagram_accounts.rows.push({ id: randomUUID(), workspace_id: ws, username: 'freelaapp', publish_block_reason: null, publish_unblocked_at: null, ...over });
     const story = (ws: string, status: string, wait_reason: string | null) => t.prisma.vacancy_stories.rows.push({ id: randomUUID(), workspace_id: ws, status, wait_reason });
     return { ...t, svc, account, story };
   }
 
-  it('bloqueio aberto: motivo, desde, próxima conferência, o que espera, modo da sonda e a conta', async () => {
+  it('bloqueio aberto: motivo, desde, próxima conferência, o que espera e a conta (sem o antigo campo `probe`)', async () => {
     const w = world();
     w.account(WS_A, { publish_block_reason: 'permission', publish_block_message: '(#10) sem permissão', publish_blocked_at: daysAgo(2), publish_block_last_at: daysAgo(1), publish_next_check_at: NOW });
     w.post(WS_A, 'scheduled', daysAgo(1), PUBLISH_BLOCKED_MSG);
@@ -117,15 +117,17 @@ describe('HealthAlertsService — publicação parada (R10)', () => {
     w.story(WS_A, 'waiting', 'cap');
     expect((await w.svc.get(WS_A, NOW)).publishing).toEqual({
       reason: 'permission', since: daysAgo(2), last_at: daysAgo(1), message: '(#10) sem permissão', next_check_at: NOW,
-      waiting: { posts: 2, vacancies: 2 }, probe: 'log_only', username: 'freelaapp',
+      waiting: { posts: 2, vacancies: 2 }, username: 'freelaapp',
     });
-    expect((await world(true).svc.get(WS_A, NOW)).publishing).toBeNull();
+    expect((await world().svc.get(WS_A, NOW)).publishing).toBeNull();
   });
 
-  it('token: sem próxima conferência; modo ativo pela flag', async () => {
-    const w = world(true);
+  it('token: sem próxima conferência', async () => {
+    const w = world();
     w.account(WS_A, { publish_block_reason: 'token', publish_blocked_at: daysAgo(1), publish_block_last_at: daysAgo(1), publish_next_check_at: NOW, username: null });
-    expect((await w.svc.get(WS_A, NOW)).publishing).toMatchObject({ reason: 'token', next_check_at: null, probe: 'active', username: null });
+    const p = (await w.svc.get(WS_A, NOW)).publishing;
+    expect(p).toMatchObject({ reason: 'token', next_check_at: null, username: null });
+    expect(p).not.toHaveProperty('probe');
   });
 
   it('sem bloqueio → null; a faixa amarela só conta falhas DEPOIS do último fechamento', async () => {

@@ -95,13 +95,13 @@ describe("auxiliares", () => {
   });
 });
 
-import { hourSp, publishingAlertText, showInstagramFailAlert, sinceSp, stillBlockedText, waitingText, whenSp, type PublishingAlert } from "./health-alerts";
+import { hourSp, PUBLISH_BACK, publishingAlertText, showInstagramFailAlert, sinceSp, stillBlockedText, waitingText, whenSp, type PublishingAlert } from "./health-alerts";
 
 describe("publicação parada (UI 24/11 §1.4)", () => {
   const NOW = new Date("2026-11-20T15:00:00Z"); // 20/11 12h em Brasília
   const base: PublishingAlert = {
     reason: "permission", since: "2026-11-20T11:30:00Z", last_at: "2026-11-20T11:30:00Z", message: "(#10)", next_check_at: "2026-11-20T12:30:00Z",
-    waiting: { posts: 3, vacancies: 7 }, probe: "active", username: "freelaapp",
+    waiting: { posts: 3, vacancies: 7 }, username: "freelaapp",
   };
 
   it("horas e dias em Brasília", () => {
@@ -124,7 +124,7 @@ describe("publicação parada (UI 24/11 §1.4)", () => {
     expect(waitingText({ posts: 1, vacancies: 7 })).toBe("1 post e 7 vagas esperam aqui; o que perder o prazo é cancelado com o motivo.");
   });
 
-  it("permissão (modo ativo): corpo, conferência automática e passo 5", () => {
+  it("permissão: corpo, conferência automática e passo 5 (o botão testa de verdade)", () => {
     const t = publishingAlertText(base, NOW);
     expect(t.mode).toBe("permission");
     expect(t.title).toBe("O Instagram parou de aceitar as publicações");
@@ -139,13 +139,6 @@ describe("publicação parada (UI 24/11 §1.4)", () => {
     expect(t.steps[4]).toBe("Volte aqui e toque em Já corrigi — testar agora.");
   });
 
-  it("modo só registro (estado E): botão de reconectar, sem a linha da conferência", () => {
-    const t = publishingAlertText({ ...base, probe: "log_only" }, NOW);
-    expect(t.mode).toBe("log_only");
-    expect(t.nextCheck).toBeNull();
-    expect(t.steps[4]).toBe("Volte aqui e toque em Já corrigi — reconectar o Instagram.");
-  });
-
   it("token: corpo próprio, sem conferência; sem username = 'Instagram desta empresa'", () => {
     const t = publishingAlertText({ ...base, reason: "token", since: "2026-11-19T11:30:00Z", username: null, waiting: { posts: 1, vacancies: 0 } }, NOW);
     expect(t.mode).toBe("token");
@@ -155,10 +148,19 @@ describe("publicação parada (UI 24/11 §1.4)", () => {
     expect(t.nextCheck).toBeNull();
   });
 
-  it("ainda bloqueado: hora do teste e a partir de quando testar de novo", () => {
-    expect(stillBlockedText(new Date("2026-11-20T12:12:30Z"))).toBe(
-      "Testado às 9h12: a Meta ainda não deu a permissão de publicar. Confira os passos 2 e 3 e teste de novo a partir das 9h13.",
+  it("ainda bloqueado: hora do teste, o motivo da API, quando testar de novo e a próxima conferência automática", () => {
+    const denied = "A Meta ainda recusa as publicações desta empresa. Confira os passos 2 e 3.";
+    expect(stillBlockedText(new Date("2026-11-20T12:12:30Z"), denied, "2026-11-20T15:12:30Z")).toBe(
+      "Testado às 9h12. A Meta ainda recusa as publicações desta empresa. Confira os passos 2 e 3. Teste de novo a partir das 9h13. Próxima conferência automática: hoje às 12h12.",
     );
+    expect(stillBlockedText(new Date("2026-11-20T12:12:30Z"), "Não conseguimos falar com a Meta agora.", null)).toBe(
+      "Testado às 9h12. Não conseguimos falar com a Meta agora. Teste de novo a partir das 9h13.",
+    );
+  });
+
+  it("voltou: a permissão voltou e as publicações voltaram", () => {
+    expect(PUBLISH_BACK.title).toBe("A permissão de publicar voltou");
+    expect(PUBLISH_BACK.body.startsWith("As publicações voltaram.")).toBe(true);
   });
 
   it("R10: a faixa amarela some quando é o mesmo fato (permissão); com outro motivo, aparece", () => {
