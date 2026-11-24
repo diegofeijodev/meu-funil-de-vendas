@@ -1114,3 +1114,8 @@ Cada ponto tem a minha preferência; a decisão é do `software-architect` (e do
 | D6 | Endereço do site escrito na arte? | Não: ninguém digita em 2 s; o link da bio cobre. Se sim, a variante está na §2.4 ("Vagas em freelaservicos.com.br" no lugar da L3) |
 | D7 | Página da vaga fixa sem salário | "A combinar" na página (o story continua pulando a vaga sem salário) |
 | D8 | Cartão "Cargo" na arte CLT (o pedido lista Empresa, Cargo, Salário, Escala, Cidade e Benefícios) | Tirar: o cargo já está no título em letra grande. Com ele, são 6 cartões e a pilha encolhe para ~0,8 (≈ 912 px para 736 livres): valores de ~34 px (≈ 11 dp no celular) e salário de ~51 px. Se o Diego quiser igual à diária, ele volta como 2º cartão ("Cargo:"), e a prévia mostra o tamanho real |
+
+## Decisões do orquestrador (24/11, depois da revisão)
+
+- **P1 conferido no `origin/main` do freela-web-v2:** `/freelancer/vagas-fixas/[id]` recebe o id da **candidatura** (tela de acompanhar), não o da vaga — confirmado. O botão da página pública `/vagas-fixas/[id]` leva ao login e depois à lista `/freelancer/vagas-fixas` (com `?vaga=<id>` para destacar/abrir a vaga, se a lista passar a aceitar o parâmetro na tarefa do site); nunca a `/freelancer/vagas-fixas/<id da vaga>`.
+- **Respostas do Denner (24/11) às perguntas do desenho técnico §9:** QR na arte = pode (ligado só depois da prévia); link das vagas na bio = hoje `https://www.freelaservicos.com.br/#vagas`, depois a página `/vagas` (diárias + fixas); limite diário = 20 (já aplicado em produção); vagas fixas só as recentes, 2 por dia = sim; vaga fixa sem salário = pular; vagas fixas públicas no site/Google sem contato e endereço = sim; segurar os posts normais enquanto a Meta recusar = sim.
