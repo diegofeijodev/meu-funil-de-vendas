@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ENV } from '../../common/config/env.module';
 import type { Env } from '../../common/config/env.validation';
 import { overrideBase } from '../../common/config/test-overrides';
-import type { FreelaVacancy } from './vacancy-types';
+import type { FreelaFixedJob, FreelaVacancy } from './vacancy-types';
 
 export const FREELA_VACANCIES_FETCH = Symbol('FREELA_VACANCIES_FETCH');
 export type FreelaFetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -14,6 +14,9 @@ export class FeedDownError extends Error {
     this.name = 'FeedDownError';
   }
 }
+
+/** Vitrine das vagas fixas fora do ar (a mensagem vai para `clt_last_poll_error`, sem sujar a das diárias). */
+export const CLT_FEED_DOWN = 'Não conseguimos consultar as vagas fixas do Freela.';
 
 const TIMEOUT_MS = 15_000;
 const DEFAULT_BASE = 'https://api.freelaservicosapp.com.br';
@@ -38,6 +41,35 @@ const itemSchema = z.object({
 function parseItem(raw: unknown): FreelaVacancy | null {
   const r = itemSchema.safeParse(raw);
   return r.success ? (r.data as FreelaVacancy) : null;
+}
+
+const cents = z.number().int().positive().max(100_000_000);
+const slotSchema = z.object({ day: z.string().min(1).max(30), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/) });
+/** Itens fora do formato saem da lista sem derrubar a vaga (a vitrine já filtra; aqui é a borda). */
+const listOf = <T>(item: z.ZodType<T>) =>
+  z.array(z.unknown()).nullish().transform((xs) => (xs ?? []).flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data] : []; }));
+
+/** `PublicFixedJob` da vitrine do Freela (ADR-028): o que não bater com o formato descarta a vaga inteira. */
+export const cltItemSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().nullish().transform((x) => (x ?? '').trim()),
+  role: z.string().trim().min(1),
+  category: nullableStr,
+  companyName: nullableStr,
+  city: nullableStr,
+  uf: nullableStr,
+  salary: z.object({ minInCents: cents, maxInCents: cents }).nullish().transform((x) => x ?? null),
+  workSchedule: nullableStr,
+  workScheduleSlots: listOf(slotSchema),
+  benefits: listOf(z.string().trim().min(1).max(80)),
+  description: nullableStr,
+  publishedAt: z.string().min(1).refine((x) => !Number.isNaN(Date.parse(x))),
+  expiresAt: z.string().nullish().transform((x) => x ?? null).refine((x) => x === null || !Number.isNaN(Date.parse(x))),
+});
+
+function parseCltItem(raw: unknown): FreelaFixedJob | null {
+  const r = cltItemSchema.safeParse(raw);
+  return r.success ? (r.data as FreelaFixedJob) : null;
 }
 
 /** Cidades da resposta com a contagem, as mais frequentes primeiro (empate: ordem de chegada) — `settings.recent_cities`. */
@@ -92,5 +124,25 @@ export class VacancyFeedClient {
     if (!res.ok) throw new FeedDownError();
     const body = (await this.json(res)) as { data?: unknown } | null;
     return parseItem(body?.data);
+  }
+
+  /** Vagas fixas abertas (todas numa chamada: o Freela tem ~50 abertas e o teto da rota é 100). Fora do ar → `FeedDownError(CLT_FEED_DOWN)`. */
+  async recentClt(): Promise<FreelaFixedJob[]> {
+    const down = () => new FeedDownError(CLT_FEED_DOWN);
+    const res = await this.get('/v1/fixed-jobs/public/recent?limit=100').catch(() => Promise.reject(down()));
+    if (!res.ok) throw down();
+    const body = (await this.json(res).catch(() => Promise.reject(down()))) as { data?: unknown } | null;
+    if (!body || !Array.isArray(body.data)) throw down();
+    return body.data.map(parseCltItem).filter((v): v is FreelaFixedJob => v !== null);
+  }
+
+  /** Vaga fixa por id: 404 (fechada, vencida ou inexistente) → null; resposta fora do formato → null (não dá para conferir = não sai). */
+  async cltById(id: string): Promise<FreelaFixedJob | null> {
+    const down = () => new FeedDownError(CLT_FEED_DOWN);
+    const res = await this.get(`/v1/fixed-jobs/public/${encodeURIComponent(id)}`).catch(() => Promise.reject(down()));
+    if (res.status === 404) return null;
+    if (!res.ok) throw down();
+    const body = (await this.json(res).catch(() => Promise.reject(down()))) as { data?: unknown } | null;
+    return parseCltItem(body?.data);
   }
 }

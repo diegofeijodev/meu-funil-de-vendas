@@ -10,7 +10,7 @@ import { VacancyFeedClient, type FreelaFetch } from '../vacancy-feed';
 import { VacancyGate } from '../vacancy-gate.service';
 import { VacancyGuardService } from '../vacancy-guard.service';
 import { VacancySettingsService } from '../vacancy-settings.service';
-import type { ArtRead, FreelaVacancy } from '../vacancy-types';
+import type { ArtRead, FreelaFixedJob, FreelaVacancy } from '../vacancy-types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Req = any;
@@ -39,6 +39,7 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 /**
  * Vitrine falsa do Freela por trás da porta `FREELA_VACANCIES_FETCH`: `vacancies` = resposta de `recent`; `byId` procura em `byId`
  * e depois em `vacancies`; `closed` = 404 (vaga fechada); `down` = 503 (vitrine fora do ar). `urls` guarda cada chamada.
+ * Vagas fixas (CLT, `/v1/fixed-jobs/public/*`): `clt`, `cltClosed` e `cltDown` — fora do ar separado das diárias.
  */
 export function fakeFeed() {
   const state = {
@@ -47,9 +48,19 @@ export function fakeFeed() {
     closed: new Set<string>(),
     down: false,
     urls: [] as string[],
+    clt: [] as FreelaFixedJob[],
+    cltClosed: new Set<string>(),
+    cltDown: false,
   };
   const fetch: FreelaFetch = async (url) => {
     state.urls.push(url);
+    if (url.includes('/v1/fixed-jobs/public/')) {
+      if (state.cltDown) return new Response('fora do ar', { status: 503 });
+      if (url.includes('/public/recent')) return json(200, { data: state.clt });
+      const id = decodeURIComponent(url.split('/v1/fixed-jobs/public/')[1]!.split('?')[0]!);
+      const v = state.cltClosed.has(id) ? null : (state.clt.find((x) => x.id === id) ?? null);
+      return v ? json(200, { data: v }) : json(404, { error: { code: 'FIXED_JOB_NOT_FOUND', message: 'Vaga não encontrada.' } });
+    }
     if (state.down) return new Response('fora do ar', { status: 503 });
     if (url.includes('/public/vacancies/recent')) return json(200, { data: state.vacancies });
     const m = url.match(/\/public\/vacancies\/([^/?]+)$/);
@@ -149,3 +160,11 @@ export function vacancyWorld(o: { list?: string; styleRefs?: unknown } = {}) {
 }
 
 export type VacancyWorld = ReturnType<typeof vacancyWorld>;
+
+/** Vaga fixa (CLT) da vitrine, com os dados reais de 24/11 (Spoleto, R$ 1.874,32, São Paulo). */
+export const fixedJob = (o: Partial<FreelaFixedJob> = {}): FreelaFixedJob => ({
+  id: uuid(), title: 'Atendente', role: 'atendente', category: 'salão', companyName: 'Spoleto Shopping Anália Franco',
+  city: 'São Paulo', uf: 'SP', salary: { minInCents: 187432, maxInCents: 187432 }, workSchedule: '6x1, 10h às 18h20',
+  workScheduleSlots: [], benefits: ['Vale-transporte', 'Refeição no local'], description: null,
+  publishedAt: '2026-11-20T14:02:11.000Z', expiresAt: null, ...o,
+});
