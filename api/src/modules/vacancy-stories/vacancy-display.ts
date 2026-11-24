@@ -89,6 +89,8 @@ export type StoryView = {
   ig_post_id: string | null;
   is_test: boolean;
   freela_url: string;
+  /** §2.5 (24/11/2026): o link que o QR da arte abre; null = arte sem QR. */
+  qr_url: string | null;
   /** R29: a mídia veio de "Enviar minha própria" — ninguém conferiu a arte. */
   own_art: boolean;
   /** A3: a reserva saiu, mas a leitura achou na arte texto que não devia estar lá (R22/T9) — os textos achados; senão `null`. */
@@ -349,6 +351,7 @@ export function storyView(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     ig_post_id: row.ig_post_id,
     is_test: isTestText(v.contractorName) || isTestText(v.title),
     freela_url: `${FREELA_VACANCY_URL}${encodeURIComponent(row.external_id)}`,
+    qr_url: ((post?.creative_brief as { vacancy?: { qr_url?: unknown } } | null)?.vacancy?.qr_url as string | undefined) ?? null,
     own_art: ownArt(post),
     check_alert: checkAlert(row, post),
     check_unread: checkUnread(row, post),

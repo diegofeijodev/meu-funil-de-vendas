@@ -40,6 +40,8 @@ const preview = z
     sample: z.boolean().optional(),
     vacancy: z.object({}).passthrough().nullish().transform((v) => v ?? null),
     error: str,
+    /** P2 (24/11/2026): prévia com QR — o link e se o sistema conferiu o QR na arte final. */
+    qr: z.object({ url: z.string().nullable(), read_ok: z.boolean() }).nullish().transform((v) => v ?? null),
   })
   .passthrough();
 export type VacancyPreview = z.infer<typeof preview>;
@@ -74,6 +76,8 @@ const settings = z
     counts: z.object({ ready: num, to_approve: num }).passthrough(),
     ai_error: str,
     ai_error_at: str,
+    qr_enabled: z.boolean().default(false),
+    qr_enabled_at: str,
     /** P9: limite de publicações em 24 h que a Meta informou (ou 25). API antiga = 25. */
     publish_quota: z.number().int().positive().catch(25).default(25),
     /** Bloqueio de publicação aberto (contrato §26, 24/11/2026). */
@@ -116,6 +120,7 @@ const story = z
     ig_post_id: str,
     is_test: z.boolean(),
     freela_url: z.string(),
+    qr_url: z.string().nullish().transform((v) => v ?? null),
     own_art: z.boolean(),
     /** A3: reserva que a leitura reprovou — os textos achados na arte. */
     check_alert: strList,
@@ -187,8 +192,12 @@ export async function uploadVacancyTemplate(ws: string, file: File): Promise<Vac
   form.append("file", file, file.name);
   return templateResult.parse((await api.post(`${base(ws)}/template`, form)).data);
 }
-export async function startVacancyPreview(ws: string): Promise<void> {
-  ok.parse((await api.post(`${base(ws)}/preview`)).data);
+export async function startVacancyPreview(ws: string, opts: { qr?: boolean } = {}): Promise<void> {
+  ok.parse((await api.post(`${base(ws)}/preview`, opts.qr ? { qr: true } : undefined)).data);
+}
+/** QR da vaga na arte (dono/admin; ligar exige prévia com QR conferida → 422 com a mensagem da API). */
+export async function setVacancyQr(ws: string, qr_enabled: boolean): Promise<VacancySettings> {
+  return settings.parse((await api.post(`${base(ws)}/qr`, { qr_enabled })).data);
 }
 export async function listVacancyStories(ws: string, filter: VacancyStoryFilter = "all"): Promise<VacancyStory[]> {
   const { data } = await api.get(`${base(ws)}/stories`, { params: { filter } });

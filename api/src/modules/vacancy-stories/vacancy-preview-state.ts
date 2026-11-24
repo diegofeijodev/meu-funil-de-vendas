@@ -23,6 +23,11 @@ export type PreviewState = {
   /** Campos da vaga usada (a tela escreve "Usamos uma vaga de exemplo: Garçom, R$ 150, Sáb 31/10, 18h às 23h, Campinas."). */
   vacancy: { funcao: string; estabelecimento: string | null; valor: string; dia: string; horario: string; cidade: string } | null;
   error: string | null;
+  /**
+   * P2 (24/11/2026): prévia com QR (pedida com `{ qr: true }` ou com o QR ligado). `url` = o link que o QR abre (null = a vaga não vira link
+   * ou o link não coube: a arte saiu sem QR); `read_ok` = o sistema conferiu o QR na arte final, reduzida a 720 px. Ausente = sem QR.
+   */
+  qr?: { url: string | null; read_ok: boolean } | null;
 };
 
 /** Prévia `running` há mais que isso travou (a API reiniciou no meio): a tela mostra falha e um novo pedido sobrescreve (D15). */

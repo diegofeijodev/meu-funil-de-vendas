@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { todaySp } from '../../common/time/dates';
 import { WorkspaceAccessService } from '../access/access.service';
@@ -112,6 +112,9 @@ export type VacancySettingsView = {
   counts: { ready: number; to_approve: number };
   ai_error: string | null;
   ai_error_at: Date | null;
+  /** QR da vaga no rodapé da arte (24/11/2026): ligado e desde quando. */
+  qr_enabled: boolean;
+  qr_enabled_at: Date | null;
   /** P9: limite de publicações em 24 h que a Meta informou (ou 25): a ajuda e o aviso do máximo por dia. */
   publish_quota: number;
   /** Bloqueio de publicação aberto (24/11/2026): o cartão de situação diz "Pausado". */
@@ -196,6 +199,8 @@ export class VacancySettingsService {
       counts: { ready, to_approve: toApprove },
       ai_error: s.ai_error,
       ai_error_at: s.ai_error_at,
+      qr_enabled: s.qr_enabled,
+      qr_enabled_at: s.qr_enabled_at,
       publish_quota: quota,
       publishing_blocked: block ? { reason: block.publish_block_reason, since: block.publish_blocked_at ?? block.publish_block_last_at ?? now } : null,
       preview: previewForView(s.preview, now),
@@ -305,6 +310,25 @@ export class VacancySettingsService {
    * modo sozinho ou agendados que NINGUÉM aprovou (`approved_at` nulo) voltam para `pending_approval` com `requires_approval: true`
    * (sem horário) e os jobs pendentes deles são cancelados. `moved_to_approval` = quantos voltaram (0 ao ligar).
    */
+  /**
+   * QR da vaga na arte (P2/P4): dono/admin. Ligar só com uma prévia com QR que o sistema conferiu (`preview.qr.read_ok`); desligar sempre.
+   * Não refaz nada: só as artes criadas depois saem com (ou sem) o QR (P21).
+   */
+  async setQr(userId: string, workspaceId: string, on: boolean): Promise<VacancySettingsView> {
+    this.gate.assert(workspaceId);
+    await this.access.require(userId, workspaceId, 'manage');
+    const s = await this.get(workspaceId);
+    const p = (s.preview ?? {}) as { status?: unknown; qr?: { read_ok?: unknown } | null };
+    if (on && !(p.status === 'done' && p.qr?.read_ok === true)) {
+      throw new UnprocessableEntityException({ code: 'QR_PREVIEW_REQUIRED', message: 'Gere uma prévia com o QR para poder ligar.' });
+    }
+    if (s.qr_enabled !== on) {
+      await this.prisma.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data: { qr_enabled: on, qr_enabled_at: on ? new Date() : null } });
+      await this.activity.log(workspaceId, userId, 'vacancy_stories.qr', 'vacancy_stories', { qr_enabled: on });
+    }
+    return this.view(workspaceId);
+  }
+
   async setAutoPublish(userId: string, workspaceId: string, value: boolean): Promise<VacancySettingsView & { moved_to_approval: number }> {
     this.gate.assert(workspaceId);
     await this.access.require(userId, workspaceId, 'manage');

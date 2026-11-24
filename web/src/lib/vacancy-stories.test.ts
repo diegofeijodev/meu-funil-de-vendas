@@ -571,3 +571,29 @@ describe('limite da Meta na tela (UI 24/11 §1.8)', () => {
     expect(capHint()).toMatch(/^O Instagram aceita até 25 publicações/);
   });
 });
+
+import { QR_TEXT, qrPreviewResult, qrShortUrl, qrStatusLine } from './vacancy-stories';
+
+describe('QR da vaga na arte (UI 24/11 §2.5)', () => {
+  const URL = 'https://freelaservicos.com.br/vagas/3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f?o=ig';
+  it('linha de situação', () => {
+    expect(qrStatusLine({ qr_enabled: false, qr_enabled_at: null })).toBe('Desligado. As artes saem sem QR, como hoje.');
+    expect(qrStatusLine({ qr_enabled: true, qr_enabled_at: '2026-11-25T13:00:00Z' })).toBe('Ligado desde 25/11 às 10h. Toda arte nova de vaga sai com o QR no rodapé.');
+  });
+  it('endereço curto', () => {
+    expect(qrShortUrl(URL)).toBe('freelaservicos.com.br/vagas/3f2a…');
+  });
+  it('resultado da prévia: leu, não leu, não coube, vaga de exemplo, sem QR pedido', () => {
+    const v = { funcao: 'Garçom' };
+    expect(qrPreviewResult({ status: 'done', qr: { url: URL, read_ok: true }, vacancy: v })).toEqual({
+      ok: true,
+      text: '✓ O sistema leu o QR. Ele abre: freelaservicos.com.br/vagas/3f2a… (vaga Garçom).',
+      human: 'Agora aponte a câmera do seu celular para o QR acima. Tem de abrir a vaga Garçom no site do Freela.',
+    });
+    expect(qrPreviewResult({ status: 'done', qr: { url: URL, read_ok: false }, vacancy: v })).toMatchObject({ ok: false, text: QR_TEXT.notRead });
+    expect(qrPreviewResult({ status: 'done', qr: { url: null, read_ok: false }, vacancy: v })).toMatchObject({ ok: false, text: QR_TEXT.tooLong });
+    expect(qrPreviewResult({ status: 'done', sample: true, qr: { url: null, read_ok: false }, vacancy: v })).toMatchObject({ ok: false, text: QR_TEXT.sample });
+    expect(qrPreviewResult({ status: 'done', qr: null, vacancy: v })).toBeNull();
+    expect(qrPreviewResult({ status: 'running', qr: { url: null, read_ok: false }, vacancy: v })).toBeNull();
+  });
+});

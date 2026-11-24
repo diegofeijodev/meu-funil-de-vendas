@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { arrivedEmptyText, reasonChipsFeedback, redoLabel } from "@/lib/vacancy-stories";
+import { arrivedEmptyText, QR_TEXT, reasonChipsFeedback, redoLabel } from "@/lib/vacancy-stories";
 import {
   listVacancyStories,
   type VacancySettings,
@@ -66,11 +66,12 @@ export function SituationLabel({ story }: { story: VacancyStory }) {
 /** Selos "Versão de reserva" e "Refeita {n} vez(es)". */
 export function StoryBadges({ story }: { story: VacancyStory }) {
   const redo = redoLabel(story.redo_count);
-  if (!story.used_fallback && !redo) return null;
+  if (!story.used_fallback && !redo && !story.qr_url) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
       {story.used_fallback && <Badge>{story.fallback_kind === "plain" ? "Sem foto" : "Versão de reserva"}</Badge>}
       {redo && <Badge>{redo}</Badge>}
+      {story.qr_url && <Badge>{QR_TEXT.badge}</Badge>}
     </div>
   );
 }

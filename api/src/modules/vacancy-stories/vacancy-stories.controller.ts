@@ -11,7 +11,7 @@ import { VacancyActionsService } from './vacancy-actions.service';
 import { VacancyGateGuard } from './vacancy-gate.service';
 import { VacancyPreviewService } from './vacancy-preview.service';
 import { VacancySettingsService } from './vacancy-settings.service';
-import { AutoPublishDto, DontPostDto, ListStoriesQuery, UpdateVacancySettingsDto } from './vacancy-stories.dto';
+import { AutoPublishDto, DontPostDto, ListStoriesQuery, QrDto, StartPreviewDto, UpdateVacancySettingsDto } from './vacancy-stories.dto';
 
 type FilePart = { file: AsyncIterable<Buffer> & { truncated?: boolean }; mimetype: string; filename: string };
 
@@ -56,6 +56,12 @@ export class VacancyStoriesController {
     return this.settings.setAutoPublish(u.id, ws, dto.auto_publish);
   }
 
+  /** QR da vaga na arte (24/11/2026, P4): dono/admin; ligar exige prévia com QR conferida (422 "Gere uma prévia com o QR para poder ligar."). */
+  @Post('qr') @HttpCode(200) @RequireAccess('manage')
+  qr(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto: QrDto) {
+    return this.settings.setQr(u.id, ws, dto.qr_enabled);
+  }
+
   /** Multipart (campo `file`): PNG/JPG até 10 MB. O tipo é conferido pelo conteúdo no serviço. */
   @Post('template') @HttpCode(200)
   async template(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Req() req: FastifyRequest) {
@@ -72,8 +78,8 @@ export class VacancyStoriesController {
 
   /** Prévia em segundo plano (o andamento fica em `settings.preview`); 409 se outra está em andamento. */
   @Post('preview') @HttpCode(200)
-  startPreview(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string) {
-    return this.preview.start(u.id, ws);
+  startPreview(@CurrentUser() u: AuthUser, @Param('workspaceId', ParseUuidPipe) ws: string, @Body() dto?: StartPreviewDto) {
+    return this.preview.start(u.id, ws, { qr: dto?.qr });
   }
 
   @Get('stories')

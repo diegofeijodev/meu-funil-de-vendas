@@ -40,6 +40,7 @@ import {
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { TemplateCard } from "./template-card";
 import { PreviewCard } from "./preview-card";
+import { QrCard } from "./qr-card";
 import { vacancyListKey } from "./use-story-actions";
 
 const LEADS = [
@@ -301,6 +302,8 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
               Postar sozinho
             </Option>
           </Field>
+
+          <QrCard workspaceId={workspaceId} settings={s} canEdit={canEdit} canManage={canManage} />
 
           {/* Barra fixa no pé da tela: só fica ativa quando algo mudou. */}
           <div className="sticky bottom-0 -mx-5 flex flex-col gap-2 border-t border-border bg-card px-5 py-3 sm:flex-row sm:items-center">

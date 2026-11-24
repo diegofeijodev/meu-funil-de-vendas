@@ -799,6 +799,7 @@ antecedência 120 min, OpenAI):
   today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
   ai_error: string | null, ai_error_at: string | null, preview: PreviewState | {} /* {} = nunca gerou; ver abaixo */,
+  qr_enabled: boolean, qr_enabled_at: string | null /* 24/11/2026: QR da vaga no rodapé da arte (§26, "QR da vaga") */,
   publish_quota: number /* 24/11/2026 (P1/P9): limite de publicações em 24 h que a Meta informou (`instagram_accounts.publish_quota_total`) ou 25; a ajuda do máximo e o aviso (máximo > limite − 10) usam ele */,
   publishing_blocked: { reason: "permission" | "token", since: string } | null /* 24/11/2026: bloqueio de publicação aberto (§22.6); o cartão diz "Pausado" */,
   recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
@@ -827,7 +828,8 @@ marca em Marcas antes de enviar a arte modelo."; falha da IA na leitura dos text
 | `POST disable` | manage | — | `{ ok: true, cancelled: number }` |
 | `POST auto-publish` | manage | `{ auto_publish: boolean }` | view + `moved_to_approval: number` — voltar para "Eu aprovo" (`false`), na mesma transação: stories de vaga `ready\|approved\|scheduled` sem `approved_at` (ninguém aprovou) → `pending_approval` + `creative_brief.vacancy.requires_approval: true` + `scheduled_at: null`, jobs pendentes cancelados; `moved_to_approval` = quantos voltaram (0 ao ligar). Aprovados por alguém e `publishing` ficam |
 | `POST template` | write | multipart `file` (PNG/JPG, ≤ 10 MB) | view + `warning: "landscape" \| null`; também preenche `recent_cities` com a vitrine (B6; vitrine fora = ficam como estavam) |
-| `POST preview` | write | — | `{ ok: true }` (segundo plano; o andamento fica em `settings.preview`); 409 "Já existe uma prévia sendo criada." se outra começou há < 10 min; 400 "Envie a arte modelo antes de gerar a prévia." |
+| `POST preview` | write | `{ qr?: boolean }` (24/11/2026, sem padrão) | `{ ok: true }` (segundo plano; o andamento fica em `settings.preview`); 409 "Já existe uma prévia sendo criada." se outra começou há < 10 min; 400 "Envie a arte modelo antes de gerar a prévia.". Com `qr: true` (ou com o QR já ligado) a prévia sai com o QR da vaga no rodapé, mesmo com o interruptor desligado, e grava `preview.qr` (abaixo) |
+| `POST qr` (24/11/2026) | manage | `{ qr_enabled: boolean }` | view. Ligar exige `preview.status = "done"` e `preview.qr.read_ok = true` → senão `422 { error: { code: "QR_PREVIEW_REQUIRED", message: "Gere uma prévia com o QR para poder ligar." } }`; desligar sempre pode. Grava `qr_enabled_at` (null ao desligar) e a atividade `vacancy_stories.qr` `{ qr_enabled }`. Não refaz nada: só as artes criadas depois saem com (ou sem) o QR. O `PATCH settings` **não** aceita `qr_enabled` |
 | `GET stories?filter=all\|live\|not_posted` | read | — | `StoryView[]`: as 100 linhas mais novas (`created_at desc`), filtradas depois — `live` = `display: 'live'` (no ar agora), `not_posted` = `skipped\|cancelled\|failed` |
 | `GET stories/:id` | read | — | `StoryDetail`; id de outra empresa ou inexistente → 404 "Não achamos este story. Ele pode ter sido apagado; atualize a tela." (vale para toda rota `stories/:id`) |
 | `POST stories/:id/dont-post` | write | `{ feedback?: "texto_errado"\|"foto_estranha"\|"nao_divulgar" }` | `{ ok: true }` — antes da entrega (`new\|waiting\|generating`) a linha vira `cancelled`; entregue e não publicado (`pending_approval\|approved\|ready\|scheduled`) → post `cancelled` + jobs pendentes cancelados + `rejection_reason` e a linha (continua `handed_off`) com `skip_reason` = "Você escolheu não postar."; já não postado → só grava o `feedback` (idempotente) |
@@ -924,6 +926,15 @@ também preenche `settings.recent_cities` — B6):
 ```
 `running` com `started_at` há mais de 10 min (a API reiniciou no meio) sai no `GET settings` como `failed` com "A prévia não terminou. Toque
 em Gerar prévia com uma vaga real para tentar de novo." e um novo `POST preview` sobrescreve.
+
+**QR da vaga na arte (24/11/2026; desenho `2026-11-24-vagas-clt-link-design.md` §2.3 e §12).** Com `qr_enabled`, a arte de cada story novo leva no
+rodapé preto um quadrado branco de 180 × 180 em (64, 1508) com o QR de `https://freelaservicos.com.br/vagas/<id>?o=ig` (só id UUID), módulo
+inteiro ≥ 4 px, zona clara de 4 módulos, correção M e depois L (versão pela `qrcode-generator@2.0.4`); o texto do rodapé vira 3 linhas
+("Candidate-se pelo app" / "Procure Freela Serviços na loja" / "ou leia o QR para ver a vaga") e os selos ficam iguais. Sem QR, o rodapé é o de
+antes, byte a byte. Link que não cabe ou id que não é UUID → arte sem QR e aviso no log. `preview.qr = { url: string | null, read_ok: boolean } |
+null`: `url` null = a arte saiu sem QR (vaga de exemplo ou link longo demais); `read_ok` = a conferência do sistema (arte final reaberta, reduzida a
+720 px, cada módulo do código e da zona clara comparado com a matriz; o jest prova a equivalência com o `jsqr@1.4.0`, que é só de dev). O story
+guarda o link em `creative_brief.vacancy.qr_url` e `StoryView.qr_url` (`string | null`) o devolve (a tela mostra "Com QR" e "O QR abre: …").
 
 Motivos gravados (`reason` — `vacancy_stories.skip_reason`; A5): lidos por dias, então nunca "hoje/amanhã" — sempre dia e hora absolutos de
 Brasília. A 1ª data do texto leva o dia ("Qua, 29/10 às 15h"); as seguintes só levam o dia quando caem em outro dia ("até Ter, 28/10 às

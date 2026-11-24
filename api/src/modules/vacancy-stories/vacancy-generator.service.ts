@@ -13,6 +13,7 @@ import { ImageService } from '../media/image.service';
 import { bad, errMessage } from '../media/user-error';
 import { loadBadges } from './vacancy-art';
 import { composeBaseArt, loadBaseFonts } from './vacancy-base-art';
+import { planQr, vacancyLink, verifyQrPixels, type QrPlan } from './vacancy-qr';
 import { VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { PUBLISH_BLOCKED_WAIT, VACANCY_CLOSED_REASON, WAIT_CAP } from './vacancy-reasons';
@@ -52,6 +53,8 @@ export type ArtOrigin = { source: 'chatgpt' | 'gemini' | 'other'; provider: stri
 /** `styleRefs` = referências que a foto aceita seguiu (só quando foi a 1ª tentativa e houve frase de estilo); `null` nos demais casos. */
 export type ArtResult = {
   bytes: Uint8Array; check: ArtCheck; attempts: AttemptLog[]; usedFallback: boolean; vendorLabel: string; origin: ArtOrigin; styleRefs: StyleRefsUsed | null;
+  /** QR desenhado no rodapé (`null` = sem QR: desligado, id que não vira link ou link que não coube). */
+  qr: QrPlan | null;
 };
 
 const VENDORS: Record<AiVendor, { label: string; origin: ArtOrigin }> = {
@@ -284,12 +287,17 @@ export class VacancyGeneratorService {
     // A4: sem como ir ao ar (prazo de aprovação passado, ou nenhum horário livre a tempo) → não gera a arte.
     const late = await this.hooks.beforeGenerate?.(row, s, now);
     if (late) return (await lease.write({ status: 'expired', skip_reason: late, lease_until: null })) ? 'cancelled' : 'lost';
+    // §2.3: com o QR ligado, o link da vaga vai no rodapé (id que não vira link = arte sem QR e aviso no log).
+    const qrUrl = s.qr_enabled ? vacancyLink(v.id) : null;
+    if (s.qr_enabled && !qrUrl) this.logger.warn(`[vagas] ${row.workspace_id}: vaga ${v.id} sem id de link (não é UUID); a arte sai sem QR.`);
     let art: ArtResult;
     try {
       // `onStep` vem antes de cada chamada da IA: renova o lease (perdeu → `LeaseLost`, nada é gravado) e, na arte da tentativa n ≤ 3,
       // grava n − 1 em `mismatch_attempts` (R28: as anteriores foram reprovadas; os passos da reserva não mexem — fica em 2).
-      art = await this.makeArt(row.workspace_id, s, vacancyFields(v), (step, n) =>
-        lease.renew(step === 'art' && n <= AI_TRIES ? { mismatch_attempts: n - 1 } : {}),
+      art = await this.makeArt(
+        row.workspace_id, s, vacancyFields(v),
+        (step, n) => lease.renew(step === 'art' && n <= AI_TRIES ? { mismatch_attempts: n - 1 } : {}),
+        { qrUrl },
       );
     } catch (e) {
       if (!(e instanceof ArtAiError)) throw e;
@@ -336,7 +344,10 @@ export class VacancyGeneratorService {
     s: SettingsRow,
     f: VacancyFields,
     onStep?: (step: 'art' | 'check', attempt: number) => Promise<void>,
+    o: { qrUrl?: string | null } = {},
   ): Promise<ArtResult> {
+    const qr = o.qrUrl ? planQr(o.qrUrl) : null;
+    if (o.qrUrl && !qr) this.logger.warn(`[vagas] ${ws}: o link da vaga não cabe no QR com módulo de 4 px (${o.qrUrl.length} caracteres); a arte sai sem QR.`);
     const vendor: AiVendor = s.vendor === 'gemini' ? 'gemini' : 'openai';
     const badges = loadBadges();
     const fonts = loadBaseFonts();
@@ -372,18 +383,23 @@ export class VacancyGeneratorService {
       }
       log(n, 'ai', found.length === 0, found);
       if (found.length === 0) {
-        const bytes = await composeBaseArt(this.images, { fields: f, photo, logo, badges, fonts });
+        const bytes = await composeBaseArt(this.images, { fields: f, photo, logo, badges, fonts, qr });
         const check: ArtCheck = { ok: true, fields, forbidden: [], hint: null };
         return {
           bytes, check, attempts, usedFallback: false, vendorLabel: VENDORS[vendor].label, origin: VENDORS[vendor].origin,
-          styleRefs: n === 1 && lines.length > 0 && style ? style.used : null,
+          styleRefs: n === 1 && lines.length > 0 && style ? style.used : null, qr,
         };
       }
     }
 
-    const bytes = await composeBaseArt(this.images, { fields: f, photo: null, logo, badges, fonts });
+    const bytes = await composeBaseArt(this.images, { fields: f, photo: null, logo, badges, fonts, qr });
     log(AI_TRIES + 1, 'fallback_plain', true, []);
-    return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin, styleRefs: null };
+    return { bytes, check: { ok: true, fields, forbidden: [], hint: null }, attempts, usedFallback: true, vendorLabel: SYSTEM.label, origin: SYSTEM.origin, styleRefs: null, qr };
+  }
+
+  /** Conferência do QR na arte final (P2: a prévia diz "o sistema leu o QR"). */
+  verifyQr(bytes: Uint8Array, qr: QrPlan): Promise<boolean> {
+    return verifyQrPixels(this.images, bytes, qr);
   }
 
   /** Leitura às cegas da foto da IA (reduzida a 1024 px): só interessa a lista de textos visíveis. */
@@ -467,6 +483,8 @@ export class VacancyGeneratorService {
       story_id: row.id, external_id: row.external_id, fingerprint: fingerprint(v), requires_approval: !auto,
       checked_fields: art.check.fields.filter((x) => x.ok).map((x) => x.key), attempts: aiTries, used_fallback: art.usedFallback,
       check_alert: alert, check_unread: unread, starts_at: v.startTime,
+      // §2.5: o link que o QR da arte abre (a tela mostra "Com QR" e "O QR abre: …"); null = arte sem QR.
+      qr_url: art.qr?.url ?? null,
     };
     // D12: no post só o resumo de cada tentativa; o detalhe fica em `vacancy_stories.attempts_log`.
     const shortLog = art.attempts.map((a) => ({ at: a.at, step: 'vacancy_art', attempt: a.n, ok: a.ok, wrong: a.wrong, fallback: a.kind !== 'ai' }));

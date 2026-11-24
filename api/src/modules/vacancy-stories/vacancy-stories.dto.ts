@@ -16,6 +16,16 @@ export class UpdateVacancySettingsDto {
   @IsOptional() @IsBoolean() style_refs_enabled?: boolean;
 }
 
+/** `POST …/vacancy-stories/preview`. `qr` sem padrão: ausente = como antes (QR só se ele já está ligado). */
+export class StartPreviewDto {
+  @IsOptional() @IsBoolean() qr?: boolean;
+}
+
+/** `POST …/vacancy-stories/qr` (dono/admin): ligar exige uma prévia com QR conferida. */
+export class QrDto {
+  @IsBoolean() qr_enabled!: boolean;
+}
+
 /** `POST …/vacancy-stories/auto-publish`. */
 export class AutoPublishDto {
   @IsBoolean() auto_publish!: boolean;

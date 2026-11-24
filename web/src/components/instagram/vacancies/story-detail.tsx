@@ -174,6 +174,15 @@ function DetailBody({
           </>
         ) : null}
 
+        {s.qr_url && (
+          <p className="text-sm">
+            O QR abre: <span className="break-all">{s.qr_url.replace(/^https?:\/\//, "")}</span>{" "}
+            <a href={s.qr_url} target="_blank" rel="noopener noreferrer" className="font-medium underline-offset-4 hover:underline">
+              Abrir no site <span aria-hidden>↗</span>
+            </a>
+          </p>
+        )}
+
         <a
           href={s.freela_url}
           target="_blank"

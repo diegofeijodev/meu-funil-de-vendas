@@ -8,6 +8,10 @@ import * as path from 'node:path';
 import { RGB, fillPolys, flatten, parseFont, rect } from '../creative/compose';
 import { ImageService, Img } from '../media/image.service';
 import { Badges, FOOTER_LINE1, FOOTER_LINE2, STORY_H, STORY_W, fitWrapped } from './vacancy-art';
+import { drawQr, QR_BOX, type QrPlan } from './vacancy-qr';
+
+/** 3ª linha do rodapé com QR (UI 24/11 §2.4: a loja vem antes; o QR é o "ou"). */
+export const FOOTER_LINE3_QR = 'ou leia o QR para ver a vaga';
 import type { VacancyFields } from './vacancy-types';
 
 type Pt = [number, number];
@@ -173,7 +177,7 @@ const FOOT_H = 196;
  */
 export async function composeBaseArt(
   images: ImageService,
-  i: { fields: VacancyFields; photo: Uint8Array | null; logo: Uint8Array | null; badges: Badges; fonts: BaseFonts },
+  i: { fields: VacancyFields; photo: Uint8Array | null; logo: Uint8Array | null; badges: Badges; fonts: BaseFonts; qr?: QrPlan | null },
 ): Promise<Uint8Array> {
   const f = i.fields;
   const fTitle = parseFont(i.fonts.title);
@@ -303,6 +307,11 @@ export async function composeBaseArt(
     y += h + GAP;
   }
 
+  if (i.qr) {
+    await footerWithQr(images, cv, i.qr, i.badges, fBold, fExtra);
+    return images.encode(cv, false, 92);
+  }
+
   // Rodapé preto com a chamada e os selos oficiais (só redimensionados).
   rect(cv, 40, FOOT_TOP, STORY_W - 80, FOOT_H, INK, 1, 40);
   text(cv, fExtra, FOOTER_LINE1, 44, 76, FOOT_TOP + 78, YELLOW);
@@ -316,4 +325,29 @@ export async function composeBaseArt(
   cv.composite(as, bx, FOOT_TOP + 22 + 64 + 22);
 
   return images.encode(cv, false, 92);
+}
+
+/**
+ * Rodapé com o QR da vaga (UI 24/11 §2.3): o mesmo preto, o QR à esquerda em (64, 1508) e o texto em 3 linhas de x 268 até 24 px antes dos
+ * selos — L1 amarela (Inter ExtraBold 44, piso 36), L2 e L3 brancas (Inter Bold 30, piso 26). Selos iguais, na mesma posição.
+ */
+async function footerWithQr(images: ImageService, cv: Img, qr: QrPlan, badges: Badges, fBold: Font, fExtra: Font) {
+  rect(cv, 40, FOOT_TOP, STORY_W - 80, FOOT_H, INK, 1, 40);
+  const gp = await images.read(badges.googlePlay);
+  const as = await images.read(badges.appStore);
+  gp.resize({ h: 64 });
+  as.resize({ h: 64 });
+  const bx = STORY_W - 76 - Math.max(gp.bitmap.width, as.bitmap.width);
+  drawQr(cv, qr, INK);
+  const x = QR_BOX.x + QR_BOX.size + 24;
+  const maxW = bx - 24 - x;
+  const line = (font: Font, s: string, start: number, floor: number, baseline: number, color: RGB) => {
+    const fit = fitWrapped(font, s, maxW, { start, floor, maxLines: 1 });
+    text(cv, font, fit.lines.join(' '), fit.size, x, baseline, color);
+  };
+  line(fExtra, FOOTER_LINE1, 44, 36, FOOT_TOP + 66, YELLOW);
+  line(fBold, FOOTER_LINE2, 30, 26, FOOT_TOP + 116, WHITE);
+  line(fBold, FOOTER_LINE3_QR, 30, 26, FOOT_TOP + 160, WHITE);
+  cv.composite(gp, bx, FOOT_TOP + 22);
+  cv.composite(as, bx, FOOT_TOP + 22 + 64 + 22);
 }

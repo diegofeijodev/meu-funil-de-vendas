@@ -652,3 +652,67 @@ export function photoStyleTexts(s: { style_brand: { id: string; name: string } |
 export function pausedNotice(sinceIso: string): string {
   return `Pausado: o Instagram não está aceitando publicações desde ${dmLabel(sinceIso)} às ${hhLabel(sinceIso)}. As vagas esperam aqui e ganham arte quando ele voltar.`;
 }
+
+// ------------------------------------------------------------------ QR da vaga na arte (UI 24/11 §2.5)
+
+export const QR_TEXT = {
+  title: 'Link da vaga na arte (QR code)',
+  off: 'Desligado. As artes saem sem QR, como hoje.',
+  steps: ['Gere uma prévia com o QR', 'Leia o QR da prévia com o seu celular'],
+  button: 'Gerar prévia com QR',
+  running: 'Criando a prévia…',
+  buttonHelp: 'Não posta nada. Usa a vaga mais recente do Freela.',
+  progress: 'Criando a prévia… costuma levar de 1 a 3 minutos. Pode sair desta tela, ela fica salva aqui.',
+  noAi: 'A IA está sem créditos, então a prévia sai sem foto. Para testar o QR, serve do mesmo jeito.',
+  crop: 'Rodapé em tamanho maior:',
+  fullSize: 'Ver a arte em tamanho real',
+  notRead: '✗ O sistema não conseguiu ler o QR desta prévia. O QR fica desligado. Tente gerar de novo; se repetir, avise o suporte.',
+  tooLong: 'Esta vaga tem um link longo demais para o QR. A arte saiu sem ele. Gere outra prévia.',
+  // Texto novo (decisão da implementação, 24/11): a vaga de exemplo não tem página no site, então não há link para o QR.
+  sample: 'A vaga de exemplo não tem página no site, então a prévia saiu sem QR. Gere de novo quando houver uma vaga aberta no Freela.',
+  switchLabel: 'Pôr o QR nas próximas artes',
+  switchHelp: 'Quem tira print do story ou vê em outra tela abre a vaga no site. No próprio celular, só pelo print.',
+  locked: 'Gere uma prévia com o QR para poder ligar.',
+  noRole: 'Só o dono ou um administrador liga o QR.',
+  dialogTitle: 'Pôr o QR code nas artes das vagas?',
+  dialogText:
+    'Daqui para frente, toda arte nova de vaga sai com o QR no rodapé, à esquerda dos selos. As artes que já estão prontas continuam sem QR. Antes, aponte a câmera do seu celular para o QR da prévia e confira se abre a vaga.',
+  dialogOk: 'Pôr o QR',
+  dialogCancel: 'Agora não',
+  toastOn: 'QR ligado. Quando o 1º story com QR for ao ar, tire um print e leia o QR para conferir.',
+  toastOff: 'QR desligado. As próximas artes saem sem QR.',
+  error: 'Não conseguimos mudar isso agora. Tente de novo.',
+  badge: 'Com QR',
+} as const;
+
+/** "Ligado desde 25/11 às 10h. Toda arte nova de vaga sai com o QR no rodapé." · desligado. */
+export function qrStatusLine(s: { qr_enabled: boolean; qr_enabled_at: string | null }): string {
+  if (!s.qr_enabled) return QR_TEXT.off;
+  const since = s.qr_enabled_at ? `Ligado desde ${dmLabel(s.qr_enabled_at)} às ${hhLabel(s.qr_enabled_at)}.` : 'Ligado.';
+  return `${since} Toda arte nova de vaga sai com o QR no rodapé.`;
+}
+
+/** "freelaservicos.com.br/vagas/3f2a…" — o endereço do QR sem o protocolo, com o código da vaga encurtado. */
+export function qrShortUrl(url: string): string {
+  const m = /^https?:\/\/([^/]+)\/vagas\/([^?#]+)/.exec(url);
+  if (!m) return url.replace(/^https?:\/\//, '');
+  return `${m[1]}/vagas/${m[2]!.slice(0, 4)}…`;
+}
+
+/** Resultado da prévia com QR (UI §2.5); null = a prévia não pediu QR. */
+export function qrPreviewResult(p: {
+  status?: string;
+  sample?: boolean;
+  qr: { url: string | null; read_ok: boolean } | null;
+  vacancy: Record<string, unknown> | null;
+}): { ok: boolean; text: string; human: string | null } | null {
+  if (p.status !== 'done' || !p.qr) return null;
+  const funcao = typeof p.vacancy?.funcao === 'string' ? p.vacancy.funcao : null;
+  if (!p.qr.url) return { ok: false, text: p.sample ? QR_TEXT.sample : QR_TEXT.tooLong, human: null };
+  if (!p.qr.read_ok) return { ok: false, text: QR_TEXT.notRead, human: null };
+  return {
+    ok: true,
+    text: `✓ O sistema leu o QR. Ele abre: ${qrShortUrl(p.qr.url)}${funcao ? ` (vaga ${funcao})` : ''}.`,
+    human: `Agora aponte a câmera do seu celular para o QR acima. Tem de abrir a vaga${funcao ? ` ${funcao}` : ''} no site do Freela.`,
+  };
+}

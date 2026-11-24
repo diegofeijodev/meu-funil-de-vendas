@@ -11,6 +11,7 @@ import { VacancyFeedClient } from './vacancy-feed';
 import { ArtAiError, VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyGate } from './vacancy-gate.service';
 import { PREVIEW_STALE_MS, type PreviewState } from './vacancy-preview-state';
+import { vacancyLink } from './vacancy-qr';
 import { VacancySettingsService } from './vacancy-settings.service';
 import { isTestText, shortDay, spParts, vacancyFields } from './vacancy-text';
 import type { FreelaVacancy, SettingsRow } from './vacancy-types';
@@ -70,7 +71,7 @@ export class VacancyPreviewService {
    * Começa a prévia e responde logo. Outra em andamento há menos de 10 min (neste processo ou gravada como `running`) → 409;
    * `running` mais velha que isso travou (a API reiniciou no meio) e é sobrescrita — a rodada velha não grava mais nada (`run_id`).
    */
-  async start(userId: string, ws: string): Promise<{ ok: true }> {
+  async start(userId: string, ws: string, o: { qr?: boolean } = {}): Promise<{ ok: true }> {
     this.gate.assert(ws);
     await this.access.require(userId, ws, 'write');
     const s = await this.settings.get(ws);
@@ -88,6 +89,8 @@ export class VacancyPreviewService {
     const state: PreviewState = {
       run_id: token, status: 'running', step: 'art', attempt: 1, started_at: new Date(now).toISOString(), finished_at: null, media_url: null,
       asset_id: null, checks: [], attempts: [], used_fallback: false, fallback_kind: null, sample: false, vacancy: null, error: null,
+      // P2: a prévia leva o QR quando pedido (mesmo com o interruptor desligado) ou quando ele já está ligado.
+      qr: o.qr === true || s.qr_enabled ? { url: null, read_ok: false } : null,
     };
     try {
       await this.prisma.vacancy_story_settings.update({ where: { workspace_id: ws }, data: { preview: json(state) } });
@@ -131,11 +134,16 @@ export class VacancyPreviewService {
       state.vacancy = { funcao: f.funcao, estabelecimento: f.estabelecimento, valor: f.valor, dia: shortDay(v.startTime), horario: f.horario, cidade: f.cidade };
       await save();
       // Etapa a etapa; as da reserva (4 e 5) viram `fallback` na tentativa 3 (nunca "Tentativa 4 de 3"). Falha ao gravar a etapa não derruba a prévia.
-      const art = await this.generator.makeArt(ws, s, f, async (step, n) => {
-        state.step = n > AI_TRIES ? 'fallback' : step;
-        state.attempt = Math.min(n, AI_TRIES);
-        await save().catch((e) => this.logger.warn(`[vagas] ${ws}: etapa da prévia não gravada: ${e instanceof Error ? e.message : String(e)}`));
-      });
+      const art = await this.generator.makeArt(
+        ws, s, f,
+        async (step, n) => {
+          state.step = n > AI_TRIES ? 'fallback' : step;
+          state.attempt = Math.min(n, AI_TRIES);
+          await save().catch((e) => this.logger.warn(`[vagas] ${ws}: etapa da prévia não gravada: ${e instanceof Error ? e.message : String(e)}`));
+        },
+        { qrUrl: state.qr ? vacancyLink(v.id) : null },
+      );
+      if (state.qr) state.qr = { url: art.qr?.url ?? null, read_ok: art.qr ? await this.generator.verifyQr(art.bytes, art.qr) : false };
       const asset = await this.assets.ingest({
         workspaceId: ws, kind: 'image', targetFormat: 'ig_story', normalize: false, source: art.origin.source, provider: art.origin.provider,
         bytes: art.bytes, mime: 'image/jpeg', title: PREVIEW_TITLE, brandId: s.brand_id, createdBy: userId,

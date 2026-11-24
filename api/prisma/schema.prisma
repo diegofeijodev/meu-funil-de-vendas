@@ -1428,6 +1428,9 @@ model vacancy_story_settings {
   vendor             String        @default("openai")
   auto_publish       Boolean       @default(false)
   style_refs_enabled Boolean       @default(false)
+  /// QR da vaga no rodapé da arte (24/11/2026): só liga depois de uma prévia com QR conferida.
+  qr_enabled         Boolean       @default(false)
+  qr_enabled_at      DateTime?     @db.Timestamptz(6)
   last_poll_at       DateTime?     @db.Timestamptz(6)
   last_poll_ok_at    DateTime?     @db.Timestamptz(6)
   last_poll_error    String?
