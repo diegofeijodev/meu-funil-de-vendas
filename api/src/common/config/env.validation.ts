@@ -182,8 +182,17 @@ const envSchema = z
     CAMPAIGN_PILOT_MAX_CREATIVES: z.coerce.number().int().min(1).max(20).default(10),
     /** Só testes: vitrine falsa. Só vale em development/test; em produção é sempre `https://api.freelaservicosapp.com.br`. */
     FREELA_PUBLIC_API_URL: opt(),
+    /**
+     * Vagas fixas (CLT, 25/11/2026): base da página pública da vaga fixa no site do Freela, com a barra no fim (ex.:
+     * `https://freelaservicos.com.br/vagas-fixas/`). Vazia = a página ainda não está no ar: a arte CLT sai sem QR e a tela sem o link.
+     */
+    FREELA_FIXED_JOB_PAGE_URL: z.string().url().regex(/\/$/, 'Termine com /').optional().or(z.literal('').transform(() => undefined)),
   })
   .superRefine((env, ctx) => {
+    // Link que vai a público (QR da arte): https fora de development/test.
+    if (env.FREELA_FIXED_JOB_PAGE_URL && !env.FREELA_FIXED_JOB_PAGE_URL.startsWith('https://') && env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FREELA_FIXED_JOB_PAGE_URL'], message: 'Use https://' });
+    }
     try {
       parseVacancyWorkspaces(env.VACANCY_STORIES_WORKSPACE_IDS, env.NODE_ENV);
     } catch (e) {

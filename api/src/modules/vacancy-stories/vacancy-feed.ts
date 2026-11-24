@@ -19,6 +19,7 @@ export class FeedDownError extends Error {
 export const CLT_FEED_DOWN = 'Não conseguimos consultar as vagas fixas do Freela.';
 
 const TIMEOUT_MS = 15_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_BASE = 'https://api.freelaservicosapp.com.br';
 const nullableStr = z.string().nullish().transform((x) => x ?? null);
 
@@ -86,12 +87,26 @@ export function countCities(list: FreelaVacancy[]): { city: string; count: numbe
 @Injectable()
 export class VacancyFeedClient {
   private readonly base: string;
+  /** Base da página pública da vaga fixa (`FREELA_FIXED_JOB_PAGE_URL`); null = a página ainda não está no ar. */
+  readonly fixedJobPageBase: string | null;
 
   constructor(
-    @Inject(ENV) env: Pick<Env, 'NODE_ENV' | 'FREELA_PUBLIC_API_URL'>,
+    @Inject(ENV) env: Pick<Env, 'NODE_ENV' | 'FREELA_PUBLIC_API_URL'> & Partial<Pick<Env, 'FREELA_FIXED_JOB_PAGE_URL'>>,
     @Inject(FREELA_VACANCIES_FETCH) private readonly fetchFn: FreelaFetch,
   ) {
     this.base = overrideBase(env, env.FREELA_PUBLIC_API_URL, DEFAULT_BASE);
+    this.fixedJobPageBase = env.FREELA_FIXED_JOB_PAGE_URL || null;
+  }
+
+  /** Página pública da vaga fixa (link "Abrir a vaga fixa no site"); null sem a página no ar ou com id que não é UUID. */
+  fixedJobPage(id: string): string | null {
+    return this.fixedJobPageBase && UUID.test(id) ? `${this.fixedJobPageBase}${id.toLowerCase()}` : null;
+  }
+
+  /** Link do QR da arte CLT: a página + `?o=ig` (origem); null = arte sem QR. */
+  fixedJobQrLink(id: string): string | null {
+    const page = this.fixedJobPage(id);
+    return page ? `${page}?o=ig` : null;
   }
 
   private async get(path: string): Promise<Response> {

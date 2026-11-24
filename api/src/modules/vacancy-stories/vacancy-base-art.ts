@@ -19,10 +19,10 @@ type Pt = [number, number];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Font = any;
 
-const YELLOW: RGB = [255, 198, 26];
+export const YELLOW: RGB = [255, 198, 26];
 const YELLOW_SOFT: RGB = [255, 221, 110];
-const INK: RGB = [17, 17, 17];
-const WHITE: RGB = [255, 255, 255];
+export const INK: RGB = [17, 17, 17];
+export const WHITE: RGB = [255, 255, 255];
 const PAPER: RGB = [250, 250, 250];
 const toInt = ([r, g, b]: RGB) => ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0;
 
@@ -74,7 +74,7 @@ const rot = (pts: Pt[], cx: number, cy: number, deg: number): Pt[] => {
   return pts.map(([x, y]) => [cx + (x - cx) * cos - (y - cy) * sin, cy + (x - cx) * sin + (y - cy) * cos] as Pt);
 };
 
-function text(img: Img, font: Font, s: string, size: number, x: number, baseline: number, color: RGB, o: { align?: 'left' | 'center'; rot?: [number, number, number] } = {}) {
+export function text(img: Img, font: Font, s: string, size: number, x: number, baseline: number, color: RGB, o: { align?: 'left' | 'center'; rot?: [number, number, number] } = {}) {
   const w = font.getAdvanceWidth(s, size);
   const left = o.align === 'center' ? x - w / 2 : x;
   let polys = flatten(font.getPath(s, left, baseline, size).commands) as Pt[][];
@@ -83,7 +83,7 @@ function text(img: Img, font: Font, s: string, size: number, x: number, baseline
 }
 
 /** Faixa "pincelada": retângulo com as pontas serrilhadas (sempre igual), girado em torno de (cx, cy). */
-function brush(img: Img, x: number, y: number, w: number, h: number, color: RGB, cx: number, cy: number, deg: number) {
+export function brush(img: Img, x: number, y: number, w: number, h: number, color: RGB, cx: number, cy: number, deg: number) {
   const teeth = 7;
   const pts: Pt[] = [[x, y], [x + w, y]];
   for (let k = 0; k < teeth; k++) {
@@ -98,10 +98,10 @@ function brush(img: Img, x: number, y: number, w: number, h: number, color: RGB,
   fillPolys(img, [rot(pts, cx, cy, deg)], color);
 }
 
-type IconKind = 'store' | 'person' | 'calendar' | 'clock' | 'pin' | 'money' | 'clipboard';
+export type IconKind = 'store' | 'person' | 'calendar' | 'clock' | 'pin' | 'money' | 'clipboard' | 'wallet' | 'check';
 
 /** Ícone simples dentro de um círculo de raio `r`; `fg` desenha, `bg` recorta. */
-function icon(img: Img, kind: IconKind, cx: number, cy: number, r: number, fg: RGB, bg: RGB, font: Font) {
+export function icon(img: Img, kind: IconKind, cx: number, cy: number, r: number, fg: RGB, bg: RGB, font: Font) {
   const u = r / 48; // unidade: o ícone foi desenhado para r = 48
   const R = (x: number, y: number, w: number, h: number, c: RGB, rad = 0) => rect(img, cx + x * u, cy + y * u, w * u, h * u, c, 1, rad * u);
   switch (kind) {
@@ -141,13 +141,23 @@ function icon(img: Img, kind: IconKind, cx: number, cy: number, r: number, fg: R
       R(-9, -28, 18, 11, fg, 3);
       for (const dy of [-8, 2, 12]) R(-11, dy, 22, 4, bg, 1);
       break;
+    case 'wallet': // carteira de trabalho: capa com a faixa em cima (vagas fixas)
+      R(-20, -26, 40, 52, fg, 6);
+      R(-14, -18, 28, 6, bg, 2);
+      R(-10, -2, 20, 4, bg, 1);
+      R(-10, 7, 14, 4, bg, 1);
+      break;
+    case 'check': // "✓" dos benefícios
+      fillPolys(img, [[[cx - 24 * u, cy + 1 * u], [cx - 14 * u, cy - 9 * u], [cx - 6 * u, cy + 0 * u], [cx + 16 * u, cy - 22 * u], [cx + 26 * u, cy - 12 * u], [cx - 6 * u, cy + 20 * u]]], fg);
+      break;
   }
 }
 
 /** Corta em `max` caracteres na última palavra inteira, com reticências (mora em `vacancy-text`: a CLT também usa). */
 export const clip = clipText;
 
-type Card = { icon: IconKind; dark?: boolean; filled?: boolean; cols: { label: string; value: string; big?: boolean; lines?: number }[] };
+export type CardCol = { label: string; value: string; big?: boolean; lines?: number; bold?: boolean; start?: number };
+export type Card = { icon: IconKind; dark?: boolean; filled?: boolean; cols: CardCol[] };
 
 function cardsOf(f: VacancyFields): Card[] {
   const cards: Card[] = [];
@@ -175,9 +185,38 @@ export async function composeBaseArt(
   i: { fields: VacancyFields; photo: Uint8Array | null; logo: Uint8Array | null; badges: Badges; fonts: BaseFonts; qr?: QrPlan | null },
 ): Promise<Uint8Array> {
   const f = i.fields;
-  const fTitle = parseFont(i.fonts.title);
-  const fBold = plainFont(i.fonts.bold);
-  const fExtra = plainFont(i.fonts.extra);
+  const { fTitle, fBold, fExtra } = artFonts(i.fonts);
+  const cv = await drawBackdrop(images, i.photo, i.logo);
+
+  // Título em faixas inclinadas: VAGA (preto), a função (amarelo) e FREELANCER (pílula preta com o ícone).
+  const vagaSize = 104;
+  const vagaW = fTitle.getAdvanceWidth('VAGA', vagaSize);
+  brush(cv, 70, 392, vagaW + 110, 122, INK, TITLE_PIVOT[0], TITLE_PIVOT[1], TITLE_DEG);
+  text(cv, fTitle, 'VAGA', vagaSize, 70 + 55, 392 + 100, WHITE, { rot: TITLE_PIVOT });
+
+  const { pillTop } = drawRole(cv, fTitle, f.funcao);
+  const flSize = 58;
+  const flW = fTitle.getAdvanceWidth('FREELANCER', flSize);
+  drawPill(cv, pillTop, flW, INK, (icx, icy) => icon(cv, 'person', icx, icy + 2, 26, INK, WHITE, fTitle));
+  text(cv, fTitle, 'FREELANCER', flSize, 70 + 86, pillTop + PILL_H / 2 + flSize * 0.36, WHITE, { rot: TITLE_PIVOT });
+
+  drawCards(cv, cardsOf(f), Math.max(CARDS_TOP, pillTop + PILL_H + 40), fBold, fExtra);
+  await drawFooter(images, cv, i.qr ?? null, i.badges, fBold, fExtra);
+  return images.encode(cv, false, 92);
+}
+
+/** As três fontes da arte já prontas para desenhar. */
+export function artFonts(fonts: BaseFonts): { fTitle: Font; fBold: Font; fExtra: Font } {
+  return { fTitle: parseFont(fonts.title), fBold: plainFont(fonts.bold), fExtra: plainFont(fonts.extra) };
+}
+
+/** Inclinação do título (faixas e pílula): −4° em torno de (330, 520). */
+export const TITLE_DEG = -4;
+export const TITLE_PIVOT: [number, number, number] = [330, 520, TITLE_DEG];
+export const PILL_H = 84;
+
+/** Quadro 1080×1920 com o fundo (curvas e base amarelas), a foto no círculo (ou o círculo amarelo) e a logo no alto. */
+export async function drawBackdrop(images: ImageService, photo: Uint8Array | null, logoBytes: Uint8Array | null): Promise<Img> {
   const cv = images.blank(STORY_W, STORY_H, toInt(PAPER));
 
   // Fundo: curvas amarelas no canto de cima e a base amarela.
@@ -191,8 +230,8 @@ export async function composeBaseArt(
   const PC = { x: 860, y: 430, r: 470 };
   disc(cv, PC.x, PC.y, PC.r + 34, YELLOW);
   disc(cv, PC.x - 6, PC.y + 4, PC.r + 14, PAPER);
-  if (i.photo) {
-    const ph = await images.read(i.photo);
+  if (photo) {
+    const ph = await images.read(photo);
     ph.cover({ w: PC.r * 2, h: PC.r * 2 });
     const d = ph.bitmap.data as Uint8Array;
     const n = PC.r * 2;
@@ -207,49 +246,45 @@ export async function composeBaseArt(
   }
 
   // Logo no alto, à esquerda, sobre um fundo claro para não brigar com a foto.
-  if (i.logo) {
-    const logo = await images.read(i.logo).catch(() => null);
+  if (logoBytes) {
+    const logo = await images.read(logoBytes).catch(() => null);
     if (logo) {
       logo.scaleToFit({ w: 380, h: 210 });
       rect(cv, 40, 140, logo.bitmap.width + 36, logo.bitmap.height + 28, PAPER, 0.94, 28);
       cv.composite(logo, 58, 154);
     }
   }
+  return cv;
+}
 
-  // Título em faixas inclinadas: VAGA (preto), a função (amarelo) e FREELANCER (pílula preta com o ícone).
-  const deg = -4;
-  const pv: [number, number, number] = [330, 520, deg];
-  const vagaSize = 104;
-  const vagaW = fTitle.getAdvanceWidth('VAGA', vagaSize);
-  brush(cv, 70, 392, vagaW + 110, 122, INK, pv[0], pv[1], deg);
-  text(cv, fTitle, 'VAGA', vagaSize, 70 + 55, 392 + 100, WHITE, { rot: pv });
-
-  // Função: numa linha enquanto couber com letra grande; senão em duas, um pouco menores (e os cartões descem junto).
-  const roleText = f.funcao.toUpperCase();
+/** Função/cargo em pincelada amarela: numa linha enquanto couber com letra grande; senão em duas, menores. Devolve o topo da pílula. */
+export function drawRole(cv: Img, fTitle: Font, value: string): { pillTop: number } {
+  const roleText = value.toUpperCase();
   const oneLine = fitWrapped(fTitle, roleText, 860, { start: 92, floor: 64, maxLines: 1 });
   const role = oneLine.size >= 64 ? oneLine : fitWrapped(fTitle, roleText, 820, { start: 76, floor: 46, maxLines: 2 });
   const roleLine = role.size * 1.04;
   const roleW = Math.max(...role.lines.map((l) => fTitle.getAdvanceWidth(l, role.size)));
   const roleH = Math.round(role.lines.length * roleLine + 26);
   const roleTop = 516;
-  brush(cv, 36, roleTop, roleW + 84, roleH, YELLOW, pv[0], pv[1], deg);
-  role.lines.forEach((l, k) => text(cv, fTitle, l, role.size, 36 + 42, roleTop + 12 + role.size * 0.82 + k * roleLine, INK, { rot: pv }));
+  brush(cv, 36, roleTop, roleW + 84, roleH, YELLOW, TITLE_PIVOT[0], TITLE_PIVOT[1], TITLE_DEG);
+  role.lines.forEach((l, k) => text(cv, fTitle, l, role.size, 36 + 42, roleTop + 12 + role.size * 0.82 + k * roleLine, INK, { rot: TITLE_PIVOT }));
+  return { pillTop: roleTop + roleH + 10 };
+}
 
-  const pillTop = roleTop + roleH + 10;
-  const flSize = 58;
-  const flW = fTitle.getAdvanceWidth('FREELANCER', flSize);
-  const pillH = 84;
+/** Pílula inclinada (texto de largura `textW`) na cor `fill`, com o disco branco do ícone; `drawIcon` recebe o centro do disco. */
+export function drawPill(cv: Img, pillTop: number, textW: number, fill: RGB, drawIcon: (cx: number, cy: number) => void): void {
+  const pillH = PILL_H;
   const pillPts: Pt[] = [];
-  for (let k = 0; k <= 16; k++) pillPts.push([70 + 86 + flW + 34 - pillH / 2 + (pillH / 2) * Math.cos(-Math.PI / 2 + (k / 16) * Math.PI), pillTop + pillH / 2 + (pillH / 2) * Math.sin(-Math.PI / 2 + (k / 16) * Math.PI)]);
+  for (let k = 0; k <= 16; k++) pillPts.push([70 + 86 + textW + 34 - pillH / 2 + (pillH / 2) * Math.cos(-Math.PI / 2 + (k / 16) * Math.PI), pillTop + pillH / 2 + (pillH / 2) * Math.sin(-Math.PI / 2 + (k / 16) * Math.PI)]);
   for (let k = 0; k <= 16; k++) pillPts.push([70 + pillH / 2 + (pillH / 2) * Math.cos(Math.PI / 2 + (k / 16) * Math.PI), pillTop + pillH / 2 + (pillH / 2) * Math.sin(Math.PI / 2 + (k / 16) * Math.PI)]);
-  fillPolys(cv, [rot(pillPts, pv[0], pv[1], deg)], INK);
-  const [icx, icy] = rot([[70 + pillH / 2, pillTop + pillH / 2]], pv[0], pv[1], deg)[0]!;
+  fillPolys(cv, [rot(pillPts, TITLE_PIVOT[0], TITLE_PIVOT[1], TITLE_DEG)], fill);
+  const [icx, icy] = rot([[70 + pillH / 2, pillTop + pillH / 2]], TITLE_PIVOT[0], TITLE_PIVOT[1], TITLE_DEG)[0]!;
   disc(cv, icx, icy, 30, WHITE);
-  icon(cv, 'person', icx, icy + 2, 26, INK, WHITE, fTitle);
-  text(cv, fTitle, 'FREELANCER', flSize, 70 + 86, pillTop + pillH / 2 + flSize * 0.36, WHITE, { rot: pv });
+  drawIcon(icx, icy);
+}
 
-  // Cartões: a pilha ocupa a faixa CARDS_TOP–CARDS_BOTTOM; com menos cartões, eles crescem (até 1,3×).
-  const cards = cardsOf(f);
+/** Cartões: a pilha ocupa a faixa `cardsTop`–CARDS_BOTTOM; com menos cartões, eles crescem (até 1,3×). */
+export function drawCards(cv: Img, cards: Card[], cardsTop: number, fBold: Font, fExtra: Font): void {
   const GAP = 14;
   const X0 = 40;
   const ICON_R = 52;
@@ -257,12 +292,14 @@ export async function composeBaseArt(
   const cardW = STORY_W - 40 - cardX;
   const textX = X0 + ICON_R * 2 + 22;
   const textW = STORY_W - 40 - 28 - textX;
+  // Fonte do valor: Inter Bold nos textos longos (`lines === 3`, ou `bold`), Inter ExtraBold no resto.
+  const fontOf = (col: CardCol) => (col.bold || col.lines === 3 ? fBold : fExtra);
   const layout = (k: number) => {
     const rows = cards.map((c) => {
       const colW = c.cols.length > 1 ? (textW - 30) / 2 : textW;
       const cols = c.cols.map((col) => {
-        const start = (col.big ? 64 : col.lines === 3 ? 30 : 42) * k;
-        const fit = fitWrapped(col.lines === 3 ? fBold : fExtra, col.value, colW, { start, floor: start * 0.62, maxLines: col.lines ?? 1 });
+        const start = (col.start ?? (col.big ? 64 : col.lines === 3 ? 30 : 42)) * k;
+        const fit = fitWrapped(fontOf(col), col.value, colW, { start, floor: start * 0.62, maxLines: col.lines ?? 1 });
         return { ...col, fit, colW };
       });
       const label = 25 * k;
@@ -273,7 +310,6 @@ export async function composeBaseArt(
     });
     return { rows, total: rows.reduce((a, r) => a + r.h, 0) + GAP * (rows.length - 1) };
   };
-  const cardsTop = Math.max(CARDS_TOP, pillTop + pillH + 40);
   const room = CARDS_BOTTOM - cardsTop;
   let k = 1.3;
   let L = layout(k);
@@ -296,30 +332,26 @@ export async function composeBaseArt(
       if (ci > 0) rect(cv, x - 16, y + 14, 3, h - 28, YELLOW, 1);
       const top = y + 16 * k;
       text(cv, fBold, col.label, r.label, x, top + r.label * 0.8, INK);
-      const font = col.lines === 3 ? fBold : fExtra;
+      const font = fontOf(col);
       col.fit.lines.forEach((l, li) => text(cv, font, l, col.fit.size, x, top + r.label + 8 * k + col.fit.size * 0.82 + li * col.fit.size * 1.14, INK));
     });
     y += h + GAP;
   }
+}
 
-  if (i.qr) {
-    await footerWithQr(images, cv, i.qr, i.badges, fBold, fExtra);
-    return images.encode(cv, false, 92);
-  }
-
-  // Rodapé preto com a chamada e os selos oficiais (só redimensionados).
+/** Rodapé preto com a chamada e os selos oficiais (só redimensionados); com `qr`, o rodapé com o QR da vaga. */
+export async function drawFooter(images: ImageService, cv: Img, qr: QrPlan | null, badges: Badges, fBold: Font, fExtra: Font): Promise<void> {
+  if (qr) return footerWithQr(images, cv, qr, badges, fBold, fExtra);
   rect(cv, 40, FOOT_TOP, STORY_W - 80, FOOT_H, INK, 1, 40);
   text(cv, fExtra, FOOTER_LINE1, 44, 76, FOOT_TOP + 78, YELLOW);
   text(cv, fBold, FOOTER_LINE2, 28, 76, FOOT_TOP + 128, WHITE);
-  const gp = await images.read(i.badges.googlePlay);
-  const as = await images.read(i.badges.appStore);
+  const gp = await images.read(badges.googlePlay);
+  const as = await images.read(badges.appStore);
   gp.resize({ h: 64 });
   as.resize({ h: 64 });
   const bx = STORY_W - 76 - Math.max(gp.bitmap.width, as.bitmap.width);
   cv.composite(gp, bx, FOOT_TOP + 22);
   cv.composite(as, bx, FOOT_TOP + 22 + 64 + 22);
-
-  return images.encode(cv, false, 92);
 }
 
 /**
