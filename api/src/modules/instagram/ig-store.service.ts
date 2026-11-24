@@ -233,6 +233,8 @@ export class IgStore {
   /** Token expirado: pausa planos, marca a conta com erro, suspende a fila e avisa. */
   async handleTokenExpired(workspaceId: string, message: string) {
     await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { status: 'error', last_error: message } });
+    // R2: o bloqueio guarda o motivo `token` (a faixa vermelha diz "reconecte"); só a reconexão fecha. O evento é o de baixo.
+    await this.openPublishBlock(workspaceId, 'token', message, { silent: true });
     await this.prisma.ig_content_plans.updateMany({ where: { workspace_id: workspaceId, status: 'active' }, data: { status: 'paused' } });
     await this.prisma.publishing_jobs.updateMany({
       where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending' },

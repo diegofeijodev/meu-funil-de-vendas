@@ -31,3 +31,27 @@ export function nextCheckDelay(failures: number): number {
   const i = Math.min(Math.max(failures, 1), CHECK_DELAYS_H.length) - 1;
   return CHECK_DELAYS_H[i]! * H;
 }
+
+/** "20/11 às 8h30" / "20/11 às 8h" no horário de Brasília (textos gravados: sempre dia e hora absolutos). */
+export function dayHourSp(d: Date): string {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hourCycle: 'h23', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return `${p['day']}/${p['month']} às ${Number(p['hour'])}h${p['minute'] === '00' ? '' : p['minute']}`;
+}
+
+/** R4/V3 — post adiado pelo bloqueio que passou do horário em mais de 12 h. */
+export const blockedOverdueMessage = (since: Date, now: Date) =>
+  `Não foi publicado: a Meta recusou as publicações desta empresa entre ${dayHourSp(since)} e ${dayHourSp(now)}.`;
+
+/**
+ * Até quando um job adiado pelo bloqueio espera: a próxima conferência, entre 5 e 60 min a partir de agora (a fila volta a olhar no máximo
+ * a cada hora; conferência já vencida não faz o job girar a cada rodada).
+ */
+export function blockedRunAt(nextCheckAt: Date | null, now: Date): Date {
+  const min = now.getTime() + 5 * 60e3;
+  const cap = now.getTime() + 60 * 60e3;
+  return new Date(nextCheckAt ? Math.min(Math.max(nextCheckAt.getTime(), min), cap) : cap);
+}

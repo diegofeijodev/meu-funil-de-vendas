@@ -1,11 +1,11 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { UserError } from '../media/user-error';
-import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
+import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, PUBLISH_BLOCKED_MSG, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
 import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
-import { MetaError, MetaGraphClient } from './meta-graph';
-import { toPublishError } from './publish-block';
+import { MetaError, MetaGraphClient, PublishPermissionError } from './meta-graph';
+import { blockedOverdueMessage, blockedRunAt, toPublishError } from './publish-block';
 import { dateIssues } from './content-strategy';
 import { normalizeHashtags } from './normalize';
 import { CAMPAIGN_FINISHED } from '../campaigns/campaign-labels';
@@ -280,6 +280,12 @@ export class PublishingService implements OnModuleInit {
     if (jobId) lease.afterRenew = () => this.prisma.publishing_jobs.updateMany({ where: { id: jobId, status: 'running' }, data: { locked_at: new Date() } });
     try {
       return await this.publishInner(postId, { ...post, status: post.status }, lease);
+    } catch (e) {
+      // R2/R3: a Meta recusou por permissão → abre (ou mantém) o bloqueio da empresa, nos dois caminhos (fila e "Publicar agora").
+      if (e instanceof PublishPermissionError) {
+        await this.store.openPublishBlock(post.workspace_id, 'permission', errText(e)).catch((err) => this.logger.error(`[instagram] bloqueio não gravado (${post.workspace_id}): ${errText(err)}`));
+      }
+      throw e;
     } finally {
       await lease.release();
     }
@@ -474,6 +480,8 @@ export class PublishingService implements OnModuleInit {
       last_error: null,
       failure_kind: null,
     });
+    // R9: uma publicação que deu certo é a prova de que a Meta voltou a aceitar (fecha o bloqueio e zera as falhas).
+    await this.store.closePublishBlock(ws, 'publish').catch((e) => this.logger.error(`[instagram] bloqueio não fechado (${ws}): ${errText(e)}`));
     return { ok: true, sandbox: false, permalink: info.permalink ?? null };
   }
 
@@ -498,6 +506,47 @@ export class PublishingService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * R4 — empresas com o bloqueio aberto: os jobs vencidos delas são adiados EM LOTE antes de escolher os 4 da rodada (uma empresa bloqueada
+   * nunca ocupa a vez das outras, R11), sem chamar a Meta e sem gastar tentativa. O post continua agendado no mesmo horário, com o aviso;
+   * passou do horário em mais de 12 h → job e post `failed` com o motivo (V3).
+   */
+  private async deferBlocked(now: Date): Promise<Set<string>> {
+    const blocked = await this.prisma.instagram_accounts.findMany({
+      where: { publish_block_reason: { not: null } },
+      select: { workspace_id: true, publish_next_check_at: true, publish_blocked_at: true },
+    });
+    for (const b of blocked) {
+      const jobs = await this.prisma.publishing_jobs.findMany({
+        where: { workspace_id: b.workspace_id, channel: 'instagram_organic', status: 'pending', run_at: { lte: now } },
+        select: { id: true, ig_post_id: true, log: true },
+      });
+      for (const job of jobs) await this.deferJob(job, b, now);
+    }
+    return new Set(blocked.map((b) => b.workspace_id));
+  }
+
+  /** Adia um job de empresa bloqueada (ou o encerra, se o post passou do horário em mais de 12 h). Condicional: só job ainda `pending`. */
+  private async deferJob(
+    job: { id: string; ig_post_id: string | null; log: string | null },
+    b: { workspace_id: string; publish_next_check_at: Date | null; publish_blocked_at: Date | null },
+    now: Date,
+  ) {
+    const post = job.ig_post_id ? await this.prisma.ig_posts.findFirst({ where: { id: job.ig_post_id, workspace_id: b.workspace_id }, select: { id: true, status: true, scheduled_at: true, plan_id: true } }) : null;
+    const line = (t: string) => `${job.log ?? ''}\n[${now.toISOString()}] ${t}`.trim();
+    if (post?.scheduled_at && now.getTime() - post.scheduled_at.getTime() > OVERDUE_MS) {
+      const msg = blockedOverdueMessage(b.publish_blocked_at ?? post.scheduled_at, now);
+      const got = await this.prisma.publishing_jobs.updateMany({ where: { id: job.id, status: 'pending' }, data: { status: 'failed', locked_at: null, log: line(msg) } });
+      if (!got.count) return;
+      await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: { in: ['scheduled', 'publishing'] } }, data: { status: 'failed', last_error: msg, failure_kind: 'publish', ig_creation_id: null } });
+      await this.store.logEvent({ workspace_id: b.workspace_id, plan_id: post.plan_id, post_id: post.id, kind: 'failure', level: 'error', message: msg });
+      return;
+    }
+    const runAt = blockedRunAt(b.publish_next_check_at, now);
+    const got = await this.prisma.publishing_jobs.updateMany({ where: { id: job.id, status: 'pending' }, data: { run_at: runAt, log: line(`adiado: a Meta está recusando as publicações desta empresa (até ${hhmmSp(runAt)}).`) } });
+    if (got.count && post) await this.prisma.ig_posts.updateMany({ where: { id: post.id, status: 'scheduled' }, data: { last_error: PUBLISH_BLOCKED_MSG } });
+  }
+
   async runPublishingQueue() {
     const now = new Date();
     // Libera travas antigas (execução interrompida).
@@ -507,17 +556,25 @@ export class PublishingService implements OnModuleInit {
     });
     // Posts presos em `publishing` (processo morto, sem job para retomar) → failed com aviso.
     await this.sweepStalePublishing().catch((e) => this.logger.error(`[instagram] varredor de publicação falhou: ${errText(e)}`));
+    const blockedWs = await this.deferBlocked(now);
     const jobs = await this.prisma.publishing_jobs.findMany({
-      where: { channel: 'instagram_organic', status: 'pending', run_at: { lte: now } },
+      where: { channel: 'instagram_organic', status: 'pending', run_at: { lte: now }, ...(blockedWs.size ? { workspace_id: { notIn: [...blockedWs] } } : {}) },
       orderBy: { run_at: 'asc' },
       // Poucos por execução: cada publicação pode levar até ~40 s de processamento na Meta.
       take: 4,
-      select: { id: true, ig_post_id: true, attempts: true, log: true },
+      select: { id: true, workspace_id: true, ig_post_id: true, attempts: true, log: true },
     });
 
     const results: { job: string; status: string; error?: string }[] = [];
     // `updateMany` nas marcações do job: job (ou empresa, "Apagar empresa") que sumiu no meio não derruba os outros desta rodada.
     for (const job of jobs) {
+      // R4: a empresa ficou bloqueada nesta rodada (job anterior dela recusado) → adia sem chamar a Meta.
+      if (blockedWs.has(job.workspace_id)) {
+        const b = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: job.workspace_id }, select: { workspace_id: true, publish_next_check_at: true, publish_blocked_at: true } });
+        if (b) await this.deferJob(job, b, now);
+        results.push({ job: job.id, status: 'blocked' });
+        continue;
+      }
       // Lock otimista: só segue se ninguém pegou antes.
       const locked = await this.prisma.publishing_jobs.updateMany({
         where: { id: job.id, status: 'pending' },
@@ -555,6 +612,21 @@ export class PublishingService implements OnModuleInit {
             data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: new Date(Date.now() + 2 * 60e3), log: logWith(msg) },
           });
           results.push({ job: job.id, status: 'processing' });
+          continue;
+        }
+        if (e instanceof PublishPermissionError) {
+          // R3: o bloqueio já foi aberto em `publishInstagramPost`. Nada foi publicado: o job volta para a fila sem gastar tentativa (na próxima
+          // conferência, no máximo em 1 h) e o post volta para a agenda NO MESMO horário, com o aviso.
+          blockedWs.add(job.workspace_id);
+          const acc = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: job.workspace_id }, select: { publish_next_check_at: true } });
+          const runAt = blockedRunAt(acc?.publish_next_check_at ?? null, new Date());
+          await this.prisma.publishing_jobs.updateMany({
+            where: { id: job.id },
+            data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: runAt, log: logWith(msg) },
+          });
+          if (job.ig_post_id) await this.prisma.ig_posts.updateMany({ where: { id: job.ig_post_id, status: 'publishing' }, data: { status: 'scheduled', last_error: PUBLISH_BLOCKED_MSG, ig_creation_id: null } });
+          this.logger.warn(`[instagram] post ${job.ig_post_id}: a Meta recusou por permissão (${msg}); publicação parada nesta empresa.`);
+          results.push({ job: job.id, status: 'blocked', error: msg });
           continue;
         }
         if (e instanceof OriginUnavailable) {

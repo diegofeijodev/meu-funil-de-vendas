@@ -7,7 +7,8 @@ import { AutoCalendarService } from './auto-calendar.service';
 import { AutopilotService } from './autopilot.service';
 import { ContentService } from './content.service';
 import { ApproveAutoStrategyDto, CreateAutoCalendarDto, GenerateNextAutoMediaDto, PreviewAutoCalendarDto } from './instagram.dto';
-import { Engine } from './ig-types';
+import { Engine, PUBLISH_BLOCKED_MSG } from './ig-types';
+import { PublishPermissionError } from './meta-graph';
 import { ClaimRefused, IgStore, OriginUnavailable, PublishClaimLost, errText } from './ig-store.service';
 import { MediaGenerationService } from './media-generation.service';
 import { MetricsService } from './metrics.service';
@@ -151,6 +152,16 @@ export class InstagramActionsService {
         // Fonte da origem fora do ar antes de criar o container: o post volta ao status de antes (o claim o pôs em "publishing").
         await this.store.prisma.ig_posts.updateMany({ where: { id: postId, workspace_id: workspaceId, status: 'publishing' }, data: { status: before.status } });
         return { ok: false as const, sandbox: false, error: ORIGIN_UNAVAILABLE_MSG };
+      }
+      if (e instanceof PublishPermissionError) {
+        // R3: o bloqueio já foi aberto e o erro da Meta vai para o toast. Não há job (o claim cancelou os pendentes), então nada fica
+        // "agendado" sem job: story de vaga e post da programação voltam para "pronto" (a agenda os retoma quando o bloqueio fechar);
+        // post manual termina "falhou" com o motivo, e quem clicou publica de novo depois.
+        const auto = before.source === 'vacancy' || !!before.run_id;
+        await this.store.patchPost(postId, auto
+          ? { status: 'ready', last_error: PUBLISH_BLOCKED_MSG, ig_creation_id: null }
+          : { status: 'failed', last_error: PUBLISH_BLOCKED_MSG, failure_kind: 'publish', ig_creation_id: null });
+        return { ok: false as const, sandbox: false, error: msg };
       }
       await this.store.patchPost(postId, { status: 'failed', last_error: msg, failure_kind: 'publish' });
       return { ok: false as const, sandbox: false, error: msg };
