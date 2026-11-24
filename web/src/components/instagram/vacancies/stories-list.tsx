@@ -13,6 +13,7 @@ import {
   Hourglass,
   Loader2,
   MinusCircle,
+  PauseCircle,
   Radio,
   ThumbsUp,
   XCircle,
@@ -39,6 +40,9 @@ const SITUATION: Record<VacancyStory["display"], { icon: LucideIcon; tone: strin
   generating: { icon: Loader2, tone: "text-primary", spin: true },
   waiting_window: { icon: CalendarClock, tone: "text-muted-foreground" },
   waiting_cap: { icon: Hourglass, tone: "text-muted-foreground" },
+  // Pausa ≠ relógio: "não sai até alguém consertar" (UI 24/11 §1.7).
+  paused: { icon: PauseCircle, tone: "text-warning" },
+  paused_ready: { icon: PauseCircle, tone: "text-warning" },
   to_approve: { icon: ThumbsUp, tone: "text-warning" },
   ready: { icon: CheckCircle2, tone: "text-success" },
   live: { icon: Radio, tone: "text-success" },

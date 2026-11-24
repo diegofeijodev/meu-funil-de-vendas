@@ -548,3 +548,13 @@ describe('Estilo da foto nos Ajustes', () => {
     expect(photoStyleTexts({ style_brand: null, style_refs_in_use: 0 })).toMatchObject({ option: null, noBrand: 'As vagas ainda não estão ligadas a uma marca. Envie a arte modelo e a marca entra sozinha.' });
   });
 });
+
+import { pausedNotice } from './vacancy-stories';
+
+describe('publicação parada no cartão de situação (UI 24/11 §1.7)', () => {
+  it('desde quando, em Brasília', () => {
+    expect(pausedNotice('2026-11-20T11:30:00Z')).toBe(
+      'Pausado: o Instagram não está aceitando publicações desde 20/11 às 8h30. As vagas esperam aqui e ganham arte quando ele voltar.',
+    );
+  });
+});

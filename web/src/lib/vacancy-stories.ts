@@ -638,3 +638,8 @@ export function photoStyleTexts(s: { style_brand: { id: string; name: string } |
     brandId: brand.id,
   };
 }
+
+/** Aviso do cartão de situação com a publicação parada (UI 24/11 §1.7). */
+export function pausedNotice(sinceIso: string): string {
+  return `Pausado: o Instagram não está aceitando publicações desde ${dmLabel(sinceIso)} às ${hhLabel(sinceIso)}. As vagas esperam aqui e ganham arte quando ele voltar.`;
+}

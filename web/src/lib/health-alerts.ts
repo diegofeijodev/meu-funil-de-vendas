@@ -16,7 +16,20 @@ export type AiCreditAlert = {
 
 export type InstagramFailAlert = { failed_count: number; last_error: string | null; last_at: string; permission: boolean };
 
-export type HealthAlerts = { ai: AiCreditAlert | null; instagram: InstagramFailAlert | null };
+/** Bloqueio de publicação aberto (contrato §30, 24/11/2026): a Meta recusa as publicações desta empresa. */
+export type PublishingAlert = {
+  reason: "permission" | "token";
+  since: string;
+  last_at: string;
+  message: string | null;
+  next_check_at: string | null;
+  waiting: { posts: number; vacancies: number };
+  /** `log_only` = a conferência só registra (o bloqueio sai com a reconexão ou com uma publicação que deu certo). */
+  probe: "active" | "log_only";
+  username: string | null;
+};
+
+export type HealthAlerts = { ai: AiCreditAlert | null; instagram: InstagramFailAlert | null; publishing?: PublishingAlert | null };
 
 const TZ = "America/Sao_Paulo";
 const LABEL: Record<AiVendor, string> = { openai: "ChatGPT (OpenAI)", gemini: "Gemini (Google)" };
@@ -105,7 +118,10 @@ function stoppedClauses(vendors: AiCreditAlert["vendors"]): string {
  * Faixa da IA. `stopped`: nada novo é criado — vermelho com falta de saldo; amarelo quando é só a cota de hoje (volta sozinha).
  * `partial` (amarelo): sobra um caminho (o outro provedor, ou o gateway do app — que não conferimos, então o texto não afirma).
  */
-export function aiAlertText(ai: AiCreditAlert, opts: { vacancyStories?: boolean } = {}): AiAlertText {
+/** UI §1.6: com a publicação parada, "o que já estava pronto continua sendo publicado" seria falso. */
+const PUBLISHING_ALSO_STOPPED = "A publicação também está parada: veja o aviso acima.";
+
+export function aiAlertText(ai: AiCreditAlert, opts: { vacancyStories?: boolean; publishingBlocked?: boolean } = {}): AiAlertText {
   const vendors = ai.vendors;
   const onlyDaily = vendors.every((v) => v.reason === "daily_limit");
   const links = vendors.map((v) => ({ vendor: v.vendor, ...CREDIT_LINKS[v.vendor] }));
@@ -119,7 +135,7 @@ export function aiAlertText(ai: AiCreditAlert, opts: { vacancyStories?: boolean 
       title: onlyDaily ? "Sua IA chegou ao limite de uso de hoje" : "Sua IA está sem créditos",
       body:
         `Desde ${since}, ${stoppedClauses(vendors)}.${onlyDaily ? ` ${DAILY_BACK}` : ""} ` +
-        `Enquanto isso, nada novo é criado: ${aiStopsList(opts)}. O que já estava pronto e agendado continua sendo publicado.`,
+        `Enquanto isso, nada novo é criado: ${aiStopsList(opts)}. ${opts.publishingBlocked ? PUBLISHING_ALSO_STOPPED : "O que já estava pronto e agendado continua sendo publicado."}`,
       inherited,
       links,
       testVendors,
@@ -181,4 +197,119 @@ export function instagramAlertText(ig: InstagramFailAlert): InstagramAlertText {
   const lastIsPermission = PERMISSION_RE.test(ig.last_error ?? "");
   const reason = ig.permission && lastIsPermission ? null : shortReason(ig.last_error);
   return { title, reason: reason ? `Último motivo: ${reason}` : null, permission: ig.permission ? META_PERMISSION_HELP : null };
+}
+
+// ------------------------------------------------------------------ publicação parada (UI 24/11 §1)
+
+/** "8h30" / "8h" no horário de Brasília. */
+export function hourSp(iso: string): string {
+  const p = parts(iso);
+  return `${Number(p.hour)}h${p.minute === "00" ? "" : p.minute}`;
+}
+
+const dayKey = (iso: string) => {
+  const p = parts(iso);
+  return `${p.day}/${p.month}`;
+};
+const plusDays = (iso: string, n: number) => new Date(new Date(iso).getTime() + n * 86400e3).toISOString();
+
+/** "hoje às 9h30" · "amanhã às 8h30" · "26/11 às 8h30". */
+export function whenSp(iso: string, now: Date): string {
+  const today = now.toISOString();
+  if (dayKey(iso) === dayKey(today)) return `hoje às ${hourSp(iso)}`;
+  if (dayKey(iso) === dayKey(plusDays(today, 1))) return `amanhã às ${hourSp(iso)}`;
+  return `${dayKey(iso)} às ${hourSp(iso)}`;
+}
+
+/** "Desde as 8h30" (hoje) · "Desde 20/11 às 8h30". */
+export function sinceSp(iso: string, now: Date): string {
+  return dayKey(iso) === dayKey(now.toISOString()) ? `Desde as ${hourSp(iso)}` : `Desde ${dayKey(iso)} às ${hourSp(iso)}`;
+}
+
+const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+const WAIT_TAIL = "o que perder o prazo é cancelado com o motivo.";
+
+/** O que espera: "3 posts e 7 vagas esperam aqui; …" (singular, plural e zero). */
+export function waitingText(w: PublishingAlert["waiting"]): string {
+  const { posts, vacancies } = w;
+  if (!posts && !vacancies) return "Nada está esperando agora.";
+  if (posts && vacancies) return `${n(posts, "post", "posts")} e ${n(vacancies, "vaga", "vagas")} esperam aqui; ${WAIT_TAIL}`;
+  if (posts) return `${posts === 1 ? "1 post espera" : `${posts} posts esperam`} aqui; ${WAIT_TAIL}`;
+  return `${vacancies === 1 ? "1 vaga espera" : `${vacancies} vagas esperam`} aqui; ${WAIT_TAIL}`;
+}
+
+export const PUBLISHING_TITLE = "O Instagram parou de aceitar as publicações";
+/** Âncora da faixa de publicação parada: o "Ver como resolver" da aba Vagas rola até ela e abre os passos (evento abaixo). */
+export const PUBLISHING_ALERT_ID = "publishing-alert";
+export const OPEN_PUBLISHING_STEPS = "mf:open-publishing-steps";
+export const PUBLISH_TEST_LABEL = "Já corrigi — testar agora";
+export const PUBLISH_RECONNECT_LABEL = "Já corrigi — reconectar o Instagram";
+export const PUBLISH_TESTING = "Testando com a Meta…";
+export const META_SYSTEM_USERS_URL = "https://business.facebook.com/settings/system-users";
+
+export type PublishingAlertText = {
+  /** `log_only` = estado E da UI (o botão leva à reconexão). */
+  mode: "permission" | "token" | "log_only";
+  title: string;
+  body: string;
+  /** Linha da conferência automática; null = não aparece (token, só registro ou sem horário). */
+  nextCheck: string | null;
+  steps: string[];
+  intro: string;
+  note: string;
+};
+
+/** Texto da faixa vermelha (UI §1.3–§1.4). */
+export function publishingAlertText(p: PublishingAlert, now: Date): PublishingAlertText {
+  const who = p.username ? `@${p.username}` : "Instagram desta empresa";
+  const since = sinceSp(p.since, now);
+  const wait = waitingText(p.waiting);
+  const logOnly = p.reason === "permission" && p.probe === "log_only";
+  const mode = p.reason === "token" ? "token" : logOnly ? "log_only" : "permission";
+  const body =
+    p.reason === "token"
+      ? `${since}, o acesso do Meu Funil ao ${who} venceu ou foi trocado. Reconecte o Instagram para voltar a publicar. ${wait}`
+      : `${since}, a Meta recusa tudo o que o Meu Funil tenta publicar no ${who}, por falta de permissão. ${wait} Nenhuma arte nova de vaga é criada até voltar.`;
+  let nextCheck: string | null = null;
+  if (mode === "permission" && p.next_check_at) {
+    nextCheck = new Date(p.next_check_at).getTime() <= now.getTime()
+      ? "Também conferimos sozinhos. Próxima conferência: nos próximos minutos."
+      : `Também conferimos sozinhos. Próxima conferência: ${whenSp(p.next_check_at, now)}.`;
+  }
+  return {
+    mode,
+    title: PUBLISHING_TITLE,
+    body,
+    nextCheck,
+    intro: "Faça no computador, com a conta que administra o Meta Business do Freela:",
+    steps: [
+      "Abra Usuários do sistema no Gerenciador de Negócios da Meta.",
+      `Escolha o usuário do sistema do Meu Funil → Atribuir ativos → Contas do Instagram → ${who}. Ligue Controle total e salve.`,
+      "No mesmo usuário, toque em Gerar token. Escolha o app do Meu Funil, validade Nunca, e marque instagram_content_publish junto com as que já estavam marcadas. Copie o token.",
+      // P18: "Salvar credenciais" pede os 5 campos (não dá para trocar só o token).
+      "No Meu Funil, abra Integrações → Meta Ads (API oficial), cole o token novo em “Token do usuário do sistema”, preencha os outros campos (ID do app, chave secreta, conta de anúncios e Página) e toque em Salvar credenciais.",
+      logOnly ? `Volte aqui e toque em ${PUBLISH_RECONNECT_LABEL}.` : `Volte aqui e toque em ${PUBLISH_TEST_LABEL}.`,
+    ],
+    note: "instagram_content_publish não aparece na lista do passo 3? O app da Meta ainda não tem essa permissão. Fale com quem criou o app (Painel de apps → Permissões).",
+  };
+}
+
+export const PUBLISH_BACK = {
+  title: "A permissão de publicar voltou",
+  body: "Os posts que esperavam começam a sair nos próximos minutos, cada um no seu horário, e as vagas voltam a ganhar arte em até 10 minutos. Quando o 1º for ao ar, está confirmado. Se a Meta recusar de novo, o aviso vermelho volta.",
+};
+export const PUBLISH_TEST_ERROR = `Não conseguimos testar agora. Verifique a conexão e toque em ${PUBLISH_TEST_LABEL} de novo.`;
+export const PUBLISH_VIEWER_NOTE = "Só quem pode editar nesta empresa testa a correção. Mostre estes passos a quem administra o Meta Business do Freela.";
+export const PUBLISH_TOKEN_NOTE = "Isso não volta sozinho: só a reconexão resolve.";
+
+/** "Testado às 9h12: … teste de novo a partir das 9h13." (o botão espera 60 s, o limite da API). */
+export function stillBlockedText(testedAt: Date): string {
+  const at = testedAt.toISOString();
+  return `Testado às ${hourSp(at)}: a Meta ainda não deu a permissão de publicar. Confira os passos 2 e 3 e teste de novo a partir das ${hourSp(new Date(testedAt.getTime() + 60_000).toISOString())}.`;
+}
+
+/** R10: com a publicação parada por permissão, a faixa amarela dos posts que falharam é o mesmo fato e não aparece. */
+export function showInstagramFailAlert(a: HealthAlerts): boolean {
+  if (!a.instagram) return false;
+  return !(a.publishing && a.publishing.reason === "permission" && a.instagram.permission);
 }

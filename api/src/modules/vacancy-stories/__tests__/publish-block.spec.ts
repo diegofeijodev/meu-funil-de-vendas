@@ -165,3 +165,13 @@ describe('produção automática (R7): conta bloqueada conta como não conectada
     expect((await x.s.production.candidates()).map((c) => c.id)).toEqual([near.id]);
   });
 });
+
+describe('Ajustes das vagas mostram o bloqueio (§26 publishing_blocked)', () => {
+  it('aberto → { reason, since }; B não vê o de A', async () => {
+    const x = await setup();
+    expect((await w.settings.view(WS_A, NOW)).publishing_blocked).toBeNull();
+    await x.block(WS_A);
+    expect((await w.settings.view(WS_A, NOW)).publishing_blocked).toEqual({ reason: 'permission', since: SINCE });
+    expect((await w.settings.view(WS_B, NOW)).publishing_blocked).toBeNull();
+  });
+});

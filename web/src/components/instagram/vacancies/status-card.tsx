@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, CircleAlert } from "lucide-react";
+import { AlertTriangle, CircleAlert, PauseCircle } from "lucide-react";
 import { Link, useNavigate } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -31,6 +31,8 @@ import {
   staleNotice,
 } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
+import { OPEN_PUBLISHING_STEPS, PUBLISHING_ALERT_ID } from "@/lib/health-alerts";
+import { pausedNotice } from "@/lib/vacancy-stories";
 import {
   disableVacancies,
   enableVacancies,
@@ -38,8 +40,8 @@ import {
   type VacancySettings,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 
-function Notice({ tone, children, action }: { tone: "warn" | "error"; children: ReactNode; action?: ReactNode }) {
-  const Icon = tone === "error" ? CircleAlert : AlertTriangle;
+function Notice({ tone, children, action, icon }: { tone: "warn" | "error"; children: ReactNode; action?: ReactNode; icon?: typeof CircleAlert }) {
+  const Icon = icon ?? (tone === "error" ? CircleAlert : AlertTriangle);
   return (
     <div
       className={cn(
@@ -137,6 +139,27 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
       </div>
 
       <div className="space-y-2" aria-live="polite">
+        {/* Publicação parada (UI 24/11 §1.7): só no motivo permissão — no token, o aviso de "desconectado" já diz o motivo. */}
+        {s.enabled && s.publishing_blocked?.reason === "permission" && (
+          <Notice
+            tone="error"
+            icon={PauseCircle}
+            action={
+              <Button
+                variant="outline"
+                className="h-11"
+                onClick={() => {
+                  document.getElementById(PUBLISHING_ALERT_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  window.dispatchEvent(new Event(OPEN_PUBLISHING_STEPS));
+                }}
+              >
+                Ver como resolver
+              </Button>
+            }
+          >
+            {pausedNotice(s.publishing_blocked.since)}
+          </Notice>
+        )}
         {s.enabled && stale && <Notice tone="warn">{staleNotice(s, now)}</Notice>}
         {s.enabled && !s.instagram.connected && (
           <Notice

@@ -94,3 +94,84 @@ describe("auxiliares", () => {
     expect(aiStopsList()).toBe(LIST);
   });
 });
+
+import { hourSp, publishingAlertText, showInstagramFailAlert, sinceSp, stillBlockedText, waitingText, whenSp, type PublishingAlert } from "./health-alerts";
+
+describe("publicação parada (UI 24/11 §1.4)", () => {
+  const NOW = new Date("2026-11-20T15:00:00Z"); // 20/11 12h em Brasília
+  const base: PublishingAlert = {
+    reason: "permission", since: "2026-11-20T11:30:00Z", last_at: "2026-11-20T11:30:00Z", message: "(#10)", next_check_at: "2026-11-20T12:30:00Z",
+    waiting: { posts: 3, vacancies: 7 }, probe: "active", username: "freelaapp",
+  };
+
+  it("horas e dias em Brasília", () => {
+    expect(hourSp("2026-11-20T11:30:00Z")).toBe("8h30");
+    expect(hourSp("2026-11-20T11:00:00Z")).toBe("8h");
+    expect(sinceSp("2026-11-20T11:30:00Z", NOW)).toBe("Desde as 8h30");
+    expect(sinceSp("2026-11-19T11:30:00Z", NOW)).toBe("Desde 19/11 às 8h30");
+    expect(whenSp("2026-11-20T18:30:00Z", NOW)).toBe("hoje às 15h30");
+    expect(whenSp("2026-11-21T11:30:00Z", NOW)).toBe("amanhã às 8h30");
+    expect(whenSp("2026-11-26T11:30:00Z", NOW)).toBe("26/11 às 8h30");
+    // 21/11 01h30 UTC = 20/11 22h30 em Brasília (ainda hoje)
+    expect(whenSp("2026-11-21T01:30:00Z", NOW)).toBe("hoje às 22h30");
+  });
+
+  it("o que espera: singular, plural e zero", () => {
+    expect(waitingText({ posts: 0, vacancies: 0 })).toBe("Nada está esperando agora.");
+    expect(waitingText({ posts: 1, vacancies: 0 })).toBe("1 post espera aqui; o que perder o prazo é cancelado com o motivo.");
+    expect(waitingText({ posts: 3, vacancies: 0 })).toBe("3 posts esperam aqui; o que perder o prazo é cancelado com o motivo.");
+    expect(waitingText({ posts: 0, vacancies: 1 })).toBe("1 vaga espera aqui; o que perder o prazo é cancelado com o motivo.");
+    expect(waitingText({ posts: 1, vacancies: 7 })).toBe("1 post e 7 vagas esperam aqui; o que perder o prazo é cancelado com o motivo.");
+  });
+
+  it("permissão (modo ativo): corpo, conferência automática e passo 5", () => {
+    const t = publishingAlertText(base, NOW);
+    expect(t.mode).toBe("permission");
+    expect(t.title).toBe("O Instagram parou de aceitar as publicações");
+    expect(t.body).toBe(
+      "Desde as 8h30, a Meta recusa tudo o que o Meu Funil tenta publicar no @freelaapp, por falta de permissão. 3 posts e 7 vagas esperam aqui; o que perder o prazo é cancelado com o motivo. Nenhuma arte nova de vaga é criada até voltar.",
+    );
+    expect(t.nextCheck).toBe("Também conferimos sozinhos. Próxima conferência: nos próximos minutos.");
+    expect(publishingAlertText({ ...base, next_check_at: "2026-11-20T15:30:00Z" }, NOW).nextCheck).toBe("Também conferimos sozinhos. Próxima conferência: hoje às 12h30.");
+    expect(publishingAlertText({ ...base, next_check_at: null }, NOW).nextCheck).toBeNull();
+    expect(t.steps).toHaveLength(5);
+    expect(t.steps[1]).toBe("Escolha o usuário do sistema do Meu Funil → Atribuir ativos → Contas do Instagram → @freelaapp. Ligue Controle total e salve.");
+    expect(t.steps[4]).toBe("Volte aqui e toque em Já corrigi — testar agora.");
+  });
+
+  it("modo só registro (estado E): botão de reconectar, sem a linha da conferência", () => {
+    const t = publishingAlertText({ ...base, probe: "log_only" }, NOW);
+    expect(t.mode).toBe("log_only");
+    expect(t.nextCheck).toBeNull();
+    expect(t.steps[4]).toBe("Volte aqui e toque em Já corrigi — reconectar o Instagram.");
+  });
+
+  it("token: corpo próprio, sem conferência; sem username = 'Instagram desta empresa'", () => {
+    const t = publishingAlertText({ ...base, reason: "token", since: "2026-11-19T11:30:00Z", username: null, waiting: { posts: 1, vacancies: 0 } }, NOW);
+    expect(t.mode).toBe("token");
+    expect(t.body).toBe(
+      "Desde 19/11 às 8h30, o acesso do Meu Funil ao Instagram desta empresa venceu ou foi trocado. Reconecte o Instagram para voltar a publicar. 1 post espera aqui; o que perder o prazo é cancelado com o motivo.",
+    );
+    expect(t.nextCheck).toBeNull();
+  });
+
+  it("ainda bloqueado: hora do teste e a partir de quando testar de novo", () => {
+    expect(stillBlockedText(new Date("2026-11-20T12:12:30Z"))).toBe(
+      "Testado às 9h12: a Meta ainda não deu a permissão de publicar. Confira os passos 2 e 3 e teste de novo a partir das 9h13.",
+    );
+  });
+
+  it("R10: a faixa amarela some quando é o mesmo fato (permissão); com outro motivo, aparece", () => {
+    const ig = { failed_count: 2, last_error: "x", last_at: "2026-11-20T11:30:00Z", permission: true };
+    expect(showInstagramFailAlert({ ai: null, instagram: ig, publishing: base })).toBe(false);
+    expect(showInstagramFailAlert({ ai: null, instagram: { ...ig, permission: false }, publishing: base })).toBe(true);
+    expect(showInstagramFailAlert({ ai: null, instagram: ig, publishing: null })).toBe(true);
+    expect(showInstagramFailAlert({ ai: null, instagram: null, publishing: base })).toBe(false);
+  });
+
+  it("faixa da IA com a publicação parada não promete publicar", () => {
+    const t = aiAlertText({ level: "stopped", fallback: null, inherited_from: null, vendors: [o("2026-11-02T00:00:00Z")] }, { publishingBlocked: true });
+    expect(t.body.endsWith("A publicação também está parada: veja o aviso acima.")).toBe(true);
+    expect(t.body).not.toMatch(/continua sendo publicado/);
+  });
+});

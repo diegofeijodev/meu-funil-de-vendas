@@ -792,6 +792,7 @@ antecedência 120 min, OpenAI):
   today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
   ai_error: string | null, ai_error_at: string | null, preview: PreviewState | {} /* {} = nunca gerou; ver abaixo */,
+  publishing_blocked: { reason: "permission" | "token", since: string } | null /* 24/11/2026: bloqueio de publicação aberto (§22.6); o cartão diz "Pausado" */,
   recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
   week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */,
   style_refs_enabled: boolean /* Fatia 5 do Pinterest automático; padrão false (desligado) */,
@@ -835,7 +836,9 @@ a função desligada). Cada ação entra no log de atividade (`vacancy_stories.d
 ```ts
 {
   id: string, external_id: string, status: "new"|"skipped"|"waiting"|"generating"|"handed_off"|"failed"|"expired"|"cancelled" /* da linha */,
-  display: "queued"|"generating"|"waiting_window"|"waiting_cap"|"to_approve"|"ready"|"live"|"was_live"|"skipped"|"cancelled"|"failed",
+  display: "queued"|"generating"|"waiting_window"|"waiting_cap"|"paused"|"paused_ready"|"to_approve"|"ready"|"live"|"was_live"|"skipped"|"cancelled"|"failed"
+    /* paused/paused_ready (24/11/2026, só com o bloqueio de publicação aberto): linha esperando o bloqueio para criar a arte ("Esperando o Instagram
+       voltar") e post pronto/agendado parado por ele ("Pronto, esperando o Instagram voltar"); com o bloqueio aberto, can.post_now = false */,
   label: string   /* "Na fila para criar a arte" · "Criando a arte" · "Esperando o horário" · "Esperando a vez" · "Esperando sua aprovação" ·
                      "Pronto, vai ao ar às 14h50" (sem horário: "Pronto para ir ao ar") · "No ar até amanhã às 14h50" · "Ficou 24 h no ar" ·
                      "Não virou story" · "Não foi ao ar" · "Não conseguimos criar o story" */,
@@ -1058,9 +1061,28 @@ no navegador). Qualquer membro lê (`WorkspaceAccessGuard`: não-membro `403`, i
     "fallback": "openai" | "gemini" | "app" | null,
     "inherited_from": null | { "id": "<uuid>", "name": "Freela App" }
   },
-  "instagram": null | { "failed_count": 2, "last_error": "<ig_posts.last_error, até 300 caracteres>", "last_at": "<ISO>", "permission": true }
+  "instagram": null | { "failed_count": 2, "last_error": "<ig_posts.last_error, até 300 caracteres>", "last_at": "<ISO>", "permission": true },
+  "publishing": null | {
+    "reason": "permission" | "token",
+    "since": "<publish_blocked_at ISO>", "last_at": "<publish_block_last_at ISO>",
+    "message": "<texto da Meta traduzido, até 300>" | null,
+    "next_check_at": "<ISO>" | null,
+    "waiting": { "posts": 3, "vacancies": 7 },
+    "probe": "active" | "log_only",
+    "username": "freelaapp" | null
+  }
 }
 ```
+
+- `publishing` (24/11/2026, §22.6): o bloqueio de publicação aberto da empresa. `waiting.posts` = posts `scheduled`/`ready`/`approved` com
+  `last_error = "Esperando o Instagram voltar a aceitar as publicações desta empresa."`; `waiting.vacancies` = linhas das vagas `new`/`waiting`
+  com `wait_reason = "Esperando o Instagram voltar a aceitar publicações para criar a arte."`. `next_check_at` só no motivo `permission`.
+  `probe = log_only` (padrão, `IG_PUBLISH_PROBE_CLOSES=false`): a conferência não fecha o bloqueio e a web troca o botão por "Já corrigi — reconectar
+  o Instagram". Web: faixa vermelha no topo (antes das outras), sem "X"; com `publishing` e `instagram.permission`, a faixa amarela não aparece (é o
+  mesmo fato); a faixa da IA troca a última frase por "A publicação também está parada: veja o aviso acima.". Isolamento: o bloqueio de A nunca
+  aparece em B.
+- `instagram` passa a contar só as falhas com `updated_at` depois de `instagram_accounts.publish_unblocked_at` (a faixa não fica velha depois do
+  conserto).
 
 - `ai`: só os provedores que TÊM chave na empresa dona (a própria ou a da agência) entram na conta; aviso de chave removida/trocada não aparece. `vendors` = os sem
   saldo ou no limite de hoje (`ai_credit_alerts`, §6; `reason` diz qual), na ordem openai, gemini. `stopped` = todos os provedores com chave estão sem saldo/no

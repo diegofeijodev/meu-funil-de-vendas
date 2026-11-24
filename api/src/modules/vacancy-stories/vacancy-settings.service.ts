@@ -112,6 +112,8 @@ export type VacancySettingsView = {
   counts: { ready: number; to_approve: number };
   ai_error: string | null;
   ai_error_at: Date | null;
+  /** Bloqueio de publicação aberto (24/11/2026): o cartão de situação diz "Pausado". */
+  publishing_blocked: { reason: 'permission' | 'token'; since: Date } | null;
   preview: unknown;
   recent_outcomes: { n: number; first_try: number; redone: number; fallback: number; not_posted: number };
   week: { total: number; fallback: number };
@@ -168,6 +170,7 @@ export class VacancySettingsService {
       this.week(workspaceId, now),
     ]);
     const { brand: styleBrand, inUse } = await this.styleView(workspaceId, s);
+    const block = await this.store.publishBlock(workspaceId);
     return {
       enabled: s.enabled,
       enabled_at: s.enabled_at,
@@ -190,6 +193,7 @@ export class VacancySettingsService {
       counts: { ready, to_approve: toApprove },
       ai_error: s.ai_error,
       ai_error_at: s.ai_error_at,
+      publishing_blocked: block ? { reason: block.publish_block_reason, since: block.publish_blocked_at ?? block.publish_block_last_at ?? now } : null,
       preview: previewForView(s.preview, now),
       recent_outcomes: recent,
       week,

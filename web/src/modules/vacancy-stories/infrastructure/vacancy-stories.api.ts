@@ -74,6 +74,8 @@ const settings = z
     counts: z.object({ ready: num, to_approve: num }).passthrough(),
     ai_error: str,
     ai_error_at: str,
+    /** Bloqueio de publicação aberto (contrato §26, 24/11/2026). */
+    publishing_blocked: z.object({ reason: z.enum(["permission", "token"]), since: z.string() }).nullish().transform((v) => v ?? null),
     preview: preview.default({}),
     recent_outcomes: z.object({ n: num, first_try: num, redone: num, fallback: num, not_posted: num }).passthrough(),
     week: z.object({ total: num, fallback: num }).passthrough(),
@@ -89,7 +91,7 @@ const story = z
     id: z.string(),
     external_id: z.string(),
     status: z.string(),
-    display: z.enum(["queued", "generating", "waiting_window", "waiting_cap", "to_approve", "ready", "live", "was_live", "skipped", "cancelled", "failed"]),
+    display: z.enum(["queued", "generating", "waiting_window", "waiting_cap", "paused", "paused_ready", "to_approve", "ready", "live", "was_live", "skipped", "cancelled", "failed"]),
     label: z.string(),
     support: str,
     reason: str,

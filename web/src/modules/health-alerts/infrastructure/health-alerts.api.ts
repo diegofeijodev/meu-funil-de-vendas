@@ -17,9 +17,24 @@ const schema = z.object({
   instagram: z
     .object({ failed_count: z.number(), last_error: z.string().nullable(), last_at: z.string(), permission: z.boolean() })
     .nullable(),
+  // API antiga sem o campo = sem bloqueio.
+  publishing: z
+    .object({
+      reason: z.enum(["permission", "token"]),
+      since: z.string(),
+      last_at: z.string(),
+      message: z.string().nullable(),
+      next_check_at: z.string().nullable(),
+      waiting: z.object({ posts: z.number(), vacancies: z.number() }),
+      probe: z.enum(["active", "log_only"]).catch("log_only"),
+      username: z.string().nullable(),
+    })
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
 });
 
-const NONE: HealthAlerts = { ai: null, instagram: null };
+const NONE: HealthAlerts = { ai: null, instagram: null, publishing: null };
 
 /** `GET /v1/workspaces/:id/health-alerts` (contrato §30). API antiga sem a rota (404) = sem aviso; o resto do erro sobe para a tela. */
 export async function getHealthAlerts(ws: string): Promise<HealthAlerts> {
@@ -45,4 +60,13 @@ export function useHealthAlerts(ws: string | null | undefined) {
     staleTime: 60_000,
     retry: 1,
   });
+}
+
+const checkSchema = z.object({ ok: z.literal(true), unblocked: z.boolean(), probe: z.enum(["active", "log_only"]).catch("log_only"), message: z.string() });
+export type PublishCheckResult = z.infer<typeof checkSchema>;
+
+/** "Já corrigi — testar agora" (contrato §22.1): 409 em menos de 60 s e 422 com token sobem como erro (mensagem da API). */
+export async function publishCheck(ws: string): Promise<PublishCheckResult> {
+  const { data } = await api.post(`/v1/workspaces/${ws}/instagram-account/publish-check`);
+  return checkSchema.parse(data);
 }
