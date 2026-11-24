@@ -272,6 +272,8 @@ export class PublishingService implements OnModuleInit {
   }
 
   async publishInstagramPost(postId: string, workspaceId?: string, opts: { fromQueue?: boolean; jobId?: string } = {}): Promise<PublishResult> {
+    // Relógio real (o mesmo do `closePublishBlock`): uma recusa desta tentativa só reabre o bloqueio se ele não fechou depois deste instante.
+    const startedAt = new Date();
     const post = await this.store.getPost(postId, workspaceId);
     const lease = await this.claim(postId, post.workspace_id, !!opts.fromQueue);
     // Pela fila: cada renovação do lease também renova a trava do job (esperas de nova tentativa não deixam a trava vencer).
@@ -282,7 +284,9 @@ export class PublishingService implements OnModuleInit {
     } catch (e) {
       // R2/R3: a Meta recusou por permissão → abre (ou mantém) o bloqueio da empresa, nos dois caminhos (fila e "Publicar agora").
       if (e instanceof PublishPermissionError) {
-        await this.store.openPublishBlock(post.workspace_id, 'permission', errText(e)).catch((err) => this.logger.error(`[instagram] bloqueio não gravado (${post.workspace_id}): ${errText(err)}`));
+        await this.store
+          .openPublishBlock(post.workspace_id, 'permission', errText(e), { attemptStartedAt: startedAt })
+          .catch((err) => this.logger.error(`[instagram] bloqueio não gravado (${post.workspace_id}): ${errText(err)}`));
       }
       throw e;
     } finally {
@@ -629,10 +633,22 @@ export class PublishingService implements OnModuleInit {
           continue;
         }
         if (e instanceof PublishPermissionError) {
+          const acc = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: job.workspace_id }, select: { publish_block_reason: true, publish_next_check_at: true } });
+          if (!acc?.publish_block_reason) {
+            // Corrida: a tentativa começou antes de o bloqueio fechar (reconexão, sonda) e a recusa foi ignorada. Volta em 5 min sem gastar
+            // tentativa, no mesmo horário e sem o aviso do bloqueio.
+            const runAt = new Date(Date.now() + 5 * 60e3);
+            await this.prisma.publishing_jobs.updateMany({
+              where: { id: job.id },
+              data: { status: 'pending', locked_at: null, attempts: job.attempts, run_at: runAt, log: logWith(`${msg} (recusa de antes do fechamento do bloqueio; nova tentativa às ${hhmmSp(runAt)})`) },
+            });
+            if (job.ig_post_id) await this.prisma.ig_posts.updateMany({ where: { id: job.ig_post_id, status: 'publishing' }, data: { status: 'scheduled', ig_creation_id: null } });
+            results.push({ job: job.id, status: 'retry', error: msg });
+            continue;
+          }
           // R3: o bloqueio já foi aberto em `publishInstagramPost`. Nada foi publicado: o job volta para a fila sem gastar tentativa (na próxima
           // conferência, no máximo em 1 h) e o post volta para a agenda NO MESMO horário, com o aviso.
           blockedWs.add(job.workspace_id);
-          const acc = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: job.workspace_id }, select: { publish_next_check_at: true } });
           const runAt = blockedRunAt(acc?.publish_next_check_at ?? null, new Date());
           await this.prisma.publishing_jobs.updateMany({
             where: { id: job.id },

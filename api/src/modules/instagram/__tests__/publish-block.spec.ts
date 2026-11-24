@@ -137,6 +137,24 @@ describe('IgStore — estado do bloqueio (R2, R9, R11)', () => {
     expect(acc(w, WS_A)).toMatchObject({ publish_block_failures: 3, publish_blocked_at: later(4), publish_next_check_at: later(10) });
   });
 
+  it('corrida: a recusa de uma tentativa que começou ANTES do último fechamento é ignorada (não reabre, não soma falha)', async () => {
+    const w = world();
+    await w.store.openPublishBlock(WS_A, 'permission', '(#10)', { now: t0 });
+    await w.store.closePublishBlock(WS_A, 'reconnect', later(1));
+    expect(await w.store.openPublishBlock(WS_A, 'permission', '(#10) atrasada', { now: later(1.1), attemptStartedAt: later(0.9) })).toEqual({ opened: false });
+    expect(acc(w, WS_A)).toMatchObject({ publish_block_reason: null, publish_block_failures: 0, publish_next_check_at: null });
+    // Recusa de tentativa nova (começou depois do fechamento) reabre normalmente.
+    expect(await w.store.openPublishBlock(WS_A, 'permission', '(#10) nova', { now: later(2), attemptStartedAt: later(1.5) })).toEqual({ opened: true });
+    // Com o bloqueio aberto de novo, a recusa atrasada também não soma falha nem mexe na próxima conferência.
+    await w.store.openPublishBlock(WS_A, 'permission', '(#10) atrasada', { now: later(2.1), attemptStartedAt: later(0.95) });
+    expect(acc(w, WS_A)).toMatchObject({ publish_block_reason: 'permission', publish_block_failures: 1, publish_block_message: '(#10) nova', publish_next_check_at: later(3) });
+    expect(events(w, WS_A)).toEqual([
+      'Publicação parada: a Meta recusou por falta de permissão.',
+      'A Meta voltou a aceitar publicações (o Instagram foi reconectado).',
+      'Publicação parada: a Meta recusou por falta de permissão.',
+    ]);
+  });
+
   it('fechar por publicação ou reconexão zera as falhas (prova real), mesmo depois de um fechamento pela sonda', async () => {
     const w = world();
     await w.store.openPublishBlock(WS_A, 'permission', '(#10)', { now: t0 });

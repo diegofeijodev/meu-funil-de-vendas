@@ -172,22 +172,29 @@ export class IgStore {
    * R2 — abre (ou mantém) o bloqueio: grava motivo e mensagem, mantém o `publish_blocked_at` do bloqueio aberto, soma 1 falha e marca a
    * próxima conferência pela escada de esperas (só `permission`; `token` não tem sonda). Um evento por ABERTURA (não por falha): a
    * transição "sem bloqueio → bloqueado" é um UPDATE condicional, então duas falhas ao mesmo tempo não registram duas aberturas.
-   * `silent`: quem chama já registra o próprio evento (token vencido).
+   * `silent`: quem chama já registra o próprio evento (token vencido). `attemptStartedAt`: início da tentativa recusada — se o bloqueio fechou
+   * DEPOIS disso (`publish_unblocked_at` posterior), a recusa é de antes do conserto e é ignorada (não reabre nem soma falha).
    */
-  async openPublishBlock(workspaceId: string, reason: PublishBlockReason, message: string, o: { now?: Date; silent?: boolean } = {}): Promise<{ opened: boolean }> {
+  async openPublishBlock(
+    workspaceId: string,
+    reason: PublishBlockReason,
+    message: string,
+    o: { now?: Date; silent?: boolean; attemptStartedAt?: Date } = {},
+  ): Promise<{ opened: boolean }> {
     const now = o.now ?? new Date();
     const msg = message.slice(0, 300);
+    const fresh = o.attemptStartedAt ? { OR: [{ publish_unblocked_at: null }, { publish_unblocked_at: { lte: o.attemptStartedAt } }] } : {};
     const opened = await this.prisma.instagram_accounts.updateMany({
-      where: { workspace_id: workspaceId, publish_block_reason: null },
+      where: { workspace_id: workspaceId, publish_block_reason: null, ...fresh },
       data: { publish_block_reason: reason, publish_block_message: msg, publish_blocked_at: now, publish_block_last_at: now, publish_block_failures: { increment: 1 } },
     });
     if (!opened.count) {
       const kept = await this.prisma.instagram_accounts.updateMany({
-        where: { workspace_id: workspaceId, publish_block_reason: { not: null } },
+        where: { workspace_id: workspaceId, publish_block_reason: { not: null }, ...fresh },
         // 'token' prevalece sobre 'permission' (só a reconexão resolve); a recusa por permissão não rebaixa um bloqueio de token.
         data: { ...(reason === 'token' ? { publish_block_reason: 'token' } : {}), publish_block_message: msg, publish_block_last_at: now, publish_block_failures: { increment: 1 } },
       });
-      if (!kept.count) return { opened: false }; // empresa sem linha de conta
+      if (!kept.count) return { opened: false }; // empresa sem linha de conta, ou recusa de antes do último fechamento
     }
     const cur = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: workspaceId }, select: { publish_block_failures: true, publish_block_reason: true } });
     await this.prisma.instagram_accounts.updateMany({

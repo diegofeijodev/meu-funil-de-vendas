@@ -117,6 +117,29 @@ describe('fila com o bloqueio de publicação (R3, R4, R11)', () => {
     expect(w.t['ig_autopilot_events']!.rows.map((e) => e.message)).toContain('A Meta voltou a aceitar publicações (uma publicação deu certo).');
   });
 
+  it('corrida: a Meta recusa uma tentativa que começou antes de o bloqueio fechar → não reabre; o job volta em 5 min, sem tentativa e sem o aviso', async () => {
+    const { w, svc, acc, job } = setup();
+    // A reconexão acontece no meio da tentativa: entre o início dela e a recusa da Meta.
+    w.respond((path, opts) => {
+      if (path === `/${IG_A}/media` && opts.method === 'POST') {
+        acc(WS).publish_unblocked_at = new Date(Date.now() + 1);
+        return PERM();
+      }
+      return undefined;
+    });
+    const at = new Date(Date.now() - 2 * MIN);
+    const p = seedPost(w, { workspace_id: WS, status: 'scheduled', scheduled_at: at, retry_count: 0 });
+    const j = job(p, { attempts: 1 });
+    const r = await svc.runPublishingQueue();
+    expect(r).toEqual([expect.objectContaining({ job: j.id, status: 'retry' })]);
+    expect(acc(WS)).toMatchObject({ publish_block_reason: null, publish_block_failures: 0 });
+    expect(j).toMatchObject({ status: 'pending', attempts: 1, locked_at: null });
+    expect(Math.abs(j.run_at.getTime() - (Date.now() + 5 * MIN))).toBeLessThan(5_000);
+    expect(p).toMatchObject({ status: 'scheduled', scheduled_at: at, retry_count: 0 });
+    expect(p.last_error ?? null).toBeNull();
+    expect(w.t['ig_autopilot_events']!.rows).toHaveLength(0);
+  });
+
   it('token vencido (190) na fila grava o motivo `token` (sem próxima conferência), como hoje pausa e suspende', async () => {
     const { w, svc, acc, job } = setup();
     w.respond((path, opts) => (path === `/${IG_A}/media` && opts.method === 'POST' ? new MetaError('token', 190) : undefined));
