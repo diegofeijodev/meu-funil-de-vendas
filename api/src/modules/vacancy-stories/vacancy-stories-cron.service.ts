@@ -6,10 +6,11 @@ import { VacancyGeneratorService } from './vacancy-generator.service';
 import { VacancyPollService } from './vacancy-poll.service';
 import { VacancySchedulerService } from './vacancy-scheduler.service';
 
-/** Etapas da rodada que falharam (`{ error }` — inclusive a consulta com a vitrine fora). */
+/** Etapas da rodada que falharam (`{ error }` — inclusive a consulta com a vitrine fora, das diárias ou das vagas fixas em `poll.clt`). */
 export function failedSteps(out: Record<string, unknown>): string[] {
+  const failed = (v: unknown) => !!v && typeof v === 'object' && 'error' in v;
   return Object.entries(out)
-    .filter(([, v]) => !!v && typeof v === 'object' && 'error' in v)
+    .filter(([, v]) => failed(v) || (!!v && typeof v === 'object' && failed((v as { clt?: unknown }).clt)))
     .map(([k]) => k);
 }
 

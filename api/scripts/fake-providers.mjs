@@ -8,6 +8,8 @@
 //   /v1/chat/completions   gateway de IA (OpenAI-compatível) — o SDR; a decisão vem de POST /__ai { decision }
 //   /freela/v1/bars-restaurants/public/vacancies/recent · /:id   vitrine pública do Freela (stories das vagas): 3 vagas — de teste,
 //                  sem valor e uma válida daqui a 3 dias —, envelope { data }, id desconhecido → 404
+//   /freela/v1/fixed-jobs/public/recent · /:id   vitrine pública das VAGAS FIXAS (CLT, 25/11/2026): 2 vagas — uma válida (publicada
+//                  "agora", com salário e cidade) e uma sem salário —, envelope { data }, id desconhecido → 404 FIXED_JOB_NOT_FOUND
 //   GET /__log (pedidos recebidos) · POST /__reset
 // A API sobe com RESEND_API_URL=http://127.0.0.1:3097/resend CALCOM_API_URL=http://127.0.0.1:3097/calcom
 // FREELA_PUBLIC_API_URL=http://127.0.0.1:3097/freela (ignoradas em produção).
@@ -34,6 +36,19 @@ const vagas = () => {
     { ...base, id: 'f0000000-0000-4000-8000-000000000001', contractorName: 'Empresa Teste Smoke' },
     { ...base, id: 'f0000000-0000-4000-8000-000000000002', amountInCents: null },
     { ...base, id: 'f0000000-0000-4000-8000-000000000003' },
+  ];
+};
+// Vagas fixas (CLT): publicadas "agora" (depois do `clt_enabled_at` de quem ligou antes da consulta), como a vitrine das diárias.
+const FIXAS = '/freela/v1/fixed-jobs/public/';
+const fixas = () => {
+  const base = {
+    title: 'Atendente CLT', role: 'atendente', category: 'salão', companyName: 'Spoleto Smoke', city: 'Campinas', uf: 'SP',
+    salary: { minInCents: 187432, maxInCents: 187432 }, workSchedule: '6x1, 10h às 18h20', workScheduleSlots: [], benefits: ['Vale-transporte'],
+    description: null, publishedAt: new Date().toISOString(), expiresAt: null,
+  };
+  return [
+    { ...base, id: 'c0000000-0000-4000-8000-000000000001' },
+    { ...base, id: 'c0000000-0000-4000-8000-000000000002', salary: null },
   ];
 };
 const decisao = (over = {}) => ({ resposta: 'Olá! Sou o agente. Em qual cidade você quer atuar?', campos_extraidos: { cidade: null, capital: null, prazo: null, decisor: null, email: null, observacoes: null }, score: 20, temperatura: 'morno', proxima_etapa: 'manter', transferir_humano: false, motivo: '', horario_escolhido: null, ...over });
@@ -68,6 +83,11 @@ createServer((req, res) => {
       if (path === '/calcom/slots') return send(res, 200, { data: { '2026-10-07': [{ start: '2026-10-07T12:00:00.000Z' }, { start: '2026-10-07T13:00:00.000Z' }, { start: '2026-10-07T14:00:00.000Z' }], '2026-10-08': [{ start: '2026-10-08T12:00:00.000Z' }] } });
       if (path === '/calcom/bookings' && req.method === 'POST') return send(res, 201, { data: { uid: `bk-${++n}`, start: body?.start, meetingUrl: 'https://meet.test/abc' } });
       if (path.startsWith('/calcom/event-types/')) return send(res, 200, { data: { title: 'Reunião de 30 min', lengthInMinutes: 30 } });
+    }
+    if (path.startsWith(FIXAS) && req.method === 'GET') {
+      if (path === `${FIXAS}recent`) return send(res, 200, { data: fixas() });
+      const f = fixas().find((x) => x.id === decodeURIComponent(path.slice(FIXAS.length)));
+      return f ? send(res, 200, { data: f }) : send(res, 404, { error: { code: 'FIXED_JOB_NOT_FOUND', message: 'Vaga fixa não encontrada.' } });
     }
     if (path.startsWith(VAGAS) && req.method === 'GET') {
       if (path === `${VAGAS}recent`) return send(res, 200, { data: vagas() });

@@ -1,16 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { leaseFree } from '../instagram/ig-store.service';
-import { countCities, FeedDownError, VacancyFeedClient } from './vacancy-feed';
+import { CLT_FEED_DOWN, countCities, FeedDownError, VacancyFeedClient } from './vacancy-feed';
 import { VacancyGate } from './vacancy-gate.service';
 import { VacancySettingsService } from './vacancy-settings.service';
+import { cltWatermark } from './vacancy-clt';
 import { PUBLISH_BLOCKED_MSG } from '../instagram/ig-types';
 import { leadDeadline, PUBLISH_BLOCKED_WAIT, WAIT_CAP } from './vacancy-reasons';
 import { approveUntil } from './vacancy-slots';
-import { sourceOf, timingOf } from './vacancy-sources';
+import { SOURCES, sourceOf, timingOf } from './vacancy-sources';
 import { fingerprint } from './vacancy-text';
 import { isAfterWatermark, triage } from './vacancy-triage';
-import type { FreelaVacancy, SettingsRow } from './vacancy-types';
+import type { FreelaFixedJob, FreelaVacancy, SettingsRow } from './vacancy-types';
+
+type PollResult = { workspaces: number; inserted: number; skipped: number; error?: string };
 
 const MIN = 60_000;
 /** Prazo de aprovação de uma empresa sem configuração (não deveria acontecer: post de vaga só existe com ela). */
@@ -39,7 +42,18 @@ export class VacancyPollService {
     return rows.filter((s) => this.gate.allowed(s.workspace_id));
   }
 
-  async pollAll(now = new Date()): Promise<{ workspaces: number; inserted: number; skipped: number; error?: string }> {
+  /**
+   * Rodada da consulta: as diárias (como sempre) e, com alguma empresa com as vagas fixas ligadas, a vitrine CLT — chamadas e erros
+   * separados (fora do ar uma, a outra segue). Sem vaga fixa ligada, o resultado é o de antes; com, ganha `clt`.
+   */
+  async pollAll(now = new Date()): Promise<PollResult & { clt?: PollResult }> {
+    const daily = await this.pollDaily(now);
+    const clt = await this.pollClt(now);
+    return clt.workspaces ? { ...daily, clt } : daily;
+  }
+
+  /** Vitrine das diárias (uma chamada para todas as empresas com as diárias ligadas). */
+  private async pollDaily(now: Date): Promise<PollResult> {
     const active = await this.activeSettings();
     if (!active.length) return { workspaces: 0, inserted: 0, skipped: 0 };
     let list: FreelaVacancy[];
@@ -83,6 +97,56 @@ export class VacancyPollService {
       } catch (e) {
         // Uma empresa com erro (ex.: apagada durante a consulta: FK/linha sumida) não derruba as outras desta rodada.
         this.logger.error(`[vagas] ${s.workspace_id}: gravar a consulta falhou: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return { workspaces: active.length, inserted, skipped };
+  }
+
+  /**
+   * Vagas fixas (CLT): uma chamada à vitrine CLT para as empresas com `clt_enabled` (e na lista). Entram as publicadas depois da marca
+   * d'água (`clt_enabled_at − clt_backlog_days`, retroativo em gotas: o limite por dia espalha); a linha guarda o "divulgar até" em
+   * `starts_at`. Erro só em `clt_last_poll_error` (o das diárias fica limpo).
+   */
+  async pollClt(now = new Date()): Promise<PollResult> {
+    const active = (await this.prisma.vacancy_story_settings.findMany({ where: { clt_enabled: true } })).filter((s) => this.gate.allowed(s.workspace_id));
+    if (!active.length) return { workspaces: 0, inserted: 0, skipped: 0 };
+    let list: FreelaFixedJob[];
+    try {
+      list = await this.feed.recentClt();
+    } catch (e) {
+      if (!(e instanceof FeedDownError)) this.logger.error(`[vagas] consulta da vitrine CLT falhou: ${e instanceof Error ? e.message : String(e)}`);
+      await this.prisma.vacancy_story_settings.updateMany({
+        where: { workspace_id: { in: active.map((s) => s.workspace_id) } },
+        data: { clt_last_poll_at: now, clt_last_poll_error: CLT_FEED_DOWN },
+      });
+      return { workspaces: active.length, inserted: 0, skipped: 0, error: CLT_FEED_DOWN };
+    }
+    const src = SOURCES.freela_clt;
+    let inserted = 0;
+    let skipped = 0;
+    for (const s of active) {
+      try {
+        const mark = cltWatermark(s);
+        const fresh: Record<string, unknown>[] = [];
+        const skips: Record<string, unknown>[] = [];
+        for (const v of list) {
+          if (!mark || !(Date.parse(v.publishedAt) > mark.getTime())) continue;
+          const t = src.triage(v, s, now);
+          const base = {
+            workspace_id: s.workspace_id, source: src.id, external_id: v.id, snapshot: v as object, fingerprint: src.fingerprint(v), starts_at: src.startsAt(v),
+          };
+          if (t.status === 'new') fresh.push({ ...base, status: 'new' });
+          else skips.push({ ...base, status: 'skipped', skip_reason: t.reason });
+        }
+        // Duplicata (mesma vaga fixa numa rodada anterior) é ignorada pelo índice único (empresa, fonte, id).
+        if (fresh.length) inserted += (await this.prisma.vacancy_stories.createMany({ data: fresh as never, skipDuplicates: true })).count;
+        if (skips.length) skipped += (await this.prisma.vacancy_stories.createMany({ data: skips as never, skipDuplicates: true })).count;
+        await this.prisma.vacancy_story_settings.update({
+          where: { workspace_id: s.workspace_id },
+          data: { clt_last_poll_at: now, clt_last_poll_ok_at: now, clt_last_poll_error: null },
+        });
+      } catch (e) {
+        this.logger.error(`[vagas] ${s.workspace_id}: gravar a consulta CLT falhou: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     return { workspaces: active.length, inserted, skipped };

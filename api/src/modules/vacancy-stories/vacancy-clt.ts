@@ -20,6 +20,11 @@ export const CLT_SKIP = {
   noCityForList: 'A vaga fixa não tem cidade para conferir com a sua lista.',
 };
 
+/** Marca d'água das vagas fixas: ligada em `clt_enabled_at`, com o retroativo de `clt_backlog_days` dias (só as publicadas depois entram). */
+export function cltWatermark(s: { clt_enabled_at: Date | null; clt_backlog_days?: number | null }): Date | null {
+  return s.clt_enabled_at ? new Date(s.clt_enabled_at.getTime() - (s.clt_backlog_days ?? 0) * DAY_MS) : null;
+}
+
 /** "Divulgar até" = mín(expiresAt, publishedAt + 30 dias). É o `starts_at` da linha CLT. */
 export function cltDeadline(v: Pick<FreelaFixedJob, 'publishedAt' | 'expiresAt'>): Date {
   const promo = Date.parse(v.publishedAt) + CLT_PROMO_DAYS * DAY_MS;
