@@ -1001,7 +1001,8 @@ geometria, este desenho vence em regra, e ponto que pede dado vira campo na API.
   recusa por permissão devolve o post ao estado de antes (status, `last_error`, `failure_kind` e os jobs que o clique tirou da fila), sem
   `failed` e sem tentativa (troca o R3 "post manual → failed").
 - **Corrida:** `openPublishBlock` recebe o início da tentativa e ignora a recusa se `publish_unblocked_at` for posterior.
-- **P1:** `quota_total` só de 1 a 100 (a Meta já citou 50 e 100); o log registra a mudança e o número ignorado.
+- **P1:** `quota_total` só de 1 a 100 (a Meta já citou 50 e 100); número fora disso = 25 e o gravado volta ao padrão; o log registra a
+  mudança e o número ignorado.
 - **R4:** job sem post (ou post sem horário) expira 12 h depois da criação do job (o `run_at` muda a cada adiamento e não serve de relógio).
 - **R9:** ao fechar, os adiados voltam em grupos de 4 a cada 5 min (a vazão da fila), na ordem do horário do post; `RateLimited` na fila vira
   evento `reschedule` (info), não falha.

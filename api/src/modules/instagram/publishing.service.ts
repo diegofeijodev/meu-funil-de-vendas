@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { UserError } from '../media/user-error';
 import { fmtDate, IgFormat, NO_ACCOUNT_MSG, OVERDUE_MS, PostRow, PUBLISH_BLOCKED_MSG, QUEUE_PER_ROUND, SKIP_PREFIX, TOKEN_EXPIRED_POST_MSG } from './ig-types';
-import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
+import { ClaimRefused, ContainerPending, DEFAULT_PUBLISH_QUOTA, Guardrail, IgStore, OriginUnavailable, PostLease, PublishClaimLost, RateLimited, errText, leaseFree } from './ig-store.service';
 import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient, PublishPermissionError } from './meta-graph';
@@ -426,12 +426,14 @@ export class PublishingService implements OnModuleInit {
       if (e instanceof MetaError && e.code === 190) throw e;
       return null;
     });
-    // P1: o limite que a Meta informa passa a valer (e fica gravado para a agenda das vagas). O log registra a mudança (não cada publicação)
-    // e o número que a Meta mandou fora de 1–100 (ignorado: fica o limite de antes).
+    // P1: o limite que a Meta informa passa a valer (e fica gravado para a agenda das vagas). O log registra a mudança (não cada publicação).
+    // Número fora de 1–100 (ou de outra janela) = dado estranho: vale o 25 e o gravado volta ao padrão; resposta sem número mantém o gravado.
     const told = quotaFrom(limit);
     const cfg = limit?.data?.[0]?.config;
     if (told === null && cfg?.quota_total != null) {
-      this.logger.warn(`[instagram] limite de publicações da Meta ignorado (${ws}): quota_total=${JSON.stringify(cfg.quota_total)} quota_duration=${JSON.stringify(cfg.quota_duration)}; vale ${quota}.`);
+      this.logger.warn(`[instagram] limite de publicações da Meta ignorado (${ws}): quota_total=${JSON.stringify(cfg.quota_total)} quota_duration=${JSON.stringify(cfg.quota_duration)}; vale ${DEFAULT_PUBLISH_QUOTA}.`);
+      if (quota !== DEFAULT_PUBLISH_QUOTA) await this.store.savePublishQuota(ws, null).catch((e) => this.logger.warn(`[instagram] limite da Meta não gravado (${ws}): ${errText(e)}`));
+      quota = DEFAULT_PUBLISH_QUOTA;
     }
     if (told !== null) {
       if (told !== quota) {

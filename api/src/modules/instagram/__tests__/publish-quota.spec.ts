@@ -74,6 +74,21 @@ describe('publicação usa o limite que a Meta informa', () => {
     expect(acc().publish_quota_total).toBe(50);
   });
 
+  it('número fora de 1–100 vale 25 mesmo com outro limite gravado (e o gravado volta ao padrão); resposta sem número mantém o gravado', async () => {
+    const { w, svc, acc } = setup(limit(1000, 86400, 30));
+    jest.spyOn((svc as any).logger, 'warn').mockImplementation(() => undefined);
+    acc().publish_quota_total = 50;
+    const e = await err(svc.publishInstagramPost(seedPost(w, { workspace_id: WS }).id));
+    expect(e).toBeInstanceOf(RateLimited);
+    expect(e.message).toBe('Limite de 25 publicações em 24h atingido.');
+    expect(acc().publish_quota_total).toBeNull();
+
+    const y = setup({ data: [{ quota_usage: 30 }] });
+    y.acc().publish_quota_total = 50;
+    expect(await y.svc.publishInstagramPost(seedPost(y.w, { workspace_id: WS }).id)).toMatchObject({ ok: true });
+    expect(y.acc().publish_quota_total).toBe(50);
+  });
+
   it('sem o número da Meta vale 25: 30 usados = RateLimited com o número', async () => {
     const { w, svc } = setup({ data: [{ quota_usage: 30 }] });
     const e = await err(svc.publishInstagramPost(seedPost(w, { workspace_id: WS }).id));

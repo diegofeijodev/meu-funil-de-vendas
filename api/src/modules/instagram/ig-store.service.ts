@@ -157,8 +157,8 @@ export class IgStore {
     return a?.publish_block_reason ? { ...a, publish_block_reason: a.publish_block_reason as PublishBlockReason } : null;
   }
 
-  /** P1: grava o limite que a Meta informou (já validado por `quotaFrom`); muda só quando o número muda. */
-  async savePublishQuota(workspaceId: string, total: number, now = new Date()) {
+  /** P1: grava o limite que a Meta informou (já validado por `quotaFrom`; `null` = volta ao padrão de 25); muda só quando o número muda. */
+  async savePublishQuota(workspaceId: string, total: number | null, now = new Date()) {
     await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { publish_quota_total: total, publish_quota_checked_at: now } });
   }
 

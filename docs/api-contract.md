@@ -565,7 +565,7 @@ descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; pala
 - **Publicar agora** com o bloqueio aberto é um TESTE manual: uma tentativa real por clique, no máximo 1 a cada 60 s por empresa (o mesmo
   limite do botão; antes disso `{ ok:false, error: "Espere um minuto para testar de novo." }` e nada muda). Deu certo → publica e fecha o
   bloqueio. Recusa por permissão → o post volta ao estado de antes (status, `last_error`, `failure_kind`; os jobs que o clique tirou da fila
-  voltam `pending` com o adiamento do bloqueio), sem `failed` e sem tentativa; `error` = "A Meta ainda recusa as publicações desta empresa. O
+  voltam `pending` como estavam, mesmo horário e tentativas — com o bloqueio aberto a fila os adia), sem `failed` e sem tentativa; `error` = "A Meta ainda recusa as publicações desta empresa. O
   post voltou para onde estava; veja o aviso vermelho no topo.".
 - **Fechamento (R9):** publicação que deu certo, reconexão (`connect-instagram-account` com sucesso), conferência automática ou botão com a
   sonda aceita. Só publicação e reconexão zeram as falhas. Ao fechar, os jobs pendentes adiados cujo post já passou do horário voltam em
@@ -582,7 +582,8 @@ descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; pala
 ### 22.7 Limite de publicações lido da Meta (24/11/2026, P1)
 
 `content_publishing_limit` é pedido com `fields=config,quota_usage`. `config.quota_total` só vale inteiro de 1 a 100 com `quota_duration = 86400`
-(a doc da Meta já citou 50 e 100; fora disso fica o 25, e o log do servidor registra o número ignorado); aí fica em
+(a doc da Meta já citou 50 e 100). Número fora disso (ou de outra janela) é dado estranho: vale o 25, o gravado volta ao padrão (NULL) e o log
+do servidor registra o número ignorado; resposta sem `config.quota_total` mantém o gravado. Valor aceito fica em
 `instagram_accounts.publish_quota_total` (+ `publish_quota_checked_at`), e o log registra quando o número gravado muda para um valor diferente de 25.
 Sem ele, o limite é 25. (O CHECK do banco continua 1–1000: rede mais larga.) Vale no
 guardrail local (publicados em 24 h), na comparação com `quota_usage` (`RateLimited "Limite de {n} publicações em 24h atingido."`) e no espaço

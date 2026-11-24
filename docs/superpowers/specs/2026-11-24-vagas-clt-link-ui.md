@@ -1119,3 +1119,19 @@ Cada ponto tem a minha preferência; a decisão é do `software-architect` (e do
 
 - **P1 conferido no `origin/main` do freela-web-v2:** `/freelancer/vagas-fixas/[id]` recebe o id da **candidatura** (tela de acompanhar), não o da vaga — confirmado. O botão da página pública `/vagas-fixas/[id]` leva ao login e depois à lista `/freelancer/vagas-fixas` (com `?vaga=<id>` para destacar/abrir a vaga, se a lista passar a aceitar o parâmetro na tarefa do site); nunca a `/freelancer/vagas-fixas/<id da vaga>`.
 - **Respostas do Denner (24/11) às perguntas do desenho técnico §9:** QR na arte = pode (ligado só depois da prévia); link das vagas na bio = hoje `https://www.freelaservicos.com.br/#vagas`, depois a página `/vagas` (diárias + fixas); limite diário = 20 (já aplicado em produção); vagas fixas só as recentes, 2 por dia = sim; vaga fixa sem salário = pular; vagas fixas públicas no site/Google sem contato e endereço = sim; segurar os posts normais enquanto a Meta recusar = sim.
+
+## Revisão de código da Fase 1 (24/11; troca §1.3 C/E, §1.4 e §1.5 onde diferem)
+
+- **O teste é real.** "Já corrigi — testar agora" e a conferência automática criam um story de teste na Meta, sem publicar (desenho §12,
+  revisão). Por isso o **estado E sai** (sem "Já corrigi — reconectar o Instagram"; o passo 5 é sempre "Volte aqui e toque em Já corrigi —
+  testar agora.") e a linha "Também conferimos sozinhos…" aparece sempre que há `next_check_at`.
+- **Testando:** igual ("Testando com a Meta…").
+- **Voltou:** título "A permissão de publicar voltou"; corpo "As publicações voltaram. Os posts que esperavam começam a sair nos próximos
+  minutos, cada um no seu horário, e as vagas voltam a ganhar arte em até 10 minutos. Se a Meta recusar de novo, o aviso vermelho volta."
+- **Ainda bloqueado:** "Testado às {9h12}. {mensagem da API} Teste de novo a partir das {9h13}. Próxima conferência automática: {hoje às
+  10h12}." — mensagem da API: recusa "A Meta ainda recusa as publicações desta empresa. Confira os passos 2 e 3."; erro passageiro "Não
+  conseguimos falar com a Meta agora."; a última frase só com `next_check_at`. Botão desabilitado 60 s, como antes.
+- **"Publicar agora" com o bloqueio aberto** (editor do post): é um teste. Recusa → toast "A Meta ainda recusa as publicações desta empresa.
+  O post voltou para onde estava; veja o aviso vermelho no topo." (o post não vira "falhou"); 2º clique em menos de 60 s → "Espere um minuto
+  para testar de novo.".
+- Pendente: a frase "reabriu depois da conferência" (§1.4, §8 P23) volta a fazer sentido e continua sem campo na API.
