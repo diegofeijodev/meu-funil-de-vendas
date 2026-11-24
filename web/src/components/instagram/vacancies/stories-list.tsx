@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -23,11 +23,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { arrivedEmptyText, QR_TEXT, reasonChipsFeedback, redoLabel } from "@/lib/vacancy-stories";
+import { CLT_TEXT, cltArrivedEmpty, storyDataLine } from "@/lib/vacancy-clt";
 import {
   listVacancyStories,
   type VacancySettings,
   type VacancyStory,
   type VacancyStoryFilter,
+  type VacancyStoryKind,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { vacancyListKey, type StoryActions } from "./use-story-actions";
 
@@ -63,12 +65,13 @@ export function SituationLabel({ story }: { story: VacancyStory }) {
   );
 }
 
-/** Selos "Versão de reserva" e "Refeita {n} vez(es)". */
-export function StoryBadges({ story }: { story: VacancyStory }) {
+/** Selos "Versão de reserva" e "Refeita {n} vez(es)"; com as duas fontes, "Diária" / "Fixa · CLT" (UI §4.4, só com o tipo "Todas"). */
+export function StoryBadges({ story, showKind = false }: { story: VacancyStory; showKind?: boolean }) {
   const redo = redoLabel(story.redo_count);
-  if (!story.used_fallback && !redo && !story.qr_url) return null;
+  if (!story.used_fallback && !redo && !story.qr_url && !showKind) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
+      {showKind && <Badge>{story.kind === "clt" ? CLT_TEXT.badgeClt : CLT_TEXT.badgeDaily}</Badge>}
       {story.used_fallback && <Badge>{story.fallback_kind === "plain" ? "Sem foto" : "Versão de reserva"}</Badge>}
       {redo && <Badge>{redo}</Badge>}
       {story.qr_url && <Badge>{QR_TEXT.badge}</Badge>}
@@ -131,14 +134,20 @@ export function StoryActionsBar({
   );
 }
 
-/** Consulta compartilhada com "Para aprovar" (filtro "all"); atualiza a cada 15 s enquanto a aba está aberta. */
-export function useStoriesQuery(ws: string, filter: VacancyStoryFilter) {
+/** Consulta compartilhada com "Para aprovar" (filtro "all", os dois tipos); atualiza a cada 15 s enquanto a aba está aberta. */
+export function useStoriesQuery(ws: string, filter: VacancyStoryFilter, kind?: VacancyStoryKind) {
   return useQuery({
-    queryKey: [...vacancyListKey(ws), filter],
-    queryFn: () => listVacancyStories(ws, filter),
+    queryKey: kind ? [...vacancyListKey(ws), filter, kind] : [...vacancyListKey(ws), filter],
+    queryFn: () => listVacancyStories(ws, filter, kind),
     refetchInterval: 15_000,
   });
 }
+
+const KINDS: { value: VacancyStoryKind | null; label: string }[] = [
+  { value: null, label: "Todas" },
+  { value: "diaria", label: "Diárias" },
+  { value: "clt", label: "Fixas (CLT)" },
+];
 
 const FILTERS: { value: VacancyStoryFilter; label: string }[] = [
   { value: "all", label: "Todas" },
@@ -167,14 +176,38 @@ export function StoriesList({
   onAction: OnStoryAction;
   onOpen: (story: VacancyStory) => void;
 }) {
-  const q = useStoriesQuery(workspaceId, filter);
+  // Filtro "Tipo" e selos só depois que as vagas fixas foram ligadas alguma vez (antes disso, a lista é a de sempre).
+  const showKinds = !!settings.clt?.enabled_at;
+  const [kind, setKind] = useState<VacancyStoryKind | null>(null);
+  const k = showKinds ? kind : null;
+  const q = useStoriesQuery(workspaceId, filter, k ?? undefined);
   const rows = (q.data ?? []).filter((s) => !actions.hidden.has(s.id));
+  const empty = k === "clt" && filter === "all" && settings.clt ? cltArrivedEmpty(settings.clt) : arrivedEmptyText(filter, settings);
 
   return (
     <section className="panel space-y-4 p-5" aria-labelledby="vac-arrived-title">
       <h2 id="vac-arrived-title" className="text-base font-semibold">
         Vagas que chegaram
       </h2>
+      {showKinds && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground" id="vac-kind-label">Tipo</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-labelledby="vac-kind-label">
+            {KINDS.map((f) => (
+              <Button
+                key={f.label}
+                className="h-11 min-w-[44px]"
+                variant={k === f.value ? "default" : "outline"}
+                aria-pressed={k === f.value}
+                onClick={() => setKind(f.value)}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+      {showKinds && <p className="text-xs font-medium text-muted-foreground" id="vac-filter-label">Situação</p>}
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar vagas">
         {FILTERS.map((f) => (
           <Button
@@ -219,7 +252,7 @@ export function StoriesList({
           </Button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{arrivedEmptyText(filter, settings)}</p>
+        <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="space-y-3">
           {rows.map((s) => (
@@ -236,7 +269,7 @@ export function StoriesList({
                     {s.funcao}
                     {s.estabelecimento ? ` · ${s.estabelecimento}` : ""}
                   </button>
-                  <p className="text-xs text-muted-foreground">{[s.valor, s.quando, s.cidade].filter(Boolean).join(" · ")}</p>
+                  <p className="text-xs text-muted-foreground">{storyDataLine(s)}</p>
                   <SituationLabel story={s} />
                   {s.support && <p className="text-sm text-muted-foreground">{s.support}</p>}
                   {s.reason && (
@@ -245,7 +278,7 @@ export function StoriesList({
                       <span>{s.reason}</span>
                     </p>
                   )}
-                  <StoryBadges story={s} />
+                  <StoryBadges story={s} showKind={showKinds && k === null} />
                 </div>
               </div>
               {s.display !== "to_approve" && <StoryActionsBar story={s} onAction={onAction} actions={actions} className="mt-3" />}

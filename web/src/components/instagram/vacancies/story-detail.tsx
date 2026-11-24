@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { attemptItemLine, attemptsLine, capFirst, checkWarningDetail } from "@/lib/vacancy-stories";
+import { storyDataLine } from "@/lib/vacancy-clt";
 import { getVacancyStory, type VacancyStory } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { SituationLabel, StoryActionsBar, StoryBadges, type OnStoryAction } from "./stories-list";
 import { vacancyDetailKey, type StoryActions } from "./use-story-actions";
@@ -63,7 +64,7 @@ function DetailBody({
           {s.funcao}
           {s.estabelecimento ? ` · ${s.estabelecimento}` : ""}
         </SheetTitle>
-        <SheetDescription>{[s.valor, s.quando, s.cidade].filter(Boolean).join(" · ")}</SheetDescription>
+        <SheetDescription>{storyDataLine(s)}</SheetDescription>
       </SheetHeader>
 
       <div className="mt-4 space-y-5">
@@ -71,7 +72,7 @@ function DetailBody({
           <SituationLabel story={s} />
           {s.support && <p className="text-sm text-muted-foreground">{s.support}</p>}
           {s.reason && <p className="text-sm text-muted-foreground">{s.reason}</p>}
-          <StoryBadges story={s} />
+          <StoryBadges story={s} showKind={s.kind === "clt"} />
         </div>
 
         {s.media_url ? (
@@ -183,14 +184,17 @@ function DetailBody({
           </p>
         )}
 
-        <a
-          href={s.freela_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-h-11 items-center gap-1 text-sm font-medium underline-offset-4 hover:underline"
-        >
-          Abrir a vaga no Freela <span aria-hidden>↗</span>
-        </a>
+        {/* Vaga fixa: o link só existe com a página pública da vaga fixa no ar (UI §4.4). */}
+        {s.freela_url && (
+          <a
+            href={s.freela_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 items-center gap-1 text-sm font-medium underline-offset-4 hover:underline"
+          >
+            {s.kind === "clt" ? "Abrir a vaga fixa no site" : "Abrir a vaga no Freela"} <span aria-hidden>↗</span>
+          </a>
+        )}
 
         <div className="space-y-2">
           <StoryActionsBar story={s} onAction={onAction} actions={actions} />

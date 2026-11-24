@@ -113,7 +113,8 @@ export function VacanciesStatusCard({ workspaceId, settings, canManage }: { work
         </label>
         <div className="min-w-0 space-y-1">
           <h2 id="vac-status-title" className="text-base font-semibold">
-            <label htmlFor="vac-switch">Postar as vagas do Freela nos stories</label>
+            {/* Com as vagas fixas disponíveis, "as vagas" ficaria ambíguo (UI §4.1). */}
+            <label htmlFor="vac-switch">{s.clt ? "Postar as diárias do Freela nos stories" : "Postar as vagas do Freela nos stories"}</label>
           </h2>
           {/* Sem aria-live aqui: a cada 30 s a linha da consulta muda e o leitor de tela repetiria tudo. Avisos têm a sua região. */}
           <div id="vac-status-text" className="space-y-1 text-sm text-muted-foreground">

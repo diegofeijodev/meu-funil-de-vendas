@@ -42,9 +42,31 @@ const preview = z
     error: str,
     /** P2 (24/11/2026): prévia com QR — o link e se o sistema conferiu o QR na arte final. */
     qr: z.object({ url: z.string().nullable(), read_ok: z.boolean() }).nullish().transform((v) => v ?? null),
+    /** Vagas fixas (25/11/2026): prévia da arte "Vaga fixa CLT". Ausente = diária. */
+    kind: z.enum(["diaria", "clt"]).nullish().catch(null).transform((v) => v ?? "diaria"),
   })
   .passthrough();
 export type VacancyPreview = z.infer<typeof preview>;
+
+/** Vagas fixas (CLT) nos Ajustes (contrato §26). API antiga (sem o bloco) ou bloco fora do formato = `null`: a tela some com a CLT. */
+const clt = z
+  .object({
+    enabled: z.boolean(),
+    enabled_at: str,
+    daily_cap: num,
+    backlog_days: num,
+    since: str,
+    promo_days: num.default(30),
+    last_poll_at: str,
+    last_poll_ok_at: str,
+    last_poll_error: str,
+    today: z.object({ posted: num, scheduled: num, cap: num }).passthrough(),
+    counts: z.object({ ready: num, to_approve: num }).passthrough(),
+    has_brand: z.boolean().default(true),
+    qr_available: z.boolean().default(false),
+  })
+  .passthrough();
+export type VacancyCltSettings = z.infer<typeof clt>;
 
 const settings = z
   .object({
@@ -85,6 +107,7 @@ const settings = z
     preview: preview.default({}),
     recent_outcomes: z.object({ n: num, first_try: num, redone: num, fallback: num, not_posted: num }).passthrough(),
     week: z.object({ total: num, fallback: num }).passthrough(),
+    clt: clt.nullish().catch(null).transform((v) => v ?? null),
   })
   .passthrough();
 export type VacancySettings = z.infer<typeof settings>;
@@ -119,7 +142,11 @@ const story = z
     redo_count: num,
     ig_post_id: str,
     is_test: z.boolean(),
-    freela_url: z.string(),
+    /** Vaga fixa sem a página pública no ar = null (sem o link). */
+    freela_url: z.string().nullish().transform((v) => v ?? null),
+    /** Vagas fixas (25/11/2026): o tipo e o "divulgar até" (diária: null). API antiga = diária. */
+    kind: z.enum(["diaria", "clt"]).nullish().catch(null).transform((v) => v ?? "diaria"),
+    promote_until: str,
     qr_url: z.string().nullish().transform((v) => v ?? null),
     own_art: z.boolean(),
     /** A3: reserva que a leitura reprovou — os textos achados na arte. */
@@ -152,6 +179,7 @@ const storyDetail = story.extend({
 export type VacancyStoryDetail = z.infer<typeof storyDetail>;
 
 export type VacancyStoryFilter = "all" | "live" | "not_posted";
+export type VacancyStoryKind = "diaria" | "clt";
 export type VacancyFeedback = "texto_errado" | "foto_estranha" | "nao_divulgar";
 export type VacancySettingsPatch = Partial<{
   cities: string[];
@@ -161,6 +189,8 @@ export type VacancySettingsPatch = Partial<{
   min_lead_minutes: 60 | 120 | 240 | 360;
   vendor: "openai" | "gemini";
   style_refs_enabled: boolean;
+  clt_daily_cap: number;
+  clt_backlog_days: 0 | 7 | 14 | 30;
 }>;
 
 const ok = z.object({ ok: z.literal(true) }).passthrough();
@@ -192,15 +222,24 @@ export async function uploadVacancyTemplate(ws: string, file: File): Promise<Vac
   form.append("file", file, file.name);
   return templateResult.parse((await api.post(`${base(ws)}/template`, form)).data);
 }
-export async function startVacancyPreview(ws: string, opts: { qr?: boolean } = {}): Promise<void> {
-  ok.parse((await api.post(`${base(ws)}/preview`, opts.qr ? { qr: true } : undefined)).data);
+export async function startVacancyPreview(ws: string, opts: { qr?: boolean; kind?: VacancyStoryKind } = {}): Promise<void> {
+  const body = { ...(opts.qr ? { qr: true } : {}), ...(opts.kind === "clt" ? { kind: "clt" } : {}) };
+  ok.parse((await api.post(`${base(ws)}/preview`, Object.keys(body).length ? body : undefined)).data);
+}
+/** Vagas fixas (dono/admin): ligar exige marca (400 com a mensagem da API). */
+export async function enableCltVacancies(ws: string): Promise<VacancySettings> {
+  return settings.parse((await api.post(`${base(ws)}/clt/enable`)).data);
+}
+export async function disableCltVacancies(ws: string): Promise<{ cancelled: number }> {
+  const { data } = await api.post(`${base(ws)}/clt/disable`);
+  return ok.extend({ cancelled: num }).parse(data);
 }
 /** QR da vaga na arte (dono/admin; ligar exige prévia com QR conferida → 422 com a mensagem da API). */
 export async function setVacancyQr(ws: string, qr_enabled: boolean): Promise<VacancySettings> {
   return settings.parse((await api.post(`${base(ws)}/qr`, { qr_enabled })).data);
 }
-export async function listVacancyStories(ws: string, filter: VacancyStoryFilter = "all"): Promise<VacancyStory[]> {
-  const { data } = await api.get(`${base(ws)}/stories`, { params: { filter } });
+export async function listVacancyStories(ws: string, filter: VacancyStoryFilter = "all", kind?: VacancyStoryKind): Promise<VacancyStory[]> {
+  const { data } = await api.get(`${base(ws)}/stories`, { params: kind ? { filter, kind } : { filter } });
   return z.array(story).parse(data);
 }
 export async function getVacancyStory(ws: string, id: string): Promise<VacancyStoryDetail> {

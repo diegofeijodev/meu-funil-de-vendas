@@ -38,6 +38,7 @@ import {
   type VacancySettings,
   type VacancySettingsPatch,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
+import { CLT_BACKLOG_OPTIONS, CLT_TEXT, cltBacklogHint, cltCapHint, summaryWithClt } from "@/lib/vacancy-clt";
 import { TemplateCard } from "./template-card";
 import { PreviewCard } from "./preview-card";
 import { QrCard } from "./qr-card";
@@ -56,7 +57,7 @@ const VENDORS = [
 ] as const;
 
 type Edits = VacancySettingsPatch;
-const FIELDS: (keyof Edits)[] = ["cities", "daily_cap", "window_start", "window_end", "min_lead_minutes", "vendor", "style_refs_enabled"];
+const FIELDS: (keyof Edits)[] = ["cities", "daily_cap", "window_start", "window_end", "min_lead_minutes", "vendor", "style_refs_enabled", "clt_daily_cap", "clt_backlog_days"];
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -109,12 +110,15 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const [autoDialog, setAutoDialog] = useState(false);
   const s = settings;
 
-  const value = <K extends keyof Edits>(k: K) => (k in edits ? edits[k] : s[k]) as NonNullable<Edits[K]>;
+  // Vagas fixas: os ajustes CLT moram no bloco `clt` da resposta (PATCH com `clt_daily_cap`/`clt_backlog_days`).
+  const server = (k: keyof Edits): unknown =>
+    k === "clt_daily_cap" ? s.clt?.daily_cap : k === "clt_backlog_days" ? s.clt?.backlog_days : s[k as Exclude<keyof Edits, "clt_daily_cap" | "clt_backlog_days">];
+  const value = <K extends keyof Edits>(k: K) => (k in edits ? edits[k] : server(k)) as NonNullable<Edits[K]>;
   const set = <K extends keyof Edits>(k: K, v: NonNullable<Edits[K]>) => {
     if (save.isError) save.reset(); // nova edição depois da falha: o botão volta a "Salvar ajustes"
     setEdits((e) => {
       const next = { ...e, [k]: v };
-      if (k === "cities" ? sameCities(v as string[], s.cities) : same(v, s[k])) delete next[k]; // voltou ao valor salvo: não conta como mudança
+      if (k === "cities" ? sameCities(v as string[], s.cities) : same(v, server(k))) delete next[k]; // voltou ao valor salvo: não conta como mudança
       return next;
     });
   };
@@ -123,6 +127,8 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const start = value("window_start");
   const end = value("window_end");
   const cap = value("daily_cap");
+  const cltCap = s.clt ? value("clt_daily_cap") : 2;
+  const cltBacklog = s.clt ? value("clt_backlog_days") : 0;
   const winErr = windowError(start, end);
   const style = photoStyleTexts(s);
   const dirty = FIELDS.some((f) => f in edits);
@@ -161,7 +167,7 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const options = [...s.recent_cities, ...s.cities.filter((c) => !known.has(c)).map((city) => ({ city, count: null as number | null }))];
   const toggleCity = (city: string) => set("cities", cities.includes(city) ? cities.filter((c) => c !== city) : [...cities, city]);
 
-  const summary = settingsSummary(s);
+  const summary = summaryWithClt(settingsSummary(s), s.daily_cap, s.clt);
   const weekly = weeklyFallbackWarning(s.week);
   const warn = capWarning(cap, s.publish_quota);
   const outcomes = autoPublishSummary(s.recent_outcomes);
@@ -193,14 +199,8 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
 
       {open && (
         <div id="vac-settings-body" className="space-y-4 px-5 pb-0">
-          {s.template && (
-            <>
-              <TemplateCard workspaceId={workspaceId} settings={s} canEdit={canEdit} />
-              <PreviewCard workspaceId={workspaceId} settings={s} canEdit={canEdit} />
-            </>
-          )}
-
-          <Field title="Cidades" hint="Só vagas dessas cidades viram story.">
+          {s.clt && <h3 className="border-t border-border pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{CLT_TEXT.groupBoth}</h3>}
+          <Field title="Cidades" hint={s.clt ? "Só vagas dessas cidades viram story, diárias e fixas." : "Só vagas dessas cidades viram story."}>
             <Option type="checkbox" checked={cities.length === 0} disabled={disabled} onChange={() => set("cities", [])}>
               Todas as cidades
             </Option>
@@ -231,38 +231,6 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
               <Input id="vac-win-end" type="time" className="h-11 w-32" value={end} disabled={disabled} aria-invalid={!!winErr}
                 aria-label="Fim do horário para postar"
                 onChange={(e) => set("window_end", e.target.value)} />
-            </div>
-          </Field>
-
-          <Field
-            title="Máximo de stories de vagas por dia"
-            hint={capHint(s.publish_quota)}
-          >
-            <div className="flex items-center gap-3">
-              <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir" disabled={disabled || cap <= 1}
-                onClick={() => set("daily_cap", Math.max(1, cap - 1))}>
-                <Minus />
-              </Button>
-              <output className="min-w-8 text-center text-lg font-semibold tabular-nums" aria-live="polite">{cap}</output>
-              <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Aumentar" disabled={disabled || cap >= 20}
-                onClick={() => set("daily_cap", Math.min(20, cap + 1))}>
-                <Plus />
-              </Button>
-            </div>
-            {warn && <p className="text-sm font-medium" role="status">{warn}</p>}
-          </Field>
-
-          <Field
-            title="Só postar vagas que começam daqui a pelo menos"
-            hint={`Vaga em cima da hora não dá tempo de alguém ver o story e se candidatar.${s.auto_publish ? "" : " Conte também o tempo que você leva para aprovar."}`}
-          >
-            <div className="flex flex-wrap gap-x-5">
-              {LEADS.map((l) => (
-                <Option key={l.value} type="radio" name="vac-lead" checked={value("min_lead_minutes") === l.value} disabled={disabled}
-                  onChange={() => set("min_lead_minutes", l.value)}>
-                  {l.label}
-                </Option>
-              ))}
             </div>
           </Field>
 
@@ -304,6 +272,73 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
           </Field>
 
           <QrCard workspaceId={workspaceId} settings={s} canEdit={canEdit} canManage={canManage} />
+
+          {s.clt && <h3 className="border-t border-border pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{CLT_TEXT.groupDaily}</h3>}
+          {s.template && (
+            <>
+              <TemplateCard workspaceId={workspaceId} settings={s} canEdit={canEdit} />
+              <PreviewCard workspaceId={workspaceId} settings={s} canEdit={canEdit} />
+            </>
+          )}
+
+          <Field
+            title={s.clt ? "Máximo de stories de diárias por dia" : "Máximo de stories de vagas por dia"}
+            hint={capHint(s.publish_quota)}
+          >
+            <div className="flex items-center gap-3">
+              <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir" disabled={disabled || cap <= 1}
+                onClick={() => set("daily_cap", Math.max(1, cap - 1))}>
+                <Minus />
+              </Button>
+              <output className="min-w-8 text-center text-lg font-semibold tabular-nums" aria-live="polite">{cap}</output>
+              <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Aumentar" disabled={disabled || cap >= 20}
+                onClick={() => set("daily_cap", Math.min(20, cap + 1))}>
+                <Plus />
+              </Button>
+            </div>
+            {warn && <p className="text-sm font-medium" role="status">{warn}</p>}
+          </Field>
+
+          <Field
+            title="Só postar vagas que começam daqui a pelo menos"
+            hint={`Vaga em cima da hora não dá tempo de alguém ver o story e se candidatar.${s.auto_publish ? "" : " Conte também o tempo que você leva para aprovar."}`}
+          >
+            <div className="flex flex-wrap gap-x-5">
+              {LEADS.map((l) => (
+                <Option key={l.value} type="radio" name="vac-lead" checked={value("min_lead_minutes") === l.value} disabled={disabled}
+                  onChange={() => set("min_lead_minutes", l.value)}>
+                  {l.label}
+                </Option>
+              ))}
+            </div>
+          </Field>
+
+          {s.clt && (
+            <>
+              <h3 className="border-t border-border pt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{CLT_TEXT.groupClt}</h3>
+              <Field title={CLT_TEXT.capTitle} hint={cltCapHint(s.publish_quota)}>
+                <div className="flex items-center gap-3">
+                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir" disabled={disabled || cltCap <= 1}
+                    onClick={() => set("clt_daily_cap", Math.max(1, cltCap - 1))}>
+                    <Minus />
+                  </Button>
+                  <output className="min-w-8 text-center text-lg font-semibold tabular-nums" aria-live="polite">{cltCap}</output>
+                  <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Aumentar" disabled={disabled || cltCap >= 10}
+                    onClick={() => set("clt_daily_cap", Math.min(10, cltCap + 1))}>
+                    <Plus />
+                  </Button>
+                </div>
+              </Field>
+              <Field title={CLT_TEXT.backlogTitle} hint={cltBacklogHint(s.clt.promo_days)}>
+                {CLT_BACKLOG_OPTIONS.filter((o) => o.value <= s.clt!.promo_days).map((o) => (
+                  <Option key={o.value} type="radio" name="vac-clt-backlog" checked={cltBacklog === o.value} disabled={disabled}
+                    onChange={() => set("clt_backlog_days", o.value)}>
+                    {o.label}
+                  </Option>
+                ))}
+              </Field>
+            </>
+          )}
 
           {/* Barra fixa no pé da tela: só fica ativa quando algo mudou. */}
           <div className="sticky bottom-0 -mx-5 flex flex-col gap-2 border-t border-border bg-card px-5 py-3 sm:flex-row sm:items-center">

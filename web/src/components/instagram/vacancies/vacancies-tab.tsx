@@ -31,6 +31,7 @@ import { useStoryActions } from "./use-story-actions";
 import { VacanciesFirstRun } from "./first-run";
 import { VacanciesStatusCard } from "./status-card";
 import { VacanciesSettingsPanel } from "./settings-panel";
+import { VacanciesCltCard } from "./clt-card";
 
 type Confirm = { kind: "post_now" | "create_anyway"; story: VacancyStory };
 
@@ -118,13 +119,21 @@ export function VacanciesTab({ workspaceId }: { workspaceId: string }) {
     </div>
   );
 
+  // Vagas fixas (UI §4.1): o cartão aparece com o bloco `clt` (também sem arte modelo, que a CLT não usa); a lista e "Para aprovar"
+  // aparecem com a arte modelo ou depois que as vagas fixas foram ligadas alguma vez.
+  const hasStories = !!settings.template || !!settings.clt?.enabled_at;
+  const clt = settings.clt ? (
+    <VacanciesCltCard workspaceId={workspaceId} settings={settings} canEdit={canEdit} canManage={canManage} />
+  ) : null;
+
   return (
     <div className="space-y-6">
-      {settings.template && waiting && approve}
+      {hasStories && waiting && approve}
       {status}
-      {/* Sem arte modelo não há story: "Para aprovar" e "Vagas que chegaram" só repetiriam o vazio. */}
-      {settings.template && !waiting && approve}
-      {settings.template && (
+      {clt}
+      {/* Sem story possível: "Para aprovar" e "Vagas que chegaram" só repetiriam o vazio. */}
+      {hasStories && !waiting && approve}
+      {hasStories && (
         <div data-vac-section="arrived">
           <StoriesList
             workspaceId={workspaceId}

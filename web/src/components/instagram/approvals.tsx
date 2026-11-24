@@ -27,6 +27,7 @@ import {
   rejectSelectedLabel,
   vagasTabState,
 } from "@/lib/vacancy-stories";
+import { cltCheckedLine, isCltPost } from "@/lib/vacancy-clt";
 import { useVacancySettings, vacancyDontPost } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
 import { useStoryActions } from "./vacancies/use-story-actions";
 
@@ -156,7 +157,7 @@ export function IgApprovalList({
         const vac = postVacancy(p);
         const own = vac ? isOwnArt(p) : false;
         const alerta = vac && !own ? checkWarning(vac) : null;
-        const conferido = vac && !own && !alerta ? checkedLine(vac.checked_fields) : null;
+        const conferido = vac && !own && !alerta ? (isCltPost(p) ? cltCheckedLine(vac.checked_fields) : checkedLine(vac.checked_fields)) : null;
         return (
         <div
           key={p.id}
