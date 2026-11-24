@@ -405,10 +405,18 @@ export class PublishingService implements OnModuleInit {
       if (e instanceof MetaError && e.code === 190) throw e;
       return null;
     });
-    // P1: o limite que a Meta informa passa a valer (e fica gravado para a agenda das vagas).
+    // P1: o limite que a Meta informa passa a valer (e fica gravado para a agenda das vagas). O log registra a mudança (não cada publicação)
+    // e o número que a Meta mandou fora de 1–100 (ignorado: fica o limite de antes).
     const told = quotaFrom(limit);
+    const cfg = limit?.data?.[0]?.config;
+    if (told === null && cfg?.quota_total != null) {
+      this.logger.warn(`[instagram] limite de publicações da Meta ignorado (${ws}): quota_total=${JSON.stringify(cfg.quota_total)} quota_duration=${JSON.stringify(cfg.quota_duration)}; vale ${quota}.`);
+    }
     if (told !== null) {
-      if (told !== quota) await this.store.savePublishQuota(ws, told).catch((e) => this.logger.warn(`[instagram] limite da Meta não gravado (${ws}): ${errText(e)}`));
+      if (told !== quota) {
+        await this.store.savePublishQuota(ws, told).catch((e) => this.logger.warn(`[instagram] limite da Meta não gravado (${ws}): ${errText(e)}`));
+        this.logger.log(`[instagram] limite de publicações da Meta (${ws}): ${told} em 24 h (antes: ${quota}).`);
+      }
       quota = told;
     }
     if ((limit?.data?.[0]?.quota_usage ?? 0) >= quota) throw new RateLimited(`Limite de ${quota} publicações em 24h atingido.`);

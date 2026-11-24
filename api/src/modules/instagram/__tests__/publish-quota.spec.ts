@@ -11,10 +11,12 @@ const IG = 'ig-1';
 const limit = (total: unknown, duration: unknown = 86400, usage = 0) => ({ data: [{ config: { quota_total: total, quota_duration: duration }, quota_usage: usage }] });
 
 describe('quotaFrom (P1/V4)', () => {
-  it('50 em 86400 s vale; ausente, outra janela, fora de 1–1000 ou não inteiro → null (fica o 25)', () => {
+  it('50 em 86400 s vale; ausente, outra janela, fora de 1–100 ou não inteiro → null (fica o 25)', () => {
     expect(quotaFrom(limit(50))).toBe(50);
     expect(quotaFrom(limit(1))).toBe(1);
-    expect(quotaFrom(limit(1000))).toBe(1000);
+    expect(quotaFrom(limit(100))).toBe(100);
+    expect(quotaFrom(limit(101))).toBeNull();
+    expect(quotaFrom(limit(1000))).toBeNull();
     expect(quotaFrom({ data: [{ quota_usage: 3 }] })).toBeNull();
     expect(quotaFrom(limit(50, 3600))).toBeNull();
     expect(quotaFrom(limit(5000))).toBeNull();
@@ -51,6 +53,25 @@ describe('publicação usa o limite que a Meta informa', () => {
     expect(acc().publish_quota_total).toBe(50);
     expect(acc().publish_quota_checked_at).toBeInstanceOf(Date);
     expect(acc(WS_B).publish_quota_total).toBeNull();
+  });
+
+  it('o log registra quando o limite gravado muda (não a cada publicação) e quando a Meta manda um número ignorado', async () => {
+    const { w, svc, acc } = setup(limit(50, 86400, 0));
+    const log = jest.spyOn((svc as any).logger, 'log').mockImplementation(() => undefined);
+    const warn = jest.spyOn((svc as any).logger, 'warn').mockImplementation(() => undefined);
+    await svc.publishInstagramPost(seedPost(w, { workspace_id: WS }).id);
+    await svc.publishInstagramPost(seedPost(w, { workspace_id: WS }).id);
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('limite de publicações'));
+    expect(lines).toEqual([expect.stringContaining('50 em 24 h (antes: 25)')]);
+
+    const x = setup(limit(1000, 86400, 30));
+    const warnX = jest.spyOn((x.svc as any).logger, 'warn').mockImplementation(() => undefined);
+    const e = await err(x.svc.publishInstagramPost(seedPost(x.w, { workspace_id: WS }).id));
+    expect(e.message).toBe('Limite de 25 publicações em 24h atingido.');
+    expect(x.acc().publish_quota_total).toBeNull();
+    expect(warnX.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringContaining('quota_total=1000'));
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('quota_total'))).toHaveLength(0);
+    expect(acc().publish_quota_total).toBe(50);
   });
 
   it('sem o número da Meta vale 25: 30 usados = RateLimited com o número', async () => {
