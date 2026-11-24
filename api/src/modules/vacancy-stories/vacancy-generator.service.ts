@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
+import { AiCreditAlertsService } from '../ai/ai-credit-alerts.service';
 import { AiService } from '../ai/ai.service';
 import type { AiImageInput, AiVendor } from '../ai/ai.types';
 import { RefsService } from '../creative/refs.service';
@@ -34,6 +35,8 @@ const RETRY_MS = 10 * MIN;
 const PER_TICK = 2;
 /** Tentativas da foto da IA antes de a arte sair sem foto. */
 const AI_TRIES = 2;
+/** P4: com o aviso de "sem crédito" do fornecedor regravado há menos que isto, a foto nem é pedida (uma tentativa por hora continua). */
+const NO_CREDIT_SKIP_MS = 60 * MIN;
 /** Espera depois de erro da IA (D9): 5 → 15 → 45 min, e fica em 45. */
 const AI_BACKOFF_MIN = [5, 15, 45];
 const QUEUE = ['new', 'waiting'];
@@ -172,7 +175,18 @@ export class VacancyGeneratorService {
     private readonly store: IgStore,
     private readonly feed: VacancyFeedClient,
     private readonly gate: VacancyGate,
+    @Optional() private readonly creditAlerts?: AiCreditAlertsService,
   ) {}
+
+  /**
+   * P4 (desenho de 24/11): o fornecedor escolhido recusou por falta de crédito há menos de 60 min (`ai_credit_alerts.last_at`) → a mensagem
+   * do aviso; senão `null` (pede a foto). Falha ao ler o aviso = pede a foto, como antes.
+   */
+  private async recentNoCredit(ws: string, vendor: AiVendor): Promise<string | null> {
+    const st = await this.creditAlerts?.status(ws).catch(() => null);
+    const v = st?.vendors.find((x) => x.vendor === vendor && x.reason === 'no_credit');
+    return v && this.now() - v.last_at.getTime() < NO_CREDIT_SKIP_MS ? v.message || AI_UNUSABLE : null;
+  }
 
   /**
    * Rodada do job: até 2 linhas (no total) começam a gerar, as de início mais próximo. Empresa sem Instagram conectado não gera (a
@@ -335,8 +349,11 @@ export class VacancyGeneratorService {
     // Fatia 5: só com o interruptor da empresa ligado; a 1ª tentativa leva as frases de estilo, a 2ª vai como sempre (sem notas).
     const style = s.style_refs_enabled ? await this.refs.loadPhotoStyle(ws, s.brand_id, `Vaga de ${f.funcao}`) : null;
     const lines = style ? photoStyleLines(style.style) : [];
+    // P4: sem crédito há pouco → a arte sai sem foto sem chamar a IA (a tentativa fica registrada com o motivo, e o aviso vermelho segue).
+    const noCredit = await this.recentNoCredit(ws, vendor);
+    if (noCredit) log(1, 'ai', false, [], noCredit);
 
-    for (let n = 1; n <= AI_TRIES; n++) {
+    for (let n = 1; n <= (noCredit ? 0 : AI_TRIES); n++) {
       await onStep?.('art', n);
       let photo: Uint8Array;
       try {
