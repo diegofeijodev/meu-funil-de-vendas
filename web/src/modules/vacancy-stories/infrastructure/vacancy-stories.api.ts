@@ -74,6 +74,8 @@ const settings = z
     counts: z.object({ ready: num, to_approve: num }).passthrough(),
     ai_error: str,
     ai_error_at: str,
+    /** P9: limite de publicações em 24 h que a Meta informou (ou 25). API antiga = 25. */
+    publish_quota: z.number().int().positive().catch(25).default(25),
     /** Bloqueio de publicação aberto (contrato §26, 24/11/2026). */
     publishing_blocked: z.object({ reason: z.enum(["permission", "token"]), since: z.string() }).nullish().transform((v) => v ?? null),
     preview: preview.default({}),

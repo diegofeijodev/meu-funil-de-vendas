@@ -5,13 +5,12 @@ import { ClaimRefused, ContainerPending, Guardrail, IgStore, OriginUnavailable, 
 import { ORIGIN_UNVERIFIABLE_MSG, PUBLISH_ORIGIN_GUARDS, PublishOriginGuard } from './origin-guards';
 import { EXTERNAL_FETCH, ExternalFetch, assertExternalUrl } from '../media/external-fetch';
 import { MetaError, MetaGraphClient, PublishPermissionError } from './meta-graph';
-import { blockedOverdueMessage, blockedRunAt, toPublishError } from './publish-block';
+import { blockedOverdueMessage, blockedRunAt, quotaFrom, toPublishError } from './publish-block';
 import { dateIssues } from './content-strategy';
 import { normalizeHashtags } from './normalize';
 import { CAMPAIGN_FINISHED } from '../campaigns/campaign-labels';
 
 const MAX_ATTEMPTS = 3;
-const DAILY_LIMIT = 25;
 const POLL_BUDGET_MS = 40_000;
 const STALE_LOCK_MS = 15 * 60e3;
 /**
@@ -321,9 +320,10 @@ export class PublishingService implements OnModuleInit {
 
     // Guardrail: nunca publicar sem aprovação quando o plano exige.
     if ((await this.store.approvalRequired(post)) && !post.approved_at) throw new Guardrail('Post não aprovado — publicação bloqueada.');
-    // Guardrail: no máximo 25 publicações em 24h por conta (contagem local).
+    // Guardrail: no máximo o limite da Meta (o que ela informou, ou 25) de publicações em 24h por conta (contagem local).
+    let quota = await this.store.publishQuota(ws);
     const count = await this.prisma.ig_posts.count({ where: { workspace_id: ws, status: 'published', published_at: { gte: new Date(Date.now() - 24 * 3600e3) } } });
-    if (count >= DAILY_LIMIT) throw new RateLimited('Limite de 25 publicações em 24h atingido.');
+    if (count >= quota) throw new RateLimited(`Limite de ${quota} publicações em 24h atingido.`);
     // Guardrail: mídia reprovada na validação de qualidade do Instagram não é publicada.
     const assetIds = media.map((m) => m.asset_id).filter(Boolean);
     const MOCK_MSG = 'Mídia simulada (sem IA real) não pode ser publicada. Gere a mídia de novo com um provedor conectado.';
@@ -401,11 +401,17 @@ export class PublishingService implements OnModuleInit {
     }
 
     const ig = acc.ig_user_id as string;
-    const limit = await this.graph.graph<{ data?: { quota_usage?: number }[] }>(ws, `/${ig}/content_publishing_limit`, { params: { fields: 'quota_usage' } }).catch((e) => {
+    const limit = await this.graph.graph<{ data?: { quota_usage?: number; config?: { quota_total?: number; quota_duration?: number } }[] }>(ws, `/${ig}/content_publishing_limit`, { params: { fields: 'config,quota_usage' } }).catch((e) => {
       if (e instanceof MetaError && e.code === 190) throw e;
       return null;
     });
-    if ((limit?.data?.[0]?.quota_usage ?? 0) >= DAILY_LIMIT) throw new RateLimited('Limite de 25 publicações em 24h atingido.');
+    // P1: o limite que a Meta informa passa a valer (e fica gravado para a agenda das vagas).
+    const told = quotaFrom(limit);
+    if (told !== null) {
+      if (told !== quota) await this.store.savePublishQuota(ws, told).catch((e) => this.logger.warn(`[instagram] limite da Meta não gravado (${ws}): ${errText(e)}`));
+      quota = told;
+    }
+    if ((limit?.data?.[0]?.quota_usage ?? 0) >= quota) throw new RateLimited(`Limite de ${quota} publicações em 24h atingido.`);
 
     await this.store.patchPost(postId, { status: 'publishing', last_error: null });
     const caption = fullCaption(post);

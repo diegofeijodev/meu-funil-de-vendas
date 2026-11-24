@@ -112,6 +112,8 @@ export type VacancySettingsView = {
   counts: { ready: number; to_approve: number };
   ai_error: string | null;
   ai_error_at: Date | null;
+  /** P9: limite de publicações em 24 h que a Meta informou (ou 25): a ajuda e o aviso do máximo por dia. */
+  publish_quota: number;
   /** Bloqueio de publicação aberto (24/11/2026): o cartão de situação diz "Pausado". */
   publishing_blocked: { reason: 'permission' | 'token'; since: Date } | null;
   preview: unknown;
@@ -171,6 +173,7 @@ export class VacancySettingsService {
     ]);
     const { brand: styleBrand, inUse } = await this.styleView(workspaceId, s);
     const block = await this.store.publishBlock(workspaceId);
+    const quota = await this.store.publishQuota(workspaceId);
     return {
       enabled: s.enabled,
       enabled_at: s.enabled_at,
@@ -193,6 +196,7 @@ export class VacancySettingsService {
       counts: { ready, to_approve: toApprove },
       ai_error: s.ai_error,
       ai_error_at: s.ai_error_at,
+      publish_quota: quota,
       publishing_blocked: block ? { reason: block.publish_block_reason, since: block.publish_blocked_at ?? block.publish_block_last_at ?? now } : null,
       preview: previewForView(s.preview, now),
       recent_outcomes: recent,

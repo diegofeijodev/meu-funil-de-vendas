@@ -3,7 +3,7 @@ import { ENV } from '../../common/config/env.module';
 import { Env } from '../../common/config/env.validation';
 import { IgStore, PublishUnblockHow, errText } from './ig-store.service';
 import { MetaGraphClient } from './meta-graph';
-import { classifyPublishError, nextCheckDelay } from './publish-block';
+import { classifyPublishError, nextCheckDelay, quotaFrom } from './publish-block';
 
 const MIN = 60e3;
 /** O botão "Já corrigi — testar agora" aceita uma conferência por minuto por empresa. */
@@ -144,6 +144,8 @@ export class PublishBlockService {
           .graph(workspaceId, `/${acc.ig_user_id}/content_publishing_limit`, { params: { fields: 'config,quota_usage' } })
           .catch((e: unknown) => ({ error: errText(e) }))
       : null;
+    const told = quotaFrom(limit);
+    if (told !== null) await this.store.savePublishQuota(workspaceId, told).catch(() => undefined);
     const list = (perms.data ?? []).map((p) => ({ permission: p.permission, status: p.status }));
     const granted = list.some((p) => p.permission === PERMISSION && p.status === 'granted');
     this.logger.log(`[instagram] sonda de publicação ${workspaceId} (${this.mode}): ${PERMISSION}=${granted ? 'granted' : 'não'} permissões=${JSON.stringify(list).slice(0, 1500)} limite=${JSON.stringify(limit).slice(0, 500)}`);

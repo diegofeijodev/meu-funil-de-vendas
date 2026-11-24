@@ -20,6 +20,7 @@ import {
   CITIES_EMPTY,
   autoPublishOffToast,
   autoPublishSummary,
+  capHint,
   capWarning,
   settingsSummary,
   sameCities,
@@ -161,7 +162,7 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
 
   const summary = settingsSummary(s);
   const weekly = weeklyFallbackWarning(s.week);
-  const warn = capWarning(cap);
+  const warn = capWarning(cap, s.publish_quota);
   const outcomes = autoPublishSummary(s.recent_outcomes);
   const disabled = !canEdit;
 
@@ -234,7 +235,7 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
 
           <Field
             title="Máximo de stories de vagas por dia"
-            hint="O Instagram aceita até 25 publicações por dia na conta, somando os posts normais. As vagas que passarem do máximo ficam para o dia seguinte, se ainda não tiverem começado."
+            hint={capHint(s.publish_quota)}
           >
             <div className="flex items-center gap-3">
               <Button type="button" variant="outline" size="icon" className="size-11" aria-label="Diminuir" disabled={disabled || cap <= 1}

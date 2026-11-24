@@ -157,6 +157,11 @@ export class IgStore {
     return a?.publish_block_reason ? { ...a, publish_block_reason: a.publish_block_reason as PublishBlockReason } : null;
   }
 
+  /** P1: grava o limite que a Meta informou (já validado por `quotaFrom`); muda só quando o número muda. */
+  async savePublishQuota(workspaceId: string, total: number, now = new Date()) {
+    await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId }, data: { publish_quota_total: total, publish_quota_checked_at: now } });
+  }
+
   /** P1: limite de publicações em 24 h que a Meta informou para a conta (ou 25). */
   async publishQuota(workspaceId: string): Promise<number> {
     const a = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: workspaceId }, select: { publish_quota_total: true } });

@@ -57,7 +57,7 @@ export type DisplayResult = {
  * O que a tela precisa saber da empresa agora: `capFull` = o limite de hoje está cheio (ausente = cheio); `igFull` = sem espaço no
  * limite de publicações da Meta.
  */
-export type DisplayContext = { capFull?: boolean; igFull?: boolean; publishBlocked?: boolean };
+export type DisplayContext = { capFull?: boolean; igFull?: boolean; publishBlocked?: boolean; quota?: number };
 
 export type StoryCan = { approve: boolean; dont_post: boolean; post_now: boolean; create_anyway: boolean; redo: boolean; retry: boolean };
 
@@ -170,8 +170,8 @@ function capSupport(cap: number, at: Date, now: Date): string {
 }
 
 /** B4: espera pelo limite de publicações da Meta (não pelo limite do dia). */
-function igSupport(at: Date, now: Date): string {
-  return `A conta está perto do limite do Instagram (25 publicações em 24 h, somando os posts normais). Vai ao ar ${atLabel(at, now)}.`;
+function igSupport(at: Date, now: Date, quota = 25): string {
+  return `A conta está perto do limite do Instagram (${quota} publicações em 24 h, somando os posts normais). Vai ao ar ${atLabel(at, now)}.`;
 }
 
 const noPeriod = (s: string) => s.trim().replace(/[.\s]+$/, '');
@@ -238,7 +238,7 @@ export function displayOf(row: StoryRow, post: StoryPost | null, s: SettingsRow,
     const otherDay = spDay(at) !== spDay(now);
     const open = inWindow(now, s);
     if (otherDay && open && ctx.capFull !== false) return out('waiting_cap', LABEL.waiting_cap, capSupport(s.daily_cap, at, now), null, null, 'cap');
-    if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now), null, null, 'instagram');
+    if (otherDay && open && ctx.igFull) return out('waiting_cap', LABEL.waiting_cap, igSupport(at, now, ctx.quota), null, null, 'instagram');
     // Janela aberta e mesmo assim outro dia: foram os 15 min entre stories que empurraram.
     if (otherDay || !open) return out('waiting_window', LABEL.waiting_window, `Vai ao ar ${atLabel(at, now)}`, null, null, open ? 'spacing' : 'window');
   }

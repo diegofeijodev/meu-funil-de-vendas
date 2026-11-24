@@ -263,7 +263,7 @@ export function atLabel(iso: string, now: Date): string {
  */
 export function postNowDialog(
   story: { display: string; wait_kind?: WaitKind | null; scheduled_at?: string | null },
-  s: { window_start: string; window_end: string; today: { posted: number; scheduled: number; cap: number } },
+  s: { window_start: string; window_end: string; today: { posted: number; scheduled: number; cap: number }; publish_quota?: number },
   now: Date,
 ): PostNowDialog {
   const kind = story.wait_kind ?? (story.display === 'waiting_cap' ? 'cap' : 'window');
@@ -281,7 +281,7 @@ export function postNowDialog(
     return {
       title: 'Postar agora, com a conta perto do limite do Instagram?',
       description:
-        'A conta está perto do limite de 25 publicações em 24 h, somando os posts normais. Este story usa o espaço que guardamos para os posts normais da empresa.',
+        `A conta está perto do limite de ${s.publish_quota ?? 25} publicações em 24 h, somando os posts normais. Este story usa o espaço que guardamos para os posts normais da empresa.`,
       confirm: 'Postar agora',
       cancel: 'Esperar a vez',
     };
@@ -374,9 +374,18 @@ export function arrivedEmptyText(
   return s.enabled ? noStoriesYet(s) : 'Ligue os stories das vagas para as vagas novas aparecerem aqui.';
 }
 
-/** Aviso do máximo por dia (UI §3): acima de 15 os posts normais podem ficar sem espaço. */
-export function capWarning(cap: number): string | null {
-  return cap > 15 ? 'Acima de 15, os posts normais da empresa podem ficar sem espaço no dia.' : null;
+/**
+ * Aviso do máximo por dia (UI 24/11 §1.8): aparece quando o máximo passa do limite da Meta − 10 (com 25, "acima de 15", como antes; com
+ * 50, só acima de 40). `quota` = o limite que a Meta informou (`publish_quota`, P9).
+ */
+export function capWarning(cap: number, quota = 25): string | null {
+  const limit = quota - 10;
+  return cap > limit ? `Acima de ${limit} por dia, os posts normais da empresa podem ficar sem espaço.` : null;
+}
+
+/** Ajuda do "Máximo de stories de vagas por dia" com o limite da Meta (UI 24/11 §1.8). */
+export function capHint(quota = 25): string {
+  return `O Instagram aceita até ${quota} publicações por dia nesta conta, somando posts normais e stories. As vagas que passarem do máximo ficam para o dia seguinte, se ainda não tiverem começado.`;
 }
 
 export type Outcomes = { n: number; first_try: number; redone: number; fallback: number; not_posted: number };

@@ -569,6 +569,13 @@ descadastro ("sair", "parar", "descadastrar", "stop") marca `unsubscribed`; pala
   recusada → falha + 1 e a próxima espera (1 h, 3 h, 6 h, 12 h, 24 h); erro de rede → +1 h sem contar falha; 190 → vira bloqueio de token.
 - **Isolamento:** tudo é por empresa; o bloqueio de A nunca adia a fila nem pausa o gerador de B.
 
+### 22.7 Limite de publicações lido da Meta (24/11/2026, P1)
+
+`content_publishing_limit` é pedido com `fields=config,quota_usage`. `config.quota_total` só vale inteiro de 1 a 1000 com `quota_duration = 86400`;
+aí fica em `instagram_accounts.publish_quota_total` (+ `publish_quota_checked_at`) — também pela sonda do bloqueio. Sem ele, o limite é 25. Vale no
+guardrail local (publicados em 24 h), na comparação com `quota_usage` (`RateLimited "Limite de {n} publicações em 24h atingido."`) e no espaço
+da agenda das vagas (`igRoom` = limite − 5 de folga − publicados em 24 h − agendados nas próximas 24 h).
+
 ## 23. Meta Ads, gestor de tráfego, Google/TikTok Ads, Performance e Insights
 
 Módulo `api/src/modules/ads`. Telas `/performance`, `/insights`, abas "Anúncios e regras" da campanha e (Task 9) o painel de Integrações. Todas as ações são `POST` com o `data` do protótipo no corpo, HTTP 200; `workspaceId`/`campaignId`/`id` são uuid (`400 VALIDATION_ERROR` se não). Erros dos provedores: Meta = `502 META_ERROR`, Google/TikTok = `502 ADS_PROVIDER_ERROR` (mensagem pt-BR do protótipo); falta de credencial = `400`. Todo id que entra em caminho da Graph/GAQL é só dígitos (`act_`+dígitos para a conta); fora disso nunca vira URL. A Graph usa `MetaGraphClient` (Task 5): `access_token` + `appsecret_proof` em toda chamada; `META_GRAPH_BASE_URL` (só testes, ignorada em produção) aponta para a Graph falsa.
@@ -792,6 +799,7 @@ antecedência 120 min, OpenAI):
   today: { posted: number, scheduled: number, cap: number } /* dia de Brasília por published_at ?? scheduled_at ?? created_at */,
   pending_approval: number, counts: { ready: number /* ready|approved|scheduled */, to_approve: number /* pending_approval */ },
   ai_error: string | null, ai_error_at: string | null, preview: PreviewState | {} /* {} = nunca gerou; ver abaixo */,
+  publish_quota: number /* 24/11/2026 (P1/P9): limite de publicações em 24 h que a Meta informou (`instagram_accounts.publish_quota_total`) ou 25; a ajuda do máximo e o aviso (máximo > limite − 10) usam ele */,
   publishing_blocked: { reason: "permission" | "token", since: string } | null /* 24/11/2026: bloqueio de publicação aberto (§22.6); o cartão diz "Pausado" */,
   recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
   week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */,

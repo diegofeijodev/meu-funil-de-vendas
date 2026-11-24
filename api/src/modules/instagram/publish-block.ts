@@ -32,6 +32,17 @@ export function nextCheckDelay(failures: number): number {
   return CHECK_DELAYS_H[i]! * H;
 }
 
+/**
+ * P1/V4 — limite de publicações em 24 h que a Meta informou em `content_publishing_limit?fields=config,quota_usage`: só vale inteiro entre
+ * 1 e 1000 e janela de 86400 s; senão `null` (fica o 25).
+ */
+export function quotaFrom(resp: unknown): number | null {
+  const row = (resp as { data?: { config?: { quota_total?: unknown; quota_duration?: unknown } }[] } | null)?.data?.[0];
+  const total = row?.config?.quota_total;
+  if (Number(row?.config?.quota_duration) !== 86400) return null;
+  return typeof total === 'number' && Number.isInteger(total) && total >= 1 && total <= 1000 ? total : null;
+}
+
 /** "20/11 às 8h30" / "20/11 às 8h" no horário de Brasília (textos gravados: sempre dia e hora absolutos). */
 export function dayHourSp(d: Date): string {
   const p = Object.fromEntries(

@@ -310,8 +310,10 @@ describe('vacancy-stories (puro)', () => {
     expect(rejectSelectedLabel([])).toBe('Rejeitar selecionados');
   });
 
-  it('capWarning: só acima de 15', () => {
-    expect(capWarning(16)).toBe('Acima de 15, os posts normais da empresa podem ficar sem espaço no dia.');
+  it('capWarning: limite da Meta − 10 (25 → acima de 15; 50 → acima de 40)', () => {
+    expect(capWarning(16)).toBe('Acima de 15 por dia, os posts normais da empresa podem ficar sem espaço.');
+    expect(capWarning(20, 50)).toBeNull();
+    expect(capWarning(41, 50)).toBe('Acima de 40 por dia, os posts normais da empresa podem ficar sem espaço.');
     expect(capWarning(15)).toBeNull();
   });
 
@@ -556,5 +558,16 @@ describe('publicação parada no cartão de situação (UI 24/11 §1.7)', () => 
     expect(pausedNotice('2026-11-20T11:30:00Z')).toBe(
       'Pausado: o Instagram não está aceitando publicações desde 20/11 às 8h30. As vagas esperam aqui e ganham arte quando ele voltar.',
     );
+  });
+});
+
+import { capHint } from './vacancy-stories';
+
+describe('limite da Meta na tela (UI 24/11 §1.8)', () => {
+  it('ajuda do máximo com o número informado', () => {
+    expect(capHint(50)).toBe(
+      'O Instagram aceita até 50 publicações por dia nesta conta, somando posts normais e stories. As vagas que passarem do máximo ficam para o dia seguinte, se ainda não tiverem começado.',
+    );
+    expect(capHint()).toMatch(/^O Instagram aceita até 25 publicações/);
   });
 });

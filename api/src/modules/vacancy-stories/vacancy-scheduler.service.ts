@@ -18,8 +18,7 @@ const MIN = 60_000;
 const DAY_MS = 24 * 60 * MIN;
 /** Espaço mínimo entre stories de vaga da empresa (§6.6: a fila pega 4 jobs por rodada de 5 min). */
 const SPACING_MIN = 15;
-/** Limite de publicações da Meta em 24 h e a folga deixada para os posts normais (§6.6). */
-const IG_DAILY_LIMIT = 25;
+/** Folga deixada para os posts normais dentro do limite de publicações da Meta em 24 h (§6.6; o limite vem de `publishQuota`, P1). */
 const IG_RESERVE = 5;
 /** Dias que o limite do dia pode empurrar um story para a frente (a vaga começa antes disso). */
 const MAX_DAYS = 14;
@@ -74,7 +73,7 @@ export class VacancySchedulerService implements OnModuleInit {
   }
 
   /**
-   * Espaço no limite da Meta: 25 − 5 de folga − publicados em 24 h − posts normais agendados nas próximas 24 h − stories de vaga
+   * Espaço no limite da Meta: o limite informado (ou 25) − 5 de folga − publicados em 24 h − posts normais agendados nas próximas 24 h − stories de vaga
    * agendados nas próximas 24 h. `freesAt` = quando a publicação mais antiga das últimas 24 h sai da conta.
    */
   async igRoom(ws: string, now: Date, exceptPostId?: string): Promise<{ room: number; freesAt: Date | null }> {
@@ -90,7 +89,8 @@ export class VacancySchedulerService implements OnModuleInit {
       where: { workspace_id: ws, status: 'scheduled', source: 'vacancy', scheduled_at: { lt: until }, ...(exceptPostId ? { id: { not: exceptPostId } } : {}) },
     });
     const oldest = published[0]?.published_at;
-    return { room: IG_DAILY_LIMIT - IG_RESERVE - published.length - others - vacancies, freesAt: oldest ? new Date(oldest.getTime() + DAY_MS) : null };
+    const quota = await this.store.publishQuota(ws);
+    return { room: quota - IG_RESERVE - published.length - others - vacancies, freesAt: oldest ? new Date(oldest.getTime() + DAY_MS) : null };
   }
 
   /**
