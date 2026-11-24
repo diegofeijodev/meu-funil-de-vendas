@@ -923,3 +923,59 @@ O texto do endereço (`location`) é livre e pode ter rua; a cidade do cadastro 
 - Nome de pessoa física sem dígitos em `companyName` não é detectável (mesma limitação da vitrine das diárias).
 - Testes de canário (contato e rua sem vírgula em todos os campos livres) são obrigatórios e travam regressão.
 - Rota nova = entrada em `docs/api-contracts.md`.
+
+---
+
+## 12. Decisões da implementação (Fase 1, 24/11/2026)
+
+Tomadas antes do M1, resolvendo os "Pontos para o arquiteto" da UI (`-ui.md` §8) que tocam a Fase 1. Regra geral: a UI vence em texto e
+geometria, este desenho vence em regra, e ponto que pede dado vira campo na API.
+
+**Bloqueio e sonda**
+- **Modo da sonda (P5).** Flag `IG_PUBLISH_PROBE_CLOSES` (padrão `false` = "só registro", F0-5 b). Nos dois modos a sonda (`checkDue` e o
+  botão) chama `GET /me/permissions` e `content_publishing_limit?fields=config,quota_usage`, grava no log do servidor o que voltou (sem token) e
+  empurra `publish_next_check_at` (1 h, 3 h, 6 h, 12 h, 24 h). Só no modo `active` o "granted" fecha o bloqueio. A resposta da faixa leva
+  `publishing.probe: 'active' | 'log_only'` e a web desenha o estado E da UI como está escrito (botão "Já corrigi — reconectar o Instagram").
+  **Não** foi feito o "liberar um job por conferência" (P5, "avaliar"): pede estado e textos novos; fica para quando a F0-5 decidir C ou D.
+  Saídas do bloqueio que continuam valendo no modo só registro: publicação que deu certo (inclusive "Publicar agora" de um post normal) e
+  reconexão.
+- **Sonda com erro 190** (token morto descoberto pela sonda): vira `handleTokenExpired` (motivo `token`), como na fila; sem isso a fila adiada
+  (R4) esconderia o token morto para sempre. Erro de rede ou outro código: +1 h sem contar falha.
+- **`publish_blocked_at` fica depois do fechamento** (ajuste ao R9): guarda o início do último bloqueio, para o motivo "Não foi ao ar: o
+  Instagram recusava… desde {…}" valer também quando a guarda cancela o post logo depois do fechamento. Bloqueio aberto = `publish_block_reason`
+  não nulo; ao abrir de novo (motivo nulo antes), `publish_blocked_at` recomeça.
+- **Coluna a mais:** `publish_checked_at` (última sonda, do botão ou automática) para o limite de 1 por 60 s do botão (409).
+- **R4 sem furar a fila das outras empresas (R11):** os jobs vencidos das empresas bloqueadas são adiados **em lote antes** de escolher os 4 da
+  rodada, sem chamar a Meta e sem gastar tentativa.
+- **Ordem no job `instagram-queue-5min`:** `checkDue` antes da fila (um fechamento pela sonda já deixa a fila publicar na mesma rodada).
+- **P6:** `publishing.username` na resposta da faixa. **P23:** fora desta fase (com o fechamento pela sonda desligado, a "reabertura depois da
+  conferência" não acontece).
+
+**Faixa, aba Vagas e limites**
+- **P7:** as linhas paradas pelo bloqueio vêm da API (`display` `paused` e `paused_ready`, só enquanto o bloqueio está aberto) e `can.post_now`
+  fica falso durante o bloqueio.
+- **P8:** só web (`aiAlertText(…, { publishingBlocked })`).
+- **P9:** `publish_quota` (o `publish_quota_total ?? 25`) no `GET …/vacancy-stories/settings`; o aviso do máximo aparece quando
+  `daily_cap > publish_quota − 10` (sem vagas fixas nesta fase).
+- **P10:** fora desta fase. O `daily_cap` da Freela App já é 20 em produção (teto do CHECK); gêmeas (P5 técnica) ficam para depois.
+- **P18 (conferido):** "Salvar credenciais" exige os 5 campos (`MetaSaveCredentialsDto`); não dá para trocar só o token. O passo 4 da faixa
+  diz isso (cole o token novo e preencha os outros campos). Salvar só o token é pendência para o dono decidir.
+- **M8:** usa `ai_credit_alerts.last_at` (§2.2 P4), não `ai_error_at`.
+
+**QR**
+- **P2 e a leitura "pelo sistema" sem leitor em produção.** `POST …/vacancy-stories/preview` aceita `{ qr: true }` (sem padrão no DTO): a
+  prévia sai com QR mesmo com o interruptor desligado e grava `preview.qr = { url, read_ok }`. A leitura em produção é a **conferência módulo a
+  módulo** (`verifyQrPixels`): reabre os bytes finais (JPEG q92), reduz para 720 px de largura e compara cada módulo com a matriz gerada. O
+  `jsqr@1.4.0` fica só em `devDependencies` e o jest prova a equivalência nos mesmos bytes (inclusive um caso corrompido em que os dois falham).
+  Alternativa não escolhida: `jsqr` em `dependencies` para decodificar de verdade em produção.
+- **Trava no servidor:** ligar o QR exige `preview.qr.read_ok = true` (senão 422 "Gere uma prévia com o QR para poder ligar."); desligar sempre
+  pode. **P4:** quem liga é `manage`, por rota própria `POST …/vacancy-stories/qr` `{ qr_enabled }` (como o "Postar sozinho"); o PATCH dos
+  Ajustes **não** aceita `qr_enabled` (um caminho só).
+- **P3:** quadrado branco de 180 × 180 em (64, 1508), módulo inteiro ≥ 4 px, zona clara de 4 módulos, correção M e depois L; a versão sai da
+  biblioteca (`typeNumber 0`), e o teste com `jsqr` a 720 px decide. URL: `https://freelaservicos.com.br/vagas/<id>?o=ig` (77 caracteres →
+  versão 5 com correção M). O link funciona hoje sem nada da Fase 2b; a atribuição de origem (`o=ig`) o site lê quando quiser (W1/W2). Só id
+  UUID vira link (o `id` da vitrine é texto livre): outro id ou URL que não cabe → arte sem QR e aviso no log (V5).
+- Rodapé com QR na ordem da UI (§2.4): "Candidate-se pelo app" / "Procure Freela Serviços na loja" / "ou leia o QR para ver a vaga". Sem QR, o
+  rodapé é o de hoje, byte a byte (hash da arte fixado no teste antes da mudança).
+- **P21:** ligar o QR não refaz nada; só as artes criadas depois saem com ele.
+- **P19, P22:** fase 3.
