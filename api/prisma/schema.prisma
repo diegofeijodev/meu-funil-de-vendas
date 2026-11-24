@@ -541,6 +541,17 @@ model instagram_accounts {
   connected_at        DateTime?  @db.Timestamptz(6)
   created_at          DateTime   @default(now()) @db.Timestamptz(6)
   updated_at          DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  /// Bloqueio de publicação (24/11/2026): CHECKs `IN ('permission','token')`, `failures >= 0` e `quota_total` 1–1000 no SQL da migração.
+  publish_block_reason     String?
+  publish_block_message    String?
+  publish_blocked_at       DateTime?  @db.Timestamptz(6)
+  publish_block_last_at    DateTime?  @db.Timestamptz(6)
+  publish_block_failures   Int        @default(0)
+  publish_next_check_at    DateTime?  @db.Timestamptz(6)
+  publish_checked_at       DateTime?  @db.Timestamptz(6)
+  publish_unblocked_at     DateTime?  @db.Timestamptz(6)
+  publish_quota_total      Int?
+  publish_quota_checked_at DateTime?  @db.Timestamptz(6)
   workspace           workspaces @relation("instagram_accounts_workspace_id", fields: [workspace_id], references: [id], onDelete: Cascade)
 
   @@unique([workspace_id])

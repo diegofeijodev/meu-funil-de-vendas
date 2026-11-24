@@ -23,6 +23,8 @@ import { FIELD_LABELS, READ_SCHEMA } from './vacancy-verify';
 
 /** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
 export const NO_ACCOUNT_WAIT = 'Esperando o Instagram ser reconectado para criar a arte.';
+/** A Meta está recusando as publicações da empresa (bloqueio aberto, R5): a linha espera sem gastar IA. */
+export const PUBLISH_BLOCKED_WAIT = 'Esperando o Instagram voltar a aceitar publicações para criar a arte.';
 /** `handOff` perdeu a linha (desligaram no meio): nada foi entregue. */
 export const HANDOFF_LOST = 'lost';
 

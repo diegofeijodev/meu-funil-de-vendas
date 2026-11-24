@@ -31,6 +31,11 @@ export const isSkipped = (p: { status: string; last_error?: string | null }) => 
 export const OVERDUE_MS = 12 * 3600e3;
 /** Post da programação sem conta conectada: fica pronto com este aviso e é agendado sozinho quando a conta conectar. */
 export const NO_ACCOUNT_MSG = 'Conecte o Instagram para publicar.';
+/**
+ * Post que espera porque a Meta está recusando as publicações da empresa (bloqueio de publicação, 24/11): fica agendado/pronto com este
+ * aviso, sem gastar tentativa, e sai sozinho quando o bloqueio fechar (a faixa conta os posts com ele).
+ */
+export const PUBLISH_BLOCKED_MSG = 'Esperando o Instagram voltar a aceitar as publicações desta empresa.';
 /** Post da programação que estava na fila quando o token venceu: volta para "pronto" com este aviso. */
 export const TOKEN_EXPIRED_POST_MSG = 'Token da Meta expirado: reconecte o Instagram para publicar.';
 

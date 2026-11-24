@@ -3,6 +3,23 @@ import { HttpException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
 import { notFound } from '../media/user-error';
 import { AutopilotEventKind, PostRow, TOKEN_EXPIRED_POST_MSG } from './ig-types';
+import { nextCheckDelay, type PublishBlockReason } from './publish-block';
+
+/** Limite de publicações em 24 h quando a Meta não informou o dela (`publish_quota_total` nulo). */
+export const DEFAULT_PUBLISH_QUOTA = 25;
+/** Como o bloqueio fechou: só `publish` e `reconnect` são prova real (zeram as falhas). */
+export type PublishUnblockHow = 'publish' | 'reconnect' | 'probe' | 'button';
+const UNBLOCK_TEXT: Record<PublishUnblockHow, string> = {
+  publish: 'uma publicação deu certo',
+  reconnect: 'o Instagram foi reconectado',
+  probe: 'a conferência automática viu a permissão de publicar',
+  button: 'o teste pelo botão viu a permissão de publicar',
+};
+export const PUBLISH_BLOCK_OPENED: Record<PublishBlockReason, string> = {
+  permission: 'Publicação parada: a Meta recusou por falta de permissão.',
+  token: 'Publicação parada: o acesso da Meta venceu ou foi trocado.',
+};
+export const publishUnblockedMessage = (how: PublishUnblockHow) => `A Meta voltou a aceitar publicações (${UNBLOCK_TEXT[how]}).`;
 
 /** Erros de regra (nunca repetidos pela fila). */
 export class Guardrail extends Error {}
@@ -123,6 +140,84 @@ export class IgStore {
   async liveAccount(workspaceId: string) {
     const a = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: workspaceId, status: 'connected' } });
     return a?.ig_user_id ? a : null;
+  }
+
+  /** R5: conta conectada E sem bloqueio de publicação aberto (o gerador das vagas e a agenda só seguem com ela). */
+  async publishAccount(workspaceId: string) {
+    const a = await this.liveAccount(workspaceId);
+    return a && !a.publish_block_reason ? a : null;
+  }
+
+  /** Bloqueio aberto da empresa (`null` = publicando normalmente). */
+  async publishBlock(workspaceId: string) {
+    const a = await this.prisma.instagram_accounts.findFirst({
+      where: { workspace_id: workspaceId, publish_block_reason: { not: null } },
+      select: { publish_block_reason: true, publish_block_message: true, publish_blocked_at: true, publish_block_last_at: true, publish_block_failures: true, publish_next_check_at: true, username: true },
+    });
+    return a?.publish_block_reason ? { ...a, publish_block_reason: a.publish_block_reason as PublishBlockReason } : null;
+  }
+
+  /** P1: limite de publicações em 24 h que a Meta informou para a conta (ou 25). */
+  async publishQuota(workspaceId: string): Promise<number> {
+    const a = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: workspaceId }, select: { publish_quota_total: true } });
+    return a?.publish_quota_total ?? DEFAULT_PUBLISH_QUOTA;
+  }
+
+  /**
+   * R2 — abre (ou mantém) o bloqueio: grava motivo e mensagem, mantém o `publish_blocked_at` do bloqueio aberto, soma 1 falha e marca a
+   * próxima conferência pela escada de esperas (só `permission`; `token` não tem sonda). Um evento por ABERTURA (não por falha): a
+   * transição "sem bloqueio → bloqueado" é um UPDATE condicional, então duas falhas ao mesmo tempo não registram duas aberturas.
+   * `silent`: quem chama já registra o próprio evento (token vencido).
+   */
+  async openPublishBlock(workspaceId: string, reason: PublishBlockReason, message: string, o: { now?: Date; silent?: boolean } = {}): Promise<{ opened: boolean }> {
+    const now = o.now ?? new Date();
+    const msg = message.slice(0, 300);
+    const opened = await this.prisma.instagram_accounts.updateMany({
+      where: { workspace_id: workspaceId, publish_block_reason: null },
+      data: { publish_block_reason: reason, publish_block_message: msg, publish_blocked_at: now, publish_block_last_at: now, publish_block_failures: { increment: 1 } },
+    });
+    if (!opened.count) {
+      const kept = await this.prisma.instagram_accounts.updateMany({
+        where: { workspace_id: workspaceId, publish_block_reason: { not: null } },
+        // 'token' prevalece sobre 'permission' (só a reconexão resolve); a recusa por permissão não rebaixa um bloqueio de token.
+        data: { ...(reason === 'token' ? { publish_block_reason: 'token' } : {}), publish_block_message: msg, publish_block_last_at: now, publish_block_failures: { increment: 1 } },
+      });
+      if (!kept.count) return { opened: false }; // empresa sem linha de conta
+    }
+    const cur = await this.prisma.instagram_accounts.findFirst({ where: { workspace_id: workspaceId }, select: { publish_block_failures: true, publish_block_reason: true } });
+    await this.prisma.instagram_accounts.updateMany({
+      where: { workspace_id: workspaceId },
+      data: { publish_next_check_at: cur?.publish_block_reason === 'permission' ? new Date(now.getTime() + nextCheckDelay(cur.publish_block_failures)) : null },
+    });
+    if (opened.count && !o.silent) await this.logEvent({ workspace_id: workspaceId, kind: 'guardrail', level: 'error', message: PUBLISH_BLOCK_OPENED[reason] });
+    return { opened: opened.count > 0 };
+  }
+
+  /**
+   * R9 — fecha o bloqueio: zera motivo, mensagem e próxima conferência e grava `publish_unblocked_at`. As falhas só zeram com prova real
+   * (`publish` ou `reconnect`); fechado pela sonda/botão, um novo bloqueio continua a escada de esperas. Registra o evento e antecipa para
+   * agora os jobs pendentes da empresa que o bloqueio adiou (post agendado para um horário que já passou). `false` = não havia bloqueio.
+   */
+  async closePublishBlock(workspaceId: string, how: PublishUnblockHow, now = new Date()): Promise<boolean> {
+    const proof = how === 'publish' || how === 'reconnect';
+    const got = await this.prisma.instagram_accounts.updateMany({
+      where: { workspace_id: workspaceId, publish_block_reason: { not: null } },
+      data: { publish_block_reason: null, publish_block_message: null, publish_next_check_at: null, publish_unblocked_at: now, ...(proof ? { publish_block_failures: 0 } : {}) },
+    });
+    if (!got.count) {
+      // Sem bloqueio aberto: a prova real ainda zera as falhas que um fechamento pela sonda deixou.
+      if (proof) await this.prisma.instagram_accounts.updateMany({ where: { workspace_id: workspaceId, publish_block_failures: { gt: 0 } }, data: { publish_block_failures: 0 } });
+      return false;
+    }
+    await this.logEvent({ workspace_id: workspaceId, kind: 'guardrail', message: publishUnblockedMessage(how) });
+    const due = await this.prisma.ig_posts.findMany({ where: { workspace_id: workspaceId, status: 'scheduled', scheduled_at: { lte: now } }, select: { id: true } });
+    if (due.length) {
+      await this.prisma.publishing_jobs.updateMany({
+        where: { workspace_id: workspaceId, channel: 'instagram_organic', status: 'pending', run_at: { gt: now }, ig_post_id: { in: due.map((p) => p.id) } },
+        data: { run_at: now },
+      });
+    }
+    return true;
   }
 
   async logEvent(ev: { workspace_id: string; plan_id?: string | null; post_id?: string | null; kind: AutopilotEventKind; level?: 'info' | 'warn' | 'error'; message: string }) {
