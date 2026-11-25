@@ -64,6 +64,9 @@ const clt = z
     counts: z.object({ ready: num, to_approve: num }).passthrough(),
     has_brand: z.boolean().default(true),
     qr_available: z.boolean().default(false),
+    /** Aviso vermelho da IA só das vagas fixas (revisão 24/11). */
+    ai_error: str,
+    ai_error_at: str,
   })
   .passthrough();
 export type VacancyCltSettings = z.infer<typeof clt>;

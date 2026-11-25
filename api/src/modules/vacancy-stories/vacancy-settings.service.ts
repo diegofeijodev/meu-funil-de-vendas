@@ -151,6 +151,9 @@ export type CltSettingsView = {
   counts: { ready: number; to_approve: number };
   has_brand: boolean;
   qr_available: boolean;
+  /** Aviso vermelho da IA só das vagas fixas (revisão 24/11; o das diárias é `ai_error`). */
+  ai_error: string | null;
+  ai_error_at: Date | null;
 };
 
 
@@ -266,6 +269,8 @@ export class VacancySettingsService {
       counts: { ready, to_approve: toApprove },
       has_brand: !!brand,
       qr_available: !!this.feed.fixedJobPageBase,
+      ai_error: s.clt_ai_error ?? null,
+      ai_error_at: s.clt_ai_error_at ?? null,
     };
   }
 

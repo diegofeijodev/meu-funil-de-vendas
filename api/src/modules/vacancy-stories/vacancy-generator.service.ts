@@ -99,6 +99,13 @@ export function photoTexts(read: ArtRead): string[] {
     .filter((t) => !/^(n[aã]o h[aá]|nenhum|sem) .*(texto|escrit)/i.test(t) && !/^(n\/a|nada|null|none)$/i.test(t));
 }
 
+/**
+ * Aviso vermelho da IA de cada tipo (revisão de 24/11): a diária grava/apaga `ai_error`, a vaga fixa `clt_ai_error`; um tipo nunca grava
+ * nem apaga o aviso do outro.
+ */
+const aiAlert = (isClt: boolean, message: string | null, at: Date | null) =>
+  isClt ? { clt_ai_error: message, clt_ai_error_at: at } : { ai_error: message, ai_error_at: at };
+
 /** A IA falhou (chave, crédito, fora do ar, resposta ilegível) antes de existir uma arte aprovada ou de reserva (D9). */
 export class ArtAiError extends Error {
   constructor(message: string, readonly attempts: AttemptLog[] = []) {
@@ -353,7 +360,7 @@ export class VacancyGeneratorService {
     if ((await this.handOff({ ...row, lease_until: lease.until }, s, art, v)) === HANDOFF_LOST) return 'lost';
     // A arte saiu sem foto porque a IA falhou (chave, crédito, queda): o story vai assim mesmo, mas o aviso vermelho fica para o dono.
     const aiError = art.attempts.find((a) => a.error)?.error;
-    if (aiError) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: aiError, ai_error_at: now } });
+    if (aiError) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: aiAlert(isClt, aiError, now) });
     return 'handed';
   }
 
@@ -373,7 +380,7 @@ export class VacancyGeneratorService {
       wait_reason: e.message === AI_UNUSABLE ? AI_UNUSABLE : `A IA não conseguiu criar a arte: ${noPeriod(e.message)}.`,
       attempts_log: json(e.attempts),
     });
-    if (ok) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: { ai_error: e.message, ai_error_at: now } });
+    if (ok) await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: row.workspace_id }, data: aiAlert(sourceOf(row.source).id === 'freela_clt', e.message, now) });
     return ok;
   }
 
@@ -591,8 +598,11 @@ export class VacancyGeneratorService {
           },
         });
         if (!done.count) throw new LeaseLost();
-        // Um story entregue apaga o aviso vermelho da IA (D9).
-        await tx.vacancy_story_settings.updateMany({ where: { workspace_id: ws, ai_error: { not: null } }, data: { ai_error: null, ai_error_at: null } });
+        // Um story entregue apaga o aviso vermelho da IA DO SEU TIPO (D9; a vaga fixa não apaga o das diárias, nem o contrário).
+        await tx.vacancy_story_settings.updateMany({
+          where: { workspace_id: ws, ...(isClt ? { clt_ai_error: { not: null } } : { ai_error: { not: null } }) },
+          data: aiAlert(isClt, null, null),
+        });
         return post.id;
       });
     } catch (e) {

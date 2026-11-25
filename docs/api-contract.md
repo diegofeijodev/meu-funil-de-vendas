@@ -839,7 +839,10 @@ CltSettingsView = {
   promo_days: 30 /* "divulgar até" = mín(expiresAt, publishedAt + 30 dias) */,
   last_poll_at: string | null, last_poll_ok_at: string | null, last_poll_error: string | null,
   today: { posted: number, scheduled: number, cap: number }, counts: { ready: number, to_approve: number },
-  has_brand: boolean /* sem marca, ligar responde 400 */, qr_available: boolean /* a página pública /vagas-fixas/<id> está configurada (FREELA_FIXED_JOB_PAGE_URL) */
+  has_brand: boolean /* sem marca, ligar responde 400 */, qr_available: boolean /* a página pública /vagas-fixas/<id> está configurada (FREELA_FIXED_JOB_PAGE_URL) */,
+  ai_error: string | null, ai_error_at: string | null /* revisão 24/11: aviso vermelho da IA só das vagas fixas (`clt_ai_error`); o
+    `ai_error` de fora do bloco é só das diárias — cada tipo grava e apaga o seu (a entrega de um não apaga o aviso do outro) */,
+  preview: PreviewState | {} /* revisão 24/11: prévia da vaga fixa (`clt_preview`, `kind: 'clt'`); a das diárias fica em `preview` */
 }
 ```
 

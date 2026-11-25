@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cltArrivedEmpty, cltDisableText, cltEnableText, cltPollLine, cltPollNotice, cltSinceLine, cltStatusLine, cltTodayLine, cltWhatEnters,
-  cltBacklogHint, cltCheckedLine, isCltPost, storyDataLine, summaryWithClt, type CltView,
+  cltAiErrorLine, cltBacklogHint, cltCheckedLine, isCltPost, storyDataLine, summaryWithClt, type CltView,
 } from './vacancy-clt';
 
 const base: CltView = {
@@ -53,6 +53,14 @@ describe('vagas fixas — textos do cartão (UI §4.2)', () => {
 });
 
 describe('vagas fixas — lista e Ajustes (UI §4.3–§4.4)', () => {
+  it('aviso da IA da CLT: só ligada e com aviso; com a hora, diz desde quando', () => {
+    const now = new Date('2026-11-25T18:00:00Z');
+    expect(cltAiErrorLine({ ...base, ai_error: null }, now)).toBeNull();
+    expect(cltAiErrorLine({ ...base, enabled: false, ai_error: 'Sua conta OpenAI está sem créditos.' }, now)).toBeNull();
+    expect(cltAiErrorLine({ ...base, ai_error: 'Sua conta OpenAI está sem créditos.', ai_error_at: '2026-11-25T17:20:00Z' }, now))
+      .toBe('Sua conta OpenAI está sem créditos. Nenhum story novo de vaga fixa está sendo criado desde as 14h20.');
+  });
+
   it('retroativo: com a CLT ligada a ajuda diz que vale ao ligar e como mudar', () => {
     expect(cltBacklogHint(30)).not.toContain('desligue');
     expect(cltBacklogHint(30, true)).toContain('Vale para o momento em que você liga: para mudar, desligue as vagas fixas.');

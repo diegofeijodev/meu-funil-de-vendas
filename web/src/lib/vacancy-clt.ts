@@ -18,6 +18,9 @@ export type CltView = {
   counts: { ready: number; to_approve: number };
   has_brand: boolean;
   qr_available: boolean;
+  /** Aviso vermelho da IA só das vagas fixas (revisão 24/11); API antiga = ausente. */
+  ai_error?: string | null;
+  ai_error_at?: string | null;
 };
 
 export type StoryKind = 'diaria' | 'clt';
@@ -121,6 +124,12 @@ export function cltCapHint(quota = 25): string {
 export function cltBacklogHint(promoDays = 30, enabled = false): string {
   const base = `Entram aos poucos, das mais novas para as mais velhas, dentro do máximo por dia. Vaga fixa publicada há mais de ${promoDays} dias não vira story.`;
   return enabled ? `${base} Vale para o momento em que você liga: para mudar, desligue as vagas fixas.` : base;
+}
+
+/** Aviso vermelho da IA só das vagas fixas (revisão 24/11; o das diárias fica no cartão de situação). Desligada ou sem aviso = null. */
+export function cltAiErrorLine(c: Pick<CltView, 'enabled' | 'ai_error' | 'ai_error_at'>, now: Date): string | null {
+  if (!c.enabled || !c.ai_error) return null;
+  return c.ai_error_at ? `${c.ai_error} Nenhum story novo de vaga fixa está sendo criado ${sinceLabel(c.ai_error_at, now)}.` : c.ai_error;
 }
 
 /** Linha de dados do story na lista e no detalhe: diária "R$ 150 · Sáb 29/11 · 18h às 23h · Campinas"; CLT "R$ 1.874,32/mês · São Paulo – SP · divulgar até 24/12". */

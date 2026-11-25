@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   CLT_TEXT,
+  cltAiErrorLine,
   cltDisableText,
   cltEnableText,
   cltPollLine,
@@ -28,7 +29,7 @@ import {
   cltTodayLine,
   cltWhatEnters,
 } from "@/lib/vacancy-clt";
-import { previewProgress } from "@/lib/vacancy-stories";
+import { aiErrorWantsIntegrations, previewProgress } from "@/lib/vacancy-stories";
 import { apiErrorMessage } from "@/modules/shared/infrastructure/http";
 import {
   disableCltVacancies,
@@ -105,6 +106,7 @@ export function VacanciesCltCard({ workspaceId, settings, canEdit, canManage }: 
   });
 
   const notice = cltPollNotice(c, new Date());
+  const aiError = cltAiErrorLine(c, new Date());
   const since = cltSinceLine(c);
   const noBrand = !c.has_brand && !c.enabled;
 
@@ -161,6 +163,19 @@ export function VacanciesCltCard({ workspaceId, settings, canEdit, canManage }: 
         <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm" role="status">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden /> {notice}
         </p>
+      )}
+
+      {aiError && (
+        <div role="alert" className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm sm:flex-row sm:items-center">
+          <p className="flex flex-1 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden /> {aiError}
+          </p>
+          {aiErrorWantsIntegrations(c.ai_error) && (
+            <Button asChild className="h-11" variant="outline">
+              <Link to="/integrations">Abrir Integrações</Link>
+            </Button>
+          )}
+        </div>
       )}
 
       <div className="space-y-2">

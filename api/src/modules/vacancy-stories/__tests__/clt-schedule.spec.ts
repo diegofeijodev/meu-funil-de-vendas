@@ -5,7 +5,7 @@ import { AssetsService } from '../../media/assets.service';
 import { RefsService } from '../../creative/refs.service';
 import { WS_A, status } from '../../media/__tests__/mem';
 import { cltDeadline, cltFingerprint } from '../vacancy-clt';
-import { VacancyGeneratorService } from '../vacancy-generator.service';
+import { ArtAiError, VacancyGeneratorService } from '../vacancy-generator.service';
 import { VacancyPollService } from '../vacancy-poll.service';
 import {
   CLT_CLOSED_REASON, CLT_STARTED_REASON, cltBlockedExpireReason, cltCapWaitReason, cltDeadlineReason, cltNoApprovalReason, PUBLISH_BLOCKED_WAIT, WAIT_CAP,
@@ -261,6 +261,30 @@ describe('geração com as vagas fixas (M17)', () => {
     await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: v.id, snapshot: v, fingerprint: cltFingerprint(v), starts_at: cltDeadline(v), status: 'new' } });
     await t.g.generateDue(NOW);
     expect(order).toEqual(['freela_clt']);
+  });
+
+  it('aviso vermelho da IA por tipo: a vaga fixa grava e apaga só o dela; o das diárias fica como estava (revisão 24/11)', async () => {
+    const daily = { ai_error: 'Sua conta OpenAI está sem créditos.', ai_error_at: new Date(NOW.getTime() - DAY) };
+    const t = await gen({ enabled: true, enabled_at: new Date(NOW.getTime() - DAY), ...daily, clt_ai_error: 'velho', clt_ai_error_at: new Date(NOW.getTime() - DAY) });
+    w.brand();
+    w.ai.image.mockRejectedValue(new Error('sem crédito')); // a arte sai sem foto: a entrega apaga o aviso e a falha grava de novo
+    const v = job();
+    w.feed.state.clt.push(v);
+    await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: v.id, snapshot: v, fingerprint: cltFingerprint(v), starts_at: cltDeadline(v), status: 'new' } });
+    expect(await t.g.generateDue(NOW)).toMatchObject({ handed: 1 });
+    expect(t.settings()).toMatchObject({ ...daily, clt_ai_error_at: NOW });
+    expect(t.settings().clt_ai_error).not.toBe('velho');
+    const view = await w.settings.view(WS_A, NOW);
+    expect(view).toMatchObject({ ...daily, clt: { ai_error: t.settings().clt_ai_error, ai_error_at: NOW } });
+
+    // Falha da IA antes de existir arte (D9): a linha CLT espera e só o aviso da CLT muda.
+    const later = new Date(NOW.getTime() + 60_000);
+    jest.spyOn(t.g, 'makeCltArt').mockRejectedValue(new ArtAiError('A chave da OpenAI foi recusada.'));
+    const v2 = job();
+    w.feed.state.clt.push(v2);
+    await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: v2.id, snapshot: v2, fingerprint: cltFingerprint(v2), starts_at: cltDeadline(v2), status: 'new' } });
+    expect(await t.g.generateDue(later)).toMatchObject({ waiting: 1 });
+    expect(t.settings()).toMatchObject({ ...daily, clt_ai_error: 'A chave da OpenAI foi recusada.', clt_ai_error_at: later });
   });
 
   it('o bloqueio de publicação vale para a CLT: a linha espera com o aviso e a IA não é chamada', async () => {
