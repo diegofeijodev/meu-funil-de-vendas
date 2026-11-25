@@ -55,9 +55,12 @@ export function VacanciesCltCard({ workspaceId, settings, canEdit, canManage }: 
   const [dialog, setDialog] = useState<"enable" | "disable" | null>(null);
   const s = settings;
   const c = s.clt!;
-  const p = s.preview;
+  // Prévia da vaga fixa no lugar próprio (`clt.preview`, revisão 24/11); API antiga ou prévia de antes = a de `preview` com kind clt.
+  const p = c.preview?.run_id ? c.preview : s.preview.kind === "clt" ? s.preview : (c.preview ?? s.preview);
   const cltPreview = p.kind === "clt";
   const running = p.status === "running";
+  // Uma prévia por vez por empresa (a API responde 409): a das diárias em andamento também trava o botão.
+  const anyRunning = running || s.preview.status === "running";
 
   useEffect(() => {
     if (!running || !cltPreview) return;
@@ -179,7 +182,7 @@ export function VacanciesCltCard({ workspaceId, settings, canEdit, canManage }: 
       )}
 
       <div className="space-y-2">
-        <Button className="h-11" variant="outline" disabled={!canEdit || running || preview.isPending} onClick={() => preview.mutate()}>
+        <Button className="h-11" variant="outline" disabled={!canEdit || anyRunning || preview.isPending} onClick={() => preview.mutate()}>
           <Eye /> {CLT_TEXT.previewButton}
         </Button>
         <div aria-live="polite">

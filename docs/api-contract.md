@@ -861,7 +861,9 @@ CltSettingsView = {
   ("R$ 1.874,32", "R$ 2.000 a R$ 2.500"; a tela acrescenta "/mês"), `quando` = "divulgar até 24/12", `cidade` = "Jundiaí – SP" ou
   `null`, `freela_url` = página pública da vaga fixa ou `null` enquanto `FREELA_FIXED_JOB_PAGE_URL` estiver vazia (diária: sempre string).
 - `POST …/preview` aceita `{ kind: 'clt' }` (sem padrão): prévia da arte "Vaga fixa CLT" com a vaga fixa mais recente que serve (com
-  salário, sem "teste") ou a de exemplo; não exige arte modelo. `preview.kind = 'clt'`; uma prévia CLT **não** destrava o QR das diárias.
+  salário, sem "teste") ou a de exemplo; não exige arte modelo. Grava em `clt.preview` (coluna `clt_preview`, `kind = 'clt'`), **não** em
+  `preview`: a prévia das diárias (e o QR liberado por ela) fica intacta. Uma prévia por vez por empresa (409 vale entre os dois tipos). Uma
+  prévia CLT antiga gravada em `preview` (antes da revisão de 24/11) continua sem destravar o QR das diárias.
 - Triagem CLT (motivos gravados): "teste" na empresa, no título ou no cargo → "Parece vaga de teste: …"; sem salário → "A vaga fixa não
   tem salário informado."; sem cidade com a lista de cidades preenchida → "A vaga fixa não tem cidade para conferir com a sua lista."
   (lista vazia: sai **sem** o cartão Cidade); cidade fora da lista → "Cidade fora da sua lista: {cidade}."; prazo passado → "O prazo para

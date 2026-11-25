@@ -154,6 +154,8 @@ export type CltSettingsView = {
   /** Aviso vermelho da IA só das vagas fixas (revisão 24/11; o das diárias é `ai_error`). */
   ai_error: string | null;
   ai_error_at: Date | null;
+  /** Prévia da arte "Vaga fixa CLT" (revisão 24/11: lugar próprio; a das diárias fica em `preview`). */
+  preview: unknown;
 };
 
 
@@ -271,6 +273,7 @@ export class VacancySettingsService {
       qr_available: !!this.feed.fixedJobPageBase,
       ai_error: s.clt_ai_error ?? null,
       ai_error_at: s.clt_ai_error_at ?? null,
+      preview: previewForView(s.clt_preview ?? {}, now),
     };
   }
 

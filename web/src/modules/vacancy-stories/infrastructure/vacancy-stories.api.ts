@@ -67,6 +67,8 @@ const clt = z
     /** Aviso vermelho da IA só das vagas fixas (revisão 24/11). */
     ai_error: str,
     ai_error_at: str,
+    /** Prévia da vaga fixa no lugar próprio (revisão 24/11); API antiga = null (a tela usa a de `preview` com kind clt). */
+    preview: preview.nullish().catch(null).transform((v) => v ?? null),
   })
   .passthrough();
 export type VacancyCltSettings = z.infer<typeof clt>;

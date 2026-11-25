@@ -27,6 +27,8 @@ const MSG = {
 };
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
+/** Coluna da prévia do tipo: diária em `preview` (como antes), vaga fixa em `clt_preview`. */
+const previewSlot = (state: PreviewState) => (state.kind === 'clt' ? { clt_preview: json(state) } : { preview: json(state) });
 
 /** Vaga de exemplo quando a vitrine não tem nenhuma aberta (ou está fora): Garçom, R$ 150, Campinas, no próximo sábado 18h–23h. */
 export function sampleVacancy(now: Date): FreelaVacancy {
@@ -98,7 +100,8 @@ export class VacancyPreviewService {
     // Daqui até reservar a vez não há `await`: dois pedidos ao mesmo tempo não passam juntos.
     const now = this.now();
     const mine = this.running.get(ws);
-    const prev = (s.preview ?? {}) as unknown as Partial<PreviewState>;
+    // Um lugar por tipo (revisão 24/11): a prévia da vaga fixa fica em `clt_preview` e não sobrescreve a das diárias (nem o QR delas).
+    const prev = ((clt ? s.clt_preview : s.preview) ?? {}) as unknown as Partial<PreviewState>;
     const prevStarted = typeof prev.started_at === 'string' ? Date.parse(prev.started_at) : NaN;
     if ((mine && now - mine.startedAt <= PREVIEW_STALE_MS) || (prev.status === 'running' && now - prevStarted <= PREVIEW_STALE_MS)) {
       throw new ConflictException({ code: 'CONFLICT', message: MSG.running });
@@ -113,7 +116,7 @@ export class VacancyPreviewService {
       ...(clt ? { kind: 'clt' as const } : {}),
     };
     try {
-      await this.prisma.vacancy_story_settings.update({ where: { workspace_id: ws }, data: { preview: json(state) } });
+      await this.prisma.vacancy_story_settings.update({ where: { workspace_id: ws }, data: previewSlot(state) });
     } catch (e) {
       this.release(ws, token);
       throw e;
@@ -140,10 +143,11 @@ export class VacancyPreviewService {
   /** A prévia: escolhe a vaga, faz a arte (o `onStep` grava a etapa), salva na Biblioteca e grava o resultado — ou a falha. */
   private async run(userId: string, ws: string, s: SettingsRow, state: PreviewState): Promise<void> {
     // Só grava enquanto a prévia gravada for esta (`run_id`): uma travada sobrescrita não volta a escrever.
+    const ours = { path: ['run_id'], equals: state.run_id };
     const save = async () => {
       await this.prisma.vacancy_story_settings.updateMany({
-        where: { workspace_id: ws, preview: { path: ['run_id'], equals: state.run_id } },
-        data: { preview: json(state) },
+        where: { workspace_id: ws, ...(state.kind === 'clt' ? { clt_preview: ours } : { preview: ours }) },
+        data: previewSlot(state),
       });
     };
     const finished = () => new Date(this.now()).toISOString();

@@ -268,8 +268,9 @@ describe('prévia da vaga fixa (M18)', () => {
     expect(await validate(plainToInstance(StartPreviewDto, { kind: 'x' }))).toHaveLength(1);
     await t.preview.start(OWNER, WS_A, { kind: 'clt', qr: true });
     await t.preview.wait(WS_A);
-    const p = t.row().preview as Record<string, unknown>;
+    const p = t.row().clt_preview as Record<string, unknown>;
     expect(p).toMatchObject({ status: 'done', kind: 'clt', sample: false, vacancy: { funcao: 'Cumim' } });
+    expect(t.row().preview).toEqual({});
     expect(await status(w.settings.setQr(OWNER, WS_A, true))).toBe('422:Gere uma prévia com o QR para poder ligar.');
   });
 
@@ -278,7 +279,26 @@ describe('prévia da vaga fixa (M18)', () => {
     w.ai.image.mockRejectedValue(new Error('sem crédito'));
     await t.preview.start(OWNER, WS_A, { kind: 'clt' });
     await t.preview.wait(WS_A);
-    expect(t.row().preview).toMatchObject({ status: 'done', kind: 'clt', sample: true });
+    expect(t.row().clt_preview).toMatchObject({ status: 'done', kind: 'clt', sample: true });
     expect(await status(t.preview.start(OWNER, WS_A))).toBe('400:Envie a arte modelo antes de gerar a prévia.');
+  });
+
+  it('um lugar por tipo: a prévia da vaga fixa não sobrescreve a das diárias e o QR das diárias continua liberado (revisão 24/11)', async () => {
+    const daily = {
+      run_id: 'diaria-1', status: 'done', step: 'check', attempt: 1, started_at: NOW.toISOString(), finished_at: NOW.toISOString(),
+      media_url: 'https://cdn.test/previa.jpg', qr: { url: 'https://freelaservicos.com.br/vagas/x?o=ig', read_ok: true },
+    };
+    const t = await setup({ settings: { preview: daily } });
+    w.ai.image.mockRejectedValue(new Error('sem crédito'));
+    await t.preview.start(OWNER, WS_A, { kind: 'clt' });
+    await t.preview.wait(WS_A);
+    expect(t.row().preview).toEqual(daily);
+    const view = await w.settings.view(WS_A, NOW);
+    expect(view.preview).toEqual(daily);
+    expect(view.clt.preview).toMatchObject({ status: 'done', kind: 'clt' });
+    expect((await w.settings.setQr(OWNER, WS_A, true)).qr_enabled).toBe(true);
+    // A prévia da vaga fixa em andamento trava só a dela (no mesmo processo, uma prévia por vez por empresa).
+    t.row().clt_preview = { ...(t.row().clt_preview as object), status: 'running', started_at: NOW.toISOString() };
+    expect(await status(t.preview.start(OWNER, WS_A, { kind: 'clt' }))).toBe('409:Já existe uma prévia sendo criada.');
   });
 });
