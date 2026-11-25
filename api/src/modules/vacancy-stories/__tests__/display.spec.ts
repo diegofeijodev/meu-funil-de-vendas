@@ -27,7 +27,7 @@ const settings = (o: Partial<SettingsRow> = {}): SettingsRow => ({
   recent_cities: [], preview: {}, ai_error: null, ai_error_at: null, qr_enabled: false, qr_enabled_at: null, created_at: NOW, updated_at: NOW,
   // Vagas fixas (25/11/2026): os padrões do banco (o tipo da linha passou a exigir as colunas novas).
   clt_enabled: false, clt_enabled_at: null, clt_enabled_by: null, clt_daily_cap: 2, clt_backlog_days: 14, clt_last_poll_at: null, clt_last_poll_ok_at: null,
-  clt_last_poll_error: null, ...o,
+  clt_last_poll_error: null, clt_ai_error: null, clt_ai_error_at: null, clt_preview: {}, ...o,
 });
 
 const row = (o: Partial<StoryRow> = {}, v: FreelaVacancy = vac()): StoryRow => ({
