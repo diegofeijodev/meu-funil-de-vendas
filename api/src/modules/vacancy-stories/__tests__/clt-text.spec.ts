@@ -1,5 +1,6 @@
 import {
-  CLT_SKIP, cltBenefits, cltCityLabel, cltDeadline, cltFields, cltFingerprint, cltForcedTriage, cltRole, cltSalary, cltSchedule, cltTriage, stripClt,
+  CLT_SKIP, cltBenefits, cltCityLabel, cltDeadline, cltFields, cltFingerprint, cltForcedTriage, cltRole, cltSalary, cltSchedule, cltTriage, hasContact,
+  stripClt,
 } from '../vacancy-clt';
 import {
   CLT_CLOSED_REASON, CLT_DISABLED_REASON, CLT_STARTED_REASON, cltBlockedExpireReason, cltCapWaitReason, cltDeadlineReason, cltIgLimitReason,
@@ -95,6 +96,30 @@ describe('vagas fixas — campos da arte (M14; UI §3.4, P13)', () => {
     expect(cltBenefits(['PJ'])).toBeNull();
     expect(cltBenefits(['Cesta básica', 'Vale-transporte'])).toBe('Cesta básica · Vale-transporte');
     expect(cltRole({ title: 'cozinheiro escala 12x36', role: 'cozinheiro' })).toBe('Cozinheiro escala 12x36');
+  });
+
+  it('contato (telefone com espaço/ponto/traço, e-mail, @perfil, link) nunca vai para cargo, escala ou benefícios', () => {
+    const phones = ['(11) 99999-9999', '11 99999 9999', '11.99999.9999', '11999999999', '+55 11 9999-9999', '99999-9999', '9999 9999'];
+    for (const p of phones) {
+      expect(hasContact(p)).toBe(true);
+      expect(cltRole({ title: `Garçom ${p}`, role: 'garçom' })).toBe('Garçom');
+      expect(cltSchedule({ workSchedule: `6x1, fale no ${p}`, workScheduleSlots: [] })).toBeNull();
+      expect(cltBenefits(['VT', `Chame no ${p}`, 'VR'])).toBe('VT · VR');
+    }
+    for (const c of ['rh@bar.com.br', '@barzinho', 'https://bar.com/vagas', 'www.bar.com.br', 'wa.me/5511999999999', 'bar.com.br']) {
+      expect(hasContact(c)).toBe(true);
+      expect(cltRole({ title: `Atendente ${c}`, role: 'atendente' })).toBe('Atendente');
+      expect(cltBenefits([`Envie o currículo: ${c}`])).toBeNull();
+    }
+    // Os dois com contato: o cargo fica vazio em vez de mostrar o contato.
+    expect(cltRole({ title: 'Garçom 11 99999 9999', role: 'garçom rh@bar.com' })).toBe('');
+    // Canários do formato real que NÃO são contato.
+    for (const ok of ['Segunda 08:00-17:00 • Terça 08:00-17:00', 'R$ 2.300,00', 'Vale-refeição R$ 1.200,00', '6x1', '12x36', '44h semanais', 'Seg a Sex, 8h às 17h', 'CEP 13201-000']) {
+      expect(hasContact(ok)).toBe(false);
+    }
+    expect(cltSchedule({ workSchedule: 'Segunda 08:00-17:00 • Terça 08:00-17:00', workScheduleSlots: [] })).toBe('Segunda 08:00-17:00 • Terça 08:00-17:00');
+    expect(cltFields(fixedJob({ title: 'Cumim 11 98888 7777', role: 'cumim', workSchedule: 'zap 11 98888 7777', workScheduleSlots: [], benefits: ['VT', '@bar'] })))
+      .toMatchObject({ cargo: 'Cumim', escala: null, beneficios: 'VT' });
   });
 
   it('cidade "Jundiaí – SP"; sem UF só a cidade; sem cidade null; empresa limpa como nas diárias', () => {

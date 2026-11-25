@@ -57,17 +57,34 @@ export function cltForcedTriage(v: FreelaFixedJob, now: Date): TriageResult {
   return { status: 'new' };
 }
 
-const CONTACT_BITS = [/\(?\d{2}\)?\s?\d{4,5}-?\d{4}/g, /[^\s@]+@[^\s@]+\.[^\s@]+/g, /(https?:\/\/|www\.)\S+/gi];
-const scrub = (s: string | null | undefined) => CONTACT_BITS.reduce((t, re) => t.replace(re, ' '), s ?? '').replace(/\s+/g, ' ').trim();
+/**
+ * Contato na vitrine (texto livre de quem publicou): telefone com DDD em qualquer separação ("(11) 99999-9999", "11 99999 9999",
+ * "11.99999.9999", "+55…"), telefone sem DDD com separador ("99999-9999"), e-mail, @perfil e link (com ou sem "www"/"https", "wa.me").
+ * Campo ou item com contato NÃO vai para a arte nem para a lista: a candidatura é pelo app.
+ */
+const CONTACT = [
+  /(?<!\d)\(?\d{2}\)?[\s.-]*9?\d{4}[\s.-]*\d{4}(?!\d)/,
+  /(?<!\d)9?\d{4}[\s.-]\d{4}(?!\d)/,
+  /[^\s@]+@[^\s@]+\.[^\s@]+/,
+  /@\w/,
+  /(https?:\/\/|www\.)\S+/i,
+  /\b[\w-]+\.(com|net|org|me|io|br)\b/i,
+];
+export const hasContact = (s: string | null | undefined): boolean => !!s && CONTACT.some((re) => re.test(s));
+/** Texto limpo; com contato = vazio (descarta o campo inteiro, nunca um pedaço). */
+const noContact = (s: string | null | undefined) => {
+  const t = (s ?? '').replace(/\s+/g, ' ').trim();
+  return hasContact(t) ? '' : t;
+};
 /** P13: "Atendente CLT", "Atendente (CLT)", "Atendente - CLT" → "Atendente" (a pílula já diz CARTEIRA ASSINADA). */
 export const stripClt = (s: string) => s.replace(/\s*[-–—]?\s*[([]?\s*\bclt\b\s*[)\]]?\s*$/i, '').trim();
 const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Cargo da arte e da lista: o título limpo (até 40 caracteres), senão o cargo do Freela. */
+/** Cargo da arte e da lista: o título limpo (até 40 caracteres), senão o cargo do Freela; o que tiver contato é descartado. */
 export function cltRole(v: Pick<FreelaFixedJob, 'title' | 'role'>): string {
-  const t = stripClt(scrub(v.title));
+  const t = stripClt(noContact(v.title));
   if (t && t.length <= 40) return capFirst(t);
-  const r = stripClt(scrub(v.role));
+  const r = stripClt(noContact(v.role));
   return capFirst((r || t).slice(0, 40).trim());
 }
 
@@ -107,7 +124,8 @@ export function cltSchedule(v: Pick<FreelaFixedJob, 'workSchedule' | 'workSchedu
     if (times.size === 1) return `${daysLabel(days as number[])}, ${hourLabel(minutesOf(first.start))} às ${hourLabel(minutesOf(first.end))}`;
     return `${new Set(days).size} dias por semana`;
   }
-  const text = (v.workSchedule ?? '').replace(/\s+/g, ' ').trim();
+  // Texto escrito com contato: o cartão sai (os horários acima são montados pelo sistema e nunca trazem contato).
+  const text = noContact(v.workSchedule);
   return text ? clipText(text, 44) : null;
 }
 
@@ -117,11 +135,11 @@ export function cltSchedule(v: Pick<FreelaFixedJob, 'workSchedule' | 'workSchedu
  */
 const NOT_BENEFIT = /^(benef[ií]cios?\b|sal[áa]rio\b|pj$)/i;
 
-/** Benefícios: até 4 itens unidos por " · ", no máximo 80 caracteres; nenhum → null. */
+/** Benefícios: até 4 itens unidos por " · ", no máximo 80 caracteres; item com contato sai; nenhum → null. */
 export function cltBenefits(list: string[] | null | undefined): string | null {
   const out: string[] = [];
   for (const raw of list ?? []) {
-    const b = raw.replace(/\s+/g, ' ').replace(/[\s:*]+$/, '').trim();
+    const b = noContact(raw).replace(/[\s:*]+$/, '').trim();
     if (!b || NOT_BENEFIT.test(b) || out.length >= 4) continue;
     if ([...out, b].join(' · ').length > 80) break;
     out.push(b);
