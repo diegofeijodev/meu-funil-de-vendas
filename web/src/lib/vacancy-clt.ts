@@ -117,8 +117,10 @@ export function cltCapHint(quota = 25): string {
   return `Vagas fixas ficam abertas por semanas, então 2 por dia costuma bastar. Elas dividem com as diárias o limite de ${quota} publicações do Instagram e o horário para postar; quando as duas disputam o mesmo horário, a diária vai antes, porque o prazo dela é mais curto.`;
 }
 
-export function cltBacklogHint(promoDays = 30): string {
-  return `Entram aos poucos, das mais novas para as mais velhas, dentro do máximo por dia. Vaga fixa publicada há mais de ${promoDays} dias não vira story.`;
+/** Ajuda do retroativo; com a CLT ligada a opção fica travada (vale no momento de ligar; a API recusa a mudança com 422). */
+export function cltBacklogHint(promoDays = 30, enabled = false): string {
+  const base = `Entram aos poucos, das mais novas para as mais velhas, dentro do máximo por dia. Vaga fixa publicada há mais de ${promoDays} dias não vira story.`;
+  return enabled ? `${base} Vale para o momento em que você liga: para mudar, desligue as vagas fixas.` : base;
 }
 
 /** Linha de dados do story na lista e no detalhe: diária "R$ 150 · Sáb 29/11 · 18h às 23h · Campinas"; CLT "R$ 1.874,32/mês · São Paulo – SP · divulgar até 24/12". */

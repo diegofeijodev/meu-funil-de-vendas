@@ -83,6 +83,17 @@ describe('Ajustes das vagas fixas (M18)', () => {
     expect(await status(w.settings.update(VIEWER, WS_A, { clt_daily_cap: 4 }))).toBe(FORBIDDEN);
   });
 
+  it('retroativo só muda com a CLT desligada (vale no momento de ligar): ligada → 422 e nada do PATCH muda; o mesmo valor passa', async () => {
+    const t = await setup({ settings: { clt_enabled: true, clt_enabled_at: NOW } });
+    const locked = '422:Desligue as vagas fixas para mudar esta opção. Ela vale para o momento em que você liga.';
+    expect(await status(w.settings.update(OWNER, WS_A, { clt_backlog_days: 30, clt_daily_cap: 5 }))).toBe(locked);
+    expect(t.row()).toMatchObject({ clt_backlog_days: 14, clt_daily_cap: 2 });
+    const same = await w.settings.update(OWNER, WS_A, { clt_backlog_days: 14, clt_daily_cap: 5 });
+    expect(same.clt).toMatchObject({ backlog_days: 14, daily_cap: 5, since: new Date(NOW.getTime() - 14 * DAY) });
+    await w.settings.cltDisable(OWNER, WS_A);
+    expect((await w.settings.update(OWNER, WS_A, { clt_backlog_days: 30 })).clt.backlog_days).toBe(30);
+  });
+
   it('ligar: só dono/admin; sem marca → 400; com marca grava a marca, a marca d\'água e a atividade; não exige arte modelo', async () => {
     const t = await setup({ settings: { template_asset_id: null, enabled: false } });
     expect(await status(w.settings.cltEnable(MARKETING, WS_A))).toBe(FORBIDDEN);

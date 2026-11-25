@@ -329,9 +329,9 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
                   </Button>
                 </div>
               </Field>
-              <Field title={CLT_TEXT.backlogTitle} hint={cltBacklogHint(s.clt.promo_days)}>
+              <Field title={CLT_TEXT.backlogTitle} hint={cltBacklogHint(s.clt.promo_days, s.clt.enabled)}>
                 {CLT_BACKLOG_OPTIONS.filter((o) => o.value <= s.clt!.promo_days).map((o) => (
-                  <Option key={o.value} type="radio" name="vac-clt-backlog" checked={cltBacklog === o.value} disabled={disabled}
+                  <Option key={o.value} type="radio" name="vac-clt-backlog" checked={cltBacklog === o.value} disabled={disabled || s.clt!.enabled}
                     onChange={() => set("clt_backlog_days", o.value)}>
                     {o.label}
                   </Option>

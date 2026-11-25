@@ -815,8 +815,8 @@ antecedência 120 min, OpenAI):
   qr_enabled: boolean, qr_enabled_at: string | null /* 24/11/2026: QR da vaga no rodapé da arte (§26, "QR da vaga") */,
   publish_quota: number /* 24/11/2026 (P1/P9): limite de publicações em 24 h que a Meta informou (`instagram_accounts.publish_quota_total`) ou 25; a ajuda do máximo e o aviso (máximo > limite − 10) usam ele */,
   publishing_blocked: { reason: "permission" | "token", since: string } | null /* 24/11/2026: bloqueio de publicação aberto (§22.6); o cartão diz "Pausado" */,
-  recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados */,
-  week: { total: number, fallback: number } /* stories de vaga criados nos últimos 7 dias */,
+  recent_outcomes: { n: number, first_try: number, redone: number, fallback: number, not_posted: number } /* últimos 20 entregues ou não postados, só das diárias */,
+  week: { total: number, fallback: number } /* stories de vaga das diárias criados nos últimos 7 dias */,
   style_refs_enabled: boolean /* Fatia 5 do Pinterest automático; padrão false (desligado) */,
   style_brand: { id: string, name: string } | null /* a marca das vagas (a mesma da arte modelo), lida com workspace_id */,
   style_refs_in_use: number /* quantas referências a escolha usaria agora: próprias + Seleção, até 4 (0 sem marca) */,
@@ -827,7 +827,7 @@ antecedência 120 min, OpenAI):
 **Vagas fixas (CLT)** (Fase 3, desenho `2026-11-24-vagas-clt-link-design.md` §2.4.3; UI §3–§4). Segunda fonte da mesma fila
 (`vacancy_stories.source = 'freela_clt'`, post `ig_posts.source = 'vacancy'` com `creative_brief.vacancy.kind = 'clt'`): vitrine
 `GET {FREELA_PUBLIC_API_URL}/v1/fixed-jobs/public/recent?limit=100` e `GET …/v1/fixed-jobs/public/:id` (404 = fechada, vencida ou
-inexistente). Interruptor e limite por dia **próprios** (`clt_enabled`, `clt_daily_cap` 1–10, padrão 2); a cota da Meta, a folga, a janela,
+inexistente; só o 404 fecha — 200 fora do formato = vitrine fora, tenta de novo). Interruptor e limite por dia **próprios** (`clt_enabled`, `clt_daily_cap` 1–10, padrão 2); a cota da Meta, a folga, a janela,
 o espaço de 15 min, o "postar sozinho" (`auto_publish`), a lista de cidades, o QR (`qr_enabled`) e o bloqueio de publicação (§22.6) são
 **compartilhados** com as diárias. As diárias não mudam de comportamento: `enabled`, `daily_cap`, `today`, `counts` e "desligar" valem só
 para elas (posts de antes deste lote contam como diária).
@@ -843,14 +843,17 @@ CltSettingsView = {
 }
 ```
 
-- `PATCH …/settings` aceita também `clt_daily_cap` (inteiro 1–10) e `clt_backlog_days` (0, 7, 14 ou 30); sem padrão no DTO.
+- `PATCH …/settings` aceita também `clt_daily_cap` (inteiro 1–10) e `clt_backlog_days` (0, 7, 14 ou 30); sem padrão no DTO. O retroativo
+  vale no momento de ligar: com a CLT ligada, mudar `clt_backlog_days` → `422 { code: "CLT_BACKLOG_LOCKED", message: "Desligue as vagas fixas
+  para mudar esta opção. Ela vale para o momento em que você liga." }` e nada do PATCH muda (o mesmo valor salvo passa; a gravação é
+  condicional a `clt_enabled = false`). O web trava as opções com a CLT ligada.
 - `POST …/vacancy-stories/clt/enable` (manage) → `VacancySettingsView`. Não exige arte modelo; exige marca (a logo vem dela): sem `brand_id`,
   grava a marca mais antiga da empresa; sem nenhuma → `400 "Cadastre uma marca em Marcas antes de ligar."`. `clt_enabled_at` = agora (com
   o retroativo, a marca d'água é `clt_enabled_at − clt_backlog_days`). Já ligado = nada muda. Atividade `vacancy_stories.clt_enable`.
 - `POST …/vacancy-stories/clt/disable` (manage) → `{ ok: true, cancelled }`: cancela só as linhas e os posts CLT ainda não publicados, com
   o motivo "Os stories das vagas fixas foram desligados."; diárias intactas. Atividade `vacancy_stories.clt_disable`. Desligar as diárias
   (`/disable`, ou a arte modelo apagada) não toca a CLT.
-- `GET …/stories?filter=&kind=diaria|clt` (ausente = as duas); cada item ganha `kind: 'diaria' | 'clt'` e `promote_until` (CLT: o
+- `GET …/stories?filter=&kind=diaria|clt` (ausente = as duas: as 100 mais novas de cada tipo, juntas da mais nova para a mais velha); cada item ganha `kind: 'diaria' | 'clt'` e `promote_until` (CLT: o
   "divulgar até"; diária: `null`). Linha CLT: `funcao` = cargo (sem "CLT" no fim), `estabelecimento` = empresa limpa, `valor` = salário
   ("R$ 1.874,32", "R$ 2.000 a R$ 2.500"; a tela acrescenta "/mês"), `quando` = "divulgar até 24/12", `cidade` = "Jundiaí – SP" ou
   `null`, `freela_url` = página pública da vaga fixa ou `null` enquanto `FREELA_FIXED_JOB_PAGE_URL` estiver vazia (diária: sempre string).
@@ -867,6 +870,11 @@ CltSettingsView = {
 - Cron (`POST /api/public/cron/vacancy-stories` e o job `vacancy-stories-10min`): as etapas são as mesmas; com alguma empresa com as vagas
   fixas ligadas, `poll` ganha `clt: { workspaces, inserted, skipped, error? }` (a queda da vitrine CLT também marca a rodada como falha).
 - Desligar e religar a CLT: as vagas fixas que o "desligar" tirou da fila antes de virar story (sem post) e ainda no prazo voltam para a fila.
+- Contato (revisão de 24/11): cargo, escala e benefícios com telefone (com DDD em qualquer separação, ou sem DDD com separador), e-mail,
+  @perfil ou link (inclusive domínio sem "www" e `wa.me`) não vão para a arte nem para a lista: o título com contato dá lugar ao cargo do
+  Freela, a escala escrita com contato some (sai sem o cartão) e o benefício com contato sai da lista.
+- Geração: um lote por tipo — primeiro as diárias (empresas com as diárias ligadas, por início, até 100), e só se sobrar vez na rodada
+  (2 por rodada) as vagas fixas (empresas com a CLT ligada, as mais novas primeiro, até 100). Uma fonte nunca ocupa o lote da outra.
 - QR da CLT: só com `qr_enabled` **e** `FREELA_FIXED_JOB_PAGE_URL` (ex.: `https://freelaservicos.com.br/vagas-fixas/`); o link é
   `{url}{id}?o=ig`. Variável vazia = arte CLT sem QR (a página pública ainda não está no ar).
 

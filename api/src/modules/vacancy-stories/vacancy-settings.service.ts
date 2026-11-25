@@ -49,7 +49,9 @@ const MSG = {
   cltCap: 'O máximo de stories de vagas fixas por dia vai de 1 a 10.',
   cltBacklog: 'Escolha só as novas, 7, 14 ou 30 dias.',
   cltNoBrand: 'Cadastre uma marca em Marcas antes de ligar.',
+  cltBacklogLocked: 'Desligue as vagas fixas para mudar esta opção. Ela vale para o momento em que você liga.',
 };
+const cltBacklogLocked = () => new UnprocessableEntityException({ code: 'CLT_BACKLOG_LOCKED', message: MSG.cltBacklogLocked });
 /** "A imagem tem 10,6 MB…" — arredonda para cima (10 MB + 1 byte não vira "10,0 MB"). */
 export const tooBigMessage = (bytes: number) =>
   `A imagem tem ${(Math.ceil((bytes / 1048576) * 10) / 10).toFixed(1).replace('.', ',')} MB e o máximo é ${MAX_TEMPLATE_MB} MB. Envie uma menor.`;
@@ -293,20 +295,28 @@ export class VacancySettingsService {
     if (dto.vendor !== undefined && !(VENDORS as readonly string[]).includes(dto.vendor)) throw bad(MSG.vendor);
     if (dto.clt_daily_cap !== undefined && (!Number.isInteger(dto.clt_daily_cap) || dto.clt_daily_cap < 1 || dto.clt_daily_cap > 10)) throw bad(MSG.cltCap);
     if (dto.clt_backlog_days !== undefined && !(CLT_BACKLOG_OPTIONS as readonly number[]).includes(dto.clt_backlog_days)) throw bad(MSG.cltBacklog);
-    await this.prisma.vacancy_story_settings.update({
-      where: { workspace_id: workspaceId },
-      data: {
-        window_start: start,
-        window_end: end,
-        ...(dto.cities !== undefined ? { cities: cleanCities(dto.cities) } : {}),
-        ...(dto.daily_cap !== undefined ? { daily_cap: dto.daily_cap } : {}),
-        ...(dto.min_lead_minutes !== undefined ? { min_lead_minutes: dto.min_lead_minutes } : {}),
-        ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
-        ...(dto.style_refs_enabled !== undefined ? { style_refs_enabled: dto.style_refs_enabled } : {}),
-        ...(dto.clt_daily_cap !== undefined ? { clt_daily_cap: dto.clt_daily_cap } : {}),
-        ...(dto.clt_backlog_days !== undefined ? { clt_backlog_days: dto.clt_backlog_days } : {}),
-      },
-    });
+    // O retroativo vale no momento de LIGAR (a marca d'água é `clt_enabled_at − clt_backlog_days`): com a CLT ligada, mudar puxaria vagas
+    // fixas antigas (ou cortaria as que já entraram). Só muda desligada; o mesmo valor passa.
+    const backlogChange = dto.clt_backlog_days !== undefined && dto.clt_backlog_days !== s.clt_backlog_days;
+    if (backlogChange && s.clt_enabled) throw cltBacklogLocked();
+    const data = {
+      window_start: start,
+      window_end: end,
+      ...(dto.cities !== undefined ? { cities: cleanCities(dto.cities) } : {}),
+      ...(dto.daily_cap !== undefined ? { daily_cap: dto.daily_cap } : {}),
+      ...(dto.min_lead_minutes !== undefined ? { min_lead_minutes: dto.min_lead_minutes } : {}),
+      ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
+      ...(dto.style_refs_enabled !== undefined ? { style_refs_enabled: dto.style_refs_enabled } : {}),
+      ...(dto.clt_daily_cap !== undefined ? { clt_daily_cap: dto.clt_daily_cap } : {}),
+      ...(dto.clt_backlog_days !== undefined ? { clt_backlog_days: dto.clt_backlog_days } : {}),
+    };
+    if (backlogChange) {
+      // Condicional: se ligaram a CLT entre a leitura e aqui, nada do PATCH muda (um comando só, tudo ou nada).
+      const r = await this.prisma.vacancy_story_settings.updateMany({ where: { workspace_id: workspaceId, clt_enabled: false }, data });
+      if (!r.count) throw cltBacklogLocked();
+    } else {
+      await this.prisma.vacancy_story_settings.update({ where: { workspace_id: workspaceId }, data });
+    }
     return this.view(workspaceId);
   }
 

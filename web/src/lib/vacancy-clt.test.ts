@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cltArrivedEmpty, cltDisableText, cltEnableText, cltPollLine, cltPollNotice, cltSinceLine, cltStatusLine, cltTodayLine, cltWhatEnters,
-  cltCheckedLine, isCltPost, storyDataLine, summaryWithClt, type CltView,
+  cltBacklogHint, cltCheckedLine, isCltPost, storyDataLine, summaryWithClt, type CltView,
 } from './vacancy-clt';
 
 const base: CltView = {
@@ -53,6 +53,11 @@ describe('vagas fixas — textos do cartão (UI §4.2)', () => {
 });
 
 describe('vagas fixas — lista e Ajustes (UI §4.3–§4.4)', () => {
+  it('retroativo: com a CLT ligada a ajuda diz que vale ao ligar e como mudar', () => {
+    expect(cltBacklogHint(30)).not.toContain('desligue');
+    expect(cltBacklogHint(30, true)).toContain('Vale para o momento em que você liga: para mudar, desligue as vagas fixas.');
+  });
+
   it('linha de dados: CLT com /mês e "divulgar até"; diária como antes', () => {
     expect(storyDataLine({ kind: 'clt', valor: 'R$ 1.874,32', quando: 'divulgar até 24/12', cidade: 'São Paulo – SP' })).toBe('R$ 1.874,32/mês · São Paulo – SP · divulgar até 24/12');
     expect(storyDataLine({ kind: 'clt', valor: 'R$ 2.550', quando: 'divulgar até 24/12', cidade: null })).toBe('R$ 2.550/mês · divulgar até 24/12');
