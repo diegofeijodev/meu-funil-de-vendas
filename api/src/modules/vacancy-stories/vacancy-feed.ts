@@ -151,13 +151,18 @@ export class VacancyFeedClient {
     return body.data.map(parseCltItem).filter((v): v is FreelaFixedJob => v !== null);
   }
 
-  /** Vaga fixa por id: 404 (fechada, vencida ou inexistente) → null; resposta fora do formato → null (não dá para conferir = não sai). */
+  /**
+   * Vaga fixa por id: só 404 (fechada, vencida ou inexistente) → null. Resposta 200 fora do formato → `FeedDownError` (a vitrine respondeu
+   * algo que não dá para conferir: tenta de novo depois, sem fechar a vaga nem o story).
+   */
   async cltById(id: string): Promise<FreelaFixedJob | null> {
     const down = () => new FeedDownError(CLT_FEED_DOWN);
     const res = await this.get(`/v1/fixed-jobs/public/${encodeURIComponent(id)}`).catch(() => Promise.reject(down()));
     if (res.status === 404) return null;
     if (!res.ok) throw down();
     const body = (await this.json(res).catch(() => Promise.reject(down()))) as { data?: unknown } | null;
-    return parseCltItem(body?.data);
+    const v = parseCltItem(body?.data);
+    if (!v) throw down();
+    return v;
   }
 }

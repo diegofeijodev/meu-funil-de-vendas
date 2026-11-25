@@ -27,7 +27,7 @@ describe('VacancyFeedClient — vagas fixas (M12)', () => {
     w.cleanup();
   });
 
-  it('cltById: aberta → a vaga; 404 (fechada, vencida, inexistente) → null; formato inválido → null', async () => {
+  it('cltById: aberta → a vaga; 404 (fechada, vencida, inexistente) → null; 200 fora do formato → FeedDownError (tenta de novo, não fecha)', async () => {
     const w = vacancyWorld();
     const v = fixedJob();
     const closed = fixedJob();
@@ -36,7 +36,7 @@ describe('VacancyFeedClient — vagas fixas (M12)', () => {
     expect((await w.feedClient.cltById(v.id))?.id).toBe(v.id);
     expect(await w.feedClient.cltById(closed.id)).toBeNull();
     expect(await w.feedClient.cltById(uuid())).toBeNull();
-    expect(await w.feedClient.cltById('ruim')).toBeNull();
+    await expect(w.feedClient.cltById('ruim')).rejects.toThrow(new FeedDownError(CLT_FEED_DOWN));
     expect(w.feed.state.urls[0]).toBe(`http://freela.test/v1/fixed-jobs/public/${v.id}`);
     w.cleanup();
   });
