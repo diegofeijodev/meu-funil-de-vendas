@@ -1770,6 +1770,14 @@ try {
   check('vagas/CLT: ligada pela tela; as diárias não mudaram', cltOn?.clt?.enabled === true && cltOn?.enabled === salva.enabled, JSON.stringify(cltOn?.clt));
   await page.locator('[data-vac-section="arrived"]').getByRole('button', { name: 'Fixas (CLT)' }).waitFor({ timeout: 15000 });
   ok('vagas/CLT: a lista ganhou o filtro "Tipo" (Todas · Diárias · Fixas (CLT))');
+  // Revisão 24/11: o retroativo vale no momento de ligar — com a CLT ligada as opções ficam travadas e a ajuda diz como mudar.
+  const backlogOpts = corpoAjustes.locator('input[name="vac-clt-backlog"]');
+  await page.waitForFunction(() => [...document.querySelectorAll('input[name="vac-clt-backlog"]')].every((i) => i.disabled), null, { timeout: 15000 }).catch(() => {});
+  check(
+    'vagas/CLT: ligada, as opções do retroativo ficam travadas e a ajuda diz "para mudar, desligue as vagas fixas"',
+    (await backlogOpts.count()) > 0 && (await backlogOpts.evaluateAll((els) => els.every((e) => e.disabled))) &&
+      (await corpoAjustes.getByText(/para mudar, desligue as vagas fixas/).count()) === 1,
+  );
   await cltCard.getByRole('switch').click();
   await page.getByText('Desligar os stories das vagas fixas?').waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Desligar vagas fixas' }).click();
