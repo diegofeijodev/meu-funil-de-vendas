@@ -15,7 +15,7 @@ import { loadBadges } from './vacancy-art';
 import { composeBaseArt, loadBaseFonts, type BaseFonts } from './vacancy-base-art';
 import { cltDeadline, cltFields } from './vacancy-clt';
 import { composeCltArt } from './vacancy-clt-art';
-import { sourceOf, type SourceItem } from './vacancy-sources';
+import { sourceOf, SOURCES, type SourceItem } from './vacancy-sources';
 import type { Badges } from './vacancy-art';
 import { planQr, vacancyLink, verifyQrPixels, type QrPlan } from './vacancy-qr';
 import { VacancyFeedClient } from './vacancy-feed';
@@ -23,7 +23,9 @@ import { VacancyGate } from './vacancy-gate.service';
 import { PUBLISH_BLOCKED_WAIT, WAIT_CAP } from './vacancy-reasons';
 import { photoPrompt, photoReadPrompt, photoStyleLines } from './vacancy-prompts';
 import { shortDay, vacancyFields } from './vacancy-text';
-import type { ArtCheck, ArtRead, AttemptLog, CltFields, FieldCheck, FieldKey, FreelaFixedJob, FreelaVacancy, SettingsRow, StoryRow, VacancyFields } from './vacancy-types';
+import type {
+  ArtCheck, ArtRead, AttemptLog, CltFields, FieldCheck, FieldKey, FreelaFixedJob, FreelaVacancy, SettingsRow, StoryRow, VacancyFields, VacancySourceId,
+} from './vacancy-types';
 import { FIELD_LABELS, READ_SCHEMA } from './vacancy-verify';
 
 /** Sem conta conectada o gerador não cria arte (A6): a linha espera com este apoio. */
@@ -209,39 +211,56 @@ export class VacancyGeneratorService {
   }
 
   /**
-   * Rodada do job: até 2 linhas (no total) começam a gerar, as de início mais próximo. Empresa sem Instagram conectado não gera (a
-   * linha diz por quê); empresa no limite do dia espera a vez (gancho da Task 10).
+   * Rodada do job: até 2 linhas (no total) começam a gerar. Empresa sem Instagram conectado não gera (a linha diz por quê); empresa no
+   * limite do dia espera a vez (gancho da Task 10). Um LOTE POR TIPO (revisão de 24/11): primeiro as diárias das empresas com as diárias
+   * ligadas, na ordem do início (prazo de horas, V7) — exatamente o lote de antes das vagas fixas —; só se sobrar vez, as vagas fixas das
+   * empresas com a CLT ligada, das mais novas para as mais velhas (retroativo em gotas). Uma fonte nunca ocupa o lote da outra.
    */
   async generateDue(now = new Date()): Promise<{ started: number; handed: number; waiting: number; cancelled: number }> {
     const out = { started: 0, handed: 0, waiting: 0, cancelled: 0 };
-    // Empresa ativa = diárias OU vagas fixas ligadas; cada linha confere o interruptor do seu tipo (porta por fonte).
-    const active = new Map(
-      (await this.prisma.vacancy_story_settings.findMany({ where: { OR: [{ enabled: true }, { clt_enabled: true }] } }))
-        .filter((s) => this.gate.allowed(s.workspace_id))
-        .map((s) => [s.workspace_id, s]),
-    );
-    if (!active.size) return out;
-    const due = await this.prisma.vacancy_stories.findMany({
-      where: {
-        workspace_id: { in: [...active.keys()] },
-        status: { in: QUEUE },
-        AND: [
-          { OR: [{ next_attempt_at: null }, { next_attempt_at: { lte: now } }] },
-          { OR: [{ not_before: null }, { not_before: { lte: now } }] },
-          leaseFree(now),
-        ],
-      },
-      orderBy: { starts_at: 'asc' },
-      take: 100,
-    });
+    const settings = (await this.prisma.vacancy_story_settings.findMany({ where: { OR: [{ enabled: true }, { clt_enabled: true }] } }))
+      .filter((s) => this.gate.allowed(s.workspace_id));
+    if (!settings.length) return out;
+    const active = new Map(settings.map((s) => [s.workspace_id, s]));
+    const on = (src: VacancySourceId) => settings.filter((s) => SOURCES[src].on(s)).map((s) => s.workspace_id);
+    const dueOf = (workspaces: string[], bySource: Prisma.vacancy_storiesWhereInput) =>
+      workspaces.length
+        ? this.prisma.vacancy_stories.findMany({
+            where: {
+              workspace_id: { in: workspaces },
+              ...bySource,
+              status: { in: QUEUE },
+              AND: [
+                { OR: [{ next_attempt_at: null }, { next_attempt_at: { lte: now } }] },
+                { OR: [{ not_before: null }, { not_before: { lte: now } }] },
+                leaseFree(now),
+              ],
+            },
+            orderBy: { starts_at: 'asc' },
+            take: 100,
+          })
+        : Promise.resolve([] as StoryRow[]);
     // Sem conta conectada → espera a reconexão; conta com a publicação bloqueada (R5) → espera o bloqueio fechar. Nos dois, nada de IA.
     const live = new Map<string, string | null>();
+    await this.startRows(await dueOf(on('freela'), { NOT: { source: SOURCES.freela_clt.id } }), active, live, out, now);
+    if (out.started < PER_TICK) {
+      const published = (r: StoryRow) => Date.parse(String((r.snapshot as { publishedAt?: unknown } | null)?.publishedAt ?? '')) || 0;
+      const clt = (await dueOf(on('freela_clt'), { source: SOURCES.freela_clt.id })).sort((a, b) => published(b) - published(a));
+      await this.startRows(clt, active, live, out, now);
+    }
+    return out;
+  }
+
+  /** Começa as linhas do lote (até completar `PER_TICK` na rodada), cada uma conferindo o interruptor do seu tipo. */
+  private async startRows(
+    rows: StoryRow[],
+    active: Map<string, SettingsRow>,
+    live: Map<string, string | null>,
+    out: { started: number; handed: number; waiting: number; cancelled: number },
+    now: Date,
+  ): Promise<void> {
     const free = (id: string) => ({ id, status: { in: QUEUE }, ...leaseFree(now) });
-    // Diárias primeiro, na ordem do início (prazo de horas, V7); depois as vagas fixas, das mais novas para as mais velhas (retroativo em gotas).
-    const clt = (r: StoryRow) => sourceOf(r.source).id === 'freela_clt';
-    const published = (r: StoryRow) => Date.parse(String((r.snapshot as { publishedAt?: unknown } | null)?.publishedAt ?? '')) || 0;
-    const ordered = [...due.filter((r) => !clt(r)), ...due.filter(clt).sort((a, b) => published(b) - published(a))];
-    for (const row of ordered) {
+    for (const row of rows) {
       if (out.started >= PER_TICK) break;
       const ws = row.workspace_id;
       const s = active.get(ws)!;
@@ -282,7 +301,6 @@ export class VacancyGeneratorService {
       }
       if (r !== 'lost') out[r]++;
     }
-    return out;
   }
 
   /** Uma linha com o lease na mão. `LeaseLost` (renovação perdida) sobe para o `generateDue`, que conta como perdida. */

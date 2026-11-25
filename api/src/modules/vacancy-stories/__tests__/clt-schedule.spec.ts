@@ -232,6 +232,37 @@ describe('geração com as vagas fixas (M17)', () => {
     expect(order).toEqual(['freela:d-1', 'freela_clt:c-new']);
   });
 
+  it('lote próprio por tipo: 101 vagas fixas com prazo antes do início da diária não tiram a diária da rodada', async () => {
+    const t = await gen({ enabled: true, enabled_at: new Date(NOW.getTime() - DAY) });
+    const order: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.spyOn(t.g as any, 'generateOne').mockImplementation(async (row: any) => { order.push(`${row.source}:${row.external_id}`); return 'handed'; });
+    for (let i = 0; i < 101; i++) {
+      const v = job({ expiresAt: new Date(NOW.getTime() + DAY).toISOString() });
+      await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: v.id, snapshot: v, fingerprint: cltFingerprint(v), starts_at: cltDeadline(v), status: 'new' } });
+    }
+    const d = diaria({ id: 'd-1', startTime: '2026-12-30T21:00:00Z' });
+    await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, external_id: d.id, snapshot: d, fingerprint: fingerprint(d), starts_at: new Date(d.startTime), status: 'new' } });
+    expect(await t.g.generateDue(NOW)).toMatchObject({ started: 2 });
+    expect(order[0]).toBe('freela:d-1');
+    expect(order[1]).toMatch(/^freela_clt:/);
+  });
+
+  it('diárias desligadas: as linhas diárias que sobraram não ocupam o lote e as vagas fixas geram', async () => {
+    const t = await gen({ enabled: false });
+    const order: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.spyOn(t.g as any, 'generateOne').mockImplementation(async (row: any) => { order.push(row.source); return 'handed'; });
+    for (let i = 0; i < 101; i++) {
+      const d = diaria({ startTime: '2026-11-26T21:00:00Z' });
+      await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, external_id: d.id, snapshot: d, fingerprint: fingerprint(d), starts_at: new Date(d.startTime), status: 'new' } });
+    }
+    const v = job();
+    await w.prisma.vacancy_stories.create({ data: { workspace_id: WS_A, source: 'freela_clt', external_id: v.id, snapshot: v, fingerprint: cltFingerprint(v), starts_at: cltDeadline(v), status: 'new' } });
+    await t.g.generateDue(NOW);
+    expect(order).toEqual(['freela_clt']);
+  });
+
   it('o bloqueio de publicação vale para a CLT: a linha espera com o aviso e a IA não é chamada', async () => {
     const t = await gen();
     w.t['instagram_accounts']!.rows[0]!.publish_block_reason = 'permission';
