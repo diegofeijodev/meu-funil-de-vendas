@@ -202,6 +202,17 @@ describe('lista com as duas fontes (M18)', () => {
     expect(await validate(plainToInstance(ListStoriesQuery, { kind: 'xx' }))).toHaveLength(1);
   });
 
+  it('sem kind: 100 de cada tipo (100 vagas fixas mais novas não empurram a diária para fora da lista), da mais nova para a mais velha', async () => {
+    const t = await setup({ settings: { clt_enabled: true, clt_enabled_at: NOW } });
+    await t.diariaRow(diaria());
+    for (let i = 0; i < 100; i++) await t.cltRow(job());
+    const all = await t.actions.list(WS_A);
+    expect(all).toHaveLength(101);
+    expect(all.filter((x) => x.kind === 'diaria')).toHaveLength(1);
+    expect(all[all.length - 1]!.kind).toBe('diaria');
+    expect(await t.actions.list(WS_A, 'all', 'clt')).toHaveLength(100);
+  });
+
   it('com a página no ar, a linha CLT traz o link; a diária continua com o link da vaga', async () => {
     const t = await setup({ settings: { clt_enabled: true, clt_enabled_at: NOW }, page: 'https://freelaservicos.com.br/vagas-fixas/' });
     const v = job({ id: '3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f' });

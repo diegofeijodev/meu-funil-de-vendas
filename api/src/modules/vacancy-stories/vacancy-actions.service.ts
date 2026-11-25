@@ -69,15 +69,21 @@ export class VacancyActionsService {
   ) {}
 
   /**
-   * As 100 linhas mais novas (filtro aplicado depois: `live` = no ar agora; `not_posted` = pulada, cancelada ou falhou). `kind` = só as
-   * diárias ou só as vagas fixas (ausente = as duas).
+   * As 100 linhas mais novas DE CADA TIPO (filtro aplicado depois: `live` = no ar agora; `not_posted` = pulada, cancelada ou falhou).
+   * `kind` = só as diárias ou só as vagas fixas; ausente = as duas, juntas da mais nova para a mais velha (uma fonte não empurra a
+   * outra para fora da lista).
    */
   async list(ws: string, filter: StoryFilter = 'all', kind?: StoryKind): Promise<StoryView[]> {
     this.gate.assert(ws);
     const now = new Date(this.now());
     const s = await this.settings.get(ws);
-    const bySource = kind ? { source: sourceOfKind(kind).id } : {};
-    const rows = await this.prisma.vacancy_stories.findMany({ where: { workspace_id: ws, ...bySource }, orderBy: { created_at: 'desc' }, take: LIST_SIZE });
+    const newest = (where: Prisma.vacancy_storiesWhereInput) =>
+      this.prisma.vacancy_stories.findMany({ where: { workspace_id: ws, ...where }, orderBy: { created_at: 'desc' }, take: LIST_SIZE });
+    const rows = kind
+      ? await newest({ source: sourceOfKind(kind).id })
+      : (await Promise.all([newest({ NOT: { source: 'freela_clt' } }), newest({ source: 'freela_clt' })]))
+          .flat()
+          .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
     const ids = rows.map((r) => r.ig_post_id).filter((x): x is string => !!x);
     const posts = new Map<string, StoryPost>(
       ids.length ? (await this.prisma.ig_posts.findMany({ where: { id: { in: ids }, workspace_id: ws } })).map((p): [string, StoryPost] => [p.id, p]) : [],
