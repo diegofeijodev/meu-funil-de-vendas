@@ -58,6 +58,8 @@ inventários do protótipo (fonte da verdade): `docs/inventory/{db,server,web}.m
   (mín(vencimento, publicação + 30 dias)), antecedência 0. Contagem do dia por tipo pela LINHA ligada ao post (`postKindFilter`; posts sem linha = diária).
   Desligar um tipo não toca o outro. Arte `vacancy-clt-art.ts` com as peças exportadas da das diárias (hashes fixados). QR da CLT só com
   `FREELA_FIXED_JOB_PAGE_URL` (vazia = página pública fora do ar). Sem salário pula; sem cidade sai sem o cartão (com lista de cidades, pula).
+  Revisão de 24/11 (desenho §13): retroativo só muda com a CLT desligada (422 `CLT_BACKLOG_LOCKED`); aviso da IA e prévia por tipo
+  (`clt_ai_error*`, `clt_preview`; a diária segue em `ai_error`/`preview`); um lote de geração por tipo; contato no texto livre não vai à arte.
 - **Migração do Lovable** (06/10/2026): importador avulso `api/src/scripts/import-lovable/` (não sobe o Nest; `main.ts` = CLI), exportação em `api/scripts/lovable-export/`
   (SQL `export_meufunil`, `pull.mjs`, prompts), runbook `docs/migracao-lovable.md`. Testes ponta a ponta: `scripts/import-lovable-e2e.sh` (Postgres local, banco
   `meufunil_import_e2e`) e `scripts/lovable-export/pull-e2e.sh`. Nunca rodar contra o banco `meufunil` fora do runbook.
