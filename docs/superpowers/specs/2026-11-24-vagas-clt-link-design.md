@@ -1029,3 +1029,19 @@ Trocam o §2.4.3, o §3 e a UI §3.5/§4.2 onde diferem.
 - **Fora desta fase:** P11 (contagens antes de ligar; a tela usa o texto sem números) e P12 (cidades das vagas fixas no `recent_cities`).
 - **Dados reais (GET público de 24/11, só leitura):** 51/51 passam no formato; os dias dos horários vêm em português ("Segunda"…); com o
   retroativo de 14 dias entra 1 vaga (sem empresa e sem cidade); 9 de 51 ainda estão no prazo de 30 dias.
+
+**Revisão de código da Fase 3 (24/11, noite; a diária não mudou de comportamento, os testes dela seguem sem mudar assert)**
+- **Contato:** cargo, escala e benefícios com telefone (DDD em qualquer separação, ou sem DDD com separador), e-mail, @perfil ou link
+  (inclusive domínio sem "www" e `wa.me`) não vão para a arte nem para a lista; o campo ou item sai inteiro. Título e cargo com contato →
+  a vaga fixa pula (também no "Criar story mesmo assim").
+- **Números das diárias:** `recent_outcomes` e `week` contam só as diárias (a tela da CLT não usa nenhum dos dois).
+- **Retroativo:** vale no momento de ligar; com a CLT ligada, mudar `clt_backlog_days` → 422 `CLT_BACKLOG_LOCKED` (o mesmo valor passa,
+  gravação condicional a `clt_enabled = false`) e o web trava as opções (a edição pendente marcada antes de ligar é descartada). Escolhido
+  em vez de congelar a marca d'água numa coluna: sem estado novo, e o título da UI já diz "quando você ligar".
+- **Aviso da IA e prévia por tipo:** migração aditiva `20261125123000_vacancy_clt_review` (`clt_ai_error`, `clt_ai_error_at`,
+  `clt_preview`); a diária continua em `ai_error`/`preview`. Uma prévia por vez por empresa (409 entre os tipos).
+- **Geração:** um lote por tipo (diárias primeiro, como antes; vagas fixas só com vez sobrando), sem linha de um tipo ocupar o lote do outro.
+- **Vitrine CLT por id:** só o 404 fecha; 200 fora do formato = vitrine fora (tenta de novo). A diária tem o mesmo ponto e ficou como está
+  (pendência).
+- **Lista sem tipo:** as 100 mais novas de cada tipo (até 200 linhas).
+

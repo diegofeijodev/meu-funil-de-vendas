@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cltArrivedEmpty, cltDisableText, cltEnableText, cltPollLine, cltPollNotice, cltSinceLine, cltStatusLine, cltTodayLine, cltWhatEnters,
-  cltAiErrorLine, cltBacklogHint, cltCheckedLine, isCltPost, storyDataLine, summaryWithClt, type CltView,
+  cltAiErrorLine, cltBacklogHint, cltCheckedLine, withoutLockedBacklog, isCltPost, storyDataLine, summaryWithClt, type CltView,
 } from './vacancy-clt';
 
 const base: CltView = {
@@ -59,6 +59,15 @@ describe('vagas fixas — lista e Ajustes (UI §4.3–§4.4)', () => {
     expect(cltAiErrorLine({ ...base, enabled: false, ai_error: 'Sua conta OpenAI está sem créditos.' }, now)).toBeNull();
     expect(cltAiErrorLine({ ...base, ai_error: 'Sua conta OpenAI está sem créditos.', ai_error_at: '2026-11-25T17:20:00Z' }, now))
       .toBe('Sua conta OpenAI está sem créditos. Nenhum story novo de vaga fixa está sendo criado desde as 14h20.');
+  });
+
+  it('retroativo marcado antes de ligar (sem salvar): com a CLT ligada a edição pendente sai da tela e do PATCH; o resto fica', () => {
+    const edits = { clt_backlog_days: 30, daily_cap: 12 };
+    expect(withoutLockedBacklog(edits, true)).toEqual({ daily_cap: 12 });
+    expect(withoutLockedBacklog(edits, false)).toBe(edits);
+    const noBacklog: { daily_cap?: number; clt_backlog_days?: number } = { daily_cap: 12 };
+    expect(withoutLockedBacklog(noBacklog, true)).toBe(noBacklog);
+    expect(edits).toEqual({ clt_backlog_days: 30, daily_cap: 12 });
   });
 
   it('retroativo: com a CLT ligada a ajuda diz que vale ao ligar e como mudar', () => {

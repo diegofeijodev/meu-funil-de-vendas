@@ -877,7 +877,9 @@ CltSettingsView = {
 - Desligar e religar a CLT: as vagas fixas que o "desligar" tirou da fila antes de virar story (sem post) e ainda no prazo voltam para a fila.
 - Contato (revisão de 24/11): cargo, escala e benefícios com telefone (com DDD em qualquer separação, ou sem DDD com separador), e-mail,
   @perfil ou link (inclusive domínio sem "www" e `wa.me`) não vão para a arte nem para a lista: o título com contato dá lugar ao cargo do
-  Freela, a escala escrita com contato some (sai sem o cartão) e o benefício com contato sai da lista.
+  Freela, a escala escrita com contato some (sai sem o cartão) e o benefício com contato sai da lista. Título e cargo com contato → pula
+  com "O título e o cargo da vaga fixa trazem contato (telefone, e-mail ou link); sem cargo, a arte não sai." (também no "Criar story
+  mesmo assim").
 - Geração: um lote por tipo — primeiro as diárias (empresas com as diárias ligadas, por início, até 100), e só se sobrar vez na rodada
   (2 por rodada) as vagas fixas (empresas com a CLT ligada, as mais novas primeiro, até 100). Uma fonte nunca ocupa o lote da outra.
 - QR da CLT: só com `qr_enabled` **e** `FREELA_FIXED_JOB_PAGE_URL` (ex.: `https://freelaservicos.com.br/vagas-fixas/`); o link é

@@ -126,6 +126,17 @@ export function cltBacklogHint(promoDays = 30, enabled = false): string {
   return enabled ? `${base} Vale para o momento em que você liga: para mudar, desligue as vagas fixas.` : base;
 }
 
+/**
+ * Retroativo travado com a CLT ligada (vale no momento de ligar; a API responde 422 à mudança): uma edição pendente dele — marcada antes de
+ * ligar, sem salvar — é ignorada na tela, no "algo mudou" e no PATCH (senão o "Salvar ajustes" falharia até recarregar a página).
+ */
+export function withoutLockedBacklog<T extends { clt_backlog_days?: unknown }>(edits: T, cltEnabled: boolean): T {
+  if (!cltEnabled || !('clt_backlog_days' in edits)) return edits;
+  const rest = { ...edits };
+  delete rest.clt_backlog_days;
+  return rest;
+}
+
 /** Aviso vermelho da IA só das vagas fixas (revisão 24/11; o das diárias fica no cartão de situação). Desligada ou sem aviso = null. */
 export function cltAiErrorLine(c: Pick<CltView, 'enabled' | 'ai_error' | 'ai_error_at'>, now: Date): string | null {
   if (!c.enabled || !c.ai_error) return null;

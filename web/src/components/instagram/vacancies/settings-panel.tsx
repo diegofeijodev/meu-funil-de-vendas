@@ -38,7 +38,7 @@ import {
   type VacancySettings,
   type VacancySettingsPatch,
 } from "@/modules/vacancy-stories/infrastructure/vacancy-stories.api";
-import { CLT_BACKLOG_OPTIONS, CLT_TEXT, cltBacklogHint, cltCapHint, summaryWithClt } from "@/lib/vacancy-clt";
+import { CLT_BACKLOG_OPTIONS, CLT_TEXT, cltBacklogHint, cltCapHint, summaryWithClt, withoutLockedBacklog } from "@/lib/vacancy-clt";
 import { TemplateCard } from "./template-card";
 import { PreviewCard } from "./preview-card";
 import { QrCard } from "./qr-card";
@@ -113,7 +113,9 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   // Vagas fixas: os ajustes CLT moram no bloco `clt` da resposta (PATCH com `clt_daily_cap`/`clt_backlog_days`).
   const server = (k: keyof Edits): unknown =>
     k === "clt_daily_cap" ? s.clt?.daily_cap : k === "clt_backlog_days" ? s.clt?.backlog_days : s[k as Exclude<keyof Edits, "clt_daily_cap" | "clt_backlog_days">];
-  const value = <K extends keyof Edits>(k: K) => (k in edits ? edits[k] : server(k)) as NonNullable<Edits[K]>;
+  // Com a CLT ligada, a edição pendente do retroativo não vale (ver `withoutLockedBacklog`).
+  const live = withoutLockedBacklog(edits, !!s.clt?.enabled);
+  const value = <K extends keyof Edits>(k: K) => (k in live ? live[k] : server(k)) as NonNullable<Edits[K]>;
   const set = <K extends keyof Edits>(k: K, v: NonNullable<Edits[K]>) => {
     if (save.isError) save.reset(); // nova edição depois da falha: o botão volta a "Salvar ajustes"
     setEdits((e) => {
@@ -131,10 +133,10 @@ export function VacanciesSettingsPanel({ workspaceId, settings, canEdit, canMana
   const cltBacklog = s.clt ? value("clt_backlog_days") : 0;
   const winErr = windowError(start, end);
   const style = photoStyleTexts(s);
-  const dirty = FIELDS.some((f) => f in edits);
+  const dirty = FIELDS.some((f) => f in live);
 
   const save = useMutation({
-    mutationFn: () => patchVacancySettings(workspaceId, edits),
+    mutationFn: () => patchVacancySettings(workspaceId, live),
     onSuccess: (view) => {
       qc.setQueryData(key, view);
       setEdits({});

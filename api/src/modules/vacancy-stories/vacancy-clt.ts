@@ -18,6 +18,8 @@ export const CLT_SKIP = {
   noSalary: 'A vaga fixa não tem salário informado.',
   /** Decisão de 25/11: sem cidade a arte sai sem o cartão; mas com a lista de cidades preenchida não há como conferir. */
   noCityForList: 'A vaga fixa não tem cidade para conferir com a sua lista.',
+  /** Revisão 24/11: título e cargo com contato (telefone, e-mail, @ ou link) — a arte ficaria sem cargo. */
+  noRole: 'O título e o cargo da vaga fixa trazem contato (telefone, e-mail ou link); sem cargo, a arte não sai.',
 };
 
 /** Marca d'água das vagas fixas: ligada em `clt_enabled_at`, com o retroativo de `clt_backlog_days` dias (só as publicadas depois entram). */
@@ -40,6 +42,7 @@ export function cltTriage(v: FreelaFixedJob, s: Pick<TriageSettings, 'cities'>, 
   if (isTestText(v.companyName)) return skip(SKIP.test);
   if (isTestText(v.title)) return skip(SKIP.testTitle);
   if (isTestText(v.role)) return skip(CLT_SKIP.testRole);
+  if (!cltRole(v)) return skip(CLT_SKIP.noRole);
   if (!v.salary) return skip(CLT_SKIP.noSalary);
   const city = cityOf(v);
   if (!city && s.cities.length) return skip(CLT_SKIP.noCityForList);
@@ -49,8 +52,9 @@ export function cltTriage(v: FreelaFixedJob, s: Pick<TriageSettings, 'cities'>, 
   return { status: 'new' };
 }
 
-/** "Criar story mesmo assim" (R30) na CLT: passa teste e cidade fora da lista, mas não sem salário nem com o prazo passado. */
+/** "Criar story mesmo assim" (R30) na CLT: passa teste e cidade fora da lista, mas não sem cargo, sem salário nem com o prazo passado. */
 export function cltForcedTriage(v: FreelaFixedJob, now: Date): TriageResult {
+  if (!cltRole(v)) return skip(CLT_SKIP.noRole);
   if (!v.salary) return skip(CLT_SKIP.noSalary);
   const deadline = cltDeadline(v);
   if (deadline.getTime() <= now.getTime()) return skip(cltDeadlineReason(deadline));

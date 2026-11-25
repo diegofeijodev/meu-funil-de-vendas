@@ -111,8 +111,12 @@ describe('vagas fixas — campos da arte (M14; UI §3.4, P13)', () => {
       expect(cltRole({ title: `Atendente ${c}`, role: 'atendente' })).toBe('Atendente');
       expect(cltBenefits([`Envie o currículo: ${c}`])).toBeNull();
     }
-    // Os dois com contato: o cargo fica vazio em vez de mostrar o contato.
+    // Os dois com contato: o cargo fica vazio em vez de mostrar o contato — e a vaga fixa pula (também no "Criar story mesmo assim").
     expect(cltRole({ title: 'Garçom 11 99999 9999', role: 'garçom rh@bar.com' })).toBe('');
+    const noRole = fixedJob({ title: 'Garçom 11 99999 9999', role: 'garçom rh@bar.com' });
+    expect(cltTriage(noRole, all, NOW)).toEqual({ status: 'skipped', reason: CLT_SKIP.noRole });
+    expect(cltForcedTriage(noRole, NOW)).toEqual({ status: 'skipped', reason: CLT_SKIP.noRole });
+    expect(cltTriage(fixedJob({ title: 'Garçom 11 99999 9999', role: 'garçom' }), all, NOW)).toEqual({ status: 'new' });
     // Canários do formato real que NÃO são contato.
     for (const ok of ['Segunda 08:00-17:00 • Terça 08:00-17:00', 'R$ 2.300,00', 'Vale-refeição R$ 1.200,00', '6x1', '12x36', '44h semanais', 'Seg a Sex, 8h às 17h', 'CEP 13201-000']) {
       expect(hasContact(ok)).toBe(false);
