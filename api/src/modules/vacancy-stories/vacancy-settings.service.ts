@@ -546,12 +546,16 @@ export class VacancySettingsService {
   }
 
   /**
-   * Como foram os últimos 20 stories entregues ou que você não postou (diálogo "Postar sozinho"): de primeira, refeitos pela
-   * conferência, na reserva, ou não postados (linha cancelada por você antes da entrega, ou post recusado).
+   * Como foram os últimos 20 stories DAS DIÁRIAS entregues ou que você não postou (diálogo "Postar sozinho"): de primeira, refeitos pela
+   * conferência, na reserva, ou não postados (linha cancelada por você antes da entrega, ou post recusado). Vaga fixa não entra.
    */
   private async recentOutcomes(workspaceId: string): Promise<VacancySettingsView['recent_outcomes']> {
     const rows = await this.prisma.vacancy_stories.findMany({
-      where: { workspace_id: workspaceId, OR: [{ status: 'handed_off' }, { status: 'cancelled', skip_reason: DONT_POST_REASON }] },
+      where: {
+        workspace_id: workspaceId,
+        NOT: { source: SOURCES.freela_clt.id },
+        OR: [{ status: 'handed_off' }, { status: 'cancelled', skip_reason: DONT_POST_REASON }],
+      },
       orderBy: { created_at: 'desc' },
       take: 20,
       select: { status: true, ig_post_id: true, used_fallback: true, mismatch_attempts: true },
@@ -572,9 +576,9 @@ export class VacancySettingsService {
     return out;
   }
 
-  /** Stories de vaga entregues nos últimos 7 dias e quantos foram para a reserva (aviso semanal). */
+  /** Stories de vaga DAS DIÁRIAS entregues nos últimos 7 dias e quantos foram para a reserva (aviso semanal das diárias). */
   private async week(workspaceId: string, now: Date): Promise<VacancySettingsView['week']> {
-    const base = { workspace_id: workspaceId, source: 'vacancy', created_at: { gte: new Date(now.getTime() - 7 * 86_400_000) } };
+    const base = { workspace_id: workspaceId, source: 'vacancy', ...postKindFilter('freela'), created_at: { gte: new Date(now.getTime() - 7 * 86_400_000) } };
     const [total, fallback] = await Promise.all([
       this.prisma.ig_posts.count({ where: base }),
       this.prisma.ig_posts.count({ where: { ...base, creative_brief: { path: ['vacancy', 'used_fallback'], equals: true } } }),

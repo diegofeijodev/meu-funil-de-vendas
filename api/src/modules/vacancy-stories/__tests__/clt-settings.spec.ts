@@ -10,7 +10,7 @@ import { VacancyActionsService } from '../vacancy-actions.service';
 import { VacancyGeneratorService } from '../vacancy-generator.service';
 import { VacancyPollService } from '../vacancy-poll.service';
 import { VacancyPreviewService } from '../vacancy-preview.service';
-import { CLT_DISABLED_REASON, DISABLED_REASON } from '../vacancy-reasons';
+import { CLT_DISABLED_REASON, DISABLED_REASON, DONT_POST_REASON } from '../vacancy-reasons';
 import { VacancySchedulerService } from '../vacancy-scheduler.service';
 import { ListStoriesQuery, StartPreviewDto, UpdateVacancySettingsDto } from '../vacancy-stories.dto';
 import { VacancyStoriesController } from '../vacancy-stories.controller';
@@ -163,6 +163,20 @@ describe('Ajustes das vagas fixas (M18)', () => {
     expect(await status(w.settings.cltDisable(OWNER, WS_B))).toBe(NOT_MEMBER);
     const other = uuid();
     expect(await status(w.settings.cltEnable(OWNER, other))).toBe('404:Página não encontrada.');
+  });
+});
+
+describe('Ajustes: números só das diárias (revisão 24/11)', () => {
+  it('resultados dos últimos stories e da semana são só das diárias: vaga fixa entregue, na reserva ou não postada não entra', async () => {
+    const t = await setup({ settings: { clt_enabled: true, clt_enabled_at: NOW } });
+    const cltPost = seedPost(w, { source: 'vacancy', format: 'story_image', status: 'published', created_at: NOW, creative_brief: { compose: false, vacancy: { kind: 'clt', used_fallback: true } } });
+    await t.cltRow(job(), { status: 'handed_off', ig_post_id: cltPost.id, used_fallback: true });
+    await t.cltRow(job(), { status: 'cancelled', skip_reason: DONT_POST_REASON });
+    const dailyPost = t.post('diaria', 'published');
+    await t.diariaRow(diaria(), { status: 'handed_off', ig_post_id: dailyPost.id });
+    const view = await w.settings.view(WS_A, NOW);
+    expect(view.recent_outcomes).toEqual({ n: 1, first_try: 1, redone: 0, fallback: 0, not_posted: 0 });
+    expect(view.week).toEqual({ total: 1, fallback: 0 });
   });
 });
 
